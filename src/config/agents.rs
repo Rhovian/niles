@@ -75,9 +75,13 @@ pub fn worker_binary(agent: &str) -> String {
 }
 
 pub fn worker_args(agent: &str) -> Vec<String> {
+    // Workers run autonomously in their own window: skip interactive approval
+    // prompts so a step runs to completion without a human driving each tool.
     match agent {
-        "codex" => vec!["--sandbox".to_owned(), "workspace-write".to_owned()],
-        "claude" => Vec::new(),
+        "codex" => ["--sandbox", "workspace-write", "--ask-for-approval", "never"]
+            .map(str::to_owned)
+            .to_vec(),
+        "claude" => vec!["--dangerously-skip-permissions".to_owned()],
         _ => default_args(agent),
     }
 }
