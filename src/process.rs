@@ -1,7 +1,8 @@
 use std::{
-    fs,
-    io::Write,
+    fs::{self, File},
+    io::{self, Read, Write},
     process::{Command, Stdio},
+    thread,
 };
 
 use anyhow::{Context, Result};
@@ -9,6 +10,8 @@ use camino::Utf8Path;
 use chrono::Utc;
 
 use crate::state::{StepKind, StepRecord, StepStatus};
+
+type ReaderHandle = thread::JoinHandle<Result<()>>;
 
 pub fn run_process(
     step_number: usize,
@@ -41,6 +44,11 @@ pub fn run_process(
         .spawn()
         .with_context(|| format!("failed to spawn `{}`", format_invocation(binary, args)))?;
 
+    let stdout = child.stdout.take().context("failed to open child stdout")?;
+    let stderr = child.stderr.take().context("failed to open child stderr")?;
+    let stdout_handle = spawn_tee(stdout, stdout_path.clone(), StreamTarget::Stdout);
+    let stderr_handle = spawn_tee(stderr, stderr_path.clone(), StreamTarget::Stderr);
+
     if let Some(input) = stdin {
         let mut child_stdin = child.stdin.take().context("failed to open child stdin")?;
         child_stdin
@@ -48,29 +56,31 @@ pub fn run_process(
             .context("failed to write child stdin")?;
     }
 
-    let output = child
-        .wait_with_output()
+    let status = child
+        .wait()
         .with_context(|| format!("failed to wait for `{}`", format_invocation(binary, args)))?;
     let finished_at = Utc::now();
 
-    fs::write(&stdout_path, &output.stdout)
-        .with_context(|| format!("failed to write {stdout_path}"))?;
-    fs::write(&stderr_path, &output.stderr)
-        .with_context(|| format!("failed to write {stderr_path}"))?;
+    stdout_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("stdout reader thread panicked"))??;
+    stderr_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))??;
     capture_git_diff(workspace, &diff_path)?;
 
     let record = StepRecord {
         index: step_number,
         kind,
         label: label.to_owned(),
-        status: if output.status.success() {
+        status: if status.success() {
             StepStatus::Completed
         } else {
             StepStatus::Failed
         },
         started_at,
         finished_at,
-        exit_code: output.status.code(),
+        exit_code: status.code(),
         stdout: stdout_path,
         stderr: stderr_path,
         diff: Some(diff_path),
@@ -110,6 +120,54 @@ fn capture_git_diff(workspace: &Utf8Path, diff_path: &Utf8Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+enum StreamTarget {
+    Stdout,
+    Stderr,
+}
+
+fn spawn_tee<R>(mut reader: R, log_path: camino::Utf8PathBuf, target: StreamTarget) -> ReaderHandle
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut log = File::create(&log_path)
+            .with_context(|| format!("failed to create stream log {log_path}"))?;
+        let mut buffer = [0_u8; 8192];
+
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .with_context(|| format!("failed to read stream for {log_path}"))?;
+            if read == 0 {
+                break;
+            }
+
+            log.write_all(&buffer[..read])
+                .with_context(|| format!("failed to write stream log {log_path}"))?;
+            match target {
+                StreamTarget::Stdout => {
+                    let mut stdout = io::stdout().lock();
+                    stdout
+                        .write_all(&buffer[..read])
+                        .context("failed to write child stdout")?;
+                    stdout.flush().context("failed to flush child stdout")?;
+                }
+                StreamTarget::Stderr => {
+                    let mut stderr = io::stderr().lock();
+                    stderr
+                        .write_all(&buffer[..read])
+                        .context("failed to write child stderr")?;
+                    stderr.flush().context("failed to flush child stderr")?;
+                }
+            }
+        }
+
+        log.flush()
+            .with_context(|| format!("failed to flush stream log {log_path}"))?;
+        Ok(())
+    })
 }
 
 fn slugify(value: &str) -> String {

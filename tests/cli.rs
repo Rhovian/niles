@@ -50,6 +50,7 @@ commands:
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("status: completed"));
+    assert!(stdout.contains("hello test"));
 
     let status = Command::new(niles)
         .arg("status")
@@ -326,9 +327,8 @@ commands:
     assert!(stderr.contains("stderr: .niles/runs/"));
     assert!(stderr.contains("diff: .niles/runs/"));
     assert!(stderr.contains("stderr tail:"));
-    assert!(stderr.contains("tail-line-2"));
-    assert!(stderr.contains("tail-line-13"));
-    assert!(!stderr.lines().any(|line| line.trim() == "tail-line-1"));
+    assert!(stderr.contains("  tail-line-2"));
+    assert!(stderr.contains("  tail-line-13"));
 
     let status = Command::new(niles)
         .arg("status")

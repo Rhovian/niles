@@ -92,7 +92,7 @@ When `args` are omitted, Niles uses built-in defaults for the common agents:
 - `codex`: `codex exec <prompt>`
 - `claude`: `claude -p <prompt>`
 
-Each step writes stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`.
+Each step streams stdout/stderr live and also writes stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`.
 
 Inspect a run with:
 
