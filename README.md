@@ -14,11 +14,17 @@ The project goal is to keep orchestration deterministic while letting agents han
 ## CLI
 
 ```sh
+niles
+niles --goal "Fix the flaky auth test and open a PR"
 niles ask "fix the failing auth test"
 niles ask -a claude "review the current diff"
 niles analyze
 niles doctor
 niles analyze --agent codex
+niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
+niles peek auth-fix
+niles send auth-fix "Please run the auth tests again."
+niles watch-crew --once
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
 niles run --watch task.yaml
 niles status
@@ -29,6 +35,8 @@ niles log --step 1
 niles diff
 niles resume --watch
 ```
+
+Bare `niles` launches the foreground supervisor agent, currently Claude by default. Niles writes a supervisor brief under `.niles/sessions/<id>/`, passes it as hidden supervisor context, and gives the foreground agent a small startup prompt so the agent greets you with useful paths: handle the task directly, create a manifest, resume existing Niles work, or spawn workers. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
 
 Short aliases are part of the interface:
 
@@ -44,6 +52,21 @@ niles re --watch
 ```
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
+
+## Crew
+
+Spawn a worker agent in tmux:
+
+```sh
+niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
+niles peek auth-fix
+niles send auth-fix "Please rerun the failing test and report the result."
+niles watch-crew --once
+```
+
+Spawn writes a brief and launch script under `.niles/crew/<id>/`, records tmux metadata in `.niles/crew/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session.
+
+Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, `niles watch-crew` injects a wake into the latest foreground supervisor pane when possible. Bare `niles` starts that watcher automatically when launched inside tmux.
 
 ## Manifests
 
@@ -76,33 +99,22 @@ Put shared defaults in `niles.yaml` or `.niles.yaml`:
 workspace: .
 
 agents:
-  codex:
-    binary: codex
-    args: ["exec"]
-  claude:
-    binary: claude
-    args: ["-p"]
+  local-reviewer:
+    binary: review-agent
+    args: ["--format", "plain"]
 
 commands:
   test:
     run: cargo test
 ```
 
-Task files can still override agents, commands, and workspace values locally.
+Niles has built-in profiles for common agents such as `codex` and `claude`. Task files and project config can still override agents, commands, and workspace values locally when a project needs an explicit invocation.
 
 ## Example Task
 
 ```yaml
 goal: "Fix flaky auth test"
 workspace: .
-
-agents:
-  codex:
-    binary: codex
-    args: ["exec"]
-  claude:
-    binary: claude
-    args: ["-p"]
 
 steps:
   - agent: claude
@@ -115,10 +127,7 @@ commands:
   test: cargo test auth
 ```
 
-When `args` are omitted, Niles uses built-in defaults for the common agents:
-
-- `codex`: `codex exec <prompt>`
-- `claude`: `claude -p <prompt>`
+When `binary` or `args` are omitted for a known agent, Niles resolves them from its built-in profile. The resolved invocation is an implementation detail owned by Niles so fast-changing agent CLIs can be updated in one place.
 
 Each step streams stdout/stderr live and also writes stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`.
 

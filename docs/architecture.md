@@ -13,11 +13,31 @@ Niles should behave like an axi:
 - YAML should be available without being mandatory
 - every advanced workflow should have a simple one-off equivalent
 
-The main fast path is:
+The main fast path launches the foreground supervisor agent:
+
+```sh
+niles
+niles --goal "Fix the flaky auth test and open a PR"
+```
+
+Niles writes a supervisor brief under `.niles/sessions/<id>/supervisor.md` before launching the agent. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Niles then gives Claude a small startup prompt that causes the foreground agent to greet the user and offer the useful paths. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
+
+The one-off batch path is:
 
 ```sh
 niles ask "fix the failing test"
 ```
+
+Worker agents can also be spawned into tmux windows:
+
+```sh
+niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
+niles peek auth-fix
+niles send auth-fix "Run the auth tests again."
+niles watch-crew --once
+```
+
+Worker briefs include a status-file wake contract. The first watcher slice polls those status files and injects actionable `done`, `failed`, `blocked`, and `needs-decision` lines into the latest foreground supervisor tmux pane. This is intentionally smaller than firstmate's watcher: it does not yet classify stale panes, inspect CI, batch digests, or manage a durable wake daemon.
 
 Explicit workflow files remain the durable automation path:
 
@@ -79,12 +99,9 @@ Agents own judgment-heavy work:
 
 The fixed-step runner is the first useful execution mode.
 
-Agent steps resolve to subprocess invocations. Built-in defaults are intentionally small:
+Agent steps resolve to subprocess invocations through agent profiles. Built-in profiles are intentionally small and live in code, not in the manifest format or public docs, so agent CLI churn can be absorbed in one place.
 
-- `codex` -> `codex exec <prompt>`
-- `claude` -> `claude -p <prompt>`
-
-Workflow files can override the binary and args for any agent. Command steps execute named commands from the task spec, which keeps shell execution explicit and auditable.
+Workflow files can override the binary and args for any agent when a project needs an explicit invocation. Command steps execute named commands from the task spec, which keeps shell execution explicit and auditable.
 
 During each step, Niles tees stdout and stderr to the terminal and per-step log files. After each step, Niles captures `git diff --no-ext-diff --` from the workspace and stores it beside the step logs. This gives the future router and the user a stable artifact for review handoffs.
 

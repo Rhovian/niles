@@ -4,9 +4,12 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
-use crate::runner;
-use crate::spec::{
-    AgentConfig, CommandConfig, PromptMode, TaskSpec, TaskStep, load_project_config_from,
+use crate::{
+    config::{
+        agents,
+        spec::{CommandConfig, TaskSpec, TaskStep, load_project_config_from},
+    },
+    runner,
 };
 
 pub fn generate(
@@ -37,7 +40,7 @@ pub fn generate(
             .agents
             .get(agent)
             .cloned()
-            .unwrap_or_else(|| default_agent_config(agent));
+            .unwrap_or_else(|| agents::default_config(agent));
         agents.insert(agent.to_owned(), config);
     }
 
@@ -102,18 +105,6 @@ pub fn generate(
     } else {
         println!("next: Run `niles run {path}`");
         Ok(())
-    }
-}
-
-fn default_agent_config(agent: &str) -> AgentConfig {
-    AgentConfig {
-        binary: Some(agent.to_owned()),
-        args: match agent {
-            "codex" => vec!["exec".to_owned()],
-            "claude" => vec!["-p".to_owned()],
-            _ => Vec::new(),
-        },
-        prompt: PromptMode::Arg,
     }
 }
 

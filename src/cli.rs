@@ -2,15 +2,16 @@ use camino::Utf8PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(
-    version,
-    about,
-    infer_subcommands = true,
-    arg_required_else_help = true
-)]
+#[command(version, about, infer_subcommands = true)]
 pub struct Cli {
+    /// Agent id to launch for bare `niles`.
+    #[arg(long, default_value = "claude")]
+    pub supervisor: String,
+    /// Initial goal to include in the foreground supervisor brief.
+    #[arg(long)]
+    pub goal: Option<String>,
     #[command(subcommand)]
-    pub command: CommandName,
+    pub command: Option<CommandName>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +69,52 @@ pub enum CommandName {
         /// Task goal.
         #[arg(required = true, num_args = 1..)]
         goal: Vec<String>,
+    },
+    /// Spawn a worker agent in a tmux window.
+    Spawn {
+        /// Crew task id used for window and metadata names.
+        id: String,
+        /// Project workspace for the worker.
+        #[arg(long, default_value = ".")]
+        project: Utf8PathBuf,
+        /// Agent id to launch.
+        #[arg(short, long, default_value = "codex")]
+        agent: String,
+        /// Existing brief file to pass to the worker.
+        #[arg(long)]
+        brief: Option<Utf8PathBuf>,
+        /// Task text used to create a brief when --brief is omitted.
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        task: Vec<String>,
+    },
+    /// Capture the tail of a worker tmux pane.
+    Peek {
+        /// Crew task id.
+        id: String,
+        /// Number of lines to capture.
+        #[arg(short, long, default_value_t = 40)]
+        lines: usize,
+    },
+    /// Send a message to a worker tmux pane.
+    Send {
+        /// Crew task id.
+        id: String,
+        /// Message to submit.
+        #[arg(required = true, num_args = 1.., trailing_var_arg = true)]
+        message: Vec<String>,
+    },
+    /// Watch worker status files and wake the foreground supervisor.
+    #[command(name = "watch-crew")]
+    WatchCrew {
+        /// Supervisor session id. Defaults to the latest bare `niles` session.
+        #[arg(long)]
+        session: Option<String>,
+        /// Poll interval in seconds.
+        #[arg(long, default_value_t = 2.0)]
+        interval: f64,
+        /// Drain once and exit.
+        #[arg(long)]
+        once: bool,
     },
     /// Resume a persisted run.
     #[command(alias = "re")]

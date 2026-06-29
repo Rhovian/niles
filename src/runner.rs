@@ -11,12 +11,15 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
+    config::{
+        agents,
+        spec::{
+            AgentConfig, PromptMode, TaskSpec, TaskStep, apply_project_config, command_config_run,
+            load_project_config, load_task, summarize_spec,
+        },
+    },
     context::{agent_prompt, write_agent_context},
     process::run_process,
-    spec::{
-        AgentConfig, PromptMode, TaskSpec, TaskStep, apply_project_config, command_config_run,
-        load_project_config, load_task, summarize_spec,
-    },
     state::{
         RunState, RunStatus, StepKind, StepRecord, StepStatus, run_status_label, step_kind_label,
         step_status_label,
@@ -37,8 +40,14 @@ impl RunSelector {
 }
 
 pub fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
+    let spec = ask_spec(agent, prompt);
+
+    create_run(with_project_config(spec)?, None, false)
+}
+
+fn ask_spec(agent: String, prompt: Vec<String>) -> TaskSpec {
     let prompt = prompt.join(" ");
-    let spec = TaskSpec {
+    TaskSpec {
         goal: prompt.clone(),
         agents: BTreeMap::new(),
         workspace: None,
@@ -48,9 +57,7 @@ pub fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
             role: None,
         }],
         commands: BTreeMap::new(),
-    };
-
-    create_run(with_project_config(spec)?, None, false)
+    }
 }
 
 pub fn run(task: Utf8PathBuf, watch: bool) -> Result<()> {
@@ -691,12 +698,9 @@ struct AgentInvocation {
 }
 
 fn agent_invocation(agent: &str, config: Option<&AgentConfig>) -> AgentInvocation {
-    let default_binary = agent.to_owned();
-    let default_args = match agent {
-        "codex" => vec!["exec".to_owned()],
-        "claude" => vec!["-p".to_owned()],
-        _ => Vec::new(),
-    };
+    let default_binary = agents::default_binary(agent);
+    let default_args = agents::default_args(agent);
+    let default_prompt = agents::default_prompt(agent);
 
     match config {
         Some(config) => AgentInvocation {
@@ -711,7 +715,7 @@ fn agent_invocation(agent: &str, config: Option<&AgentConfig>) -> AgentInvocatio
         None => AgentInvocation {
             binary: default_binary,
             args: default_args,
-            prompt: PromptMode::Arg,
+            prompt: default_prompt,
         },
     }
 }

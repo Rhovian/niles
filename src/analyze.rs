@@ -8,17 +8,20 @@ use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::config::agents;
+
 pub fn analyze(agent: Option<String>) -> Result<()> {
     let agents = match agent {
         Some(agent) => vec![agent],
-        None => vec!["codex".to_owned(), "claude".to_owned()],
+        None => agents::known_agent_ids().map(str::to_owned).collect(),
     };
 
     let dir = Utf8Path::new(".niles").join("capabilities");
     fs::create_dir_all(&dir).context("failed to create capability directory")?;
 
     for agent in agents {
-        let manifest = probe_agent(&agent, &agent);
+        let binary = agents::default_binary(&agent);
+        let manifest = probe_agent(&agent, &binary);
         let path = dir.join(format!("{agent}.json"));
         let body = serde_json::to_string_pretty(&manifest)?;
         fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
