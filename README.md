@@ -1,0 +1,48 @@
+# Niles
+
+Niles is a Rust CLI orchestration harness for coordinating agent CLIs such as Codex and Claude.
+
+The project goal is to keep orchestration deterministic while letting agents handle judgment-heavy handoffs.
+
+## Shape
+
+- Rust owns workspace state, execution, policies, persistence, and validation.
+- Agent adapters normalize fast-changing CLIs behind a stable internal contract.
+- An analyzer probes installed agent CLIs and records their current capabilities.
+- A router agent can decide the next handoff using structured JSON decisions.
+
+## Early CLI
+
+```sh
+niles analyze
+niles analyze --agent codex
+niles run task.yaml
+niles status latest
+niles resume latest
+```
+
+## Example Task
+
+```yaml
+goal: "Fix flaky auth test"
+
+agents:
+  codex:
+    binary: codex
+  claude:
+    binary: claude
+
+steps:
+  - agent: claude
+    task: "Analyze likely causes. Do not edit files."
+  - agent: codex
+    task: "Implement the fix using the analysis above."
+  - command: test
+
+commands:
+  test: cargo test auth
+```
+
+## Status
+
+Niles is just starting. The first target is a sequential workflow runner with local analyzer support, persisted run logs, and public capability manifests.
