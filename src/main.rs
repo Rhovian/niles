@@ -22,7 +22,7 @@ fn main() -> Result<()> {
         CommandName::Analyze { agent } => analyze::analyze(agent),
         CommandName::Run { task } => runner::run(task),
         CommandName::Resume { run } => runner::resume(RunSelector::new(run)),
-        CommandName::Status { run } => runner::status(RunSelector::new(run)),
+        CommandName::Status { run, json } => runner::status(RunSelector::new(run), json),
         CommandName::Show { run } => runner::show(RunSelector::new(run)),
         CommandName::Log {
             run,

@@ -9,6 +9,7 @@ Niles should behave like an axi:
 - common actions need short commands
 - defaults should make the first command useful
 - output should be compact and scriptable
+- raw JSON should be opt-in for inspection commands
 - YAML should be available without being mandatory
 - every advanced workflow should have a simple one-off equivalent
 

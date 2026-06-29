@@ -57,11 +57,16 @@ pub fn resume(selector: RunSelector) -> Result<()> {
     Ok(())
 }
 
-pub fn status(selector: RunSelector) -> Result<()> {
+pub fn status(selector: RunSelector, json: bool) -> Result<()> {
     let run_dir = selector.resolve()?;
     let path = state_path(&run_dir);
-    let state = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-    println!("{state}");
+    if json {
+        let state = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+        println!("{state}");
+    } else {
+        let state = read_state(&run_dir)?;
+        print_status(&state);
+    }
     Ok(())
 }
 
@@ -95,6 +100,64 @@ pub fn show(selector: RunSelector) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_status(state: &RunState) {
+    println!("run: {}", state.id);
+    println!("status: {}", run_status_label(&state.status));
+    println!("goal: {}", state.goal);
+    println!("updated: {}", state.updated_at);
+
+    if state.steps.is_empty() {
+        println!("steps[0]:");
+        println!("help[2]:");
+        println!("  Run `niles show {}`", state.id);
+        println!("  Run `niles status {} --json`", state.id);
+        return;
+    }
+
+    println!(
+        "steps[{}]{{index,kind,label,status,exit}}:",
+        state.steps.len()
+    );
+    for step in &state.steps {
+        println!(
+            "  {},{},{},{},{}",
+            step.index,
+            step_kind_label(&step.kind),
+            step.label,
+            step_status_label(&step.status),
+            step.exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_owned())
+        );
+    }
+
+    let focus_step = state
+        .steps
+        .iter()
+        .rev()
+        .find(|step| matches!(step.status, StepStatus::Failed))
+        .or_else(|| state.steps.last());
+
+    if let Some(step) = focus_step {
+        if matches!(step.status, StepStatus::Failed) {
+            println!("help[4]:");
+            println!(
+                "  Run `niles log {} --step {} --stderr`",
+                state.id, step.index
+            );
+            println!("  Run `niles diff {} --step {}`", state.id, step.index);
+            println!("  Run `niles show {}`", state.id);
+            println!("  Run `niles status {} --json`", state.id);
+        } else {
+            println!("help[4]:");
+            println!("  Run `niles log {} --step {}`", state.id, step.index);
+            println!("  Run `niles diff {} --step {}`", state.id, step.index);
+            println!("  Run `niles show {}`", state.id);
+            println!("  Run `niles status {} --json`", state.id);
+        }
+    }
 }
 
 pub fn log(selector: RunSelector, step: Option<usize>, stderr: bool, both: bool) -> Result<()> {

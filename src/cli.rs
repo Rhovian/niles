@@ -51,6 +51,9 @@ pub enum CommandName {
         /// Run id or "latest".
         #[arg(default_value = "latest")]
         run: String,
+        /// Print raw JSON state.
+        #[arg(long)]
+        json: bool,
     },
     /// Show a compact summary of a persisted run.
     #[command(alias = "sh")]

@@ -59,8 +59,24 @@ commands:
     assert!(status.status.success());
 
     let status_stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(status_stdout.contains("\"status\": \"completed\""));
-    assert!(status_stdout.contains("001-echo.stdout.txt"));
+    assert!(status_stdout.contains("status: completed"));
+    assert!(status_stdout.contains("steps[2]{index,kind,label,status,exit}:"));
+    assert!(status_stdout.contains("1,agent,echo,completed,0"));
+    assert!(status_stdout.contains("help[4]:"));
+    assert!(status_stdout.contains("Run `niles status "));
+    assert!(status_stdout.contains("--json`"));
+
+    let status_json = Command::new(niles)
+        .arg("status")
+        .arg("--json")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status_json.status.success());
+
+    let status_json_stdout = String::from_utf8_lossy(&status_json.stdout);
+    assert!(status_json_stdout.contains("\"status\": \"completed\""));
+    assert!(status_json_stdout.contains("001-echo.stdout.txt"));
 
     let show = Command::new(niles)
         .arg("show")
@@ -172,6 +188,7 @@ commands:
 
     let status = Command::new(niles)
         .arg("status")
+        .arg("--json")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -312,4 +329,16 @@ commands:
     assert!(stderr.contains("tail-line-2"));
     assert!(stderr.contains("tail-line-13"));
     assert!(!stderr.lines().any(|line| line.trim() == "tail-line-1"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: failed"));
+    assert!(status_stdout.contains("1,command,fail,failed,7"));
+    assert!(status_stdout.contains("--stderr`"));
 }

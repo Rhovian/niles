@@ -21,6 +21,7 @@ niles doctor
 niles analyze --agent codex
 niles run task.yaml
 niles status
+niles status --json
 niles show
 niles log --step 1
 niles diff
@@ -97,6 +98,8 @@ Inspect a run with:
 
 ```sh
 niles show
+niles status
+niles status --json
 niles log
 niles log --step 2 --stderr
 niles log --both
@@ -105,6 +108,8 @@ niles diff --step 1
 ```
 
 When a step fails, Niles prints the failed step, exit code, stderr log path, diff path, and a short stderr tail before exiting nonzero.
+
+`niles status` uses compact, agent-readable output by default. Use `niles status --json` when a tool needs the raw persisted state.
 
 ## Status
 
