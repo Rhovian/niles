@@ -11,15 +11,28 @@ The project goal is to keep orchestration deterministic while letting agents han
 - An analyzer probes installed agent CLIs and records their current capabilities.
 - A router agent can decide the next handoff using structured JSON decisions.
 
-## Early CLI
+## CLI
 
 ```sh
+niles ask "fix the failing auth test"
+niles ask -a claude "review the current diff"
 niles analyze
+niles doctor
 niles analyze --agent codex
 niles run task.yaml
-niles status latest
-niles resume latest
+niles status
+niles resume
 ```
+
+Short aliases are part of the interface:
+
+```sh
+niles a "summarize this repo"
+niles r task.yaml
+niles s
+```
+
+The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
 
 ## Example Task
 

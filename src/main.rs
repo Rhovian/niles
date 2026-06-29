@@ -7,13 +7,14 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        CommandName::Ask { agent, prompt } => ask(agent, prompt),
         CommandName::Analyze { agent } => analyze(agent),
         CommandName::Run { task } => run(task),
         CommandName::Resume { run } => resume(run),
@@ -22,7 +23,12 @@ fn main() -> Result<()> {
 }
 
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(
+    version,
+    about,
+    infer_subcommands = true,
+    arg_required_else_help = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: CommandName,
@@ -30,23 +36,38 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CommandName {
+    /// Start a one-off agent task without writing YAML.
+    #[command(alias = "a")]
+    Ask {
+        /// Agent id to hand the task to.
+        #[arg(short, long, default_value = "codex")]
+        agent: String,
+        /// Prompt to send to the agent.
+        #[arg(required = true, action = ArgAction::Append, trailing_var_arg = true)]
+        prompt: Vec<String>,
+    },
     /// Probe configured agent CLIs and write local capability manifests.
+    #[command(alias = "doctor", alias = "scan")]
     Analyze {
         /// Agent id to probe. Defaults to codex and claude.
-        #[arg(long)]
+        #[arg(short, long)]
         agent: Option<String>,
     },
     /// Start a new run from a task spec.
+    #[command(alias = "r")]
     Run {
         /// YAML task specification.
         task: Utf8PathBuf,
     },
     /// Resume a persisted run.
+    #[command(alias = "re")]
     Resume {
         /// Run id or "latest".
+        #[arg(default_value = "latest")]
         run: String,
     },
     /// Inspect a persisted run.
+    #[command(alias = "s")]
     Status {
         /// Run id or "latest".
         #[arg(default_value = "latest")]
@@ -81,7 +102,8 @@ enum Step {
 struct RunState {
     id: String,
     goal: String,
-    task_file: Utf8PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_file: Option<Utf8PathBuf>,
     created_at: DateTime<Utc>,
     status: RunStatus,
 }
@@ -116,6 +138,21 @@ enum ProbeStatus {
     NotFound,
 }
 
+fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
+    let prompt = prompt.join(" ");
+    let spec = TaskSpec {
+        goal: prompt.clone(),
+        agents: BTreeMap::from([(agent.clone(), AgentConfig { binary: None })]),
+        steps: vec![Step::Agent {
+            agent,
+            task: prompt,
+        }],
+        commands: BTreeMap::new(),
+    };
+
+    create_run(spec, None)
+}
+
 fn analyze(agent: Option<String>) -> Result<()> {
     let agents = match agent {
         Some(agent) => vec![agent],
@@ -139,12 +176,20 @@ fn analyze(agent: Option<String>) -> Result<()> {
 fn run(task: Utf8PathBuf) -> Result<()> {
     let body = fs::read_to_string(&task).with_context(|| format!("failed to read {task}"))?;
     let spec: TaskSpec = serde_yaml::from_str(&body).context("failed to parse task YAML")?;
+    create_run(spec, Some(task))
+}
 
+fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
     if spec.steps.is_empty() {
         bail!("task spec must contain at least one step");
     }
 
-    let id = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let now = Utc::now();
+    let id = format!(
+        "{}{:09}Z",
+        now.format("%Y%m%dT%H%M%S"),
+        now.timestamp_subsec_nanos()
+    );
     let run_dir = Utf8Path::new(".niles").join("runs").join(&id);
     fs::create_dir_all(&run_dir).with_context(|| format!("failed to create {run_dir}"))?;
     let plan = summarize_spec(&spec);
@@ -152,8 +197,8 @@ fn run(task: Utf8PathBuf) -> Result<()> {
     let state = RunState {
         id: id.clone(),
         goal: spec.goal,
-        task_file: task,
-        created_at: Utc::now(),
+        task_file,
+        created_at: now,
         status: RunStatus::Created,
     };
 
@@ -165,8 +210,9 @@ fn run(task: Utf8PathBuf) -> Result<()> {
     fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)
         .with_context(|| format!("failed to write {plan_path}"))?;
 
-    println!("created run {id}");
+    println!("run: {id}");
     println!("state: {state_path}");
+    println!("status: created");
     println!("next: workflow execution is not implemented yet");
 
     Ok(())

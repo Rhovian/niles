@@ -2,6 +2,28 @@
 
 Niles is intentionally a small runtime around unstable agent CLIs.
 
+## CLI Ergonomics
+
+Niles should behave like an axi:
+
+- common actions need short commands
+- defaults should make the first command useful
+- output should be compact and scriptable
+- YAML should be available without being mandatory
+- every advanced workflow should have a simple one-off equivalent
+
+The main fast path is:
+
+```sh
+niles ask "fix the failing test"
+```
+
+Explicit workflow files remain the durable automation path:
+
+```sh
+niles run task.yaml
+```
+
 ## Runtime Boundary
 
 The Rust CLI owns deterministic work:
