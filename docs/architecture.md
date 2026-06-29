@@ -25,6 +25,12 @@ Explicit workflow files remain the durable automation path:
 niles run task.yaml
 ```
 
+Niles can also generate an explicit workflow manifest from role flags:
+
+```sh
+niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
+```
+
 ## Project Config
 
 Niles loads the first config file it finds from:

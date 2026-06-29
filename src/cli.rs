@@ -38,6 +38,28 @@ pub enum CommandName {
         /// YAML task specification.
         task: Utf8PathBuf,
     },
+    /// Generate a role-based task manifest.
+    #[command(alias = "m")]
+    Manifest {
+        /// Project workspace for the generated manifest.
+        #[arg(long, default_value = ".")]
+        project: Utf8PathBuf,
+        /// Agent id to use for planning.
+        #[arg(long, default_value = "claude")]
+        planner: String,
+        /// Agent id to use for implementation.
+        #[arg(long, default_value = "codex")]
+        implementer: String,
+        /// Agent id to use for review.
+        #[arg(long, default_value = "claude")]
+        reviewer: String,
+        /// Named validation command to include.
+        #[arg(long, default_value = "test")]
+        command: String,
+        /// Task goal.
+        #[arg(required = true, num_args = 1..)]
+        goal: Vec<String>,
+    },
     /// Resume a persisted run.
     #[command(alias = "re")]
     Resume {

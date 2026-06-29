@@ -19,6 +19,7 @@ niles ask -a claude "review the current diff"
 niles analyze
 niles doctor
 niles analyze --agent codex
+niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
 niles run task.yaml
 niles status
 niles status --json
@@ -32,6 +33,7 @@ Short aliases are part of the interface:
 
 ```sh
 niles a "summarize this repo"
+niles m "fix the flaky test" --project ../my-app
 niles r task.yaml
 niles s
 niles l
@@ -39,6 +41,21 @@ niles d
 ```
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
+
+## Manifests
+
+Generate a role-based workflow manifest:
+
+```sh
+niles manifest "Fix flaky auth test" \
+  --project ../my-app \
+  --planner claude \
+  --implementer codex \
+  --reviewer claude \
+  --command test
+```
+
+Niles writes the manifest to `.niles/manifests/<id>.yaml` and prints the follow-up `niles run ...` command. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
 
 ## Project Config
 

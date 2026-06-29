@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskSpec {
     pub goal: String,
     #[serde(default)]
@@ -17,7 +17,7 @@ pub struct TaskSpec {
     pub commands: BTreeMap<String, CommandConfig>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ProjectConfig {
     #[serde(default)]
     pub workspace: Option<Utf8PathBuf>,
@@ -27,7 +27,7 @@ pub struct ProjectConfig {
     pub commands: BTreeMap<String, CommandConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentConfig {
     pub binary: Option<String>,
     #[serde(default)]
@@ -36,7 +36,7 @@ pub struct AgentConfig {
     pub prompt: PromptMode,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum TaskStep {
     Agent { agent: String, task: String },
@@ -50,7 +50,7 @@ pub enum CommandConfig {
     Full { run: String },
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMode {
     Arg,
@@ -69,10 +69,15 @@ pub fn load_task(path: &Utf8Path) -> Result<TaskSpec> {
 }
 
 pub fn load_project_config() -> Result<ProjectConfig> {
+    load_project_config_from(Utf8Path::new("."))
+}
+
+pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
     for path in [Utf8Path::new("niles.yaml"), Utf8Path::new(".niles.yaml")] {
+        let path = root.join(path);
         if path.exists() {
             let body =
-                fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
+                fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
             return serde_yaml::from_str(&body).with_context(|| format!("failed to parse {path}"));
         }
     }

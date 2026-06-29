@@ -1,5 +1,6 @@
 mod analyze;
 mod cli;
+mod manifest;
 mod process;
 mod runner;
 mod spec;
@@ -21,6 +22,14 @@ fn main() -> Result<()> {
         CommandName::Ask { agent, prompt } => runner::ask(agent, prompt),
         CommandName::Analyze { agent } => analyze::analyze(agent),
         CommandName::Run { task } => runner::run(task),
+        CommandName::Manifest {
+            goal,
+            project,
+            planner,
+            implementer,
+            reviewer,
+            command,
+        } => manifest::generate(goal, project, planner, implementer, reviewer, command),
         CommandName::Resume { run } => runner::resume(RunSelector::new(run)),
         CommandName::Status { run, json } => runner::status(RunSelector::new(run), json),
         CommandName::Show { run } => runner::show(RunSelector::new(run)),

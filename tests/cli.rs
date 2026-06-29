@@ -342,3 +342,89 @@ commands:
     assert!(status_stdout.contains("1,command,fail,failed,7"));
     assert!(status_stdout.contains("--stderr`"));
 }
+
+#[test]
+fn manifest_generates_runnable_role_workflow() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-manifest-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    fs::write(
+        workspace.join("niles.yaml"),
+        r#"
+agents:
+  echo:
+    binary: /bin/echo
+commands:
+  test:
+    run: printf 'manifest command\n'
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .args([
+            "manifest",
+            "--project",
+            ".",
+            "--planner",
+            "echo",
+            "--implementer",
+            "echo",
+            "--reviewer",
+            "echo",
+            "--command",
+            "test",
+            "Ship",
+            "role",
+            "workflow",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let manifest_line = stdout
+        .lines()
+        .find(|line| line.starts_with("manifest: "))
+        .expect("manifest output should include manifest path");
+    let manifest_path = workspace.join(manifest_line.trim_start_matches("manifest: "));
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+
+    assert!(manifest.contains("goal: Ship role workflow"));
+    assert!(manifest.contains("workspace: ."));
+    assert!(manifest.contains("agent: echo"));
+    assert!(manifest.contains("command: test"));
+    assert!(manifest.contains("manifest command"));
+
+    let run = Command::new(niles)
+        .arg("run")
+        .arg(&manifest_path)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let run_stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(run_stdout.contains("step 1: agent echo"));
+    assert!(run_stdout.contains("step 3: command test"));
+    assert!(run_stdout.contains("manifest command"));
+    assert!(run_stdout.contains("status: completed"));
+}
