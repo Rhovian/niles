@@ -49,24 +49,30 @@ pub fn generate(
             TaskStep::Agent {
                 agent: planner.clone(),
                 task: planner_prompt(&goal),
+                role: Some("planner".to_owned()),
             },
             TaskStep::Agent {
                 agent: implementer.clone(),
                 task: implementer_prompt(&goal),
+                role: Some("implementer".to_owned()),
             },
             TaskStep::Command {
                 command: command.clone(),
+                role: Some("validation".to_owned()),
             },
             TaskStep::Agent {
                 agent: reviewer.clone(),
                 task: reviewer_prompt(&goal, &command),
+                role: Some("reviewer".to_owned()),
             },
             TaskStep::Agent {
                 agent: implementer,
                 task: review_fix_prompt(&goal),
+                role: Some("implementer".to_owned()),
             },
             TaskStep::Command {
                 command: command.clone(),
+                role: Some("validation".to_owned()),
             },
         ],
         commands: BTreeMap::from([(command, command_config)]),

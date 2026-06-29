@@ -26,6 +26,8 @@ pub enum RunStatus {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StepRecord {
     pub index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     pub kind: StepKind,
     pub label: String,
     pub status: StepStatus,

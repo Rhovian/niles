@@ -38,6 +38,7 @@ pub fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
         steps: vec![TaskStep::Agent {
             agent,
             task: prompt,
+            role: None,
         }],
         commands: BTreeMap::new(),
     };
@@ -88,8 +89,12 @@ pub fn show(selector: RunSelector) -> Result<()> {
     println!("steps:");
     for step in &state.steps {
         println!(
-            "  {}. {} {} {}{}",
+            "  {}. {}{} {} {}{}",
             step.index,
+            step.role
+                .as_deref()
+                .map(|role| format!("{role} "))
+                .unwrap_or_default(),
             step_kind_label(&step.kind),
             step.label,
             step_status_label(&step.status),
@@ -116,21 +121,43 @@ fn print_status(state: &RunState) {
         return;
     }
 
-    println!(
-        "steps[{}]{{index,kind,label,status,exit}}:",
-        state.steps.len()
-    );
-    for step in &state.steps {
+    let has_roles = state.steps.iter().any(|step| step.role.is_some());
+    if has_roles {
         println!(
-            "  {},{},{},{},{}",
-            step.index,
-            step_kind_label(&step.kind),
-            step.label,
-            step_status_label(&step.status),
-            step.exit_code
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "signal".to_owned())
+            "steps[{}]{{index,role,kind,label,status,exit}}:",
+            state.steps.len()
         );
+    } else {
+        println!(
+            "steps[{}]{{index,kind,label,status,exit}}:",
+            state.steps.len()
+        );
+    }
+    for step in &state.steps {
+        let exit = step
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "signal".to_owned());
+        if has_roles {
+            println!(
+                "  {},{},{},{},{},{}",
+                step.index,
+                step.role.as_deref().unwrap_or("-"),
+                step_kind_label(&step.kind),
+                step.label,
+                step_status_label(&step.status),
+                exit
+            );
+        } else {
+            println!(
+                "  {},{},{},{},{}",
+                step.index,
+                step_kind_label(&step.kind),
+                step.label,
+                step_status_label(&step.status),
+                exit
+            );
+        }
     }
 
     let focus_step = state
@@ -261,13 +288,28 @@ fn execute_run(
     for (index, step) in spec.steps.iter().enumerate() {
         let step_number = index + 1;
         let result = match step {
-            TaskStep::Agent { agent, task } => {
-                println!("step {step_number}: agent {agent}");
-                run_agent_step(step_number, agent, task, spec, workspace, &steps_dir)
+            TaskStep::Agent { agent, task, role } => {
+                print_step_start(step_number, role.as_deref(), "agent", agent);
+                run_agent_step(
+                    step_number,
+                    role.clone(),
+                    agent,
+                    task,
+                    spec,
+                    workspace,
+                    &steps_dir,
+                )
             }
-            TaskStep::Command { command } => {
-                println!("step {step_number}: command {command}");
-                run_command_step(step_number, command, spec, workspace, &steps_dir)
+            TaskStep::Command { command, role } => {
+                print_step_start(step_number, role.as_deref(), "command", command);
+                run_command_step(
+                    step_number,
+                    role.clone(),
+                    command,
+                    spec,
+                    workspace,
+                    &steps_dir,
+                )
             }
         }?;
 
@@ -300,6 +342,7 @@ fn execute_run(
 
 fn run_agent_step(
     step_number: usize,
+    role: Option<String>,
     agent: &str,
     task: &str,
     spec: &TaskSpec,
@@ -318,6 +361,7 @@ fn run_agent_step(
 
     run_process(
         step_number,
+        role,
         StepKind::Agent,
         agent,
         &config.binary,
@@ -330,6 +374,7 @@ fn run_agent_step(
 
 fn run_command_step(
     step_number: usize,
+    role: Option<String>,
     command: &str,
     spec: &TaskSpec,
     workspace: &Utf8Path,
@@ -342,6 +387,7 @@ fn run_command_step(
     let command_line = command_config_run(config);
     run_process(
         step_number,
+        role,
         StepKind::Command,
         command,
         "sh",
@@ -350,6 +396,13 @@ fn run_command_step(
         workspace,
         steps_dir,
     )
+}
+
+fn print_step_start(step_number: usize, role: Option<&str>, kind: &str, label: &str) {
+    match role {
+        Some(role) => println!("step {step_number}: {role} {kind} {label}"),
+        None => println!("step {step_number}: {kind} {label}"),
+    }
 }
 
 struct AgentInvocation {
@@ -396,8 +449,12 @@ fn print_log_file(label: &str, path: &Utf8Path) -> Result<()> {
 fn print_failure_summary(step: &StepRecord) {
     eprintln!("failure:");
     eprintln!(
-        "  step: {} {} {}",
+        "  step: {} {}{} {}",
         step.index,
+        step.role
+            .as_deref()
+            .map(|role| format!("{role} "))
+            .unwrap_or_default(),
         step_kind_label(&step.kind),
         step.label
     );

@@ -39,8 +39,17 @@ pub struct AgentConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum TaskStep {
-    Agent { agent: String, task: String },
-    Command { command: String },
+    Agent {
+        agent: String,
+        task: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
+    Command {
+        command: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -124,10 +133,12 @@ pub fn summarize_spec(spec: &TaskSpec) -> serde_json::Value {
         .steps
         .iter()
         .map(|step| match step {
-            TaskStep::Agent { agent, task } => {
-                serde_json::json!({ "agent": agent, "task": task })
+            TaskStep::Agent { agent, task, role } => {
+                serde_json::json!({ "agent": agent, "task": task, "role": role })
             }
-            TaskStep::Command { command } => serde_json::json!({ "command": command }),
+            TaskStep::Command { command, role } => {
+                serde_json::json!({ "command": command, "role": role })
+            }
         })
         .collect::<Vec<_>>();
 

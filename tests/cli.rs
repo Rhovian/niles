@@ -405,6 +405,10 @@ commands:
 
     assert!(manifest.contains("goal: Ship role workflow"));
     assert!(manifest.contains("workspace: ."));
+    assert!(manifest.contains("role: planner"));
+    assert!(manifest.contains("role: implementer"));
+    assert!(manifest.contains("role: reviewer"));
+    assert!(manifest.contains("role: validation"));
     assert!(manifest.contains("agent: echo"));
     assert!(manifest.contains("command: test"));
     assert!(manifest.contains("manifest command"));
@@ -423,8 +427,22 @@ commands:
     );
 
     let run_stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(run_stdout.contains("step 1: agent echo"));
-    assert!(run_stdout.contains("step 3: command test"));
+    assert!(run_stdout.contains("step 1: planner agent echo"));
+    assert!(run_stdout.contains("step 3: validation command test"));
     assert!(run_stdout.contains("manifest command"));
     assert!(run_stdout.contains("status: completed"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+    assert!(status_stdout.contains("1,planner,agent,echo,completed,0"));
+    assert!(status_stdout.contains("2,implementer,agent,echo,completed,0"));
+    assert!(status_stdout.contains("3,validation,command,test,completed,0"));
+    assert!(status_stdout.contains("4,reviewer,agent,echo,completed,0"));
 }

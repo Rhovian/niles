@@ -57,6 +57,8 @@ niles manifest "Fix flaky auth test" \
 
 Niles writes the manifest to `.niles/manifests/<id>.yaml` and prints the follow-up `niles run ...` command. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
 
+Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
+
 ## Project Config
 
 Put shared defaults in `niles.yaml` or `.niles.yaml`:

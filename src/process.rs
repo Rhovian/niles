@@ -15,6 +15,7 @@ type ReaderHandle = thread::JoinHandle<Result<()>>;
 
 pub fn run_process(
     step_number: usize,
+    role: Option<String>,
     kind: StepKind,
     label: &str,
     binary: &str,
@@ -71,6 +72,7 @@ pub fn run_process(
 
     let record = StepRecord {
         index: step_number,
+        role,
         kind,
         label: label.to_owned(),
         status: if status.success() {

@@ -31,6 +31,8 @@ Niles can also generate an explicit workflow manifest from role flags:
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
 ```
 
+Generated manifests label steps with roles. Roles are persisted in run state and shown by inspection commands so future tmux or TUI views can group work by planner, implementer, reviewer, and validation surfaces without changing execution semantics.
+
 ## Project Config
 
 Niles loads the first config file it finds from:
