@@ -1255,3 +1255,256 @@ commands:
     assert!(stdout.contains("status: completed"));
     assert!(stdout.contains("2,validation,command,fast,completed,0"));
 }
+
+#[test]
+fn prepare_then_exec_step_drives_run() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Exercise supervisor stepping"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "stepped hello"
+  - command: pwd
+commands:
+  pwd: pwd
+"#,
+    )
+    .unwrap();
+
+    // prepare: create the run without executing it.
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .arg("--prepare")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        prepare.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&prepare.stdout),
+        String::from_utf8_lossy(&prepare.stderr)
+    );
+    let prepare_stdout = String::from_utf8_lossy(&prepare.stdout);
+    assert!(prepare_stdout.contains("status: created"));
+    assert!(prepare_stdout.contains("1 agent echo"));
+    assert!(prepare_stdout.contains("next: niles step "));
+    // prepare must not execute the agent.
+    assert!(!prepare_stdout.contains("stepped hello"));
+
+    // status shows created with all steps pending.
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: created"));
+    assert!(status_stdout.contains("1,agent,echo,pending,-"));
+
+    // exec-step 1: runs the agent, records state, appends a done wake.
+    let step1 = Command::new(niles)
+        .arg("exec-step")
+        .arg("latest")
+        .arg("1")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        step1.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&step1.stdout),
+        String::from_utf8_lossy(&step1.stderr)
+    );
+    let step1_stdout = String::from_utf8_lossy(&step1.stdout);
+    assert!(step1_stdout.contains("stepped hello"));
+    assert!(step1_stdout.contains("step 1: completed"));
+    // run is still running with step 2 pending; not yet complete.
+    assert!(!step1_stdout.contains("status: completed"));
+
+    // exec-step 2: runs the command and completes the run.
+    let step2 = Command::new(niles)
+        .arg("exec-step")
+        .arg("latest")
+        .arg("2")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        step2.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&step2.stdout),
+        String::from_utf8_lossy(&step2.stderr)
+    );
+    assert!(String::from_utf8_lossy(&step2.stdout).contains("status: completed"));
+
+    // the run status log carries the wake lines the watcher relays.
+    let runs_dir = workspace.join(".niles").join("runs");
+    let run_dir = fs::read_dir(&runs_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .max()
+        .unwrap();
+    let status_log = fs::read_to_string(run_dir.join("status.log")).unwrap();
+    assert!(status_log.contains("done: step 1 "));
+    assert!(status_log.contains("done: step 2 "));
+
+    // final status is completed with both steps recorded.
+    let final_status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let final_stdout = String::from_utf8_lossy(&final_status.stdout);
+    assert!(final_stdout.contains("status: completed"));
+    assert!(final_stdout.contains("1,agent,echo,completed,0"));
+    assert!(final_stdout.contains("2,command,pwd,completed,0"));
+}
+
+#[test]
+fn step_guards_block_out_of_order_and_command_steps() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-guard-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Guard checks"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "first"
+  - command: pwd
+commands:
+  pwd: pwd
+"#,
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .arg("--prepare")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(prepare.status.success());
+
+    // Ordering guard: step 2 cannot launch while step 1 is still pending.
+    let out_of_order = Command::new(niles)
+        .args(["step", "--index", "2"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!out_of_order.status.success());
+    assert!(
+        String::from_utf8_lossy(&out_of_order.stderr).contains("prior steps must complete first")
+    );
+
+    // Complete step 1 (captured), then step 2 is a command -> directed to exec-step.
+    let step1 = Command::new(niles)
+        .args(["exec-step", "latest", "1"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(step1.status.success());
+
+    let command_step = Command::new(niles)
+        .args(["step", "--index", "2"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!command_step.status.success());
+    assert!(
+        String::from_utf8_lossy(&command_step.stderr).contains("run it captured with `niles exec-step")
+    );
+}
+
+#[test]
+fn step_close_marks_step_completed() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-close-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Close checks"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "only step"
+"#,
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .arg("--prepare")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(prepare.status.success());
+
+    // step-close finalizes the step and reports completion. Window teardown is
+    // best-effort (no live window in the test env) and must not fail the call.
+    let close = Command::new(niles)
+        .args(["step-close", "--index", "1"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        close.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
+    let close_stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(close_stdout.contains("step 1: completed"));
+    assert!(close_stdout.contains("status: completed"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: completed"));
+    assert!(status_stdout.contains("1,agent,echo,completed,0"));
+}

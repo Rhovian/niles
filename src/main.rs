@@ -27,7 +27,18 @@ fn main() -> Result<()> {
         None => session::run(cli.supervisor, cli.goal),
         Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
-        Some(CommandName::Run { task, watch }) => runner::run(task, watch),
+        Some(CommandName::Run {
+            task,
+            watch,
+            prepare,
+        }) => runner::run(task, watch, prepare),
+        Some(CommandName::Step { run, index }) => runner::step(RunSelector::new(run), index),
+        Some(CommandName::StepClose { run, index }) => {
+            runner::step_close(RunSelector::new(run), index)
+        }
+        Some(CommandName::ExecStep { run, index }) => {
+            runner::exec_step(RunSelector::new(run), index)
+        }
         Some(CommandName::Manifest {
             goal,
             project,

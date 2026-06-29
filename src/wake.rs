@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::{crew, session, util::write_json_pretty};
+use crate::{crew, session, store, util::write_json_pretty};
 
 const WAKE_DIR: &str = ".niles/wake";
 
@@ -20,10 +20,18 @@ struct WakeState {
     seen_lines: BTreeMap<String, usize>,
 }
 
+/// A status log to drain, plus the command that inspects its source.
+struct WakeTarget {
+    id: String,
+    status: Utf8PathBuf,
+    inspect: String,
+}
+
 struct Wake {
-    crew_id: String,
+    id: String,
     state: String,
     message: String,
+    inspect: String,
 }
 
 pub fn watch_crew(session_id: Option<String>, interval: f64, once: bool) -> Result<()> {
@@ -46,7 +54,7 @@ fn drain_once(session_id: Option<&str>) -> Result<()> {
     let mut state = read_state()?;
     let mut wakes = Vec::new();
 
-    for target in crew::status_targets()? {
+    for target in wake_targets(&state.seen_lines)? {
         let body = match fs::read_to_string(&target.status) {
             Ok(body) => body,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -63,8 +71,13 @@ fn drain_once(session_id: Option<&str>) -> Result<()> {
             .min(lines.len());
 
         for line in &lines[start..] {
-            if let Some(wake) = parse_wake(&target.id, line) {
-                wakes.push(wake);
+            if let Some((wake_state, message)) = parse_wake(line) {
+                wakes.push(Wake {
+                    id: target.id.clone(),
+                    state: wake_state,
+                    message,
+                    inspect: target.inspect.clone(),
+                });
             }
         }
 
@@ -80,24 +93,47 @@ fn drain_once(session_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn parse_wake(crew_id: &str, line: &str) -> Option<Wake> {
+/// Status logs the watcher drains: crew worker panes plus run steps. A run that
+/// has already finished is included only when the watcher was tracking it (its
+/// id is in `seen`), so a continuously-running watcher delivers a run's final
+/// wake without replaying old runs it cold-starts against.
+fn wake_targets(seen: &BTreeMap<String, usize>) -> Result<Vec<WakeTarget>> {
+    let mut targets = Vec::new();
+    for target in crew::status_targets()? {
+        let inspect = format!("niles peek {}", target.id);
+        targets.push(WakeTarget {
+            id: target.id,
+            status: target.status,
+            inspect,
+        });
+    }
+    for target in store::run_status_targets()? {
+        if target.terminal && !seen.contains_key(&target.id) {
+            continue;
+        }
+        let inspect = format!("niles status {}", target.id);
+        targets.push(WakeTarget {
+            id: target.id,
+            status: target.status,
+            inspect,
+        });
+    }
+    Ok(targets)
+}
+
+fn parse_wake(line: &str) -> Option<(String, String)> {
     let (state, message) = line.split_once(':')?;
     let state = state.trim();
     if !matches!(state, "done" | "failed" | "blocked" | "needs-decision") {
         return None;
     }
-    let message = message.trim();
-    Some(Wake {
-        crew_id: crew_id.to_owned(),
-        state: state.to_owned(),
-        message: message.to_owned(),
-    })
+    Some((state.to_owned(), message.trim().to_owned()))
 }
 
 fn dispatch_wake(session_id: Option<&str>, wake: &Wake) -> Result<()> {
     let line = format!(
-        "Niles wake: {} {}: {}. Inspect with `niles peek {}`.",
-        wake.crew_id, wake.state, wake.message, wake.crew_id
+        "Niles wake: {} {}: {}. Inspect with `{}`.",
+        wake.id, wake.state, wake.message, wake.inspect
     );
     append_queue(&line)?;
 
@@ -181,11 +217,10 @@ mod tests {
 
     #[test]
     fn parses_actionable_wakes() {
-        let wake = parse_wake("auth-fix", "done: tests pass").unwrap();
+        let (state, message) = parse_wake("done: tests pass").unwrap();
 
-        assert_eq!(wake.crew_id, "auth-fix");
-        assert_eq!(wake.state, "done");
-        assert_eq!(wake.message, "tests pass");
-        assert!(parse_wake("auth-fix", "working: running tests").is_none());
+        assert_eq!(state, "done");
+        assert_eq!(message, "tests pass");
+        assert!(parse_wake("working: running tests").is_none());
     }
 }

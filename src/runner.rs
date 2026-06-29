@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    env, fs,
     io::{self, Write},
     thread,
     time::Duration,
@@ -19,11 +19,16 @@ use crate::{
         },
     },
     context::{agent_prompt, write_agent_context},
+    crew,
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, resolve_run_dir, selected_step, state_path, write_state},
-    util::{timestamp_id, write_json_pretty},
+    util::{slugify, timestamp_id, write_json_pretty},
 };
+
+/// Scrollback lines captured from an interactive step window on close. Large
+/// enough to hold an agent's session; `context.rs` truncates when embedding.
+const PANE_CAPTURE_LINES: usize = 2000;
 
 pub struct RunSelector(String);
 
@@ -58,18 +63,321 @@ fn ask_spec(agent: String, prompt: Vec<String>) -> TaskSpec {
     }
 }
 
-pub fn run(task: Utf8PathBuf, watch: bool) -> Result<()> {
-    let spec = load_task(&task)?;
-    run_loaded_spec(spec, Some(task), watch)
+pub fn run(task: Utf8PathBuf, watch: bool, prepare: bool) -> Result<()> {
+    let spec = with_project_config(load_task(&task)?)?;
+    if prepare {
+        prepare_run(spec, Some(task))
+    } else {
+        create_run(spec, Some(task), watch)
+    }
 }
 
 pub fn run_manifest(task: Utf8PathBuf, watch: bool) -> Result<()> {
-    let spec = load_task(&task)?;
-    run_loaded_spec(spec, Some(task), watch)
+    let spec = with_project_config(load_task(&task)?)?;
+    create_run(spec, Some(task), watch)
 }
 
-fn run_loaded_spec(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
-    create_run(with_project_config(spec)?, task_file, watch)
+/// Launch a single pending step into its own tmux window. The window runs
+/// `niles exec-step`, so output streams live in the pane while state, diff, and
+/// exit code are captured exactly as in a batch run. Completion appends a wake
+/// line to the run status log for the supervisor.
+pub fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
+    let run_dir = selector.resolve()?;
+    let state_path = state_path(&run_dir);
+    let mut state = read_state(&run_dir)?;
+
+    let step_number = match index {
+        Some(index) => index,
+        None => state
+            .steps
+            .iter()
+            .find(|step| matches!(step.status, StepStatus::Pending))
+            .map(|step| step.index)
+            .context("run has no pending steps to launch")?,
+    };
+
+    let record = state
+        .steps
+        .iter()
+        .find(|step| step.index == step_number)
+        .with_context(|| format!("step {step_number} not found"))?;
+    if !matches!(record.status, StepStatus::Pending) {
+        bail!(
+            "step {step_number} is {}; only pending steps can be launched",
+            record.status
+        );
+    }
+
+    // Handoff context for step N folds in every prior step's output, so a step
+    // can only launch once all earlier steps have completed.
+    if let Some(prior) = state
+        .steps
+        .iter()
+        .find(|step| step.index < step_number && !matches!(step.status, StepStatus::Completed))
+    {
+        bail!(
+            "cannot launch step {step_number}: step {} is {}; prior steps must complete first",
+            prior.index,
+            prior.status
+        );
+    }
+
+    let task_file = state
+        .task_file
+        .clone()
+        .context("run has no task file; only task-backed runs support stepping")?;
+    let spec = with_project_config(load_task(&task_file)?)?;
+    let position = step_number.checked_sub(1).context("step index must be >= 1")?;
+    let task_step = spec
+        .steps
+        .get(position)
+        .with_context(|| format!("step {step_number} is out of range for this task"))?;
+    let (agent, task, role) = match task_step {
+        TaskStep::Agent { agent, task, role } => (agent, task, role),
+        TaskStep::Command { command, .. } => bail!(
+            "step {step_number} is the `{command}` command; run it captured with `niles exec-step {} {step_number}`",
+            state.id
+        ),
+    };
+
+    let workspace = spec.workspace.clone();
+    let workspace = workspace.as_deref().unwrap_or(Utf8Path::new("."));
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+
+    // Brief = handoff context plus a wake contract pointing at this run's log.
+    let brief = write_agent_context(
+        &state,
+        step_number,
+        role.as_deref(),
+        agent,
+        task,
+        workspace,
+        &steps_dir,
+    )?;
+    append_wake_contract(&brief, &run_dir, step_number)?;
+
+    let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
+    let window_name = format!("niles-{}-s{step_number}", state.id);
+    let cwd = absolute(workspace)?;
+    let target = crew::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
+
+    // Mark the step running now that the window exists, so a follow-up `step`
+    // call won't re-pick this step before it is closed.
+    mark_step_running(&mut state, step_number, Some(brief.clone()));
+    if matches!(state.status, RunStatus::Created) {
+        state.status = RunStatus::Running;
+    }
+    state.updated_at = Utc::now();
+    write_state(&state_path, &state)?;
+
+    println!("step: {step_number}");
+    println!("agent: {agent}");
+    println!("window: {target}");
+    println!("run: {}", state.id);
+    println!("brief: {brief}");
+    println!("status_log: {}", run_dir.join("status.log"));
+    println!("on_done: niles step-close {} --index {step_number}", state.id);
+    Ok(())
+}
+
+/// Mark a step complete and tear down its interactive window. The supervisor
+/// calls this once it judges the step's work finished (typically after the
+/// agent's `done:` wake), giving the human final say over window cleanup.
+pub fn step_close(selector: RunSelector, index: usize) -> Result<()> {
+    let run_dir = selector.resolve()?;
+    let state_path = state_path(&run_dir);
+    let mut state = read_state(&run_dir)?;
+    let window_name = format!("niles-{}-s{index}", state.id);
+
+    let label = state
+        .steps
+        .iter()
+        .find(|step| step.index == index)
+        .with_context(|| format!("step {index} not found in run"))?
+        .label
+        .clone();
+
+    // Capture the interactive pane before tearing it down, so the step's output
+    // reaches later steps' handoff context. Best-effort: a window that already
+    // exited leaves no pane, and that must not block closing the step.
+    let captured = match crew::capture_window(&window_name, PANE_CAPTURE_LINES) {
+        Ok(text) => {
+            let steps_dir = run_dir.join("steps");
+            fs::create_dir_all(&steps_dir)
+                .with_context(|| format!("failed to create {steps_dir}"))?;
+            let path = steps_dir.join(format!("{index:03}-{}.pane.txt", slugify(&label)));
+            fs::write(&path, text).with_context(|| format!("failed to write {path}"))?;
+            Some(path)
+        }
+        Err(err) => {
+            println!("pane not captured for step {index}: {err}");
+            None
+        }
+    };
+
+    let step = state
+        .steps
+        .iter_mut()
+        .find(|step| step.index == index)
+        .with_context(|| format!("step {index} not found in run"))?;
+    step.status = StepStatus::Completed;
+    step.finished_at = Some(Utc::now());
+    if step.exit_code.is_none() {
+        step.exit_code = Some(0);
+    }
+    if let Some(path) = captured {
+        step.stdout = Some(path);
+    }
+
+    let all_completed = state
+        .steps
+        .iter()
+        .all(|step| matches!(step.status, StepStatus::Completed));
+    if all_completed {
+        state.status = RunStatus::Completed;
+    }
+    state.updated_at = Utc::now();
+    write_state(&state_path, &state)?;
+
+    match crew::close_window(&window_name) {
+        Ok(()) => println!("closed: {window_name}"),
+        Err(err) => println!("window {window_name} not closed: {err}"),
+    }
+    println!("step {index}: completed");
+    if all_completed {
+        println!("status: completed");
+    }
+    Ok(())
+}
+
+/// Append a wake contract to a step brief so the interactive agent reports back
+/// to the run status log the supervisor watches.
+fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
+    let status_log = absolute(run_dir)?.join("status.log");
+    let footer = format!(
+        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so Niles wakes the supervisor:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the supervisor reviews your work and closes it.\n"
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(brief)
+        .with_context(|| format!("failed to open {brief}"))?
+        .write_all(footer.as_bytes())
+        .with_context(|| format!("failed to write {brief}"))
+}
+
+fn absolute(path: &Utf8Path) -> Result<Utf8PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let cwd = utf8_path(env::current_dir().context("failed to read current directory")?)?;
+    Ok(cwd.join(path))
+}
+
+/// Execute one run step in-process (invoked inside the per-step tmux window).
+/// Records state via the same path as a batch run, then appends a `done:` or
+/// `failed:` wake line to the run status log.
+pub fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
+    let run_dir = selector.resolve()?;
+    let state_path = state_path(&run_dir);
+    let mut state = read_state(&run_dir)?;
+
+    let task_file = state
+        .task_file
+        .clone()
+        .context("run has no task file; only task-backed runs support step execution")?;
+    let spec = with_project_config(load_task(&task_file)?)?;
+
+    let position = index.checked_sub(1).context("step index must be >= 1")?;
+    let step = spec
+        .steps
+        .get(position)
+        .with_context(|| format!("step {index} is out of range for this task"))?;
+
+    let workspace = spec.workspace.clone();
+    let workspace = workspace.as_deref().unwrap_or(Utf8Path::new("."));
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+
+    if matches!(state.status, RunStatus::Created) {
+        state.status = RunStatus::Running;
+        state.updated_at = Utc::now();
+        write_state(&state_path, &state)?;
+    }
+
+    let failed = execute_single_step(
+        &spec,
+        &mut state,
+        &state_path,
+        &steps_dir,
+        workspace,
+        step,
+        index,
+        false,
+    )?;
+
+    let record = state
+        .steps
+        .iter()
+        .find(|step| step.index == index)
+        .with_context(|| format!("run state is missing step {index}"))?;
+    let exit = record
+        .exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "signal".to_owned());
+    let label = record.label.clone();
+    let role_label = record
+        .role
+        .as_deref()
+        .map(|role| format!("{role} "))
+        .unwrap_or_default();
+
+    if failed {
+        append_run_status(&run_dir, &format!("failed: step {index} {label} exit {exit}"))?;
+        println!("status: failed");
+        if let Some(step) = state.steps.iter().find(|step| step.index == index) {
+            print_failure_summary(step);
+        }
+        bail!("step {index} failed");
+    }
+
+    let all_completed = state
+        .steps
+        .iter()
+        .all(|step| matches!(step.status, StepStatus::Completed));
+    if all_completed {
+        state.status = RunStatus::Completed;
+        state.updated_at = Utc::now();
+        write_state(&state_path, &state)?;
+    }
+
+    append_run_status(
+        &run_dir,
+        &format!("done: step {index} {role_label}{label} exit {exit}"),
+    )?;
+    println!("step {index}: completed");
+    if all_completed {
+        println!("status: completed");
+    }
+    Ok(())
+}
+
+fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
+    let path = run_dir.join("status.log");
+    let mut body = line.to_owned();
+    body.push('\n');
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("failed to open {path}"))?
+        .write_all(body.as_bytes())
+        .with_context(|| format!("failed to write {path}"))
+}
+
+fn utf8_path(path: std::path::PathBuf) -> Result<Utf8PathBuf> {
+    Utf8PathBuf::from_path_buf(path)
+        .map_err(|path| anyhow::anyhow!("path is not UTF-8: {}", path.display()))
 }
 
 pub fn resume(selector: RunSelector, watch: bool) -> Result<()> {
@@ -359,7 +667,10 @@ fn with_project_config(spec: TaskSpec) -> Result<TaskSpec> {
     Ok(apply_project_config(spec, config))
 }
 
-fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
+fn init_run(
+    spec: &TaskSpec,
+    task_file: Option<Utf8PathBuf>,
+) -> Result<(Utf8PathBuf, RunState, Utf8PathBuf)> {
     if spec.steps.is_empty() {
         bail!("task spec must contain at least one step");
     }
@@ -368,16 +679,16 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Re
     let id = timestamp_id(&now);
     let run_dir = Utf8Path::new(".niles").join("runs").join(&id);
     fs::create_dir_all(&run_dir).with_context(|| format!("failed to create {run_dir}"))?;
-    let plan = summarize_spec(&spec);
+    let plan = summarize_spec(spec);
 
     let state = RunState {
-        id: id.clone(),
+        id,
         goal: spec.goal.clone(),
         task_file,
         created_at: now,
         updated_at: now,
         status: RunStatus::Created,
-        steps: planned_steps(&spec),
+        steps: planned_steps(spec),
     };
 
     let state_path = run_dir.join("state.json");
@@ -386,11 +697,43 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Re
     let plan_path = run_dir.join("plan.json");
     write_json_pretty(&plan_path, &plan)?;
 
-    println!("run: {id}");
+    Ok((run_dir, state, state_path))
+}
+
+fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
+    let (run_dir, state, state_path) = init_run(&spec, task_file)?;
+
+    println!("run: {}", state.id);
     println!("state: {state_path}");
-    println!("watch: niles watch {id}");
-    println!("show: niles show {id}");
+    println!("watch: niles watch {}", state.id);
+    println!("show: niles show {}", state.id);
     execute_run(&spec, &run_dir, state, &state_path, watch, 1)?;
+
+    Ok(())
+}
+
+/// Create a run without executing it, so the foreground supervisor can drive the
+/// steps one tmux window at a time via `niles step`.
+fn prepare_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
+    let (_run_dir, state, state_path) = init_run(&spec, task_file)?;
+
+    println!("run: {}", state.id);
+    println!("state: {state_path}");
+    println!("status: {}", state.status);
+    println!("steps:");
+    for step in &state.steps {
+        println!(
+            "  {} {}{} {}",
+            step.index,
+            step.role
+                .as_deref()
+                .map(|role| format!("{role} "))
+                .unwrap_or_default(),
+            step.kind,
+            step.label
+        );
+    }
+    println!("next: niles step {} --index 1", state.id);
 
     Ok(())
 }
@@ -418,66 +761,16 @@ fn execute_run(
         .skip(start_step.saturating_sub(1))
     {
         let step_number = index + 1;
-        let context = match step {
-            TaskStep::Agent { agent, task, role } => Some(write_agent_context(
-                &state,
-                step_number,
-                role.as_deref(),
-                agent,
-                task,
-                workspace,
-                &steps_dir,
-            )?),
-            TaskStep::Command { .. } => None,
-        };
-
-        mark_step_running(&mut state, step_number, context.clone());
-        state.updated_at = Utc::now();
-        write_state(state_path, &state)?;
-        if watch {
-            print_watch_snapshot(&state);
-        }
-
-        let result = match step {
-            TaskStep::Agent { agent, task, role } => {
-                print_step_start(step_number, role.as_deref(), "agent", agent);
-                print_step_context(context.as_deref());
-                run_agent_step(AgentStep {
-                    step_number,
-                    role: role.clone(),
-                    agent,
-                    task,
-                    spec,
-                    workspace,
-                    steps_dir: &steps_dir,
-                    context_path: context,
-                })
-            }
-            TaskStep::Command { command, role } => {
-                print_step_start(step_number, role.as_deref(), "command", command);
-                run_command_step(
-                    step_number,
-                    role.clone(),
-                    command,
-                    spec,
-                    workspace,
-                    &steps_dir,
-                )
-            }
-        }?;
-
-        let failed = matches!(result.status, StepStatus::Failed);
-        update_step_record(&mut state, result);
-        state.status = if failed {
-            RunStatus::Failed
-        } else {
-            RunStatus::Running
-        };
-        state.updated_at = Utc::now();
-        write_state(state_path, &state)?;
-        if watch {
-            print_watch_snapshot(&state);
-        }
+        let failed = execute_single_step(
+            spec,
+            &mut state,
+            state_path,
+            &steps_dir,
+            workspace,
+            step,
+            step_number,
+            watch,
+        )?;
 
         if failed {
             println!("status: failed");
@@ -497,6 +790,77 @@ fn execute_run(
     println!("status: completed");
 
     Ok(())
+}
+
+/// Run one step: build its handoff context, mark it running, execute it, and
+/// record the result. Returns whether the step failed. Run-level status is left
+/// at `Running`/`Failed` for the caller to finalize.
+#[allow(clippy::too_many_arguments)]
+fn execute_single_step(
+    spec: &TaskSpec,
+    state: &mut RunState,
+    state_path: &Utf8Path,
+    steps_dir: &Utf8Path,
+    workspace: &Utf8Path,
+    step: &TaskStep,
+    step_number: usize,
+    watch: bool,
+) -> Result<bool> {
+    let context = match step {
+        TaskStep::Agent { agent, task, role } => Some(write_agent_context(
+            state,
+            step_number,
+            role.as_deref(),
+            agent,
+            task,
+            workspace,
+            steps_dir,
+        )?),
+        TaskStep::Command { .. } => None,
+    };
+
+    mark_step_running(state, step_number, context.clone());
+    state.updated_at = Utc::now();
+    write_state(state_path, state)?;
+    if watch {
+        print_watch_snapshot(state);
+    }
+
+    let result = match step {
+        TaskStep::Agent { agent, task, role } => {
+            print_step_start(step_number, role.as_deref(), "agent", agent);
+            print_step_context(context.as_deref());
+            run_agent_step(AgentStep {
+                step_number,
+                role: role.clone(),
+                agent,
+                task,
+                spec,
+                workspace,
+                steps_dir,
+                context_path: context,
+            })
+        }
+        TaskStep::Command { command, role } => {
+            print_step_start(step_number, role.as_deref(), "command", command);
+            run_command_step(step_number, role.clone(), command, spec, workspace, steps_dir)
+        }
+    }?;
+
+    let failed = matches!(result.status, StepStatus::Failed);
+    update_step_record(state, result);
+    state.status = if failed {
+        RunStatus::Failed
+    } else {
+        RunStatus::Running
+    };
+    state.updated_at = Utc::now();
+    write_state(state_path, state)?;
+    if watch {
+        print_watch_snapshot(state);
+    }
+
+    Ok(failed)
 }
 
 fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {

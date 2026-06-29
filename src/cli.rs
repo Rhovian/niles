@@ -41,6 +41,36 @@ pub enum CommandName {
         /// Print compact state snapshots as steps run.
         #[arg(long)]
         watch: bool,
+        /// Create the run without executing it, for supervisor-driven stepping.
+        #[arg(long)]
+        prepare: bool,
+    },
+    /// Launch a single run step in its own tmux window.
+    Step {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Step number to launch. Defaults to the first pending step.
+        #[arg(short, long)]
+        index: Option<usize>,
+    },
+    /// Mark a step complete and close its interactive tmux window.
+    #[command(name = "step-close")]
+    StepClose {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Step number to close.
+        #[arg(short, long)]
+        index: usize,
+    },
+    /// Execute one run step in-process, capturing output (used for command steps).
+    #[command(name = "exec-step")]
+    ExecStep {
+        /// Run id or "latest".
+        run: String,
+        /// Step number to execute.
+        index: usize,
     },
     /// Generate a role-based task manifest.
     #[command(alias = "m")]

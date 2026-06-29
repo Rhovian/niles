@@ -64,10 +64,7 @@ pub fn spawn(
         }
     };
 
-    let config = load_project_config_from(&project)?;
-    let invocation = agent_invocation(&agent, config.agents.get(&agent));
     let launch_path = dir.join("launch.sh");
-    write_launch_script(&launch_path, &invocation, &brief_path)?;
     let status_path = dir.join("status.log");
     fs::OpenOptions::new()
         .create(true)
@@ -75,23 +72,8 @@ pub fn spawn(
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 
-    let session = tmux_session()?;
     let window_name = format!("niles-{id}");
-    ensure_window_available(&session, &window_name)?;
-    let target = format!("{session}:{window_name}");
-
-    let launch_command = format!("sh {}", shell_quote(launch_path.as_str()));
-    run_tmux([
-        "new-window",
-        "-d",
-        "-t",
-        &session,
-        "-n",
-        &window_name,
-        "-c",
-        project.as_str(),
-        &launch_command,
-    ])?;
+    let target = spawn_agent_window(&window_name, &project, &agent, &project, &brief_path, &launch_path)?;
 
     let meta = CrewMeta {
         id: id.clone(),
@@ -116,29 +98,39 @@ pub fn spawn(
 
 pub fn peek(id: String, lines: usize) -> Result<()> {
     let meta = read_meta(&id)?;
+    print!("{}", capture_pane(&meta.window, lines)?);
+    Ok(())
+}
+
+/// Capture the last `lines` of a step window's pane by window name, resolving
+/// the active session. Used to fold an interactive step's output into the run.
+pub(crate) fn capture_window(window_name: &str, lines: usize) -> Result<String> {
+    let session = tmux_session()?;
+    capture_pane(&format!("{session}:{window_name}"), lines)
+}
+
+fn capture_pane(target: &str, lines: usize) -> Result<String> {
     let output = Command::new("tmux")
-        .args([
-            "capture-pane",
-            "-p",
-            "-t",
-            &meta.window,
-            "-S",
-            &format!("-{lines}"),
-        ])
+        .args(["capture-pane", "-p", "-t", target, "-S", &format!("-{lines}")])
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("failed to run tmux capture-pane for {}", meta.window))?;
+        .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
     if !output.status.success() {
         bail!(
-            "tmux capture-pane failed for {}: {}",
-            meta.window,
+            "tmux capture-pane failed for {target}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
 
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
+    // tmux pads the capture to the pane height; drop the trailing blank lines.
+    let text = String::from_utf8_lossy(&output.stdout);
+    let trimmed = text.trim_end();
+    Ok(if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}\n")
+    })
 }
 
 pub fn send(id: String, message: Vec<String>) -> Result<()> {
@@ -251,6 +243,51 @@ fn write_launch_script(
     }
 
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
+}
+
+/// Launch `agent` interactively in a fresh tmux window driven by `brief_path`,
+/// returning its `session:window` target. Shared by `spawn` and per-step
+/// orchestration so both use the same interactive invocation and launch script.
+pub(crate) fn spawn_agent_window(
+    window_name: &str,
+    cwd: &Utf8Path,
+    agent: &str,
+    project: &Utf8Path,
+    brief_path: &Utf8Path,
+    launch_path: &Utf8Path,
+) -> Result<String> {
+    let config = load_project_config_from(project)?;
+    let invocation = agent_invocation(agent, config.agents.get(agent));
+    write_launch_script(launch_path, &invocation, brief_path)?;
+    let command = format!("sh {}", shell_quote(launch_path.as_str()));
+    open_window(window_name, cwd, &command)
+}
+
+/// Kill a tmux window by name in the active session. Used to tear down a step
+/// window once the supervisor decides the step is done.
+pub(crate) fn close_window(window_name: &str) -> Result<()> {
+    let session = tmux_session()?;
+    run_tmux(["kill-window", "-t", &format!("{session}:{window_name}")])
+}
+
+/// Open a detached tmux window running `command` in `cwd` and return its
+/// `session:window` target. Shared by `spawn` and the per-step orchestrator.
+pub(crate) fn open_window(window_name: &str, cwd: &Utf8Path, command: &str) -> Result<String> {
+    let session = tmux_session()?;
+    ensure_window_available(&session, window_name)?;
+    let target = format!("{session}:{window_name}");
+    run_tmux([
+        "new-window",
+        "-d",
+        "-t",
+        &session,
+        "-n",
+        window_name,
+        "-c",
+        cwd.as_str(),
+        command,
+    ])?;
+    Ok(target)
 }
 
 fn tmux_session() -> Result<String> {
@@ -384,7 +421,7 @@ fn validate_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
