@@ -75,6 +75,9 @@ pub enum CommandName {
         /// Run id or "latest".
         #[arg(default_value = "latest")]
         run: String,
+        /// Print compact state snapshots as resumed steps run.
+        #[arg(long)]
+        watch: bool,
     },
     /// Inspect a persisted run.
     #[command(alias = "s")]

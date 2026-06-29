@@ -27,7 +27,7 @@ niles watch
 niles show
 niles log --step 1
 niles diff
-niles resume
+niles resume --watch
 ```
 
 Short aliases are part of the interface:
@@ -40,6 +40,7 @@ niles s
 niles w
 niles l
 niles d
+niles re --watch
 ```
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
@@ -138,6 +139,14 @@ niles diff --step 1
 ```
 
 When a step fails, Niles prints the failed step, exit code, stderr log path, diff path, and a short stderr tail before exiting nonzero.
+
+Resume a task-backed run after fixing the cause of a failure:
+
+```sh
+niles resume --watch
+```
+
+Resume keeps completed steps, resets the first incomplete step and everything after it to pending, then continues from there. It validates that the original task file still has the same step shape before executing.
 
 `niles status` uses compact, agent-readable output by default. Use `niles status --json` when a tool needs the raw persisted state.
 

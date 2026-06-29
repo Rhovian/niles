@@ -67,10 +67,37 @@ fn run_loaded_spec(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) 
     create_run(with_project_config(spec)?, task_file, watch)
 }
 
-pub fn resume(selector: RunSelector) -> Result<()> {
+pub fn resume(selector: RunSelector, watch: bool) -> Result<()> {
     let run_dir = selector.resolve()?;
-    println!("resume target: {run_dir}");
-    println!("next: resume execution is not implemented yet");
+    let state_path = state_path(&run_dir);
+    let mut state = read_state(&run_dir)?;
+
+    if matches!(state.status, RunStatus::Completed) {
+        println!("run: {}", state.id);
+        println!("status: completed");
+        println!("next: nothing to resume");
+        return Ok(());
+    }
+
+    let task_file = state
+        .task_file
+        .clone()
+        .context("run has no task file; only task-backed runs can be resumed")?;
+    let spec = with_project_config(load_task(&task_file)?)?;
+    let resume_from = first_incomplete_step(&state).context("run has no incomplete steps")?;
+    validate_resume_shape(&state, &spec)?;
+    reset_steps_from(&mut state, &spec, resume_from)?;
+    state.status = RunStatus::Running;
+    state.updated_at = Utc::now();
+    write_state(&state_path, &state)?;
+
+    println!("resume: {}", state.id);
+    println!("state: {state_path}");
+    println!("from_step: {resume_from}");
+    println!("watch: niles watch {}", state.id);
+    println!("show: niles show {}", state.id);
+
+    execute_run(&spec, &run_dir, state, &state_path, watch, resume_from)?;
     Ok(())
 }
 
@@ -367,7 +394,7 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Re
     println!("state: {state_path}");
     println!("watch: niles watch {id}");
     println!("show: niles show {id}");
-    execute_run(&spec, &run_dir, state, &state_path, watch)?;
+    execute_run(&spec, &run_dir, state, &state_path, watch, 1)?;
 
     Ok(())
 }
@@ -378,6 +405,7 @@ fn execute_run(
     mut state: RunState,
     state_path: &Utf8Path,
     watch: bool,
+    start_step: usize,
 ) -> Result<()> {
     let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
     let steps_dir = run_dir.join("steps");
@@ -387,7 +415,12 @@ fn execute_run(
     state.updated_at = Utc::now();
     write_state(state_path, &state)?;
 
-    for (index, step) in spec.steps.iter().enumerate() {
+    for (index, step) in spec
+        .steps
+        .iter()
+        .enumerate()
+        .skip(start_step.saturating_sub(1))
+    {
         let step_number = index + 1;
         let context = match step {
             TaskStep::Agent { agent, task, role } => Some(write_agent_context(
@@ -500,6 +533,56 @@ fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
             }
         })
         .collect()
+}
+
+fn first_incomplete_step(state: &RunState) -> Option<usize> {
+    state
+        .steps
+        .iter()
+        .find(|step| !matches!(step.status, StepStatus::Completed))
+        .map(|step| step.index)
+}
+
+fn validate_resume_shape(state: &RunState, spec: &TaskSpec) -> Result<()> {
+    let planned = planned_steps(spec);
+    if planned.len() != state.steps.len() {
+        bail!(
+            "cannot resume: task now has {} steps, but run state has {}",
+            planned.len(),
+            state.steps.len()
+        );
+    }
+
+    for (expected, actual) in planned.iter().zip(&state.steps) {
+        if expected.index != actual.index
+            || expected.role != actual.role
+            || expected.kind != actual.kind
+            || expected.label != actual.label
+        {
+            bail!(
+                "cannot resume: task step {} no longer matches run state",
+                expected.index
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn reset_steps_from(state: &mut RunState, spec: &TaskSpec, start_step: usize) -> Result<()> {
+    for planned in planned_steps(spec)
+        .into_iter()
+        .filter(|step| step.index >= start_step)
+    {
+        let step = state
+            .steps
+            .iter_mut()
+            .find(|step| step.index == planned.index)
+            .with_context(|| format!("run state is missing step {}", planned.index))?;
+        *step = planned;
+    }
+
+    Ok(())
 }
 
 fn mark_step_running(state: &mut RunState, step_number: usize, context: Option<Utf8PathBuf>) {

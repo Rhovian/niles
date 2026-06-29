@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             run,
             watch,
         ),
-        CommandName::Resume { run } => runner::resume(RunSelector::new(run)),
+        CommandName::Resume { run, watch } => runner::resume(RunSelector::new(run), watch),
         CommandName::Status { run, json } => runner::status(RunSelector::new(run), json),
         CommandName::Watch {
             run,

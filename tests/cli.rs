@@ -461,6 +461,89 @@ commands:
 }
 
 #[test]
+fn resume_continues_from_first_incomplete_step() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-resume-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Resume failed run"
+steps:
+  - command: first
+  - command: gate
+  - command: last
+commands:
+  first: printf 'first\n' >> trace.txt
+  gate: test -f allow
+  last: printf 'last\n' >> trace.txt
+"#,
+    )
+    .unwrap();
+
+    let failed = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        !failed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&failed.stdout),
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    let failed_stdout = String::from_utf8_lossy(&failed.stdout);
+    assert!(failed_stdout.contains("status: failed"));
+
+    fs::write(workspace.join("allow"), "").unwrap();
+
+    let resumed = Command::new(niles)
+        .args(["resume", "--watch"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&resumed.stdout),
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+
+    let resumed_stdout = String::from_utf8_lossy(&resumed.stdout);
+    assert!(resumed_stdout.contains("resume: "));
+    assert!(resumed_stdout.contains("from_step: 2"));
+    assert!(resumed_stdout.contains("2,command,gate,running,-"));
+    assert!(resumed_stdout.contains("3,command,last,completed,0"));
+    assert!(resumed_stdout.contains("status: completed"));
+
+    assert_eq!(
+        fs::read_to_string(workspace.join("trace.txt")).unwrap(),
+        "first\nlast\n"
+    );
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: completed"));
+    assert!(status_stdout.contains("1,command,first,completed,0"));
+    assert!(status_stdout.contains("2,command,gate,completed,0"));
+    assert!(status_stdout.contains("3,command,last,completed,0"));
+}
+
+#[test]
 fn manifest_generates_runnable_role_workflow() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(

@@ -47,7 +47,7 @@ pub struct StepRecord {
     pub context: Option<Utf8PathBuf>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
     Agent,
