@@ -24,10 +24,20 @@ Explicit workflow files remain the durable automation path:
 niles run task.yaml
 ```
 
+## Project Config
+
+Niles loads the first config file it finds from:
+
+- `niles.yaml`
+- `.niles.yaml`
+
+Project config can provide shared workspace, agent, and command defaults. Task specs are merged on top, so local workflow files can override project defaults without repeating every common value.
+
 ## Runtime Boundary
 
 The Rust CLI owns deterministic work:
 
+- loading project config
 - loading task specs
 - creating run directories
 - probing local agent binaries

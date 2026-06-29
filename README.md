@@ -39,6 +39,28 @@ niles d
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
 
+## Project Config
+
+Put shared defaults in `niles.yaml` or `.niles.yaml`:
+
+```yaml
+workspace: .
+
+agents:
+  codex:
+    binary: codex
+    args: ["exec"]
+  claude:
+    binary: claude
+    args: ["-p"]
+
+commands:
+  test:
+    run: cargo test
+```
+
+Task files can still override agents, commands, and workspace values locally.
+
 ## Example Task
 
 ```yaml

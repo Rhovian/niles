@@ -189,3 +189,77 @@ commands:
     assert!(diff_stdout.contains("-before"));
     assert!(diff_stdout.contains("+after"));
 }
+
+#[test]
+fn run_uses_project_config_defaults() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-config-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    fs::write(
+        workspace.join("niles.yaml"),
+        r#"
+agents:
+  echo:
+    binary: /bin/echo
+commands:
+  marker: printf 'from config\n'
+"#,
+    )
+    .unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Use project config"
+steps:
+  - agent: echo
+    task: "configured agent"
+  - command: marker
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let first_log = Command::new(niles)
+        .arg("log")
+        .arg("--step")
+        .arg("1")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(first_log.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&first_log.stdout),
+        "configured agent\n"
+    );
+
+    let second_log = Command::new(niles)
+        .arg("log")
+        .arg("--step")
+        .arg("2")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(second_log.status.success());
+    assert_eq!(String::from_utf8_lossy(&second_log.stdout), "from config\n");
+}
