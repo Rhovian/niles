@@ -80,11 +80,11 @@ pub fn run_process(
         } else {
             StepStatus::Failed
         },
-        started_at,
-        finished_at,
+        started_at: Some(started_at),
+        finished_at: Some(finished_at),
         exit_code: status.code(),
-        stdout: stdout_path,
-        stderr: stderr_path,
+        stdout: Some(stdout_path),
+        stderr: Some(stderr_path),
         diff: Some(diff_path),
     };
 

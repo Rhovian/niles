@@ -60,6 +60,8 @@ Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it p
 
 Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
 
+Run state includes pending, running, completed, and failed steps, so `niles status` can be used from another terminal while a long agent or validation step is still active.
+
 ## Project Config
 
 Put shared defaults in `niles.yaml` or `.niles.yaml`:

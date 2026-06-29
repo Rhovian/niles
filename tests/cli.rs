@@ -1,7 +1,8 @@
 use std::{
     fs,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[test]
@@ -518,4 +519,74 @@ commands:
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("goal: Ship and run"));
     assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+}
+
+#[test]
+fn status_shows_running_and_pending_steps() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-running-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Show running state"
+steps:
+  - command: slow
+    role: validation
+  - command: fast
+    role: validation
+commands:
+  slow: sleep 1
+  fast: printf 'done\n'
+"#,
+    )
+    .unwrap();
+
+    let child = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut saw_running = false;
+    for _ in 0..20 {
+        let status = Command::new(niles)
+            .arg("status")
+            .current_dir(&workspace)
+            .output();
+
+        if let Ok(status) = status {
+            if status.status.success() {
+                let stdout = String::from_utf8_lossy(&status.stdout);
+                if stdout.contains("1,validation,command,slow,running,-")
+                    && stdout.contains("2,validation,command,fast,pending,-")
+                {
+                    saw_running = true;
+                    break;
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(saw_running, "status never showed running/pending steps");
 }

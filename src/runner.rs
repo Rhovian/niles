@@ -146,7 +146,7 @@ fn print_status(state: &RunState) {
         let exit = step
             .exit_code
             .map(|code| code.to_string())
-            .unwrap_or_else(|| "signal".to_owned());
+            .unwrap_or_else(|| "-".to_owned());
         if has_roles {
             println!(
                 "  {},{},{},{},{},{}",
@@ -202,19 +202,35 @@ pub fn log(selector: RunSelector, step: Option<usize>, stderr: bool, both: bool)
     let record = selected_step(&state, step)?;
 
     if both {
-        print_log_file("stdout", &record.stdout)?;
-        print_log_file("stderr", &record.stderr)?;
+        let stdout = record
+            .stdout
+            .as_ref()
+            .with_context(|| format!("step {} has no stdout log yet", record.index))?;
+        let stderr = record
+            .stderr
+            .as_ref()
+            .with_context(|| format!("step {} has no stderr log yet", record.index))?;
+        print_log_file("stdout", stdout)?;
+        print_log_file("stderr", stderr)?;
     } else if stderr {
+        let stderr = record
+            .stderr
+            .as_ref()
+            .with_context(|| format!("step {} has no stderr log yet", record.index))?;
         print!(
             "{}",
-            fs::read_to_string(&record.stderr)
-                .with_context(|| { format!("failed to read stderr log {}", record.stderr) })?
+            fs::read_to_string(stderr)
+                .with_context(|| { format!("failed to read stderr log {stderr}") })?
         );
     } else {
+        let stdout = record
+            .stdout
+            .as_ref()
+            .with_context(|| format!("step {} has no stdout log yet", record.index))?;
         print!(
             "{}",
-            fs::read_to_string(&record.stdout)
-                .with_context(|| { format!("failed to read stdout log {}", record.stdout) })?
+            fs::read_to_string(stdout)
+                .with_context(|| { format!("failed to read stdout log {stdout}") })?
         );
     }
 
@@ -263,7 +279,7 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
         created_at: now,
         updated_at: now,
         status: RunStatus::Created,
-        steps: Vec::new(),
+        steps: planned_steps(&spec),
     };
 
     let state_path = run_dir.join("state.json");
@@ -296,6 +312,10 @@ fn execute_run(
 
     for (index, step) in spec.steps.iter().enumerate() {
         let step_number = index + 1;
+        mark_step_running(&mut state, step_number);
+        state.updated_at = Utc::now();
+        write_state(state_path, &state)?;
+
         let result = match step {
             TaskStep::Agent { agent, task, role } => {
                 print_step_start(step_number, role.as_deref(), "agent", agent);
@@ -323,7 +343,7 @@ fn execute_run(
         }?;
 
         let failed = matches!(result.status, StepStatus::Failed);
-        state.steps.push(result);
+        update_step_record(&mut state, result);
         state.status = if failed {
             RunStatus::Failed
         } else {
@@ -334,7 +354,7 @@ fn execute_run(
 
         if failed {
             println!("status: failed");
-            if let Some(step) = state.steps.last() {
+            if let Some(step) = state.steps.iter().find(|step| step.index == step_number) {
                 print_failure_summary(step);
             }
             bail!("step {step_number} failed");
@@ -347,6 +367,60 @@ fn execute_run(
     println!("status: completed");
 
     Ok(())
+}
+
+fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
+    spec.steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let (role, kind, label) = match step {
+                TaskStep::Agent { agent, role, .. } => {
+                    (role.clone(), StepKind::Agent, agent.clone())
+                }
+                TaskStep::Command { command, role } => {
+                    (role.clone(), StepKind::Command, command.clone())
+                }
+            };
+
+            StepRecord {
+                index: index + 1,
+                role,
+                kind,
+                label,
+                status: StepStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                diff: None,
+            }
+        })
+        .collect()
+}
+
+fn mark_step_running(state: &mut RunState, step_number: usize) {
+    if let Some(step) = state
+        .steps
+        .iter_mut()
+        .find(|step| step.index == step_number)
+    {
+        step.status = StepStatus::Running;
+        step.started_at = Some(Utc::now());
+    }
+}
+
+fn update_step_record(state: &mut RunState, result: StepRecord) {
+    if let Some(step) = state
+        .steps
+        .iter_mut()
+        .find(|step| step.index == result.index)
+    {
+        *step = result;
+    } else {
+        state.steps.push(result);
+    }
 }
 
 fn run_agent_step(
@@ -473,20 +547,25 @@ fn print_failure_summary(step: &StepRecord) {
             .map(|code| code.to_string())
             .unwrap_or_else(|| "signal".to_owned())
     );
-    eprintln!("  stderr: {}", step.stderr);
+    if let Some(stderr) = &step.stderr {
+        eprintln!("  stderr: {stderr}");
+    }
     if let Some(diff) = &step.diff {
         eprintln!("  diff: {diff}");
     }
     eprintln!("stderr tail:");
 
-    match stderr_tail(&step.stderr, 12) {
-        Ok(lines) if lines.is_empty() => eprintln!("  <empty>"),
-        Ok(lines) => {
-            for line in lines {
-                eprintln!("  {line}");
+    match &step.stderr {
+        Some(stderr) => match stderr_tail(stderr, 12) {
+            Ok(lines) if lines.is_empty() => eprintln!("  <empty>"),
+            Ok(lines) => {
+                for line in lines {
+                    eprintln!("  {line}");
+                }
             }
-        }
-        Err(err) => eprintln!("  <failed to read stderr: {err}>"),
+            Err(err) => eprintln!("  <failed to read stderr: {err}>"),
+        },
+        None => eprintln!("  <no stderr log>"),
     }
 }
 

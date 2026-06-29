@@ -31,11 +31,16 @@ pub struct StepRecord {
     pub kind: StepKind,
     pub label: String,
     pub status: StepStatus,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
-    pub stdout: Utf8PathBuf,
-    pub stderr: Utf8PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<Utf8PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<Utf8PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff: Option<Utf8PathBuf>,
 }
@@ -50,6 +55,8 @@ pub enum StepKind {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
+    Pending,
+    Running,
     Completed,
     Failed,
 }
@@ -72,6 +79,8 @@ pub fn step_kind_label(kind: &StepKind) -> &'static str {
 
 pub fn step_status_label(status: &StepStatus) -> &'static str {
     match status {
+        StepStatus::Pending => "pending",
+        StepStatus::Running => "running",
         StepStatus::Completed => "completed",
         StepStatus::Failed => "failed",
     }

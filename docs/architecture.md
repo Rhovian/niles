@@ -35,6 +35,8 @@ Adding `--run` executes the generated manifest immediately through the same runn
 
 Generated manifests label steps with roles. Roles are persisted in run state and shown by inspection commands so future tmux or TUI views can group work by planner, implementer, reviewer, and validation surfaces without changing execution semantics.
 
+Run state is initialized with every planned step as pending. Niles marks the active step running before launching its subprocess, then updates that same record to completed or failed. This gives future tmux views a reliable state source instead of inferring progress from panes or logs.
+
 ## Project Config
 
 Niles loads the first config file it finds from:
