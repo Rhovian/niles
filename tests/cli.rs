@@ -1142,15 +1142,15 @@ commands:
             .current_dir(&workspace)
             .output();
 
-        if let Ok(status) = status {
-            if status.status.success() {
-                let stdout = String::from_utf8_lossy(&status.stdout);
-                if stdout.contains("1,validation,command,slow,running,-")
-                    && stdout.contains("2,validation,command,fast,pending,-")
-                {
-                    saw_running = true;
-                    break;
-                }
+        if let Ok(status) = status
+            && status.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&status.stdout);
+            if stdout.contains("1,validation,command,slow,running,-")
+                && stdout.contains("2,validation,command,fast,pending,-")
+            {
+                saw_running = true;
+                break;
             }
         }
 
@@ -1212,15 +1212,15 @@ commands:
             .current_dir(&workspace)
             .output();
 
-        if let Ok(status) = status {
-            if status.status.success() {
-                let stdout = String::from_utf8_lossy(&status.stdout);
-                if stdout.contains("1,validation,command,slow,running,-")
-                    && stdout.contains("2,validation,command,fast,pending,-")
-                {
-                    run_started = true;
-                    break;
-                }
+        if let Ok(status) = status
+            && status.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&status.stdout);
+            if stdout.contains("1,validation,command,slow,running,-")
+                && stdout.contains("2,validation,command,fast,pending,-")
+            {
+                run_started = true;
+                break;
             }
         }
 
@@ -1442,7 +1442,8 @@ commands:
         .unwrap();
     assert!(!command_step.status.success());
     assert!(
-        String::from_utf8_lossy(&command_step.stderr).contains("run it captured with `niles exec-step")
+        String::from_utf8_lossy(&command_step.stderr)
+            .contains("run it captured with `niles exec-step")
     );
 }
 

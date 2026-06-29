@@ -9,6 +9,7 @@ mod runner;
 mod session;
 mod state;
 mod store;
+mod tmux;
 mod util;
 mod wake;
 

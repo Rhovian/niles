@@ -1,17 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::Write,
-    process::{Command, Stdio},
-    thread,
-    time::Duration,
-};
+use std::{collections::BTreeMap, fs, io::Write, thread, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::{crew, session, store, util::write_json_pretty};
+use crate::{crew, session, store, tmux, util::write_json_pretty};
 
 const WAKE_DIR: &str = ".niles/wake";
 
@@ -150,28 +143,7 @@ fn dispatch_wake(session_id: Option<&str>, wake: &Wake) -> Result<()> {
 }
 
 fn send_to_tmux(target: &str, line: &str) -> Result<()> {
-    run_tmux(["send-keys", "-t", target, "-l", line])?;
-    run_tmux(["send-keys", "-t", target, "Enter"])
-}
-
-fn run_tmux<I, S>(args: I) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect::<Vec<_>>();
-    let status = Command::new("tmux")
-        .args(&args)
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| format!("failed to run tmux {}", args.join(" ")))?;
-    if !status.success() {
-        bail!("tmux {} exited with {status}", args.join(" "));
-    }
-    Ok(())
+    tmux::send_line(target, line)
 }
 
 fn append_queue(line: &str) -> Result<()> {

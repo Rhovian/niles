@@ -1,7 +1,4 @@
-use std::{
-    env, fs,
-    process::{Command, Stdio},
-};
+use std::fs;
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -10,9 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{
         agents,
-        spec::{AgentConfig, PromptMode, load_project_config_from},
+        spec::{PromptMode, load_project_config_from},
     },
-    util::write_json_pretty,
+    tmux,
+    util::{
+        absolute_existing_dir, absolute_existing_file, absolute_path, utf8_path, write_json_pretty,
+    },
 };
 
 const CREW_DIR: &str = ".niles/crew";
@@ -26,12 +26,6 @@ struct CrewMeta {
     brief: Utf8PathBuf,
     launch: Utf8PathBuf,
     status: Option<Utf8PathBuf>,
-}
-
-struct AgentInvocation {
-    binary: String,
-    args: Vec<String>,
-    prompt: PromptMode,
 }
 
 pub struct CrewStatusTarget {
@@ -51,12 +45,12 @@ pub fn spawn(
         bail!("spawn requires either --brief or task text");
     }
 
-    let project = absolute_existing_dir(&project)?;
+    let project = absolute_existing_dir(&project, "project")?;
     let dir = absolute_path(Utf8Path::new(CREW_DIR))?.join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
     let brief_path = match brief {
-        Some(path) => absolute_existing_file(&path)?,
+        Some(path) => absolute_existing_file(&path, "brief")?,
         None => {
             let path = dir.join("brief.md");
             write_brief(&path, &id, &project, &agent, &task.join(" "))?;
@@ -73,7 +67,14 @@ pub fn spawn(
         .with_context(|| format!("failed to create {status_path}"))?;
 
     let window_name = format!("niles-{id}");
-    let target = spawn_agent_window(&window_name, &project, &agent, &project, &brief_path, &launch_path)?;
+    let target = spawn_agent_window(
+        &window_name,
+        &project,
+        &agent,
+        &project,
+        &brief_path,
+        &launch_path,
+    )?;
 
     let meta = CrewMeta {
         id: id.clone(),
@@ -105,32 +106,12 @@ pub fn peek(id: String, lines: usize) -> Result<()> {
 /// Capture the last `lines` of a step window's pane by window name, resolving
 /// the active session. Used to fold an interactive step's output into the run.
 pub(crate) fn capture_window(window_name: &str, lines: usize) -> Result<String> {
-    let session = tmux_session()?;
+    let session = tmux::current_or_named_session("niles")?;
     capture_pane(&format!("{session}:{window_name}"), lines)
 }
 
 fn capture_pane(target: &str, lines: usize) -> Result<String> {
-    let output = Command::new("tmux")
-        .args(["capture-pane", "-p", "-t", target, "-S", &format!("-{lines}")])
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
-
-    if !output.status.success() {
-        bail!(
-            "tmux capture-pane failed for {target}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    // tmux pads the capture to the pane height; drop the trailing blank lines.
-    let text = String::from_utf8_lossy(&output.stdout);
-    let trimmed = text.trim_end();
-    Ok(if trimmed.is_empty() {
-        String::new()
-    } else {
-        format!("{trimmed}\n")
-    })
+    tmux::capture_pane(target, lines)
 }
 
 pub fn send(id: String, message: Vec<String>) -> Result<()> {
@@ -140,8 +121,7 @@ pub fn send(id: String, message: Vec<String>) -> Result<()> {
 
     let meta = read_meta(&id)?;
     let message = message.join(" ");
-    run_tmux(["send-keys", "-t", &meta.window, "-l", &message])?;
-    run_tmux(["send-keys", "-t", &meta.window, "Enter"])?;
+    tmux::send_line(&meta.window, &message)?;
     println!("sent: {id}");
     Ok(())
 }
@@ -157,9 +137,7 @@ pub fn status_targets() -> Result<Vec<CrewStatusTarget>> {
     let mut targets = Vec::new();
     for entry in entries {
         let entry = entry.with_context(|| format!("failed to read entry in {dir}"))?;
-        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
-            anyhow::anyhow!("crew metadata path is not UTF-8: {}", path.display())
-        })?;
+        let path = utf8_path(entry.path(), "crew metadata path")?;
         if path.extension() != Some("json") {
             continue;
         }
@@ -176,28 +154,6 @@ pub fn status_targets() -> Result<Vec<CrewStatusTarget>> {
 
     targets.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(targets)
-}
-
-fn agent_invocation(agent: &str, config: Option<&AgentConfig>) -> AgentInvocation {
-    match config {
-        Some(config) => AgentInvocation {
-            binary: config
-                .binary
-                .clone()
-                .unwrap_or_else(|| agents::worker_binary(agent)),
-            args: if config.args.is_empty() {
-                agents::worker_args(agent)
-            } else {
-                config.args.clone()
-            },
-            prompt: config.prompt,
-        },
-        None => AgentInvocation {
-            binary: agents::worker_binary(agent),
-            args: agents::worker_args(agent),
-            prompt: agents::worker_prompt(agent),
-        },
-    }
 }
 
 fn write_brief(
@@ -219,7 +175,7 @@ fn write_brief(
 
 fn write_launch_script(
     path: &Utf8Path,
-    invocation: &AgentInvocation,
+    invocation: &agents::AgentInvocation,
     brief_path: &Utf8Path,
 ) -> Result<()> {
     let mut body = String::new();
@@ -257,7 +213,11 @@ pub(crate) fn spawn_agent_window(
     launch_path: &Utf8Path,
 ) -> Result<String> {
     let config = load_project_config_from(project)?;
-    let invocation = agent_invocation(agent, config.agents.get(agent));
+    let invocation = agents::invocation(
+        agent,
+        config.agents.get(agent),
+        agents::InvocationDefaults::Worker,
+    );
     write_launch_script(launch_path, &invocation, brief_path)?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     open_window(window_name, cwd, &command)
@@ -266,100 +226,18 @@ pub(crate) fn spawn_agent_window(
 /// Kill a tmux window by name in the active session. Used to tear down a step
 /// window once the supervisor decides the step is done.
 pub(crate) fn close_window(window_name: &str) -> Result<()> {
-    let session = tmux_session()?;
-    run_tmux(["kill-window", "-t", &format!("{session}:{window_name}")])
+    let session = tmux::current_or_named_session("niles")?;
+    tmux::kill_window(&session, window_name)
 }
 
 /// Open a detached tmux window running `command` in `cwd` and return its
 /// `session:window` target. Shared by `spawn` and the per-step orchestrator.
 pub(crate) fn open_window(window_name: &str, cwd: &Utf8Path, command: &str) -> Result<String> {
-    let session = tmux_session()?;
-    ensure_window_available(&session, window_name)?;
+    let session = tmux::current_or_named_session("niles")?;
+    tmux::ensure_window_available(&session, window_name)?;
     let target = format!("{session}:{window_name}");
-    run_tmux([
-        "new-window",
-        "-d",
-        "-t",
-        &session,
-        "-n",
-        window_name,
-        "-c",
-        cwd.as_str(),
-        command,
-    ])?;
+    tmux::new_window(&session, window_name, cwd, command)?;
     Ok(target)
-}
-
-fn tmux_session() -> Result<String> {
-    if env::var_os("TMUX").is_some() {
-        let output = Command::new("tmux")
-            .args(["display-message", "-p", "#S"])
-            .stdin(Stdio::null())
-            .output()
-            .context("failed to query current tmux session")?;
-        if output.status.success() {
-            let session = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !session.is_empty() {
-                return Ok(session);
-            }
-        }
-    }
-
-    match Command::new("tmux")
-        .args(["has-session", "-t", "niles"])
-        .stdin(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => Ok("niles".to_owned()),
-        _ => {
-            run_tmux(["new-session", "-d", "-s", "niles"])?;
-            Ok("niles".to_owned())
-        }
-    }
-}
-
-fn ensure_window_available(session: &str, window_name: &str) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["list-windows", "-t", session, "-F", "#{window_name}"])
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
-
-    if !output.status.success() {
-        bail!(
-            "tmux list-windows failed for session {session}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    let exists = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .any(|line| line == window_name);
-    if exists {
-        bail!("tmux window {session}:{window_name} already exists");
-    }
-
-    Ok(())
-}
-
-fn run_tmux<I, S>(args: I) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect::<Vec<_>>();
-    let status = Command::new("tmux")
-        .args(&args)
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| format!("failed to run tmux {}", args.join(" ")))?;
-    if !status.success() {
-        bail!("tmux {} exited with {status}", args.join(" "));
-    }
-    Ok(())
 }
 
 fn write_meta(id: &str, meta: &CrewMeta) -> Result<()> {
@@ -379,33 +257,6 @@ fn read_meta(id: &str) -> Result<CrewMeta> {
 
 fn meta_path(id: &str) -> Utf8PathBuf {
     Utf8Path::new(CREW_DIR).join(format!("{id}.json"))
-}
-
-fn absolute_existing_dir(path: &Utf8Path) -> Result<Utf8PathBuf> {
-    let path = absolute_path(path)?;
-    if !path.is_dir() {
-        bail!("project path is not a directory: {path}");
-    }
-    Ok(path)
-}
-
-fn absolute_existing_file(path: &Utf8Path) -> Result<Utf8PathBuf> {
-    let path = absolute_path(path)?;
-    if !path.is_file() {
-        bail!("brief path is not a file: {path}");
-    }
-    Ok(path)
-}
-
-fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-
-    let cwd = env::current_dir().context("failed to read current directory")?;
-    let cwd = Utf8PathBuf::from_path_buf(cwd)
-        .map_err(|path| anyhow::anyhow!("current directory is not UTF-8: {}", path.display()))?;
-    Ok(cwd.join(path))
 }
 
 fn validate_id(id: &str) -> Result<()> {

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::agents,
-    util::{timestamp_id, write_json_pretty},
+    util::{current_dir_utf8, timestamp_id, write_json_pretty},
 };
 
 const SUPERVISOR_BRIEF_TEMPLATE: &str = include_str!("templates/supervisor_brief.md");
@@ -72,7 +72,7 @@ fn startup_prompt(_goal: Option<&str>) -> String {
 }
 
 fn write_supervisor_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta> {
-    let workspace = current_workspace()?;
+    let workspace = current_dir_utf8()?;
     let now = Utc::now();
     let id = timestamp_id(&now);
     let dir = Utf8Path::new(".niles").join("sessions").join(&id);
@@ -159,12 +159,6 @@ fn stop_wake_watcher(watcher: &mut Option<Child>) {
         let _ = child.kill();
         let _ = child.wait();
     }
-}
-
-fn current_workspace() -> Result<Utf8PathBuf> {
-    let cwd = env::current_dir().context("failed to read current directory")?;
-    Utf8PathBuf::from_path_buf(cwd)
-        .map_err(|path| anyhow::anyhow!("current directory is not UTF-8: {}", path.display()))
 }
 
 fn startup_context() -> Result<String> {

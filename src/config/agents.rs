@@ -8,6 +8,19 @@ pub struct AgentProfile {
     pub prompt: PromptMode,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum InvocationDefaults {
+    Default,
+    Worker,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentInvocation {
+    pub binary: String,
+    pub args: Vec<String>,
+    pub prompt: PromptMode,
+}
+
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
@@ -62,6 +75,27 @@ pub fn default_prompt(agent: &str) -> PromptMode {
         .unwrap_or(PromptMode::Arg)
 }
 
+pub fn invocation(
+    agent: &str,
+    config: Option<&AgentConfig>,
+    defaults: InvocationDefaults,
+) -> AgentInvocation {
+    let default_invocation = default_invocation(agent, defaults);
+
+    match config {
+        Some(config) => AgentInvocation {
+            binary: config.binary.clone().unwrap_or(default_invocation.binary),
+            args: if config.args.is_empty() {
+                default_invocation.args
+            } else {
+                config.args.clone()
+            },
+            prompt: config.prompt,
+        },
+        None => default_invocation,
+    }
+}
+
 pub fn foreground_binary(agent: &str) -> String {
     default_binary(agent)
 }
@@ -70,23 +104,39 @@ pub fn foreground_args(_agent: &str) -> Vec<String> {
     Vec::new()
 }
 
-pub fn worker_binary(agent: &str) -> String {
-    default_binary(agent)
+fn default_invocation(agent: &str, defaults: InvocationDefaults) -> AgentInvocation {
+    match defaults {
+        InvocationDefaults::Default => AgentInvocation {
+            binary: default_binary(agent),
+            args: default_args(agent),
+            prompt: default_prompt(agent),
+        },
+        InvocationDefaults::Worker => AgentInvocation {
+            binary: default_binary(agent),
+            args: worker_args(agent),
+            prompt: worker_prompt(agent),
+        },
+    }
 }
 
-pub fn worker_args(agent: &str) -> Vec<String> {
+fn worker_args(agent: &str) -> Vec<String> {
     // Workers run autonomously in their own window: skip interactive approval
     // prompts so a step runs to completion without a human driving each tool.
     match agent {
-        "codex" => ["--sandbox", "workspace-write", "--ask-for-approval", "never"]
-            .map(str::to_owned)
-            .to_vec(),
+        "codex" => [
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "never",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
         "claude" => vec!["--dangerously-skip-permissions".to_owned()],
         _ => default_args(agent),
     }
 }
 
-pub fn worker_prompt(agent: &str) -> PromptMode {
+fn worker_prompt(agent: &str) -> PromptMode {
     match agent {
         "codex" | "claude" => PromptMode::Arg,
         _ => default_prompt(agent),
@@ -120,5 +170,35 @@ mod tests {
         assert_eq!(config.binary.as_deref(), Some("custom"));
         assert!(config.args.is_empty());
         assert!(matches!(config.prompt, PromptMode::Arg));
+    }
+
+    #[test]
+    fn invocation_applies_batch_defaults() {
+        let invocation = invocation("codex", None, InvocationDefaults::Default);
+
+        assert_eq!(invocation.binary, "codex");
+        assert_eq!(
+            invocation.args,
+            ["exec", "--sandbox", "workspace-write"].map(str::to_owned)
+        );
+        assert!(matches!(invocation.prompt, PromptMode::Arg));
+    }
+
+    #[test]
+    fn invocation_applies_worker_defaults() {
+        let invocation = invocation("codex", None, InvocationDefaults::Worker);
+
+        assert_eq!(invocation.binary, "codex");
+        assert_eq!(
+            invocation.args,
+            [
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "never"
+            ]
+            .map(str::to_owned)
+        );
+        assert!(matches!(invocation.prompt, PromptMode::Arg));
     }
 }

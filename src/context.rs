@@ -1,11 +1,11 @@
-use std::{env, fs};
+use std::fs;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     state::{RunState, StepKind},
-    util::slugify,
+    util::{absolute_path, slugify},
 };
 
 const CONTEXT_ARTIFACT_MAX_CHARS: usize = 12_000;
@@ -52,20 +52,6 @@ pub fn agent_prompt(task: &str, context_path: Option<&Utf8Path>) -> Result<Strin
     Ok(format!(
         "{task}\n\nNiles handoff context: {context_path}\nRead that file before acting. It contains the task goal, prior agent output, validation output, and the latest captured diff."
     ))
-}
-
-fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let cwd = env::current_dir().context("failed to read current directory")?;
-        let cwd = Utf8PathBuf::from_path_buf(cwd).map_err(|path| {
-            anyhow::anyhow!("current directory is not UTF-8: {}", path.display())
-        })?;
-        cwd.join(path)
-    };
-
-    Ok(path)
 }
 
 fn append_prior_step_summary(body: &mut String, state: &RunState, step_number: usize) {
