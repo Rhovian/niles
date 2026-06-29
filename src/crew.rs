@@ -7,9 +7,12 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{
-    agents,
-    spec::{AgentConfig, PromptMode, load_project_config_from},
+use crate::{
+    config::{
+        agents,
+        spec::{AgentConfig, PromptMode, load_project_config_from},
+    },
+    util::write_json_pretty,
 };
 
 const CREW_DIR: &str = ".niles/crew";
@@ -327,8 +330,7 @@ fn write_meta(id: &str, meta: &CrewMeta) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
     }
-    fs::write(&path, serde_json::to_string_pretty(meta)?)
-        .with_context(|| format!("failed to write {path}"))
+    write_json_pretty(&path, meta)
 }
 
 fn read_meta(id: &str) -> Result<CrewMeta> {

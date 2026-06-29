@@ -14,17 +14,15 @@ use crate::{
     config::{
         agents,
         spec::{
-            AgentConfig, PromptMode, TaskSpec, TaskStep, apply_project_config, command_config_run,
-            load_project_config, load_task, summarize_spec,
+            AgentConfig, PromptMode, TaskSpec, TaskStep, apply_project_config, load_project_config,
+            load_task, summarize_spec,
         },
     },
     context::{agent_prompt, write_agent_context},
-    process::run_process,
-    state::{
-        RunState, RunStatus, StepKind, StepRecord, StepStatus, run_status_label, step_kind_label,
-        step_status_label,
-    },
+    process::{ProcessSpec, run_process},
+    state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, resolve_run_dir, selected_step, state_path, write_state},
+    util::{timestamp_id, write_json_pretty},
 };
 
 pub struct RunSelector(String);
@@ -160,7 +158,7 @@ pub fn show(selector: RunSelector) -> Result<()> {
     let state = read_state(&run_dir)?;
 
     println!("run: {}", state.id);
-    println!("status: {}", run_status_label(&state.status));
+    println!("status: {}", state.status);
     println!("goal: {}", state.goal);
     println!("created: {}", state.created_at);
     println!("updated: {}", state.updated_at);
@@ -179,9 +177,9 @@ pub fn show(selector: RunSelector) -> Result<()> {
                 .as_deref()
                 .map(|role| format!("{role} "))
                 .unwrap_or_default(),
-            step_kind_label(&step.kind),
+            step.kind,
             step.label,
-            step_status_label(&step.status),
+            step.status,
             step.exit_code
                 .map(|code| format!(" ({code})"))
                 .unwrap_or_default(),
@@ -197,7 +195,7 @@ pub fn show(selector: RunSelector) -> Result<()> {
 
 fn print_status(state: &RunState) {
     println!("run: {}", state.id);
-    println!("status: {}", run_status_label(&state.status));
+    println!("status: {}", state.status);
     println!("goal: {}", state.goal);
     println!("updated: {}", state.updated_at);
 
@@ -253,7 +251,7 @@ fn print_status(state: &RunState) {
 fn print_watch_snapshot(state: &RunState) {
     println!("watch:");
     println!("run: {}", state.id);
-    println!("status: {}", run_status_label(&state.status));
+    println!("status: {}", state.status);
     println!("updated: {}", state.updated_at);
 
     if state.steps.is_empty() {
@@ -286,19 +284,15 @@ fn print_steps_table(state: &RunState) {
                 "  {},{},{},{},{},{}",
                 step.index,
                 step.role.as_deref().unwrap_or("-"),
-                step_kind_label(&step.kind),
+                step.kind,
                 step.label,
-                step_status_label(&step.status),
+                step.status,
                 exit
             );
         } else {
             println!(
                 "  {},{},{},{},{}",
-                step.index,
-                step_kind_label(&step.kind),
-                step.label,
-                step_status_label(&step.status),
-                exit
+                step.index, step.kind, step.label, step.status, exit
             );
         }
     }
@@ -371,11 +365,7 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Re
     }
 
     let now = Utc::now();
-    let id = format!(
-        "{}{:09}Z",
-        now.format("%Y%m%dT%H%M%S"),
-        now.timestamp_subsec_nanos()
-    );
+    let id = timestamp_id(&now);
     let run_dir = Utf8Path::new(".niles").join("runs").join(&id);
     fs::create_dir_all(&run_dir).with_context(|| format!("failed to create {run_dir}"))?;
     let plan = summarize_spec(&spec);
@@ -394,8 +384,7 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Re
     write_state(&state_path, &state)?;
 
     let plan_path = run_dir.join("plan.json");
-    fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)
-        .with_context(|| format!("failed to write {plan_path}"))?;
+    write_json_pretty(&plan_path, &plan)?;
 
     println!("run: {id}");
     println!("state: {state_path}");
@@ -453,16 +442,16 @@ fn execute_run(
             TaskStep::Agent { agent, task, role } => {
                 print_step_start(step_number, role.as_deref(), "agent", agent);
                 print_step_context(context.as_deref());
-                run_agent_step(
+                run_agent_step(AgentStep {
                     step_number,
-                    role.clone(),
+                    role: role.clone(),
                     agent,
                     task,
                     spec,
                     workspace,
-                    &steps_dir,
-                    context,
-                )
+                    steps_dir: &steps_dir,
+                    context_path: context,
+                })
             }
             TaskStep::Command { command, role } => {
                 print_step_start(step_number, role.as_deref(), "command", command);
@@ -616,19 +605,21 @@ fn update_step_record(state: &mut RunState, result: StepRecord) {
     }
 }
 
-fn run_agent_step(
+struct AgentStep<'a> {
     step_number: usize,
     role: Option<String>,
-    agent: &str,
-    task: &str,
-    spec: &TaskSpec,
-    workspace: &Utf8Path,
-    steps_dir: &Utf8Path,
+    agent: &'a str,
+    task: &'a str,
+    spec: &'a TaskSpec,
+    workspace: &'a Utf8Path,
+    steps_dir: &'a Utf8Path,
     context_path: Option<Utf8PathBuf>,
-) -> Result<StepRecord> {
-    let config = agent_invocation(agent, spec.agents.get(agent));
+}
+
+fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
+    let config = agent_invocation(step.agent, step.spec.agents.get(step.agent));
     let mut args = config.args;
-    let prompt = agent_prompt(task, context_path.as_deref())?;
+    let prompt = agent_prompt(step.task, step.context_path.as_deref())?;
     let stdin = match config.prompt {
         PromptMode::Arg => {
             args.push(prompt);
@@ -637,18 +628,18 @@ fn run_agent_step(
         PromptMode::Stdin => Some(prompt),
     };
 
-    run_process(
-        step_number,
-        role,
-        StepKind::Agent,
-        agent,
-        &config.binary,
-        &args,
-        stdin.as_deref(),
-        workspace,
-        steps_dir,
-        context_path,
-    )
+    run_process(ProcessSpec {
+        step_number: step.step_number,
+        role: step.role,
+        kind: StepKind::Agent,
+        label: step.agent,
+        binary: &config.binary,
+        args: &args,
+        stdin: stdin.as_deref(),
+        workspace: step.workspace,
+        steps_dir: step.steps_dir,
+        context_path: step.context_path,
+    })
 }
 
 fn run_command_step(
@@ -663,19 +654,20 @@ fn run_command_step(
         .commands
         .get(command)
         .with_context(|| format!("unknown command `{command}`"))?;
-    let command_line = command_config_run(config);
-    run_process(
+    let command_line = config.run();
+    let args = ["-c".to_owned(), command_line.to_owned()];
+    run_process(ProcessSpec {
         step_number,
         role,
-        StepKind::Command,
-        command,
-        "sh",
-        &["-c".to_owned(), command_line.to_owned()],
-        None,
+        kind: StepKind::Command,
+        label: command,
+        binary: "sh",
+        args: &args,
+        stdin: None,
         workspace,
         steps_dir,
-        None,
-    )
+        context_path: None,
+    })
 }
 
 fn print_step_start(step_number: usize, role: Option<&str>, kind: &str, label: &str) {
@@ -738,7 +730,7 @@ fn print_failure_summary(step: &StepRecord) {
             .as_deref()
             .map(|role| format!("{role} "))
             .unwrap_or_default(),
-        step_kind_label(&step.kind),
+        step.kind,
         step.label
     );
     eprintln!(

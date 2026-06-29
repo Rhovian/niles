@@ -10,18 +10,32 @@ use crate::{
         spec::{CommandConfig, TaskSpec, TaskStep, load_project_config_from},
     },
     runner,
+    util::timestamp_id,
 };
 
-pub fn generate(
-    goal: Vec<String>,
-    project: Utf8PathBuf,
-    planner: String,
-    implementer: String,
-    reviewer: String,
-    command: String,
-    run: bool,
-    watch: bool,
-) -> Result<()> {
+pub struct GenerateOptions {
+    pub goal: Vec<String>,
+    pub project: Utf8PathBuf,
+    pub planner: String,
+    pub implementer: String,
+    pub reviewer: String,
+    pub command: String,
+    pub run: bool,
+    pub watch: bool,
+}
+
+pub fn generate(options: GenerateOptions) -> Result<()> {
+    let GenerateOptions {
+        goal,
+        project,
+        planner,
+        implementer,
+        reviewer,
+        command,
+        run,
+        watch,
+    } = options;
+
     let goal = goal.join(" ");
     if goal.trim().is_empty() {
         bail!("manifest goal cannot be empty");
@@ -90,11 +104,7 @@ pub fn generate(
     let dir = Utf8Path::new(".niles").join("manifests");
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let now = Utc::now();
-    let id = format!(
-        "{}{:09}Z",
-        now.format("%Y%m%dT%H%M%S"),
-        now.timestamp_subsec_nanos()
-    );
+    let id = timestamp_id(&now);
     let path = dir.join(format!("{id}.yaml"));
     let body = serde_yaml::to_string(&spec).context("failed to serialize manifest")?;
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;

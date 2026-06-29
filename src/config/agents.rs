@@ -35,7 +35,7 @@ pub fn default_config(agent: &str) -> AgentConfig {
     match profile_for(agent) {
         Some(profile) => AgentConfig {
             binary: Some(profile.binary.to_owned()),
-            args: profile.args.iter().map(|arg| (*arg).to_owned()).collect(),
+            args: profile_args(profile),
             prompt: profile.prompt,
         },
         None => AgentConfig {
@@ -53,9 +53,7 @@ pub fn default_binary(agent: &str) -> String {
 }
 
 pub fn default_args(agent: &str) -> Vec<String> {
-    profile_for(agent)
-        .map(|profile| profile.args.iter().map(|arg| (*arg).to_owned()).collect())
-        .unwrap_or_default()
+    profile_for(agent).map(profile_args).unwrap_or_default()
 }
 
 pub fn default_prompt(agent: &str) -> PromptMode {
@@ -68,11 +66,8 @@ pub fn foreground_binary(agent: &str) -> String {
     default_binary(agent)
 }
 
-pub fn foreground_args(agent: &str) -> Vec<String> {
-    match agent {
-        "codex" | "claude" => Vec::new(),
-        _ => Vec::new(),
-    }
+pub fn foreground_args(_agent: &str) -> Vec<String> {
+    Vec::new()
 }
 
 pub fn worker_binary(agent: &str) -> String {
@@ -92,6 +87,10 @@ pub fn worker_prompt(agent: &str) -> PromptMode {
         "codex" | "claude" => PromptMode::Arg,
         _ => default_prompt(agent),
     }
+}
+
+fn profile_args(profile: AgentProfile) -> Vec<String> {
+    profile.args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
 #[cfg(test)]

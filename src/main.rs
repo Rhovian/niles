@@ -9,6 +9,7 @@ mod runner;
 mod session;
 mod state;
 mod store;
+mod util;
 mod wake;
 
 use anyhow::Result;
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
             command,
             run,
             watch,
-        }) => manifest::generate(
+        }) => manifest::generate(manifest::GenerateOptions {
             goal,
             project,
             planner,
@@ -45,7 +46,7 @@ fn main() -> Result<()> {
             command,
             run,
             watch,
-        ),
+        }),
         Some(CommandName::Spawn {
             id,
             project,

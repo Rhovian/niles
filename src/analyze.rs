@@ -8,7 +8,7 @@ use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::config::agents;
+use crate::{config::agents, util::write_json_pretty};
 
 pub fn analyze(agent: Option<String>) -> Result<()> {
     let agents = match agent {
@@ -23,8 +23,7 @@ pub fn analyze(agent: Option<String>) -> Result<()> {
         let binary = agents::default_binary(&agent);
         let manifest = probe_agent(&agent, &binary);
         let path = dir.join(format!("{agent}.json"));
-        let body = serde_json::to_string_pretty(&manifest)?;
-        fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
+        write_json_pretty(&path, &manifest)?;
         println!("wrote {path}");
     }
 

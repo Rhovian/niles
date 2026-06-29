@@ -1,3 +1,5 @@
+use std::fmt;
+
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -63,27 +65,33 @@ pub enum StepStatus {
     Failed,
 }
 
-pub fn run_status_label(status: &RunStatus) -> &'static str {
-    match status {
-        RunStatus::Created => "created",
-        RunStatus::Running => "running",
-        RunStatus::Completed => "completed",
-        RunStatus::Failed => "failed",
+impl fmt::Display for RunStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            RunStatus::Created => "created",
+            RunStatus::Running => "running",
+            RunStatus::Completed => "completed",
+            RunStatus::Failed => "failed",
+        })
     }
 }
 
-pub fn step_kind_label(kind: &StepKind) -> &'static str {
-    match kind {
-        StepKind::Agent => "agent",
-        StepKind::Command => "command",
+impl fmt::Display for StepKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            StepKind::Agent => "agent",
+            StepKind::Command => "command",
+        })
     }
 }
 
-pub fn step_status_label(status: &StepStatus) -> &'static str {
-    match status {
-        StepStatus::Pending => "pending",
-        StepStatus::Running => "running",
-        StepStatus::Completed => "completed",
-        StepStatus::Failed => "failed",
+impl fmt::Display for StepStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            StepStatus::Pending => "pending",
+            StepStatus::Running => "running",
+            StepStatus::Completed => "completed",
+            StepStatus::Failed => "failed",
+        })
     }
 }

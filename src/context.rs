@@ -3,7 +3,10 @@ use std::{env, fs};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::state::{RunState, StepKind, run_status_label, step_kind_label, step_status_label};
+use crate::{
+    state::{RunState, StepKind},
+    util::slugify,
+};
 
 const CONTEXT_ARTIFACT_MAX_CHARS: usize = 12_000;
 
@@ -21,10 +24,7 @@ pub fn write_agent_context(
 
     body.push_str("# Niles Step Context\n\n");
     body.push_str(&format!("run: {}\n", state.id));
-    body.push_str(&format!(
-        "run_status: {}\n",
-        run_status_label(&state.status)
-    ));
+    body.push_str(&format!("run_status: {}\n", state.status));
     body.push_str(&format!("goal: {}\n", state.goal));
     body.push_str(&format!("workspace: {workspace}\n"));
     body.push_str(&format!("step: {step_number}\n"));
@@ -92,9 +92,9 @@ fn append_prior_step_summary(body: &mut String, state: &RunState, step_number: u
             "| {} | {} | {} | {} | {} | {} |\n",
             step.index,
             markdown_cell(step.role.as_deref().unwrap_or("-")),
-            step_kind_label(&step.kind),
+            step.kind,
             markdown_cell(&step.label),
-            step_status_label(&step.status),
+            step.status,
             exit
         ));
     }
@@ -209,28 +209,4 @@ fn append_fenced(body: &mut String, language: &str, value: &str) {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('\n', " ").replace('|', "\\|")
-}
-
-fn slugify(value: &str) -> String {
-    let mut slug = value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-
-    while slug.contains("--") {
-        slug = slug.replace("--", "-");
-    }
-
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "step".to_owned()
-    } else {
-        slug.to_owned()
-    }
 }

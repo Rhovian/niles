@@ -59,17 +59,12 @@ pub enum CommandConfig {
     Full { run: String },
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMode {
+    #[default]
     Arg,
     Stdin,
-}
-
-impl Default for PromptMode {
-    fn default() -> Self {
-        Self::Arg
-    }
 }
 
 pub fn load_task(path: &Utf8Path) -> Result<TaskSpec> {
@@ -110,10 +105,12 @@ pub fn apply_project_config(mut spec: TaskSpec, config: ProjectConfig) -> TaskSp
     spec
 }
 
-pub fn command_config_run(config: &CommandConfig) -> &str {
-    match config {
-        CommandConfig::Short(run) => run,
-        CommandConfig::Full { run } => run,
+impl CommandConfig {
+    pub fn run(&self) -> &str {
+        match self {
+            CommandConfig::Short(run) => run,
+            CommandConfig::Full { run } => run,
+        }
     }
 }
 

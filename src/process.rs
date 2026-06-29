@@ -9,34 +9,39 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::Utc;
 
-use crate::state::{StepKind, StepRecord, StepStatus};
+use crate::{
+    state::{StepKind, StepRecord, StepStatus},
+    util::{slugify, write_json_pretty},
+};
 
 type ReaderHandle = thread::JoinHandle<Result<()>>;
 
-pub fn run_process(
-    step_number: usize,
-    role: Option<String>,
-    kind: StepKind,
-    label: &str,
-    binary: &str,
-    args: &[String],
-    stdin: Option<&str>,
-    workspace: &Utf8Path,
-    steps_dir: &Utf8Path,
-    context_path: Option<camino::Utf8PathBuf>,
-) -> Result<StepRecord> {
-    let started_at = Utc::now();
-    let slug = slugify(label);
-    let prefix = format!("{step_number:03}-{slug}");
-    let stdout_path = steps_dir.join(format!("{prefix}.stdout.txt"));
-    let stderr_path = steps_dir.join(format!("{prefix}.stderr.txt"));
-    let diff_path = steps_dir.join(format!("{prefix}.diff"));
-    let meta_path = steps_dir.join(format!("{prefix}.json"));
+pub struct ProcessSpec<'a> {
+    pub step_number: usize,
+    pub role: Option<String>,
+    pub kind: StepKind,
+    pub label: &'a str,
+    pub binary: &'a str,
+    pub args: &'a [String],
+    pub stdin: Option<&'a str>,
+    pub workspace: &'a Utf8Path,
+    pub steps_dir: &'a Utf8Path,
+    pub context_path: Option<camino::Utf8PathBuf>,
+}
 
-    let mut child = Command::new(binary)
-        .args(args)
-        .current_dir(workspace)
-        .stdin(if stdin.is_some() {
+pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
+    let started_at = Utc::now();
+    let slug = slugify(spec.label);
+    let prefix = format!("{:03}-{slug}", spec.step_number);
+    let stdout_path = spec.steps_dir.join(format!("{prefix}.stdout.txt"));
+    let stderr_path = spec.steps_dir.join(format!("{prefix}.stderr.txt"));
+    let diff_path = spec.steps_dir.join(format!("{prefix}.diff"));
+    let meta_path = spec.steps_dir.join(format!("{prefix}.json"));
+
+    let mut child = Command::new(spec.binary)
+        .args(spec.args)
+        .current_dir(spec.workspace)
+        .stdin(if spec.stdin.is_some() {
             Stdio::piped()
         } else {
             Stdio::null()
@@ -44,23 +49,31 @@ pub fn run_process(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("failed to spawn `{}`", format_invocation(binary, args)))?;
+        .with_context(|| {
+            format!(
+                "failed to spawn `{}`",
+                format_invocation(spec.binary, spec.args)
+            )
+        })?;
 
     let stdout = child.stdout.take().context("failed to open child stdout")?;
     let stderr = child.stderr.take().context("failed to open child stderr")?;
     let stdout_handle = spawn_tee(stdout, stdout_path.clone(), StreamTarget::Stdout);
     let stderr_handle = spawn_tee(stderr, stderr_path.clone(), StreamTarget::Stderr);
 
-    if let Some(input) = stdin {
+    if let Some(input) = spec.stdin {
         let mut child_stdin = child.stdin.take().context("failed to open child stdin")?;
         child_stdin
             .write_all(input.as_bytes())
             .context("failed to write child stdin")?;
     }
 
-    let status = child
-        .wait()
-        .with_context(|| format!("failed to wait for `{}`", format_invocation(binary, args)))?;
+    let status = child.wait().with_context(|| {
+        format!(
+            "failed to wait for `{}`",
+            format_invocation(spec.binary, spec.args)
+        )
+    })?;
     let finished_at = Utc::now();
 
     stdout_handle
@@ -69,13 +82,13 @@ pub fn run_process(
     stderr_handle
         .join()
         .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))??;
-    capture_git_diff(workspace, &diff_path)?;
+    capture_git_diff(spec.workspace, &diff_path)?;
 
     let record = StepRecord {
-        index: step_number,
-        role,
-        kind,
-        label: label.to_owned(),
+        index: spec.step_number,
+        role: spec.role,
+        kind: spec.kind,
+        label: spec.label.to_owned(),
         status: if status.success() {
             StepStatus::Completed
         } else {
@@ -87,11 +100,10 @@ pub fn run_process(
         stdout: Some(stdout_path),
         stderr: Some(stderr_path),
         diff: Some(diff_path),
-        context: context_path,
+        context: spec.context_path,
     };
 
-    fs::write(&meta_path, serde_json::to_string_pretty(&record)?)
-        .with_context(|| format!("failed to write {meta_path}"))?;
+    write_json_pretty(&meta_path, &record)?;
 
     Ok(record)
 }
@@ -109,16 +121,14 @@ fn capture_git_diff(workspace: &Utf8Path, diff_path: &Utf8Path) -> Result<()> {
                 .with_context(|| format!("failed to write {diff_path}"))?;
         }
         Ok(output) => {
-            fs::write(diff_path, Vec::<u8>::new())
-                .with_context(|| format!("failed to write {diff_path}"))?;
+            write_empty_diff(diff_path)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.trim().is_empty() {
                 eprintln!("warning: git diff failed: {}", stderr.trim());
             }
         }
         Err(err) => {
-            fs::write(diff_path, Vec::<u8>::new())
-                .with_context(|| format!("failed to write {diff_path}"))?;
+            write_empty_diff(diff_path)?;
             eprintln!("warning: git diff failed: {err}");
         }
     }
@@ -126,9 +136,22 @@ fn capture_git_diff(workspace: &Utf8Path, diff_path: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
+fn write_empty_diff(diff_path: &Utf8Path) -> Result<()> {
+    fs::write(diff_path, Vec::<u8>::new()).with_context(|| format!("failed to write {diff_path}"))
+}
+
 enum StreamTarget {
     Stdout,
     Stderr,
+}
+
+impl StreamTarget {
+    fn write(&self, bytes: &[u8]) -> Result<()> {
+        match self {
+            StreamTarget::Stdout => write_child_stream(io::stdout().lock(), bytes, "stdout"),
+            StreamTarget::Stderr => write_child_stream(io::stderr().lock(), bytes, "stderr"),
+        }
+    }
 }
 
 fn spawn_tee<R>(mut reader: R, log_path: camino::Utf8PathBuf, target: StreamTarget) -> ReaderHandle
@@ -150,22 +173,7 @@ where
 
             log.write_all(&buffer[..read])
                 .with_context(|| format!("failed to write stream log {log_path}"))?;
-            match target {
-                StreamTarget::Stdout => {
-                    let mut stdout = io::stdout().lock();
-                    stdout
-                        .write_all(&buffer[..read])
-                        .context("failed to write child stdout")?;
-                    stdout.flush().context("failed to flush child stdout")?;
-                }
-                StreamTarget::Stderr => {
-                    let mut stderr = io::stderr().lock();
-                    stderr
-                        .write_all(&buffer[..read])
-                        .context("failed to write child stderr")?;
-                    stderr.flush().context("failed to flush child stderr")?;
-                }
-            }
+            target.write(&buffer[..read])?;
         }
 
         log.flush()
@@ -174,28 +182,16 @@ where
     })
 }
 
-fn slugify(value: &str) -> String {
-    let mut slug = value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-
-    while slug.contains("--") {
-        slug = slug.replace("--", "-");
-    }
-
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "step".to_owned()
-    } else {
-        slug.to_owned()
-    }
+fn write_child_stream<W>(mut writer: W, bytes: &[u8], label: &str) -> Result<()>
+where
+    W: Write,
+{
+    writer
+        .write_all(bytes)
+        .with_context(|| format!("failed to write child {label}"))?;
+    writer
+        .flush()
+        .with_context(|| format!("failed to flush child {label}"))
 }
 
 fn format_invocation(binary: &str, args: &[String]) -> String {

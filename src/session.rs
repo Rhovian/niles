@@ -8,7 +8,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::config::agents;
+use crate::{
+    config::agents,
+    util::{timestamp_id, write_json_pretty},
+};
 
 const SUPERVISOR_BRIEF_TEMPLATE: &str = include_str!("templates/supervisor_brief.md");
 
@@ -71,11 +74,7 @@ fn startup_prompt(_goal: Option<&str>) -> String {
 fn write_supervisor_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta> {
     let workspace = current_workspace()?;
     let now = Utc::now();
-    let id = format!(
-        "{}{:09}Z",
-        now.format("%Y%m%dT%H%M%S"),
-        now.timestamp_subsec_nanos()
-    );
+    let id = timestamp_id(&now);
     let dir = Utf8Path::new(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("supervisor.md");
@@ -97,8 +96,7 @@ fn write_supervisor_session(agent: &str, goal: Option<&str>) -> Result<SessionMe
         brief: path,
     };
     let meta_path = session_meta_path(&id);
-    fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)
-        .with_context(|| format!("failed to write {meta_path}"))?;
+    write_json_pretty(&meta_path, &meta)?;
     fs::write(latest_session_path(), &id).context("failed to write latest session pointer")?;
     Ok(meta)
 }
@@ -170,9 +168,7 @@ fn current_workspace() -> Result<Utf8PathBuf> {
 }
 
 fn startup_context() -> Result<String> {
-    let mut lines = Vec::new();
-    lines.push(latest_run_context()?);
-    lines.push(crew_context()?);
+    let lines = [latest_run_context()?, crew_context()?];
     Ok(lines.join("\n"))
 }
 

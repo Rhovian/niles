@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::{crew, session};
+use crate::{crew, session, util::write_json_pretty};
 
 const WAKE_DIR: &str = ".niles/wake";
 
@@ -168,8 +168,7 @@ fn write_state(state: &WakeState) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
     }
-    fs::write(&path, serde_json::to_string_pretty(state)?)
-        .with_context(|| format!("failed to write {path}"))
+    write_json_pretty(&path, state)
 }
 
 fn state_path() -> Utf8PathBuf {

@@ -3,11 +3,13 @@ use std::fs;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::state::{RunState, StepRecord};
+use crate::{
+    state::{RunState, StepRecord},
+    util::write_json_pretty,
+};
 
 pub fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
-    fs::write(path, serde_json::to_string_pretty(state)?)
-        .with_context(|| format!("failed to write {path}"))
+    write_json_pretty(path, state)
 }
 
 pub fn read_state(run_dir: &Utf8Path) -> Result<RunState> {
