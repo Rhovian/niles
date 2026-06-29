@@ -80,6 +80,19 @@ pub enum CommandName {
         #[arg(long)]
         json: bool,
     },
+    /// Watch a persisted run until it finishes.
+    #[command(alias = "w")]
+    Watch {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Refresh interval in seconds.
+        #[arg(long, default_value_t = 1.0)]
+        interval: f64,
+        /// Append snapshots instead of clearing the terminal.
+        #[arg(long)]
+        no_clear: bool,
+    },
     /// Show a compact summary of a persisted run.
     #[command(alias = "sh")]
     Show {

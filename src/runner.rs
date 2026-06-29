@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fs};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{self, Write},
+    thread,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -77,6 +83,40 @@ pub fn status(selector: RunSelector, json: bool) -> Result<()> {
         let state = read_state(&run_dir)?;
         print_status(&state);
     }
+    Ok(())
+}
+
+pub fn watch(selector: RunSelector, interval: f64, no_clear: bool) -> Result<()> {
+    if !interval.is_finite() || interval <= 0.0 {
+        bail!("watch interval must be a finite positive number");
+    }
+
+    let run_dir = selector.resolve()?;
+    let interval = Duration::from_secs_f64(interval);
+    let mut first = true;
+
+    loop {
+        let state = read_state(&run_dir)?;
+
+        if no_clear {
+            if !first {
+                println!();
+            }
+        } else {
+            print!("\x1B[2J\x1B[H");
+        }
+
+        print_status(&state);
+        io::stdout().flush().context("failed to flush stdout")?;
+        first = false;
+
+        if matches!(state.status, RunStatus::Completed | RunStatus::Failed) {
+            break;
+        }
+
+        thread::sleep(interval);
+    }
+
     Ok(())
 }
 
@@ -172,8 +212,20 @@ fn print_status(state: &RunState) {
     let focus_step = state
         .steps
         .iter()
-        .rev()
         .find(|step| matches!(step.status, StepStatus::Failed))
+        .or_else(|| {
+            state
+                .steps
+                .iter()
+                .find(|step| matches!(step.status, StepStatus::Running))
+        })
+        .or_else(|| {
+            state
+                .steps
+                .iter()
+                .rev()
+                .find(|step| matches!(step.status, StepStatus::Completed))
+        })
         .or_else(|| state.steps.last());
 
     if let Some(step) = focus_step {

@@ -37,6 +37,8 @@ Generated manifests label steps with roles. Roles are persisted in run state and
 
 Run state is initialized with every planned step as pending. Niles marks the active step running before launching its subprocess, then updates that same record to completed or failed. This gives future tmux views a reliable state source instead of inferring progress from panes or logs.
 
+`niles watch` is a thin live view over that same state file. It keeps the initial milestone usable in a single terminal while preserving the later tmux direction: panes can own process display, and the state file can still drive summaries, role grouping, and completion detection.
+
 ## Project Config
 
 Niles loads the first config file it finds from:

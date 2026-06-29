@@ -590,3 +590,92 @@ commands:
     );
     assert!(saw_running, "status never showed running/pending steps");
 }
+
+#[test]
+fn watch_streams_run_state_until_completion() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-watch-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Watch running state"
+steps:
+  - command: slow
+    role: validation
+  - command: fast
+    role: validation
+commands:
+  slow: sleep 3
+  fast: printf 'done\n'
+"#,
+    )
+    .unwrap();
+
+    let child = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut run_started = false;
+    for _ in 0..30 {
+        let status = Command::new(niles)
+            .arg("status")
+            .current_dir(&workspace)
+            .output();
+
+        if let Ok(status) = status {
+            if status.status.success() {
+                let stdout = String::from_utf8_lossy(&status.stdout);
+                if stdout.contains("1,validation,command,slow,running,-")
+                    && stdout.contains("2,validation,command,fast,pending,-")
+                {
+                    run_started = true;
+                    break;
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(run_started, "run never reached running state");
+
+    let watch = Command::new(niles)
+        .args(["watch", "--interval", "0.05", "--no-clear"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        watch.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&watch.stdout),
+        String::from_utf8_lossy(&watch.stderr)
+    );
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&watch.stdout);
+    assert!(stdout.contains("status: running"));
+    assert!(stdout.contains("1,validation,command,slow,running,-"));
+    assert!(stdout.contains("2,validation,command,fast,pending,-"));
+    assert!(stdout.contains("status: completed"));
+    assert!(stdout.contains("2,validation,command,fast,completed,0"));
+}

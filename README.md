@@ -23,6 +23,7 @@ niles manifest "Fix flaky auth test" --project ../my-app --planner claude --impl
 niles run task.yaml
 niles status
 niles status --json
+niles watch
 niles show
 niles log --step 1
 niles diff
@@ -36,6 +37,7 @@ niles a "summarize this repo"
 niles m "fix the flaky test" --project ../my-app
 niles r task.yaml
 niles s
+niles w
 niles l
 niles d
 ```
@@ -60,7 +62,7 @@ Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it p
 
 Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
 
-Run state includes pending, running, completed, and failed steps, so `niles status` can be used from another terminal while a long agent or validation step is still active.
+Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 
 ## Project Config
 
@@ -122,6 +124,7 @@ Inspect a run with:
 niles show
 niles status
 niles status --json
+niles watch
 niles log
 niles log --step 2 --stderr
 niles log --both

@@ -33,6 +33,11 @@ fn main() -> Result<()> {
         } => manifest::generate(goal, project, planner, implementer, reviewer, command, run),
         CommandName::Resume { run } => runner::resume(RunSelector::new(run)),
         CommandName::Status { run, json } => runner::status(RunSelector::new(run), json),
+        CommandName::Watch {
+            run,
+            interval,
+            no_clear,
+        } => runner::watch(RunSelector::new(run), interval, no_clear),
         CommandName::Show { run } => runner::show(RunSelector::new(run)),
         CommandName::Log {
             run,
