@@ -20,6 +20,13 @@ fn main() -> Result<()> {
         CommandName::Run { task } => run(task),
         CommandName::Resume { run } => resume(run),
         CommandName::Status { run } => status(run),
+        CommandName::Show { run } => show(run),
+        CommandName::Log {
+            run,
+            step,
+            stderr,
+            both,
+        } => log(run, step, stderr, both),
     }
 }
 
@@ -74,6 +81,29 @@ enum CommandName {
         #[arg(default_value = "latest")]
         run: String,
     },
+    /// Show a compact summary of a persisted run.
+    #[command(alias = "sh")]
+    Show {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+    },
+    /// Print stdout or stderr for a run step.
+    #[command(alias = "l")]
+    Log {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Step number to inspect. Defaults to the last recorded step.
+        #[arg(short, long)]
+        step: Option<usize>,
+        /// Print stderr instead of stdout.
+        #[arg(long)]
+        stderr: bool,
+        /// Print stdout and stderr.
+        #[arg(long)]
+        both: bool,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,7 +155,7 @@ impl Default for PromptMode {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct RunState {
     id: String,
     goal: String,
@@ -137,7 +167,7 @@ struct RunState {
     steps: Vec<StepRecord>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RunStatus {
     Created,
@@ -146,7 +176,7 @@ enum RunStatus {
     Failed,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct StepRecord {
     index: usize,
     kind: StepKind,
@@ -159,14 +189,14 @@ struct StepRecord {
     stderr: Utf8PathBuf,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum StepKind {
     Agent,
     Command,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum StepStatus {
     Completed,
@@ -468,10 +498,73 @@ fn resume(run: String) -> Result<()> {
 
 fn status(run: String) -> Result<()> {
     let run_dir = resolve_run_dir(&run)?;
-    let state_path = run_dir.join("state.json");
-    let state =
-        fs::read_to_string(&state_path).with_context(|| format!("failed to read {state_path}"))?;
+    let path = state_path(&run_dir);
+    let state = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
     println!("{state}");
+    Ok(())
+}
+
+fn show(run: String) -> Result<()> {
+    let run_dir = resolve_run_dir(&run)?;
+    let state = read_state(&run_dir)?;
+
+    println!("run: {}", state.id);
+    println!("status: {}", run_status_label(&state.status));
+    println!("goal: {}", state.goal);
+    println!("created: {}", state.created_at);
+    println!("updated: {}", state.updated_at);
+
+    if state.steps.is_empty() {
+        println!("steps: none");
+        return Ok(());
+    }
+
+    println!("steps:");
+    for step in &state.steps {
+        println!(
+            "  {}. {} {} {}{}",
+            step.index,
+            step_kind_label(&step.kind),
+            step.label,
+            step_status_label(&step.status),
+            step.exit_code
+                .map(|code| format!(" ({code})"))
+                .unwrap_or_default()
+        );
+    }
+
+    Ok(())
+}
+
+fn log(run: String, step: Option<usize>, stderr: bool, both: bool) -> Result<()> {
+    let run_dir = resolve_run_dir(&run)?;
+    let state = read_state(&run_dir)?;
+    let record = match step {
+        Some(step) => state
+            .steps
+            .iter()
+            .find(|record| record.index == step)
+            .with_context(|| format!("step {step} not found"))?,
+        None => state.steps.last().context("run has no recorded steps")?,
+    };
+
+    if both {
+        print_log_file("stdout", &record.stdout)?;
+        print_log_file("stderr", &record.stderr)?;
+    } else if stderr {
+        print!(
+            "{}",
+            fs::read_to_string(&record.stderr)
+                .with_context(|| { format!("failed to read stderr log {}", record.stderr) })?
+        );
+    } else {
+        print!(
+            "{}",
+            fs::read_to_string(&record.stdout)
+                .with_context(|| { format!("failed to read stdout log {}", record.stdout) })?
+        );
+    }
+
     Ok(())
 }
 
@@ -520,6 +613,48 @@ fn command_config_run(config: &CommandConfig) -> &str {
 fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(state)?)
         .with_context(|| format!("failed to write {path}"))
+}
+
+fn read_state(run_dir: &Utf8Path) -> Result<RunState> {
+    let path = state_path(run_dir);
+    let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+    serde_json::from_str(&body).with_context(|| format!("failed to parse {path}"))
+}
+
+fn state_path(run_dir: &Utf8Path) -> Utf8PathBuf {
+    run_dir.join("state.json")
+}
+
+fn print_log_file(label: &str, path: &Utf8Path) -> Result<()> {
+    println!("==> {label}: {path} <==");
+    print!(
+        "{}",
+        fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?
+    );
+    Ok(())
+}
+
+fn run_status_label(status: &RunStatus) -> &'static str {
+    match status {
+        RunStatus::Created => "created",
+        RunStatus::Running => "running",
+        RunStatus::Completed => "completed",
+        RunStatus::Failed => "failed",
+    }
+}
+
+fn step_kind_label(kind: &StepKind) -> &'static str {
+    match kind {
+        StepKind::Agent => "agent",
+        StepKind::Command => "command",
+    }
+}
+
+fn step_status_label(status: &StepStatus) -> &'static str {
+    match status {
+        StepStatus::Completed => "completed",
+        StepStatus::Failed => "failed",
+    }
 }
 
 fn slugify(value: &str) -> String {

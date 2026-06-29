@@ -21,6 +21,8 @@ niles doctor
 niles analyze --agent codex
 niles run task.yaml
 niles status
+niles show
+niles log --step 1
 niles resume
 ```
 
@@ -30,6 +32,7 @@ Short aliases are part of the interface:
 niles a "summarize this repo"
 niles r task.yaml
 niles s
+niles l
 ```
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
@@ -65,6 +68,15 @@ When `args` are omitted, Niles uses built-in defaults for the common agents:
 - `claude`: `claude -p <prompt>`
 
 Each step writes stdout, stderr, and metadata into `.niles/runs/<id>/steps/`.
+
+Inspect a run with:
+
+```sh
+niles show
+niles log
+niles log --step 2 --stderr
+niles log --both
+```
 
 ## Status
 
