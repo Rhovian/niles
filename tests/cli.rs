@@ -94,3 +94,98 @@ commands:
     assert!(alias.status.success());
     assert!(String::from_utf8_lossy(&alias.stdout).contains("niles-test-"));
 }
+
+#[test]
+fn run_captures_git_diff_after_each_step() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-diff-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    assert!(
+        Command::new("git")
+            .arg("init")
+            .current_dir(&workspace)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::write(workspace.join("tracked.txt"), "before\n").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&workspace)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=Niles Test",
+                "-c",
+                "user.email=niles@example.invalid",
+                "commit",
+                "-m",
+                "initial",
+            ])
+            .current_dir(&workspace)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Capture diff"
+steps:
+  - command: edit
+commands:
+  edit: printf 'after\n' > tracked.txt
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(String::from_utf8_lossy(&status.stdout).contains("001-edit.diff"));
+
+    let diff = Command::new(niles)
+        .arg("diff")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(diff.status.success());
+
+    let diff_stdout = String::from_utf8_lossy(&diff.stdout);
+    assert!(diff_stdout.contains("-before"));
+    assert!(diff_stdout.contains("+after"));
+}

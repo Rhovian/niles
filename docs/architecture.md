@@ -55,6 +55,8 @@ Agent steps resolve to subprocess invocations. Built-in defaults are intentional
 
 Workflow files can override the binary and args for any agent. Command steps execute named commands from the task spec, which keeps shell execution explicit and auditable.
 
+After each step, Niles captures `git diff --no-ext-diff --` from the workspace and stores it beside the step logs. This gives the future router and the user a stable artifact for review handoffs.
+
 ## Analyzer
 
 Agent CLIs change quickly. Niles should not assume a fixed flag set forever.

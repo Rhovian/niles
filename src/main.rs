@@ -27,6 +27,7 @@ fn main() -> Result<()> {
             stderr,
             both,
         } => log(run, step, stderr, both),
+        CommandName::Diff { run, step } => diff(run, step),
     }
 }
 
@@ -103,6 +104,16 @@ enum CommandName {
         /// Print stdout and stderr.
         #[arg(long)]
         both: bool,
+    },
+    /// Print the git diff captured after a run step.
+    #[command(alias = "d")]
+    Diff {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Step number to inspect. Defaults to the last recorded step.
+        #[arg(short, long)]
+        step: Option<usize>,
     },
 }
 
@@ -187,6 +198,8 @@ struct StepRecord {
     exit_code: Option<i32>,
     stdout: Utf8PathBuf,
     stderr: Utf8PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diff: Option<Utf8PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -435,6 +448,7 @@ fn run_process(
     let prefix = format!("{step_number:03}-{slug}");
     let stdout_path = steps_dir.join(format!("{prefix}.stdout.txt"));
     let stderr_path = steps_dir.join(format!("{prefix}.stderr.txt"));
+    let diff_path = steps_dir.join(format!("{prefix}.diff"));
     let meta_path = steps_dir.join(format!("{prefix}.json"));
 
     let mut child = Command::new(binary)
@@ -466,6 +480,7 @@ fn run_process(
         .with_context(|| format!("failed to write {stdout_path}"))?;
     fs::write(&stderr_path, &output.stderr)
         .with_context(|| format!("failed to write {stderr_path}"))?;
+    capture_git_diff(workspace, &diff_path)?;
 
     let record = StepRecord {
         index: step_number,
@@ -481,6 +496,7 @@ fn run_process(
         exit_code: output.status.code(),
         stdout: stdout_path,
         stderr: stderr_path,
+        diff: Some(diff_path),
     };
 
     fs::write(&meta_path, serde_json::to_string_pretty(&record)?)
@@ -539,14 +555,7 @@ fn show(run: String) -> Result<()> {
 fn log(run: String, step: Option<usize>, stderr: bool, both: bool) -> Result<()> {
     let run_dir = resolve_run_dir(&run)?;
     let state = read_state(&run_dir)?;
-    let record = match step {
-        Some(step) => state
-            .steps
-            .iter()
-            .find(|record| record.index == step)
-            .with_context(|| format!("step {step} not found"))?,
-        None => state.steps.last().context("run has no recorded steps")?,
-    };
+    let record = selected_step(&state, step)?;
 
     if both {
         print_log_file("stdout", &record.stdout)?;
@@ -565,6 +574,21 @@ fn log(run: String, step: Option<usize>, stderr: bool, both: bool) -> Result<()>
         );
     }
 
+    Ok(())
+}
+
+fn diff(run: String, step: Option<usize>) -> Result<()> {
+    let run_dir = resolve_run_dir(&run)?;
+    let state = read_state(&run_dir)?;
+    let record = selected_step(&state, step)?;
+    let diff = record
+        .diff
+        .as_ref()
+        .with_context(|| format!("step {} has no captured diff", record.index))?;
+    print!(
+        "{}",
+        fs::read_to_string(diff).with_context(|| format!("failed to read diff {diff}"))?
+    );
     Ok(())
 }
 
@@ -613,6 +637,47 @@ fn command_config_run(config: &CommandConfig) -> &str {
 fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(state)?)
         .with_context(|| format!("failed to write {path}"))
+}
+
+fn capture_git_diff(workspace: &Utf8Path, diff_path: &Utf8Path) -> Result<()> {
+    let output = Command::new("git")
+        .args(["diff", "--no-ext-diff", "--"])
+        .current_dir(workspace)
+        .stdin(Stdio::null())
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            fs::write(diff_path, output.stdout)
+                .with_context(|| format!("failed to write {diff_path}"))?;
+        }
+        Ok(output) => {
+            fs::write(diff_path, Vec::<u8>::new())
+                .with_context(|| format!("failed to write {diff_path}"))?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.trim().is_empty() {
+                eprintln!("warning: git diff failed: {}", stderr.trim());
+            }
+        }
+        Err(err) => {
+            fs::write(diff_path, Vec::<u8>::new())
+                .with_context(|| format!("failed to write {diff_path}"))?;
+            eprintln!("warning: git diff failed: {err}");
+        }
+    }
+
+    Ok(())
+}
+
+fn selected_step(state: &RunState, step: Option<usize>) -> Result<&StepRecord> {
+    match step {
+        Some(step) => state
+            .steps
+            .iter()
+            .find(|record| record.index == step)
+            .with_context(|| format!("step {step} not found")),
+        None => state.steps.last().context("run has no recorded steps"),
+    }
 }
 
 fn read_state(run_dir: &Utf8Path) -> Result<RunState> {
