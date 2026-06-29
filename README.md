@@ -104,6 +104,8 @@ niles diff
 niles diff --step 1
 ```
 
+When a step fails, Niles prints the failed step, exit code, stderr log path, diff path, and a short stderr tail before exiting nonzero.
+
 ## Status
 
 Niles is just starting. The first target is a sequential workflow runner with local analyzer support, persisted run logs, and public capability manifests.

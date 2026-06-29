@@ -263,3 +263,53 @@ steps:
     assert!(second_log.status.success());
     assert_eq!(String::from_utf8_lossy(&second_log.stdout), "from config\n");
 }
+
+#[test]
+fn run_prints_actionable_failure_summary() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-failure-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Fail usefully"
+steps:
+  - command: fail
+commands:
+  fail:
+    run: "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo tail-line-$i >&2; done; exit 7"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("status: failed"));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failure:"));
+    assert!(stderr.contains("step: 1 command fail"));
+    assert!(stderr.contains("exit: 7"));
+    assert!(stderr.contains("stderr: .niles/runs/"));
+    assert!(stderr.contains("diff: .niles/runs/"));
+    assert!(stderr.contains("stderr tail:"));
+    assert!(stderr.contains("tail-line-2"));
+    assert!(stderr.contains("tail-line-13"));
+    assert!(!stderr.lines().any(|line| line.trim() == "tail-line-1"));
+}

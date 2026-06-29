@@ -220,6 +220,9 @@ fn execute_run(
 
         if failed {
             println!("status: failed");
+            if let Some(step) = state.steps.last() {
+                print_failure_summary(step);
+            }
             bail!("step {step_number} failed");
         }
     }
@@ -325,4 +328,47 @@ fn print_log_file(label: &str, path: &Utf8Path) -> Result<()> {
         fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?
     );
     Ok(())
+}
+
+fn print_failure_summary(step: &StepRecord) {
+    eprintln!("failure:");
+    eprintln!(
+        "  step: {} {} {}",
+        step.index,
+        step_kind_label(&step.kind),
+        step.label
+    );
+    eprintln!(
+        "  exit: {}",
+        step.exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "signal".to_owned())
+    );
+    eprintln!("  stderr: {}", step.stderr);
+    if let Some(diff) = &step.diff {
+        eprintln!("  diff: {diff}");
+    }
+    eprintln!("stderr tail:");
+
+    match stderr_tail(&step.stderr, 12) {
+        Ok(lines) if lines.is_empty() => eprintln!("  <empty>"),
+        Ok(lines) => {
+            for line in lines {
+                eprintln!("  {line}");
+            }
+        }
+        Err(err) => eprintln!("  <failed to read stderr: {err}>"),
+    }
+}
+
+fn stderr_tail(path: &Utf8Path, max_lines: usize) -> Result<Vec<String>> {
+    let body = fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
+    let lines = body
+        .lines()
+        .rev()
+        .take(max_lines)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    Ok(lines.into_iter().rev().collect())
 }
