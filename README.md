@@ -52,10 +52,11 @@ niles manifest "Fix flaky auth test" \
   --planner claude \
   --implementer codex \
   --reviewer claude \
-  --command test
+  --command test \
+  --run
 ```
 
-Niles writes the manifest to `.niles/manifests/<id>.yaml` and prints the follow-up `niles run ...` command. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
+Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it prints the follow-up `niles run ...` command. With `--run`, it immediately executes the generated manifest. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
 
 Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
 

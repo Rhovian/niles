@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
+use crate::runner;
 use crate::spec::{
     AgentConfig, CommandConfig, PromptMode, TaskSpec, TaskStep, load_project_config_from,
 };
@@ -15,6 +16,7 @@ pub fn generate(
     implementer: String,
     reviewer: String,
     command: String,
+    run: bool,
 ) -> Result<()> {
     let goal = goal.join(" ");
     if goal.trim().is_empty() {
@@ -91,9 +93,12 @@ pub fn generate(
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
 
     println!("manifest: {path}");
-    println!("next: Run `niles run {path}`");
-
-    Ok(())
+    if run {
+        runner::run_manifest(path)
+    } else {
+        println!("next: Run `niles run {path}`");
+        Ok(())
+    }
 }
 
 fn default_agent_config(agent: &str) -> AgentConfig {

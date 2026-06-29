@@ -446,3 +446,76 @@ commands:
     assert!(status_stdout.contains("3,validation,command,test,completed,0"));
     assert!(status_stdout.contains("4,reviewer,agent,echo,completed,0"));
 }
+
+#[test]
+fn manifest_run_generates_and_executes_role_workflow() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-manifest-run-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    fs::write(
+        workspace.join("niles.yaml"),
+        r#"
+agents:
+  echo:
+    binary: /bin/echo
+commands:
+  test:
+    run: printf 'manifest run command\n'
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .args([
+            "manifest",
+            "--project",
+            ".",
+            "--planner",
+            "echo",
+            "--implementer",
+            "echo",
+            "--reviewer",
+            "echo",
+            "--command",
+            "test",
+            "--run",
+            "Ship",
+            "and",
+            "run",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("manifest: .niles/manifests/"));
+    assert!(stdout.contains("run: "));
+    assert!(stdout.contains("step 1: planner agent echo"));
+    assert!(stdout.contains("step 3: validation command test"));
+    assert!(stdout.contains("manifest run command"));
+    assert!(stdout.contains("status: completed"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("goal: Ship and run"));
+    assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+}

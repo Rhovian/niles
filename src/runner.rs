@@ -48,7 +48,16 @@ pub fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
 
 pub fn run(task: Utf8PathBuf) -> Result<()> {
     let spec = load_task(&task)?;
-    create_run(with_project_config(spec)?, Some(task))
+    run_loaded_spec(spec, Some(task))
+}
+
+pub fn run_manifest(task: Utf8PathBuf) -> Result<()> {
+    let spec = load_task(&task)?;
+    run_loaded_spec(spec, Some(task))
+}
+
+fn run_loaded_spec(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
+    create_run(with_project_config(spec)?, task_file)
 }
 
 pub fn resume(selector: RunSelector) -> Result<()> {

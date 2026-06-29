@@ -56,6 +56,9 @@ pub enum CommandName {
         /// Named validation command to include.
         #[arg(long, default_value = "test")]
         command: String,
+        /// Run the generated manifest immediately.
+        #[arg(long)]
+        run: bool,
         /// Task goal.
         #[arg(required = true, num_args = 1..)]
         goal: Vec<String>,
