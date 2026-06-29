@@ -50,21 +50,21 @@ pub fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
         commands: BTreeMap::new(),
     };
 
-    create_run(with_project_config(spec)?, None)
+    create_run(with_project_config(spec)?, None, false)
 }
 
-pub fn run(task: Utf8PathBuf) -> Result<()> {
+pub fn run(task: Utf8PathBuf, watch: bool) -> Result<()> {
     let spec = load_task(&task)?;
-    run_loaded_spec(spec, Some(task))
+    run_loaded_spec(spec, Some(task), watch)
 }
 
-pub fn run_manifest(task: Utf8PathBuf) -> Result<()> {
+pub fn run_manifest(task: Utf8PathBuf, watch: bool) -> Result<()> {
     let spec = load_task(&task)?;
-    run_loaded_spec(spec, Some(task))
+    run_loaded_spec(spec, Some(task), watch)
 }
 
-fn run_loaded_spec(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
-    create_run(with_project_config(spec)?, task_file)
+fn run_loaded_spec(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
+    create_run(with_project_config(spec)?, task_file, watch)
 }
 
 pub fn resume(selector: RunSelector) -> Result<()> {
@@ -175,44 +175,7 @@ fn print_status(state: &RunState) {
         return;
     }
 
-    let has_roles = state.steps.iter().any(|step| step.role.is_some());
-    if has_roles {
-        println!(
-            "steps[{}]{{index,role,kind,label,status,exit}}:",
-            state.steps.len()
-        );
-    } else {
-        println!(
-            "steps[{}]{{index,kind,label,status,exit}}:",
-            state.steps.len()
-        );
-    }
-    for step in &state.steps {
-        let exit = step
-            .exit_code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "-".to_owned());
-        if has_roles {
-            println!(
-                "  {},{},{},{},{},{}",
-                step.index,
-                step.role.as_deref().unwrap_or("-"),
-                step_kind_label(&step.kind),
-                step.label,
-                step_status_label(&step.status),
-                exit
-            );
-        } else {
-            println!(
-                "  {},{},{},{},{}",
-                step.index,
-                step_kind_label(&step.kind),
-                step.label,
-                step_status_label(&step.status),
-                exit
-            );
-        }
-    }
+    print_steps_table(state);
 
     let focus_step = state
         .steps
@@ -249,6 +212,60 @@ fn print_status(state: &RunState) {
             println!("  Run `niles diff {} --step {}`", state.id, step.index);
             println!("  Run `niles show {}`", state.id);
             println!("  Run `niles status {} --json`", state.id);
+        }
+    }
+}
+
+fn print_watch_snapshot(state: &RunState) {
+    println!("watch:");
+    println!("run: {}", state.id);
+    println!("status: {}", run_status_label(&state.status));
+    println!("updated: {}", state.updated_at);
+
+    if state.steps.is_empty() {
+        println!("steps[0]:");
+    } else {
+        print_steps_table(state);
+    }
+}
+
+fn print_steps_table(state: &RunState) {
+    let has_roles = state.steps.iter().any(|step| step.role.is_some());
+    if has_roles {
+        println!(
+            "steps[{}]{{index,role,kind,label,status,exit}}:",
+            state.steps.len()
+        );
+    } else {
+        println!(
+            "steps[{}]{{index,kind,label,status,exit}}:",
+            state.steps.len()
+        );
+    }
+    for step in &state.steps {
+        let exit = step
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        if has_roles {
+            println!(
+                "  {},{},{},{},{},{}",
+                step.index,
+                step.role.as_deref().unwrap_or("-"),
+                step_kind_label(&step.kind),
+                step.label,
+                step_status_label(&step.status),
+                exit
+            );
+        } else {
+            println!(
+                "  {},{},{},{},{}",
+                step.index,
+                step_kind_label(&step.kind),
+                step.label,
+                step_status_label(&step.status),
+                exit
+            );
         }
     }
 }
@@ -314,7 +331,7 @@ fn with_project_config(spec: TaskSpec) -> Result<TaskSpec> {
     Ok(apply_project_config(spec, config))
 }
 
-fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
+fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
     if spec.steps.is_empty() {
         bail!("task spec must contain at least one step");
     }
@@ -348,7 +365,9 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
 
     println!("run: {id}");
     println!("state: {state_path}");
-    execute_run(&spec, &run_dir, state, &state_path)?;
+    println!("watch: niles watch {id}");
+    println!("show: niles show {id}");
+    execute_run(&spec, &run_dir, state, &state_path, watch)?;
 
     Ok(())
 }
@@ -358,6 +377,7 @@ fn execute_run(
     run_dir: &Utf8Path,
     mut state: RunState,
     state_path: &Utf8Path,
+    watch: bool,
 ) -> Result<()> {
     let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
     let steps_dir = run_dir.join("steps");
@@ -385,6 +405,9 @@ fn execute_run(
         mark_step_running(&mut state, step_number, context.clone());
         state.updated_at = Utc::now();
         write_state(state_path, &state)?;
+        if watch {
+            print_watch_snapshot(&state);
+        }
 
         let result = match step {
             TaskStep::Agent { agent, task, role } => {
@@ -423,6 +446,9 @@ fn execute_run(
         };
         state.updated_at = Utc::now();
         write_state(state_path, &state)?;
+        if watch {
+            print_watch_snapshot(&state);
+        }
 
         if failed {
             println!("status: failed");
@@ -436,6 +462,9 @@ fn execute_run(
     state.status = RunStatus::Completed;
     state.updated_at = Utc::now();
     write_state(state_path, &state)?;
+    if watch {
+        print_watch_snapshot(&state);
+    }
     println!("status: completed");
 
     Ok(())

@@ -22,7 +22,7 @@ niles ask "fix the failing test"
 Explicit workflow files remain the durable automation path:
 
 ```sh
-niles run task.yaml
+niles run --watch task.yaml
 ```
 
 Niles can also generate an explicit workflow manifest from role flags:
@@ -31,7 +31,7 @@ Niles can also generate an explicit workflow manifest from role flags:
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
 ```
 
-Adding `--run` executes the generated manifest immediately through the same runner path as `niles run`.
+Adding `--run` executes the generated manifest immediately through the same runner path as `niles run`. Adding `--watch` to either execution path prints compact state snapshots inline at step transitions, avoiding the need for a second terminal during a product trial.
 
 Generated manifests label steps with roles. Roles are persisted in run state and shown by inspection commands so future tmux or TUI views can group work by planner, implementer, reviewer, and validation surfaces without changing execution semantics.
 

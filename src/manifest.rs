@@ -17,10 +17,14 @@ pub fn generate(
     reviewer: String,
     command: String,
     run: bool,
+    watch: bool,
 ) -> Result<()> {
     let goal = goal.join(" ");
     if goal.trim().is_empty() {
         bail!("manifest goal cannot be empty");
+    }
+    if watch && !run {
+        bail!("--watch requires --run");
     }
     if !project.is_dir() {
         bail!("project path is not a directory: {project}");
@@ -94,7 +98,7 @@ pub fn generate(
 
     println!("manifest: {path}");
     if run {
-        runner::run_manifest(path)
+        runner::run_manifest(path, watch)
     } else {
         println!("next: Run `niles run {path}`");
         Ok(())

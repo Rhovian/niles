@@ -22,7 +22,7 @@ fn main() -> Result<()> {
     match cli.command {
         CommandName::Ask { agent, prompt } => runner::ask(agent, prompt),
         CommandName::Analyze { agent } => analyze::analyze(agent),
-        CommandName::Run { task } => runner::run(task),
+        CommandName::Run { task, watch } => runner::run(task, watch),
         CommandName::Manifest {
             goal,
             project,
@@ -31,7 +31,17 @@ fn main() -> Result<()> {
             reviewer,
             command,
             run,
-        } => manifest::generate(goal, project, planner, implementer, reviewer, command, run),
+            watch,
+        } => manifest::generate(
+            goal,
+            project,
+            planner,
+            implementer,
+            reviewer,
+            command,
+            run,
+            watch,
+        ),
         CommandName::Resume { run } => runner::resume(RunSelector::new(run)),
         CommandName::Status { run, json } => runner::status(RunSelector::new(run), json),
         CommandName::Watch {

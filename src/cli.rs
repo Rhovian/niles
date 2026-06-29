@@ -37,6 +37,9 @@ pub enum CommandName {
     Run {
         /// YAML task specification.
         task: Utf8PathBuf,
+        /// Print compact state snapshots as steps run.
+        #[arg(long)]
+        watch: bool,
     },
     /// Generate a role-based task manifest.
     #[command(alias = "m")]
@@ -59,6 +62,9 @@ pub enum CommandName {
         /// Run the generated manifest immediately.
         #[arg(long)]
         run: bool,
+        /// Print compact state snapshots during --run.
+        #[arg(long)]
+        watch: bool,
         /// Task goal.
         #[arg(required = true, num_args = 1..)]
         goal: Vec<String>,

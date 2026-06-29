@@ -20,7 +20,7 @@ niles analyze
 niles doctor
 niles analyze --agent codex
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
-niles run task.yaml
+niles run --watch task.yaml
 niles status
 niles status --json
 niles watch
@@ -55,14 +55,15 @@ niles manifest "Fix flaky auth test" \
   --implementer codex \
   --reviewer claude \
   --command test \
-  --run
+  --run \
+  --watch
 ```
 
-Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it prints the follow-up `niles run ...` command. With `--run`, it immediately executes the generated manifest. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
+Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it prints the follow-up `niles run ...` command. With `--run`, it immediately executes the generated manifest. Add `--watch` to `niles run` or `niles manifest --run` to print compact state snapshots inline as each step starts and finishes. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
 
 Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
 
-Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
+Run state includes pending, running, completed, and failed steps. Use `--watch` for inline progress or `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 
 Before each agent step, Niles writes a markdown handoff context file beside the step logs and appends that file path to the agent prompt. The context includes the goal, current role/task, prior agent output, validation output, and the latest captured diff. `niles show` displays context paths, and `niles status --json` exposes them as structured state.
 

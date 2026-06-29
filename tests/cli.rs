@@ -603,6 +603,7 @@ commands:
             "--command",
             "test",
             "--run",
+            "--watch",
             "Ship",
             "and",
             "run",
@@ -620,6 +621,10 @@ commands:
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("manifest: .niles/manifests/"));
     assert!(stdout.contains("run: "));
+    assert!(stdout.contains("watch: niles watch "));
+    assert!(stdout.contains("show: niles show "));
+    assert!(stdout.contains("watch:\nrun: "));
+    assert!(stdout.contains("1,planner,agent,echo,running,-"));
     assert!(stdout.contains("step 1: planner agent echo"));
     assert!(stdout.contains("step 3: validation command test"));
     assert!(stdout.contains("manifest run command"));
@@ -635,6 +640,28 @@ commands:
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("goal: Ship and run"));
     assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+}
+
+#[test]
+fn manifest_watch_requires_run() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-manifest-watch-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let output = Command::new(niles)
+        .args(["manifest", "--watch", "Ship", "with", "watch"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--watch requires --run"));
 }
 
 #[test]
