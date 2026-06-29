@@ -38,12 +38,15 @@ The default path should feel like an axi: terse commands, obvious defaults, comp
 
 ```yaml
 goal: "Fix flaky auth test"
+workspace: .
 
 agents:
   codex:
     binary: codex
+    args: ["exec"]
   claude:
     binary: claude
+    args: ["-p"]
 
 steps:
   - agent: claude
@@ -55,6 +58,13 @@ steps:
 commands:
   test: cargo test auth
 ```
+
+When `args` are omitted, Niles uses built-in defaults for the common agents:
+
+- `codex`: `codex exec <prompt>`
+- `claude`: `claude -p <prompt>`
+
+Each step writes stdout, stderr, and metadata into `.niles/runs/<id>/steps/`.
 
 ## Status
 

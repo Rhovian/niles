@@ -44,6 +44,17 @@ Agents own judgment-heavy work:
 - handoff wording
 - deciding whether a task is complete
 
+## Step Execution
+
+The fixed-step runner is the first useful execution mode.
+
+Agent steps resolve to subprocess invocations. Built-in defaults are intentionally small:
+
+- `codex` -> `codex exec <prompt>`
+- `claude` -> `claude -p <prompt>`
+
+Workflow files can override the binary and args for any agent. Command steps execute named commands from the task spec, which keeps shell execution explicit and auditable.
+
 ## Analyzer
 
 Agent CLIs change quickly. Niles should not assume a fixed flag set forever.

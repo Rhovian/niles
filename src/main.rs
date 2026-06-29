@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     process::{Command, Stdio},
 };
 
@@ -79,23 +80,49 @@ enum CommandName {
 struct TaskSpec {
     goal: String,
     #[serde(default)]
+    workspace: Option<Utf8PathBuf>,
+    #[serde(default)]
     agents: BTreeMap<String, AgentConfig>,
     #[serde(default)]
-    steps: Vec<Step>,
+    steps: Vec<TaskStep>,
     #[serde(default)]
-    commands: BTreeMap<String, String>,
+    commands: BTreeMap<String, CommandConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AgentConfig {
     binary: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    prompt: PromptMode,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum Step {
+enum TaskStep {
     Agent { agent: String, task: String },
     Command { command: String },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum CommandConfig {
+    Short(String),
+    Full { run: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PromptMode {
+    Arg,
+    Stdin,
+}
+
+impl Default for PromptMode {
+    fn default() -> Self {
+        Self::Arg
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -105,13 +132,45 @@ struct RunState {
     #[serde(skip_serializing_if = "Option::is_none")]
     task_file: Option<Utf8PathBuf>,
     created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     status: RunStatus,
+    steps: Vec<StepRecord>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RunStatus {
     Created,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Serialize)]
+struct StepRecord {
+    index: usize,
+    kind: StepKind,
+    label: String,
+    status: StepStatus,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    exit_code: Option<i32>,
+    stdout: Utf8PathBuf,
+    stderr: Utf8PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StepKind {
+    Agent,
+    Command,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StepStatus {
+    Completed,
+    Failed,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,8 +201,16 @@ fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
     let prompt = prompt.join(" ");
     let spec = TaskSpec {
         goal: prompt.clone(),
-        agents: BTreeMap::from([(agent.clone(), AgentConfig { binary: None })]),
-        steps: vec![Step::Agent {
+        agents: BTreeMap::from([(
+            agent.clone(),
+            AgentConfig {
+                binary: None,
+                args: Vec::new(),
+                prompt: PromptMode::Arg,
+            },
+        )]),
+        workspace: None,
+        steps: vec![TaskStep::Agent {
             agent,
             task: prompt,
         }],
@@ -196,15 +263,16 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
 
     let state = RunState {
         id: id.clone(),
-        goal: spec.goal,
+        goal: spec.goal.clone(),
         task_file,
         created_at: now,
+        updated_at: now,
         status: RunStatus::Created,
+        steps: Vec::new(),
     };
 
     let state_path = run_dir.join("state.json");
-    fs::write(&state_path, serde_json::to_string_pretty(&state)?)
-        .with_context(|| format!("failed to write {state_path}"))?;
+    write_state(&state_path, &state)?;
 
     let plan_path = run_dir.join("plan.json");
     fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)
@@ -212,10 +280,183 @@ fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
 
     println!("run: {id}");
     println!("state: {state_path}");
-    println!("status: created");
-    println!("next: workflow execution is not implemented yet");
+    execute_run(&spec, &run_dir, state, &state_path)?;
 
     Ok(())
+}
+
+fn execute_run(
+    spec: &TaskSpec,
+    run_dir: &Utf8Path,
+    mut state: RunState,
+    state_path: &Utf8Path,
+) -> Result<()> {
+    let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+
+    state.status = RunStatus::Running;
+    state.updated_at = Utc::now();
+    write_state(state_path, &state)?;
+
+    for (index, step) in spec.steps.iter().enumerate() {
+        let step_number = index + 1;
+        let result = match step {
+            TaskStep::Agent { agent, task } => {
+                println!("step {step_number}: agent {agent}");
+                run_agent_step(step_number, agent, task, spec, workspace, &steps_dir)
+            }
+            TaskStep::Command { command } => {
+                println!("step {step_number}: command {command}");
+                run_command_step(step_number, command, spec, workspace, &steps_dir)
+            }
+        }?;
+
+        let failed = matches!(result.status, StepStatus::Failed);
+        state.steps.push(result);
+        state.status = if failed {
+            RunStatus::Failed
+        } else {
+            RunStatus::Running
+        };
+        state.updated_at = Utc::now();
+        write_state(state_path, &state)?;
+
+        if failed {
+            println!("status: failed");
+            bail!("step {step_number} failed");
+        }
+    }
+
+    state.status = RunStatus::Completed;
+    state.updated_at = Utc::now();
+    write_state(state_path, &state)?;
+    println!("status: completed");
+
+    Ok(())
+}
+
+fn run_agent_step(
+    step_number: usize,
+    agent: &str,
+    task: &str,
+    spec: &TaskSpec,
+    workspace: &Utf8Path,
+    steps_dir: &Utf8Path,
+) -> Result<StepRecord> {
+    let config = agent_invocation(agent, spec.agents.get(agent));
+    let mut args = config.args;
+    let stdin = match config.prompt {
+        PromptMode::Arg => {
+            args.push(task.to_owned());
+            None
+        }
+        PromptMode::Stdin => Some(task),
+    };
+
+    run_process(
+        step_number,
+        StepKind::Agent,
+        agent,
+        &config.binary,
+        &args,
+        stdin,
+        workspace,
+        steps_dir,
+    )
+}
+
+fn run_command_step(
+    step_number: usize,
+    command: &str,
+    spec: &TaskSpec,
+    workspace: &Utf8Path,
+    steps_dir: &Utf8Path,
+) -> Result<StepRecord> {
+    let config = spec
+        .commands
+        .get(command)
+        .with_context(|| format!("unknown command `{command}`"))?;
+    let command_line = command_config_run(config);
+    run_process(
+        step_number,
+        StepKind::Command,
+        command,
+        "sh",
+        &["-c".to_owned(), command_line.to_owned()],
+        None,
+        workspace,
+        steps_dir,
+    )
+}
+
+fn run_process(
+    step_number: usize,
+    kind: StepKind,
+    label: &str,
+    binary: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    workspace: &Utf8Path,
+    steps_dir: &Utf8Path,
+) -> Result<StepRecord> {
+    let started_at = Utc::now();
+    let slug = slugify(label);
+    let prefix = format!("{step_number:03}-{slug}");
+    let stdout_path = steps_dir.join(format!("{prefix}.stdout.txt"));
+    let stderr_path = steps_dir.join(format!("{prefix}.stderr.txt"));
+    let meta_path = steps_dir.join(format!("{prefix}.json"));
+
+    let mut child = Command::new(binary)
+        .args(args)
+        .current_dir(workspace)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn `{}`", format_invocation(binary, args)))?;
+
+    if let Some(input) = stdin {
+        let mut child_stdin = child.stdin.take().context("failed to open child stdin")?;
+        child_stdin
+            .write_all(input.as_bytes())
+            .context("failed to write child stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("failed to wait for `{}`", format_invocation(binary, args)))?;
+    let finished_at = Utc::now();
+
+    fs::write(&stdout_path, &output.stdout)
+        .with_context(|| format!("failed to write {stdout_path}"))?;
+    fs::write(&stderr_path, &output.stderr)
+        .with_context(|| format!("failed to write {stderr_path}"))?;
+
+    let record = StepRecord {
+        index: step_number,
+        kind,
+        label: label.to_owned(),
+        status: if output.status.success() {
+            StepStatus::Completed
+        } else {
+            StepStatus::Failed
+        },
+        started_at,
+        finished_at,
+        exit_code: output.status.code(),
+        stdout: stdout_path,
+        stderr: stderr_path,
+    };
+
+    fs::write(&meta_path, serde_json::to_string_pretty(&record)?)
+        .with_context(|| format!("failed to write {meta_path}"))?;
+
+    Ok(record)
 }
 
 fn resume(run: String) -> Result<()> {
@@ -232,6 +473,84 @@ fn status(run: String) -> Result<()> {
         fs::read_to_string(&state_path).with_context(|| format!("failed to read {state_path}"))?;
     println!("{state}");
     Ok(())
+}
+
+struct AgentInvocation {
+    binary: String,
+    args: Vec<String>,
+    prompt: PromptMode,
+}
+
+fn agent_invocation(agent: &str, config: Option<&AgentConfig>) -> AgentInvocation {
+    let default_binary = agent.to_owned();
+    let default_args = match agent {
+        "codex" => vec!["exec".to_owned()],
+        "claude" => vec!["-p".to_owned()],
+        _ => Vec::new(),
+    };
+
+    match config {
+        Some(config) => AgentInvocation {
+            binary: config.binary.clone().unwrap_or(default_binary),
+            args: if config.args.is_empty() {
+                default_args
+            } else {
+                config.args.clone()
+            },
+            prompt: match config.prompt {
+                PromptMode::Arg => PromptMode::Arg,
+                PromptMode::Stdin => PromptMode::Stdin,
+            },
+        },
+        None => AgentInvocation {
+            binary: default_binary,
+            args: default_args,
+            prompt: PromptMode::Arg,
+        },
+    }
+}
+
+fn command_config_run(config: &CommandConfig) -> &str {
+    match config {
+        CommandConfig::Short(run) => run,
+        CommandConfig::Full { run } => run,
+    }
+}
+
+fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
+    fs::write(path, serde_json::to_string_pretty(state)?)
+        .with_context(|| format!("failed to write {path}"))
+}
+
+fn slugify(value: &str) -> String {
+    let mut slug = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "step".to_owned()
+    } else {
+        slug.to_owned()
+    }
+}
+
+fn format_invocation(binary: &str, args: &[String]) -> String {
+    std::iter::once(binary)
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn probe_agent(agent: &str, binary: &str) -> CapabilityManifest {
@@ -306,10 +625,10 @@ fn summarize_spec(spec: &TaskSpec) -> serde_json::Value {
         .steps
         .iter()
         .map(|step| match step {
-            Step::Agent { agent, task } => {
+            TaskStep::Agent { agent, task } => {
                 serde_json::json!({ "agent": agent, "task": task })
             }
-            Step::Command { command } => serde_json::json!({ "command": command }),
+            TaskStep::Command { command } => serde_json::json!({ "command": command }),
         })
         .collect::<Vec<_>>();
 
