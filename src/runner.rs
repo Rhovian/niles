@@ -11,6 +11,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
+    context::{agent_prompt, write_agent_context},
     process::run_process,
     spec::{
         AgentConfig, PromptMode, TaskSpec, TaskStep, apply_project_config, command_config_run,
@@ -138,7 +139,7 @@ pub fn show(selector: RunSelector) -> Result<()> {
     println!("steps:");
     for step in &state.steps {
         println!(
-            "  {}. {}{} {} {}{}",
+            "  {}. {}{} {} {}{}{}",
             step.index,
             step.role
                 .as_deref()
@@ -149,6 +150,10 @@ pub fn show(selector: RunSelector) -> Result<()> {
             step_status_label(&step.status),
             step.exit_code
                 .map(|code| format!(" ({code})"))
+                .unwrap_or_default(),
+            step.context
+                .as_ref()
+                .map(|path| format!(" context {path}"))
                 .unwrap_or_default()
         );
     }
@@ -364,13 +369,27 @@ fn execute_run(
 
     for (index, step) in spec.steps.iter().enumerate() {
         let step_number = index + 1;
-        mark_step_running(&mut state, step_number);
+        let context = match step {
+            TaskStep::Agent { agent, task, role } => Some(write_agent_context(
+                &state,
+                step_number,
+                role.as_deref(),
+                agent,
+                task,
+                workspace,
+                &steps_dir,
+            )?),
+            TaskStep::Command { .. } => None,
+        };
+
+        mark_step_running(&mut state, step_number, context.clone());
         state.updated_at = Utc::now();
         write_state(state_path, &state)?;
 
         let result = match step {
             TaskStep::Agent { agent, task, role } => {
                 print_step_start(step_number, role.as_deref(), "agent", agent);
+                print_step_context(context.as_deref());
                 run_agent_step(
                     step_number,
                     role.clone(),
@@ -379,6 +398,7 @@ fn execute_run(
                     spec,
                     workspace,
                     &steps_dir,
+                    context,
                 )
             }
             TaskStep::Command { command, role } => {
@@ -447,12 +467,13 @@ fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
                 stdout: None,
                 stderr: None,
                 diff: None,
+                context: None,
             }
         })
         .collect()
 }
 
-fn mark_step_running(state: &mut RunState, step_number: usize) {
+fn mark_step_running(state: &mut RunState, step_number: usize, context: Option<Utf8PathBuf>) {
     if let Some(step) = state
         .steps
         .iter_mut()
@@ -460,6 +481,7 @@ fn mark_step_running(state: &mut RunState, step_number: usize) {
     {
         step.status = StepStatus::Running;
         step.started_at = Some(Utc::now());
+        step.context = context;
     }
 }
 
@@ -483,15 +505,17 @@ fn run_agent_step(
     spec: &TaskSpec,
     workspace: &Utf8Path,
     steps_dir: &Utf8Path,
+    context_path: Option<Utf8PathBuf>,
 ) -> Result<StepRecord> {
     let config = agent_invocation(agent, spec.agents.get(agent));
     let mut args = config.args;
+    let prompt = agent_prompt(task, context_path.as_deref())?;
     let stdin = match config.prompt {
         PromptMode::Arg => {
-            args.push(task.to_owned());
+            args.push(prompt);
             None
         }
-        PromptMode::Stdin => Some(task),
+        PromptMode::Stdin => Some(prompt),
     };
 
     run_process(
@@ -501,9 +525,10 @@ fn run_agent_step(
         agent,
         &config.binary,
         &args,
-        stdin,
+        stdin.as_deref(),
         workspace,
         steps_dir,
+        context_path,
     )
 }
 
@@ -530,6 +555,7 @@ fn run_command_step(
         None,
         workspace,
         steps_dir,
+        None,
     )
 }
 
@@ -537,6 +563,12 @@ fn print_step_start(step_number: usize, role: Option<&str>, kind: &str, label: &
     match role {
         Some(role) => println!("step {step_number}: {role} {kind} {label}"),
         None => println!("step {step_number}: {kind} {label}"),
+    }
+}
+
+fn print_step_context(context: Option<&Utf8Path>) {
+    if let Some(context) = context {
+        println!("context: {context}");
     }
 }
 

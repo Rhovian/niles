@@ -1,5 +1,6 @@
 mod analyze;
 mod cli;
+mod context;
 mod manifest;
 mod process;
 mod runner;

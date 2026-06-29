@@ -43,6 +43,8 @@ pub struct StepRecord {
     pub stderr: Option<Utf8PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff: Option<Utf8PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Utf8PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

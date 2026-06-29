@@ -64,6 +64,8 @@ Generated manifests label each step with a role: `planner`, `implementer`, `vali
 
 Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 
+Before each agent step, Niles writes a markdown handoff context file beside the step logs and appends that file path to the agent prompt. The context includes the goal, current role/task, prior agent output, validation output, and the latest captured diff. `niles show` displays context paths, and `niles status --json` exposes them as structured state.
+
 ## Project Config
 
 Put shared defaults in `niles.yaml` or `.niles.yaml`:
@@ -117,6 +119,8 @@ When `args` are omitted, Niles uses built-in defaults for the common agents:
 - `claude`: `claude -p <prompt>`
 
 Each step streams stdout/stderr live and also writes stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`.
+
+Agent steps also get `.context.md` handoff files. These are the durable bridge between roles: the implementer can read the planner output, and the reviewer can read both validation output and the current diff without relying on terminal scrollback.
 
 Inspect a run with:
 

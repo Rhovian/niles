@@ -100,7 +100,9 @@ commands:
         .output()
         .unwrap();
     assert!(log.status.success());
-    assert_eq!(String::from_utf8_lossy(&log.stdout), "hello test\n");
+    let log_stdout = String::from_utf8_lossy(&log.stdout);
+    assert!(log_stdout.contains("hello test"));
+    assert!(log_stdout.contains("Niles handoff context: "));
 
     let alias = Command::new(niles)
         .arg("l")
@@ -267,10 +269,9 @@ steps:
         .output()
         .unwrap();
     assert!(first_log.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&first_log.stdout),
-        "configured agent\n"
-    );
+    let first_log_stdout = String::from_utf8_lossy(&first_log.stdout);
+    assert!(first_log_stdout.contains("configured agent"));
+    assert!(first_log_stdout.contains("Niles handoff context: "));
 
     let second_log = Command::new(niles)
         .arg("log")
@@ -281,6 +282,121 @@ steps:
         .unwrap();
     assert!(second_log.status.success());
     assert_eq!(String::from_utf8_lossy(&second_log.stdout), "from config\n");
+}
+
+#[test]
+fn agent_steps_receive_context_artifacts() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-context-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    fs::write(
+        workspace.join("agent.sh"),
+        r#"#!/bin/sh
+printf 'PROMPT\n%s\n' "$1"
+context=$(printf '%s\n' "$1" | sed -n 's/^Niles handoff context: //p' | head -n 1)
+if [ -n "$context" ]; then
+  printf 'CONTEXT\n'
+  cat "$context"
+fi
+"#,
+    )
+    .unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Use context handoffs"
+agents:
+  inspector:
+    binary: sh
+    args: ["agent.sh"]
+steps:
+  - agent: inspector
+    role: planner
+    task: "planner says inspect auth flow"
+  - agent: inspector
+    role: implementer
+    task: "implement from planner output"
+  - command: validate
+    role: validation
+  - agent: inspector
+    role: reviewer
+    task: "review with validation output"
+commands:
+  validate: printf 'validation ok\n'
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let run_stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(run_stdout.contains("context: .niles/runs/"));
+
+    let implementer_log = Command::new(niles)
+        .arg("log")
+        .arg("--step")
+        .arg("2")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(implementer_log.status.success());
+    let implementer_stdout = String::from_utf8_lossy(&implementer_log.stdout);
+    assert!(implementer_stdout.contains("Niles handoff context: "));
+    assert!(implementer_stdout.contains("# Niles Step Context"));
+    assert!(implementer_stdout.contains("role: implementer"));
+    assert!(implementer_stdout.contains("## Prior Agent Output"));
+    assert!(implementer_stdout.contains("planner says inspect auth flow"));
+
+    let reviewer_log = Command::new(niles)
+        .arg("log")
+        .arg("--step")
+        .arg("4")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(reviewer_log.status.success());
+    let reviewer_stdout = String::from_utf8_lossy(&reviewer_log.stdout);
+    assert!(reviewer_stdout.contains("role: reviewer"));
+    assert!(reviewer_stdout.contains("## Validation Output"));
+    assert!(reviewer_stdout.contains("validation ok"));
+    assert!(reviewer_stdout.contains("## Latest Diff"));
+
+    let show = Command::new(niles)
+        .arg("show")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    assert!(String::from_utf8_lossy(&show.stdout).contains("context .niles/runs/"));
+
+    let status_json = Command::new(niles)
+        .arg("status")
+        .arg("--json")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(status_json.status.success());
+    assert!(String::from_utf8_lossy(&status_json.stdout).contains("\"context\": \".niles/runs/"));
 }
 
 #[test]

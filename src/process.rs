@@ -23,6 +23,7 @@ pub fn run_process(
     stdin: Option<&str>,
     workspace: &Utf8Path,
     steps_dir: &Utf8Path,
+    context_path: Option<camino::Utf8PathBuf>,
 ) -> Result<StepRecord> {
     let started_at = Utc::now();
     let slug = slugify(label);
@@ -86,6 +87,7 @@ pub fn run_process(
         stdout: Some(stdout_path),
         stderr: Some(stderr_path),
         diff: Some(diff_path),
+        context: context_path,
     };
 
     fs::write(&meta_path, serde_json::to_string_pretty(&record)?)
