@@ -34,10 +34,10 @@ Worker agents can also be spawned into tmux windows:
 niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Run the auth tests again."
-niles watch-crew --once
+niles wait --crew auth-fix
 ```
 
-Worker briefs include a status-file wake contract. The first watcher slice polls those status files and injects actionable `done`, `failed`, `blocked`, and `needs-decision` lines into the latest foreground supervisor tmux pane. This is intentionally smaller than firstmate's watcher: it does not yet classify stale panes, inspect CI, batch digests, or manage a durable wake daemon.
+Worker briefs include a status-file wake contract. `niles wait` polls the relevant crew or run status log on demand and prints the next actionable `done`, `failed`, `blocked`, or `needs-decision` line. It is the single wake-delivery mechanism.
 
 Explicit workflow files remain the durable automation path:
 

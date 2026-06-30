@@ -11,9 +11,7 @@ use crate::{
     },
     store::{read_state, resolve_run_dir},
     tmux,
-    util::{
-        absolute_existing_dir, absolute_existing_file, absolute_path, utf8_path, write_json_pretty,
-    },
+    util::{absolute_existing_dir, absolute_existing_file, absolute_path, write_json_pretty},
 };
 
 const CREW_DIR: &str = ".niles/crew";
@@ -27,11 +25,6 @@ struct CrewMeta {
     brief: Utf8PathBuf,
     launch: Utf8PathBuf,
     status: Option<Utf8PathBuf>,
-}
-
-pub struct CrewStatusTarget {
-    pub id: String,
-    pub status: Utf8PathBuf,
 }
 
 enum PaneTarget {
@@ -101,7 +94,7 @@ pub fn spawn(
     write_meta(&id, &meta)?;
 
     println!("spawned: {id}");
-    println!("window: {target}");
+    println!("window: {window_name}");
     println!("agent: {}", meta.agent);
     println!("brief: {}", meta.brief);
     println!("peek: niles peek {id}");
@@ -270,36 +263,6 @@ fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarg
 fn active_window_target(window_name: &str) -> Result<String> {
     let session = tmux::current_or_named_session("niles")?;
     Ok(format!("{session}:{window_name}"))
-}
-
-pub fn status_targets() -> Result<Vec<CrewStatusTarget>> {
-    let dir = Utf8Path::new(CREW_DIR);
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {dir}")),
-    };
-
-    let mut targets = Vec::new();
-    for entry in entries {
-        let entry = entry.with_context(|| format!("failed to read entry in {dir}"))?;
-        let path = utf8_path(entry.path(), "crew metadata path")?;
-        if path.extension() != Some("json") {
-            continue;
-        }
-        let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-        let meta = serde_json::from_str::<CrewMeta>(&body)
-            .with_context(|| format!("failed to parse {path}"))?;
-        if let Some(status) = meta.status {
-            targets.push(CrewStatusTarget {
-                id: meta.id,
-                status,
-            });
-        }
-    }
-
-    targets.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(targets)
 }
 
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {

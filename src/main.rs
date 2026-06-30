@@ -12,7 +12,6 @@ mod store;
 mod tmux;
 mod util;
 mod wait;
-mod wake;
 
 use anyhow::Result;
 use clap::Parser;
@@ -80,11 +79,6 @@ fn main() -> Result<()> {
             index,
             target_and_message,
         }) => crew::send(run, index, target_and_message),
-        Some(CommandName::WatchCrew {
-            session,
-            interval,
-            once,
-        }) => wake::watch_crew(session, interval, once),
         Some(CommandName::Wait {
             run,
             crew,

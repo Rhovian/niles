@@ -159,19 +159,6 @@ pub enum CommandName {
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
         target_and_message: Vec<String>,
     },
-    /// Watch worker status files and wake the foreground supervisor.
-    #[command(name = "watch-crew")]
-    WatchCrew {
-        /// Supervisor session id. Defaults to the latest bare `niles` session.
-        #[arg(long)]
-        session: Option<String>,
-        /// Poll interval in seconds.
-        #[arg(long, default_value_t = 2.0)]
-        interval: f64,
-        /// Drain once and exit.
-        #[arg(long)]
-        once: bool,
-    },
     /// Wait for the next actionable status-log wake and print it.
     Wait {
         /// Run id. Use --crew instead for a crew worker.

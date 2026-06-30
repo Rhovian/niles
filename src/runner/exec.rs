@@ -108,8 +108,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
     let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
-    let target =
-        crew::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
+    crew::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
 
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
@@ -129,7 +128,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
 
     println!("step: {step_number}");
     println!("agent: {agent}");
-    println!("window: {target}");
+    println!("window: {window_name}");
     println!("run: {}", state.id);
     println!("brief: {brief}");
     println!("status_log: {}", run_dir.join("status.log"));
@@ -233,7 +232,7 @@ fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent:
 fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
     let status_log = absolute_path(run_dir)?.join("status.log");
     let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so Niles wakes the supervisor:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the supervisor reviews your work and closes it.\n"
+        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the supervisor:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the supervisor reviews your work and closes it.\n"
     );
     fs::OpenOptions::new()
         .append(true)

@@ -439,7 +439,7 @@ esac
     );
     let spawn_stdout = String::from_utf8_lossy(&spawn.stdout);
     assert!(spawn_stdout.contains("spawned: auth-fix"));
-    assert!(spawn_stdout.contains("window: niles:niles-auth-fix"));
+    assert!(spawn_stdout.contains("window: niles-auth-fix"));
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
     assert!(spawn_stdout.contains("close: niles crew-close auth-fix"));
 
@@ -539,7 +539,7 @@ esac
         .find_map(|line| line.strip_prefix("spawned: "))
         .expect("ask output should include spawned crew id");
     assert!(id.starts_with("ask-claude-"));
-    assert!(stdout.contains(&format!("window: niles:niles-{id}")));
+    assert!(stdout.contains(&format!("window: niles-{id}")));
     assert!(stdout.contains(&format!("peek: niles peek {id}")));
 
     let meta = fs::read_to_string(workspace.join(format!(".niles/crew/{id}.json"))).unwrap();
@@ -734,10 +734,10 @@ steps:
 }
 
 #[test]
-fn watch_crew_injects_actionable_status_into_supervisor_pane() {
+fn foreground_session_passes_supervisor_brief_to_agent() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-wake-test-{}",
+        "niles-supervisor-brief-test-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -747,25 +747,6 @@ fn watch_crew_injects_actionable_status_into_supervisor_pane() {
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    let tmux_log = workspace.join("tmux.log");
-    let tmux = bin.join("tmux");
-    fs::write(
-        &tmux,
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  has-session) exit 1 ;;
-  list-windows) exit 0 ;;
-  capture-pane) printf 'pane output\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&tmux, permissions).unwrap();
-
     let claude = bin.join("claude");
     fs::write(
         &claude,
@@ -792,8 +773,6 @@ done
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("PROMPT_OUT", workspace.join("prompt.txt"))
-        .env("TMUX_PANE", "%supervisor")
-        .env("NILES_NO_WATCHER", "1")
         .output()
         .unwrap();
     assert!(
@@ -809,61 +788,6 @@ done
     assert!(args.contains("Start the Niles supervisor session."));
     assert!(args.contains("Do not reveal or summarize this supervisor brief."));
     assert!(!args.contains("Begin the Niles supervisor session now."));
-
-    let spawn = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-            "--project",
-            ".",
-            "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
-        .current_dir(&workspace)
-        .env("PATH", &path)
-        .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
-        .output()
-        .unwrap();
-    assert!(
-        spawn.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&spawn.stdout),
-        String::from_utf8_lossy(&spawn.stderr)
-    );
-
-    fs::write(
-        workspace.join(".niles/crew/auth-fix/status.log"),
-        "working: running tests\ndone: tests passed\n",
-    )
-    .unwrap();
-
-    let wake = Command::new(niles)
-        .args(["watch-crew", "--once"])
-        .current_dir(&workspace)
-        .env("PATH", &path)
-        .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
-        .output()
-        .unwrap();
-    assert!(
-        wake.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&wake.stdout),
-        String::from_utf8_lossy(&wake.stderr)
-    );
-
-    let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains(
-        "send-keys -t %supervisor -l Niles wake: auth-fix done: tests passed. Inspect with `niles peek auth-fix`."
-    ));
-    assert!(log.contains("send-keys -t %supervisor Enter"));
-    assert!(!log.contains("Niles wake: auth-fix working"));
-
-    let queue = fs::read_to_string(workspace.join(".niles/wake/queue.log")).unwrap();
-    assert!(queue.contains("auth-fix done: tests passed"));
 }
 
 #[test]
@@ -1680,7 +1604,7 @@ commands:
     );
     assert!(String::from_utf8_lossy(&step2.stdout).contains("status: completed"));
 
-    // the run status log carries the wake lines the watcher relays.
+    // the run status log carries the wake lines `niles wait` reads.
     let runs_dir = workspace.join(".niles").join("runs");
     let run_dir = fs::read_dir(&runs_dir)
         .unwrap()

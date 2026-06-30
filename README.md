@@ -24,7 +24,7 @@ niles analyze --agent codex
 niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Please run the auth tests again."
-niles watch-crew --once
+niles wait --crew auth-fix
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
 niles run task.yaml
 niles step latest --index 1
@@ -65,12 +65,12 @@ Spawn a worker agent in tmux:
 niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Please rerun the failing test and report the result."
-niles watch-crew --once
+niles wait --crew auth-fix
 ```
 
 Spawn writes a brief and launch script under `.niles/crew/<id>/`, records tmux metadata in `.niles/crew/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session.
 
-Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, `niles watch-crew` injects a wake into the latest foreground supervisor pane when possible. Bare `niles` starts that watcher automatically when launched inside tmux.
+Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, the foreground supervisor uses `niles wait --crew <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism.
 
 ## Manifests
 

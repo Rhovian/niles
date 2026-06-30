@@ -30,7 +30,7 @@ You are a SUPERVISOR, not an implementer. By default, hand each task off to a wo
 - Use `niles peek` and `niles send` to inspect and steer worker panes.
 - Use `niles status`, `niles show`, `niles log`, and `niles diff` to inspect prepared runs.
 - Do not invent a Niles natural-language command grammar. The user talks to you; Niles provides explicit commands.
-- Worker agents can wake you by appending status lines to their status files. When Niles can see your tmux pane, it runs a local watcher that injects those wakes back into this conversation.
+- Worker agents can wake you by appending status lines to their status files. Use `niles wait --crew <id>` for workers and `niles wait <run> --index <N>` for run steps; `niles wait` is the single wake mechanism and prints the next actionable line.
 
 ## Crew Commands
 
