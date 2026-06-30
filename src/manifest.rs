@@ -68,14 +68,17 @@ pub fn generate(options: GenerateOptions) -> Result<()> {
         goal: goal.clone(),
         workspace: Some(project),
         agents,
+        // The flow ends at the first review. The supervisor drives any further
+        // implement->review cycles via `niles step-add` until the reviewer
+        // signals consensus, then adds a final validation step.
         steps: vec![
             TaskStep::Agent {
-                agent: planner.clone(),
+                agent: planner,
                 task: planner_prompt(&goal),
                 role: Some("planner".to_owned()),
             },
             TaskStep::Agent {
-                agent: implementer.clone(),
+                agent: implementer,
                 task: implementer_prompt(&goal),
                 role: Some("implementer".to_owned()),
             },
@@ -84,18 +87,9 @@ pub fn generate(options: GenerateOptions) -> Result<()> {
                 role: Some("validation".to_owned()),
             },
             TaskStep::Agent {
-                agent: reviewer.clone(),
+                agent: reviewer,
                 task: reviewer_prompt(&goal, &command),
                 role: Some("reviewer".to_owned()),
-            },
-            TaskStep::Agent {
-                agent: implementer,
-                task: review_fix_prompt(&goal),
-                role: Some("implementer".to_owned()),
-            },
-            TaskStep::Command {
-                command: command.clone(),
-                role: Some("validation".to_owned()),
             },
         ],
         commands: BTreeMap::from([(command, command_config)]),
@@ -142,12 +136,6 @@ fn implementer_prompt(goal: &str) -> String {
 
 fn reviewer_prompt(goal: &str, command: &str) -> String {
     format!(
-        "Review the current project diff for this task.\n\nGoal:\n{goal}\n\nCheck the diff and the `{command}` validation result. Report only actionable issues, missing tests, or concrete risks. Do not edit files."
-    )
-}
-
-fn review_fix_prompt(goal: &str) -> String {
-    format!(
-        "Address actionable review feedback for this task if any was reported.\n\nGoal:\n{goal}\n\nIf the review found no issues, make no changes."
+        "Review the current project diff for this task.\n\nGoal:\n{goal}\n\nCheck the diff and the `{command}` validation result. Report only actionable issues, missing tests, or concrete risks. Do not edit files.\n\nFinish with exactly one wake line giving your verdict, since the supervisor uses it to decide whether to run another implement->review cycle:\n- `done: CONSENSUS - <one-line summary>` when the change is acceptable with no blocking issues.\n- `needs-decision: <blocking issues to address>` when another implement->review cycle is needed."
     )
 }

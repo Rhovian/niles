@@ -990,7 +990,7 @@ commands:
     assert!(status.status.success());
 
     let status_stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+    assert!(status_stdout.contains("steps[4]{index,role,kind,label,status,exit}:"));
     assert!(status_stdout.contains("1,planner,agent,echo,completed,0"));
     assert!(status_stdout.contains("2,implementer,agent,echo,completed,0"));
     assert!(status_stdout.contains("3,validation,command,test,completed,0"));
@@ -1072,7 +1072,7 @@ commands:
 
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("goal: Ship and run"));
-    assert!(status_stdout.contains("steps[6]{index,role,kind,label,status,exit}:"));
+    assert!(status_stdout.contains("steps[4]{index,role,kind,label,status,exit}:"));
 }
 
 #[test]
