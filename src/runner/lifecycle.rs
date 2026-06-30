@@ -241,6 +241,7 @@ fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
                 stderr: None,
                 diff: None,
                 context: None,
+                window: None,
             }
         })
         .collect()

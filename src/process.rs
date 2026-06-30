@@ -101,6 +101,7 @@ pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
         stderr: Some(stderr_path),
         diff: Some(diff_path),
         context: spec.context_path,
+        window: None,
     };
 
     write_json_pretty(&meta_path, &record)?;

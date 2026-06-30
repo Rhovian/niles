@@ -47,6 +47,9 @@ pub struct StepRecord {
     pub diff: Option<Utf8PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Utf8PathBuf>,
+    /// tmux window name for an interactive step, used to peek/steer/close it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]

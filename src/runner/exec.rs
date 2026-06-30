@@ -106,7 +106,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     append_wake_contract(&brief, &run_dir, step_number)?;
 
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
-    let window_name = format!("niles-{}-s{step_number}", state.id);
+    let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     let target =
         crew::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
@@ -114,6 +114,9 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
     mark_step_running(&mut state, step_number, Some(brief.clone()));
+    if let Some(step) = state.steps.iter_mut().find(|step| step.index == step_number) {
+        step.window = Some(window_name.clone());
+    }
     if matches!(state.status, RunStatus::Created) {
         state.status = RunStatus::Running;
     }
@@ -140,15 +143,19 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     let run_dir = selector.resolve()?;
     let state_path = state_path(&run_dir);
     let mut state = read_state(&run_dir)?;
-    let window_name = format!("niles-{}-s{index}", state.id);
 
-    let label = state
+    let record = state
         .steps
         .iter()
         .find(|step| step.index == index)
-        .with_context(|| format!("step {index} not found in run"))?
-        .label
-        .clone();
+        .with_context(|| format!("step {index} not found in run"))?;
+    let label = record.label.clone();
+    // Use the window name recorded at launch; fall back to the legacy scheme for
+    // runs prepared before window names were stored.
+    let window_name = record
+        .window
+        .clone()
+        .unwrap_or_else(|| format!("niles-{}-s{index}", state.id));
 
     // Capture the interactive pane before tearing it down, so the step's output
     // reaches later steps' handoff context. Best-effort: a window that already
@@ -201,6 +208,20 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
         println!("status: completed");
     }
     Ok(())
+}
+
+/// Self-descriptive tmux window name for a step, e.g. `niles-claude-planner-s1-9000z`.
+/// The agent + role make it readable in `tmux list-windows`; the step number and
+/// a short run-id tail keep it unique across repeated roles and concurrent runs.
+fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent: &str) -> String {
+    let shortid = &run_id[run_id.len().saturating_sub(6)..];
+    let role = role.unwrap_or("step");
+    format!(
+        "niles-{}-{}-s{step_number}-{}",
+        slugify(agent),
+        slugify(role),
+        slugify(shortid)
+    )
 }
 
 /// Append a wake contract to a step brief so the interactive agent reports back
