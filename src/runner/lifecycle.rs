@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs};
+use std::fs;
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -9,49 +9,25 @@ use crate::{
         TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, save_task,
         summarize_spec,
     },
+    crew,
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{timestamp_id, write_json_pretty},
+    util::{current_dir_utf8, slugify, timestamp_id, write_json_pretty},
 };
 
-use super::{RunSelector, exec, report};
+use super::RunSelector;
 
 pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
-    let spec = ask_spec(agent, prompt);
-
-    create_run(with_project_config(spec)?, None, false)
+    let id = format!("ask-{}-{}", slugify(&agent), timestamp_id(&Utc::now()));
+    crew::spawn(id, current_dir_utf8()?, agent, None, prompt)
 }
 
-fn ask_spec(agent: String, prompt: Vec<String>) -> TaskSpec {
-    let prompt = prompt.join(" ");
-    TaskSpec {
-        goal: prompt.clone(),
-        agents: BTreeMap::new(),
-        workspace: None,
-        steps: vec![TaskStep::Agent {
-            agent,
-            task: prompt,
-            role: None,
-        }],
-        commands: BTreeMap::new(),
-    }
-}
-
-pub(crate) fn run(task: Utf8PathBuf, watch: bool, prepare: bool) -> Result<()> {
+pub(crate) fn run(task: Utf8PathBuf) -> Result<()> {
     let spec = with_project_config(load_task(&task)?)?;
-    if prepare {
-        prepare_run(spec, Some(task))
-    } else {
-        create_run(spec, Some(task), watch)
-    }
+    prepare_run(spec, Some(task))
 }
 
-pub(crate) fn run_manifest(task: Utf8PathBuf, watch: bool) -> Result<()> {
-    let spec = with_project_config(load_task(&task)?)?;
-    create_run(spec, Some(task), watch)
-}
-
-pub(crate) fn resume(selector: RunSelector, watch: bool) -> Result<()> {
+pub(crate) fn resume(selector: RunSelector) -> Result<()> {
     let run_dir = selector.resolve()?;
     let state_path = run_dir.join("state.json");
     let mut state = read_state(&run_dir)?;
@@ -71,7 +47,9 @@ pub(crate) fn resume(selector: RunSelector, watch: bool) -> Result<()> {
     let resume_from = first_incomplete_step(&state).context("run has no incomplete steps")?;
     validate_resume_shape(&state, &spec)?;
     reset_steps_from(&mut state, &spec, resume_from)?;
-    state.status = RunStatus::Running;
+    if matches!(state.status, RunStatus::Failed) {
+        state.status = RunStatus::Running;
+    }
     state.updated_at = Utc::now();
     write_state(&state_path, &state)?;
 
@@ -80,8 +58,7 @@ pub(crate) fn resume(selector: RunSelector, watch: bool) -> Result<()> {
     println!("from_step: {resume_from}");
     println!("watch: niles watch {}", state.id);
     println!("show: niles show {}", state.id);
-
-    execute_run(&spec, &run_dir, state, &state_path, watch, resume_from)?;
+    print_step_commands(&state, resume_from);
     Ok(())
 }
 
@@ -123,20 +100,8 @@ fn init_run(
     Ok((run_dir, state, state_path))
 }
 
-fn create_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>, watch: bool) -> Result<()> {
-    let (run_dir, state, state_path) = init_run(&spec, task_file)?;
-
-    println!("run: {}", state.id);
-    println!("state: {state_path}");
-    println!("watch: niles watch {}", state.id);
-    println!("show: niles show {}", state.id);
-    execute_run(&spec, &run_dir, state, &state_path, watch, 1)?;
-
-    Ok(())
-}
-
 /// Create a run without executing it, so the foreground supervisor can drive the
-/// steps one tmux window at a time via `niles step`.
+/// steps one at a time via `niles step` or `niles exec-step`.
 fn prepare_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
     let (_run_dir, state, state_path) = init_run(&spec, task_file)?;
 
@@ -156,63 +121,32 @@ fn prepare_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
             step.label
         );
     }
-    println!("next: niles step {} --index 1", state.id);
+    println!("watch: niles watch {}", state.id);
+    println!("show: niles show {}", state.id);
+    print_step_commands(&state, 1);
 
     Ok(())
 }
 
-fn execute_run(
-    spec: &TaskSpec,
-    run_dir: &Utf8Path,
-    mut state: RunState,
-    state_path: &Utf8Path,
-    watch: bool,
-    start_step: usize,
-) -> Result<()> {
-    let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
-    let steps_dir = run_dir.join("steps");
-    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
-
-    state.status = RunStatus::Running;
-    state.updated_at = Utc::now();
-    write_state(state_path, &state)?;
-
-    for (index, step) in spec
+fn print_step_commands(state: &RunState, step_index: usize) {
+    let recommended = state
         .steps
         .iter()
-        .enumerate()
-        .skip(start_step.saturating_sub(1))
-    {
-        let step_number = index + 1;
-        let failed = exec::execute_single_step(
-            spec,
-            &mut state,
-            state_path,
-            &steps_dir,
-            workspace,
-            step,
-            step_number,
-            watch,
-        )?;
+        .find(|step| step.index == step_index)
+        .map(|step| match step.kind {
+            StepKind::Agent => format!("niles step {} --index {step_index}", state.id),
+            StepKind::Command => format!("niles exec-step {} {step_index}", state.id),
+        })
+        .unwrap_or_else(|| format!("niles step {} --index {step_index}", state.id));
 
-        if failed {
-            println!("status: failed");
-            if let Some(step) = state.steps.iter().find(|step| step.index == step_number) {
-                report::print_failure_summary(step);
-            }
-            bail!("step {step_number} failed");
-        }
-    }
-
-    state.status = RunStatus::Completed;
-    state.updated_at = Utc::now();
-    write_state(state_path, &state)?;
-    if watch {
-        report::print_watch_snapshot(&state);
-    }
-    println!("status: completed");
-
-    Ok(())
+    println!("next: {recommended}");
+    println!("step: niles step {} --index {step_index}", state.id);
+    println!("exec-step: niles exec-step {} {step_index}", state.id);
+    println!("wait: niles wait {} --index {step_index}", state.id);
+    println!(
+        "step-close: niles step-close {} --index {step_index}",
+        state.id
+    );
 }
 
 /// Append a step to an existing run so the supervisor can extend it on the fly

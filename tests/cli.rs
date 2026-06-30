@@ -2,7 +2,8 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
-    process::{Command, Stdio},
+    path::Path,
+    process::{Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -10,6 +11,50 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+fn prepare_run(niles: &str, workspace: &Path, task: &Path) -> Output {
+    let output = Command::new(niles)
+        .arg("run")
+        .arg(task)
+        .current_dir(workspace)
+        .output()
+        .unwrap();
+    assert_command_success("run", &output);
+    output
+}
+
+fn exec_step_output(niles: &str, workspace: &Path, index: usize) -> Output {
+    Command::new(niles)
+        .arg("exec-step")
+        .arg("latest")
+        .arg(index.to_string())
+        .current_dir(workspace)
+        .output()
+        .unwrap()
+}
+
+fn drive_exec_steps(
+    niles: &str,
+    workspace: &Path,
+    steps: impl IntoIterator<Item = usize>,
+) -> Vec<Output> {
+    let mut outputs = Vec::new();
+    for index in steps {
+        let output = exec_step_output(niles, workspace, index);
+        assert_command_success(&format!("exec-step {index}"), &output);
+        outputs.push(output);
+    }
+    outputs
+}
+
+fn assert_command_success(label: &str, output: &Output) {
+    assert!(
+        output.status.success(),
+        "{label} stdout:\n{}\n{label} stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[test]
 fn run_executes_steps_and_persists_state() {
@@ -41,23 +86,16 @@ commands:
     )
     .unwrap();
 
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
+    let output = prepare_run(niles, &workspace, &task);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("status: completed"));
-    assert!(stdout.contains("hello test"));
+    assert!(stdout.contains("status: created"));
+    assert!(stdout.contains("next: niles step "));
+    assert!(stdout.contains("exec-step: niles exec-step "));
+    assert!(!stdout.contains("hello test"));
+
+    let steps = drive_exec_steps(niles, &workspace, 1..=2);
+    assert!(String::from_utf8_lossy(&steps[0].stdout).contains("hello test"));
+    assert!(String::from_utf8_lossy(&steps[1].stdout).contains("status: completed"));
 
     let status = Command::new(niles)
         .arg("status")
@@ -183,18 +221,8 @@ commands:
     )
     .unwrap();
 
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    prepare_run(niles, &workspace, &task);
+    drive_exec_steps(niles, &workspace, [1]);
 
     let status = Command::new(niles)
         .arg("status")
@@ -254,18 +282,8 @@ steps:
     )
     .unwrap();
 
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    prepare_run(niles, &workspace, &task);
+    drive_exec_steps(niles, &workspace, 1..=2);
 
     let first_log = Command::new(niles)
         .arg("log")
@@ -468,6 +486,77 @@ esac
 }
 
 #[test]
+fn ask_spawns_one_off_worker_window() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-ask-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let ask = Command::new(niles)
+        .args(["ask", "-a", "claude", "Fix", "auth"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("ask", &ask);
+
+    let stdout = String::from_utf8_lossy(&ask.stdout);
+    let id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("spawned: "))
+        .expect("ask output should include spawned crew id");
+    assert!(id.starts_with("ask-claude-"));
+    assert!(stdout.contains(&format!("window: niles:niles-{id}")));
+    assert!(stdout.contains(&format!("peek: niles peek {id}")));
+
+    let meta = fs::read_to_string(workspace.join(format!(".niles/crew/{id}.json"))).unwrap();
+    assert!(meta.contains("\"agent\": \"claude\""));
+    assert!(meta.contains(&format!("\"window\": \"niles:niles-{id}\"")));
+
+    let brief = fs::read_to_string(workspace.join(format!(".niles/crew/{id}/brief.md"))).unwrap();
+    assert!(brief.contains("Fix auth"));
+    assert!(brief.contains(&format!("niles peek {id}")));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("new-session -d -s niles"));
+    assert!(log.contains(&format!("new-window -d -t niles -n niles-{id}")));
+    assert!(!workspace.join(".niles/runs").exists());
+}
+
+#[test]
 fn crew_close_tears_down_worker() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
@@ -613,7 +702,6 @@ steps:
     let prepare = Command::new(niles)
         .arg("run")
         .arg(&task)
-        .arg("--prepare")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -889,20 +977,13 @@ commands:
     )
     .unwrap();
 
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let run_stdout = String::from_utf8_lossy(&output.stdout);
+    prepare_run(niles, &workspace, &task);
+    let steps = drive_exec_steps(niles, &workspace, 1..=4);
+    let run_stdout = steps
+        .iter()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(run_stdout.contains("context: .niles/runs/"));
 
     let implementer_log = Command::new(niles)
@@ -978,12 +1059,8 @@ commands:
     )
     .unwrap();
 
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
+    prepare_run(niles, &workspace, &task);
+    let output = exec_step_output(niles, &workspace, 1);
 
     assert!(!output.status.success());
 
@@ -1042,25 +1119,23 @@ commands:
     )
     .unwrap();
 
-    let failed = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
+    prepare_run(niles, &workspace, &task);
+    let first = exec_step_output(niles, &workspace, 1);
+    assert_command_success("exec-step 1", &first);
+
+    let failed = exec_step_output(niles, &workspace, 2);
     assert!(
         !failed.status.success(),
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&failed.stdout),
         String::from_utf8_lossy(&failed.stderr)
     );
-    let failed_stdout = String::from_utf8_lossy(&failed.stdout);
-    assert!(failed_stdout.contains("status: failed"));
+    assert!(String::from_utf8_lossy(&failed.stdout).contains("status: failed"));
 
     fs::write(workspace.join("allow"), "").unwrap();
 
     let resumed = Command::new(niles)
-        .args(["resume", "--watch"])
+        .arg("resume")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1074,9 +1149,11 @@ commands:
     let resumed_stdout = String::from_utf8_lossy(&resumed.stdout);
     assert!(resumed_stdout.contains("resume: "));
     assert!(resumed_stdout.contains("from_step: 2"));
-    assert!(resumed_stdout.contains("2,command,gate,running,-"));
-    assert!(resumed_stdout.contains("3,command,last,completed,0"));
-    assert!(resumed_stdout.contains("status: completed"));
+    assert!(resumed_stdout.contains("next: niles exec-step "));
+    assert!(resumed_stdout.contains("exec-step: niles exec-step "));
+    assert!(resumed_stdout.contains("wait: niles wait "));
+
+    drive_exec_steps(niles, &workspace, 2..=3);
 
     assert_eq!(
         fs::read_to_string(workspace.join("trace.txt")).unwrap(),
@@ -1220,10 +1297,15 @@ commands:
     );
 
     let run_stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(run_stdout.contains("step 1: planner agent echo"));
-    assert!(run_stdout.contains("step 3: validation command test"));
-    assert!(run_stdout.contains("manifest command"));
-    assert!(run_stdout.contains("status: completed"));
+    assert!(run_stdout.contains("status: created"));
+    assert!(run_stdout.contains("1 planner agent echo"));
+    assert!(run_stdout.contains("3 validation command test"));
+    assert!(run_stdout.contains("next: niles step "));
+    assert!(!run_stdout.contains("manifest command"));
+
+    let steps = drive_exec_steps(niles, &workspace, 1..=4);
+    assert!(String::from_utf8_lossy(&steps[2].stdout).contains("manifest command"));
+    assert!(String::from_utf8_lossy(&steps[3].stdout).contains("status: completed"));
 
     let status = Command::new(niles)
         .arg("status")
@@ -1241,7 +1323,7 @@ commands:
 }
 
 #[test]
-fn manifest_run_generates_and_executes_role_workflow() {
+fn manifest_run_generates_and_prepares_role_workflow() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
         "niles-manifest-run-test-{}",
@@ -1279,7 +1361,6 @@ commands:
             "--command",
             "test",
             "--run",
-            "--watch",
             "Ship",
             "and",
             "run",
@@ -1297,14 +1378,17 @@ commands:
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("manifest: .niles/manifests/"));
     assert!(stdout.contains("run: "));
+    assert!(stdout.contains("status: created"));
     assert!(stdout.contains("watch: niles watch "));
     assert!(stdout.contains("show: niles show "));
-    assert!(stdout.contains("watch:\nrun: "));
-    assert!(stdout.contains("1,planner,agent,echo,running,-"));
-    assert!(stdout.contains("step 1: planner agent echo"));
-    assert!(stdout.contains("step 3: validation command test"));
-    assert!(stdout.contains("manifest run command"));
-    assert!(stdout.contains("status: completed"));
+    assert!(stdout.contains("1 planner agent echo"));
+    assert!(stdout.contains("3 validation command test"));
+    assert!(stdout.contains("next: niles step "));
+    assert!(!stdout.contains("manifest run command"));
+
+    let steps = drive_exec_steps(niles, &workspace, 1..=4);
+    assert!(String::from_utf8_lossy(&steps[2].stdout).contains("manifest run command"));
+    assert!(String::from_utf8_lossy(&steps[3].stdout).contains("status: completed"));
 
     let status = Command::new(niles)
         .arg("status")
@@ -1319,10 +1403,10 @@ commands:
 }
 
 #[test]
-fn manifest_watch_requires_run() {
+fn manifest_rejects_watch_flag() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-manifest-watch-test-{}",
+        "niles-manifest-watch-flag-test-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1337,7 +1421,9 @@ fn manifest_watch_requires_run() {
         .unwrap();
 
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--watch requires --run"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unexpected argument"));
+    assert!(stderr.contains("--watch"));
 }
 
 #[test]
@@ -1369,9 +1455,10 @@ commands:
     )
     .unwrap();
 
+    prepare_run(niles, &workspace, &task);
+
     let child = Command::new(niles)
-        .arg("run")
-        .arg(&task)
+        .args(["exec-step", "latest", "1"])
         .current_dir(&workspace)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1439,9 +1526,10 @@ commands:
     )
     .unwrap();
 
-    let child = Command::new(niles)
-        .arg("run")
-        .arg(&task)
+    prepare_run(niles, &workspace, &task);
+
+    let step1 = Command::new(niles)
+        .args(["exec-step", "latest", "1"])
         .current_dir(&workspace)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1474,22 +1562,19 @@ commands:
     let watch = Command::new(niles)
         .args(["watch", "--interval", "0.05", "--no-clear"])
         .current_dir(&workspace)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-    assert!(
-        watch.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&watch.stdout),
-        String::from_utf8_lossy(&watch.stderr)
-    );
 
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = step1.wait_with_output().unwrap();
+    assert_command_success("exec-step 1", &output);
+
+    let step2 = exec_step_output(niles, &workspace, 2);
+    assert_command_success("exec-step 2", &step2);
+
+    let watch = watch.wait_with_output().unwrap();
+    assert_command_success("watch", &watch);
 
     let stdout = String::from_utf8_lossy(&watch.stdout);
     assert!(stdout.contains("status: running"));
@@ -1533,7 +1618,6 @@ commands:
     let prepare = Command::new(niles)
         .arg("run")
         .arg(&task)
-        .arg("--prepare")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1653,7 +1737,6 @@ commands:
     let prepare = Command::new(niles)
         .arg("run")
         .arg(&task)
-        .arg("--prepare")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1720,7 +1803,6 @@ steps:
     let prepare = Command::new(niles)
         .arg("run")
         .arg(&task)
-        .arg("--prepare")
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1788,7 +1870,6 @@ commands:
         Command::new(niles)
             .arg("run")
             .arg(&task)
-            .arg("--prepare")
             .current_dir(&workspace)
             .output()
             .unwrap()

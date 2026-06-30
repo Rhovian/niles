@@ -28,7 +28,7 @@ You are a SUPERVISOR, not an implementer. By default, hand each task off to a wo
 - Use `niles manifest` when a durable role workflow should be generated as YAML.
 - Use `niles run` for an existing YAML workflow.
 - Use `niles peek` and `niles send` to inspect and steer worker panes.
-- Use `niles status`, `niles show`, `niles log`, and `niles diff` to inspect batch runs.
+- Use `niles status`, `niles show`, `niles log`, and `niles diff` to inspect prepared runs.
 - Do not invent a Niles natural-language command grammar. The user talks to you; Niles provides explicit commands.
 - Worker agents can wake you by appending status lines to their status files. When Niles can see your tmux pane, it runs a local watcher that injects those wakes back into this conversation.
 
@@ -65,10 +65,10 @@ Generate a durable workflow:
 niles manifest "<goal>" --project <path> --planner claude --implementer codex --reviewer claude --command test
 ```
 
-Run immediately:
+Generate and prepare a run:
 
 ```sh
-niles manifest "<goal>" --project <path> --run --watch
+niles manifest "<goal>" --project <path> --run
 ```
 
 Current limitation: `niles manifest` still generates the full built-in role flow. For smaller one-off work, prefer direct planning in this supervisor session or `niles spawn`.

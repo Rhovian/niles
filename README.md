@@ -26,14 +26,18 @@ niles peek auth-fix
 niles send auth-fix "Please run the auth tests again."
 niles watch-crew --once
 niles manifest "Fix flaky auth test" --project ../my-app --planner claude --implementer codex --reviewer claude --command test
-niles run --watch task.yaml
+niles run task.yaml
+niles step latest --index 1
+niles exec-step latest 1
+niles wait latest --index 1
+niles step-close latest --index 1
 niles status
 niles status --json
 niles watch
 niles show
 niles log --step 1
 niles diff
-niles resume --watch
+niles resume
 ```
 
 Bare `niles` launches the foreground supervisor agent, currently Claude by default. Niles writes a supervisor brief under `.niles/sessions/<id>/`, passes it as hidden supervisor context, and gives the foreground agent a small startup prompt so the agent greets you with useful paths: handle the task directly, create a manifest, resume existing Niles work, or spawn workers. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
@@ -48,7 +52,7 @@ niles s
 niles w
 niles l
 niles d
-niles re --watch
+niles re
 ```
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
@@ -79,15 +83,14 @@ niles manifest "Fix flaky auth test" \
   --implementer codex \
   --reviewer claude \
   --command test \
-  --run \
-  --watch
+  --run
 ```
 
-Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it prints the follow-up `niles run ...` command. With `--run`, it immediately executes the generated manifest. Add `--watch` to `niles run` or `niles manifest --run` to print compact state snapshots inline as each step starts and finishes. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
+Niles writes the manifest to `.niles/manifests/<id>.yaml`. Without `--run`, it prints the follow-up `niles run ...` command. With `--run`, it generates the manifest and prepares a run from it. `niles run` always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps. Project config from the target project is copied into the manifest when available, so the generated YAML is runnable and editable.
 
-Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the run executes.
+Generated manifests label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the supervisor drives the run.
 
-Run state includes pending, running, completed, and failed steps. Use `--watch` for inline progress or `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
+Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 
 Before each agent step, Niles writes a markdown handoff context file beside the step logs and appends that file path to the agent prompt. The context includes the goal, current role/task, prior agent output, validation output, and the latest captured diff. `niles show` displays context paths, and `niles status --json` exposes them as structured state.
 
@@ -129,7 +132,7 @@ commands:
 
 When `binary` or `args` are omitted for a known agent, Niles resolves them from its built-in profile. The resolved invocation is an implementation detail owned by Niles so fast-changing agent CLIs can be updated in one place.
 
-Each step streams stdout/stderr live and also writes stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`.
+Captured steps stream stdout/stderr live and also write stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`. Interactive agent steps run in tmux windows; close them with `niles step-close` after reviewing the worker output.
 
 Agent steps also get `.context.md` handoff files. These are the durable bridge between roles: the implementer can read the planner output, and the reviewer can read both validation output and the current diff without relying on terminal scrollback.
 
@@ -152,10 +155,10 @@ When a step fails, Niles prints the failed step, exit code, stderr log path, dif
 Resume a task-backed run after fixing the cause of a failure:
 
 ```sh
-niles resume --watch
+niles resume
 ```
 
-Resume keeps completed steps, resets the first incomplete step and everything after it to pending, then continues from there. It validates that the original task file still has the same step shape before executing.
+Resume keeps completed steps, resets the first incomplete step and everything after it to pending, then prints the command to continue driving that step. It validates that the original task file still has the same step shape before updating state.
 
 `niles status` uses compact, agent-readable output by default. Use `niles status --json` when a tool needs the raw persisted state.
 

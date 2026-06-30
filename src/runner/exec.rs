@@ -25,8 +25,8 @@ const PANE_CAPTURE_LINES: usize = 2000;
 
 /// Launch a single pending step into its own tmux window. The window runs
 /// `niles exec-step`, so output streams live in the pane while state, diff, and
-/// exit code are captured exactly as in a batch run. Completion appends a wake
-/// line to the run status log for the supervisor.
+/// exit code are captured exactly as in direct step execution. Completion
+/// appends a wake line to the run status log for the supervisor.
 pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let run_dir = selector.resolve()?;
     let state_path = state_path(&run_dir);
@@ -244,8 +244,8 @@ fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize
 }
 
 /// Execute one run step in-process (invoked inside the per-step tmux window).
-/// Records state via the same path as a batch run, then appends a `done:` or
-/// `failed:` wake line to the run status log.
+/// Records state for one step, then appends a `done:` or `failed:` wake line to
+/// the run status log.
 pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
     let run_dir = selector.resolve()?;
     let state_path = state_path(&run_dir);

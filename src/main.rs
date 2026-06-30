@@ -29,11 +29,7 @@ fn main() -> Result<()> {
         None => session::run(cli.supervisor, cli.goal),
         Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
-        Some(CommandName::Run {
-            task,
-            watch,
-            prepare,
-        }) => runner::run(task, watch, prepare),
+        Some(CommandName::Run { task }) => runner::run(task),
         Some(CommandName::Step { run, index }) => runner::step(RunSelector::new(run), index),
         Some(CommandName::StepAdd {
             run,
@@ -56,7 +52,6 @@ fn main() -> Result<()> {
             reviewer,
             command,
             run,
-            watch,
         }) => manifest::generate(manifest::GenerateOptions {
             goal,
             project,
@@ -65,7 +60,6 @@ fn main() -> Result<()> {
             reviewer,
             command,
             run,
-            watch,
         }),
         Some(CommandName::Spawn {
             id,
@@ -98,7 +92,7 @@ fn main() -> Result<()> {
             interval,
             timeout,
         }) => wait::wait(run, crew, index, interval, timeout),
-        Some(CommandName::Resume { run, watch }) => runner::resume(RunSelector::new(run), watch),
+        Some(CommandName::Resume { run }) => runner::resume(RunSelector::new(run)),
         Some(CommandName::Status { run, json }) => runner::status(RunSelector::new(run), json),
         Some(CommandName::Watch {
             run,

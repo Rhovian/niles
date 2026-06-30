@@ -21,7 +21,6 @@ pub struct GenerateOptions {
     pub reviewer: String,
     pub command: String,
     pub run: bool,
-    pub watch: bool,
 }
 
 pub fn generate(options: GenerateOptions) -> Result<()> {
@@ -33,15 +32,11 @@ pub fn generate(options: GenerateOptions) -> Result<()> {
         reviewer,
         command,
         run,
-        watch,
     } = options;
 
     let goal = goal.join(" ");
     if goal.trim().is_empty() {
         bail!("manifest goal cannot be empty");
-    }
-    if watch && !run {
-        bail!("--watch requires --run");
     }
     if !project.is_dir() {
         bail!("project path is not a directory: {project}");
@@ -105,7 +100,7 @@ pub fn generate(options: GenerateOptions) -> Result<()> {
 
     println!("manifest: {path}");
     if run {
-        runner::run_manifest(path, watch)
+        runner::run(path)
     } else {
         println!("next: Run `niles run {path}`");
         Ok(())

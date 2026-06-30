@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn invocation_applies_batch_defaults() {
+    fn invocation_applies_default_agent_args() {
         let invocation = invocation("codex", None, InvocationDefaults::Default);
 
         assert_eq!(invocation.binary, "codex");

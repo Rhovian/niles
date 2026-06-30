@@ -33,17 +33,11 @@ pub enum CommandName {
         #[arg(short, long)]
         agent: Option<String>,
     },
-    /// Start a new run from a task spec.
+    /// Prepare a new supervisor-driven run from a task spec.
     #[command(alias = "r")]
     Run {
         /// YAML task specification.
         task: Utf8PathBuf,
-        /// Print compact state snapshots as steps run.
-        #[arg(long)]
-        watch: bool,
-        /// Create the run without executing it, for supervisor-driven stepping.
-        #[arg(long)]
-        prepare: bool,
     },
     /// Launch a single run step in its own tmux window.
     Step {
@@ -109,12 +103,9 @@ pub enum CommandName {
         /// Named validation command to include.
         #[arg(long, default_value = "test")]
         command: String,
-        /// Run the generated manifest immediately.
+        /// Prepare a run from the generated manifest.
         #[arg(long)]
         run: bool,
-        /// Print compact state snapshots during --run.
-        #[arg(long)]
-        watch: bool,
         /// Task goal.
         #[arg(required = true, num_args = 1..)]
         goal: Vec<String>,
@@ -205,9 +196,6 @@ pub enum CommandName {
         /// Run id or "latest".
         #[arg(default_value = "latest")]
         run: String,
-        /// Print compact state snapshots as resumed steps run.
-        #[arg(long)]
-        watch: bool,
     },
     /// Inspect a persisted run.
     #[command(alias = "s")]
