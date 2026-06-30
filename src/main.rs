@@ -34,6 +34,13 @@ fn main() -> Result<()> {
             prepare,
         }) => runner::run(task, watch, prepare),
         Some(CommandName::Step { run, index }) => runner::step(RunSelector::new(run), index),
+        Some(CommandName::StepAdd {
+            run,
+            agent,
+            command,
+            role,
+            task,
+        }) => runner::step_add(RunSelector::new(run), agent, command, role, task),
         Some(CommandName::StepClose { run, index }) => {
             runner::step_close(RunSelector::new(run), index)
         }

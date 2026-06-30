@@ -6,10 +6,11 @@ use chrono::Utc;
 
 use crate::{
     config::spec::{
-        TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, summarize_spec,
+        TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, save_task,
+        summarize_spec,
     },
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
-    store::{read_state, write_state},
+    store::{read_state, state_path, write_state},
     util::{timestamp_id, write_json_pretty},
 };
 
@@ -214,37 +215,100 @@ fn execute_run(
     Ok(())
 }
 
+/// Append a step to an existing run so the supervisor can extend it on the fly
+/// (e.g. another code -> review cycle until the reviewer reaches consensus). The
+/// step is added to both the run's task spec and its state, and a terminal run
+/// is reopened to `running`.
+pub(crate) fn step_add(
+    selector: RunSelector,
+    agent: Option<String>,
+    command: Option<String>,
+    role: Option<String>,
+    task: Vec<String>,
+) -> Result<()> {
+    let run_dir = selector.resolve()?;
+    let state_path = state_path(&run_dir);
+    let mut state = read_state(&run_dir)?;
+    let task_file = state
+        .task_file
+        .clone()
+        .context("run has no task file; only task-backed runs support step-add")?;
+
+    let new_step = match (agent, command) {
+        (Some(agent), None) => {
+            if task.is_empty() {
+                bail!("step-add --agent requires task text");
+            }
+            TaskStep::Agent {
+                agent,
+                task: task.join(" "),
+                role,
+            }
+        }
+        (None, Some(command)) => TaskStep::Command { command, role },
+        (Some(_), Some(_)) => bail!("step-add takes either --agent or --command, not both"),
+        (None, None) => bail!("step-add requires --agent <id> or --command <name>"),
+    };
+
+    let mut spec = load_task(&task_file)?;
+    spec.steps.push(new_step.clone());
+    save_task(&task_file, &spec)?;
+
+    let index = state.steps.len() + 1;
+    state.steps.push(planned_step(index, &new_step));
+    if matches!(state.status, RunStatus::Completed | RunStatus::Failed) {
+        state.status = RunStatus::Running;
+    }
+    state.updated_at = Utc::now();
+    write_state(&state_path, &state)?;
+
+    let record = &state.steps[index - 1];
+    println!(
+        "added: step {index} {}{} {}",
+        record
+            .role
+            .as_deref()
+            .map(|role| format!("{role} "))
+            .unwrap_or_default(),
+        record.kind,
+        record.label
+    );
+    match record.kind {
+        StepKind::Agent => println!("next: niles step {} --index {index}", state.id),
+        StepKind::Command => println!("next: niles exec-step {} {index}", state.id),
+    }
+    Ok(())
+}
+
 fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
     spec.steps
         .iter()
         .enumerate()
-        .map(|(index, step)| {
-            let (role, kind, label) = match step {
-                TaskStep::Agent { agent, role, .. } => {
-                    (role.clone(), StepKind::Agent, agent.clone())
-                }
-                TaskStep::Command { command, role } => {
-                    (role.clone(), StepKind::Command, command.clone())
-                }
-            };
-
-            StepRecord {
-                index: index + 1,
-                role,
-                kind,
-                label,
-                status: StepStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                diff: None,
-                context: None,
-                window: None,
-            }
-        })
+        .map(|(index, step)| planned_step(index + 1, step))
         .collect()
+}
+
+fn planned_step(index: usize, step: &TaskStep) -> StepRecord {
+    let (role, kind, label) = match step {
+        TaskStep::Agent { agent, role, .. } => (role.clone(), StepKind::Agent, agent.clone()),
+        TaskStep::Command { command, role } => (role.clone(), StepKind::Command, command.clone()),
+    };
+
+    StepRecord {
+        index,
+        role,
+        kind,
+        label,
+        status: StepStatus::Pending,
+        started_at: None,
+        finished_at: None,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        diff: None,
+        context: None,
+        window: None,
+    }
 }
 
 fn first_incomplete_step(state: &RunState) -> Option<usize> {

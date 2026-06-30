@@ -1509,3 +1509,110 @@ steps:
     assert!(status_stdout.contains("status: completed"));
     assert!(status_stdout.contains("1,agent,echo,completed,0"));
 }
+
+#[test]
+fn step_add_appends_to_run_and_reopens() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-add-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "step-add"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "first"
+    role: implementer
+commands:
+  check:
+    run: "true"
+"#,
+    )
+    .unwrap();
+
+    let run = String::from_utf8(
+        Command::new(niles)
+            .arg("run")
+            .arg(&task)
+            .arg("--prepare")
+            .current_dir(&workspace)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(run.contains("status: created"));
+
+    // Complete the only step so the run reaches a terminal state.
+    let step1 = Command::new(niles)
+        .args(["exec-step", "latest", "1"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(step1.status.success());
+    assert!(String::from_utf8_lossy(&step1.stdout).contains("status: completed"));
+
+    // Append a review cycle: a reviewer agent step and a validation command step.
+    let add_review = Command::new(niles)
+        .args([
+            "step-add",
+            "latest",
+            "--agent",
+            "echo",
+            "--role",
+            "reviewer",
+            "review it",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        add_review.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&add_review.stderr)
+    );
+    assert!(String::from_utf8_lossy(&add_review.stdout).contains("added: step 2 reviewer agent echo"));
+
+    let add_check = Command::new(niles)
+        .args([
+            "step-add",
+            "latest",
+            "--command",
+            "check",
+            "--role",
+            "validation",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(add_check.status.success());
+    assert!(String::from_utf8_lossy(&add_check.stdout).contains("added: step 3 validation command check"));
+
+    // The run reopened to running with the two new pending steps.
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: running"));
+    assert!(status_stdout.contains("1,implementer,agent,echo,completed,0"));
+    assert!(status_stdout.contains("2,reviewer,agent,echo,pending,-"));
+    assert!(status_stdout.contains("3,validation,command,check,pending,-"));
+
+    // The appended steps are persisted to the task spec for step/exec-step.
+    let task_body = fs::read_to_string(&task).unwrap();
+    assert!(task_body.contains("role: reviewer"));
+    assert!(task_body.contains("role: validation"));
+}

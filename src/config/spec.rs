@@ -72,6 +72,11 @@ pub fn load_task(path: &Utf8Path) -> Result<TaskSpec> {
     serde_yaml::from_str(&body).context("failed to parse task YAML")
 }
 
+pub fn save_task(path: &Utf8Path, spec: &TaskSpec) -> Result<()> {
+    let body = serde_yaml::to_string(spec).context("failed to serialize task YAML")?;
+    fs::write(path, body).with_context(|| format!("failed to write {path}"))
+}
+
 pub fn load_project_config() -> Result<ProjectConfig> {
     load_project_config_from(Utf8Path::new("."))
 }

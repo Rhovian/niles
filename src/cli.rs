@@ -54,6 +54,25 @@ pub enum CommandName {
         #[arg(short, long)]
         index: Option<usize>,
     },
+    /// Append a step to an existing run (for supervisor-driven review loops).
+    #[command(name = "step-add")]
+    StepAdd {
+        /// Run id or "latest".
+        #[arg(default_value = "latest")]
+        run: String,
+        /// Agent id for an agent step.
+        #[arg(short, long, conflicts_with = "command")]
+        agent: Option<String>,
+        /// Named command for a command step.
+        #[arg(long, conflicts_with = "agent")]
+        command: Option<String>,
+        /// Role label for the step.
+        #[arg(short, long)]
+        role: Option<String>,
+        /// Task text (required for an agent step).
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        task: Vec<String>,
+    },
     /// Mark a step complete and close its interactive tmux window.
     #[command(name = "step-close")]
     StepClose {
