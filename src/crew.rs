@@ -9,6 +9,7 @@ use crate::{
         agents,
         spec::{PromptMode, load_project_config_from},
     },
+    store::{read_state, resolve_run_dir},
     tmux,
     util::{
         absolute_existing_dir, absolute_existing_file, absolute_path, utf8_path, write_json_pretty,
@@ -31,6 +32,18 @@ struct CrewMeta {
 pub struct CrewStatusTarget {
     pub id: String,
     pub status: Utf8PathBuf,
+}
+
+enum PaneTarget {
+    Crew {
+        id: String,
+        target: String,
+    },
+    RunStep {
+        run: String,
+        index: usize,
+        window_name: String,
+    },
 }
 
 pub fn spawn(
@@ -97,33 +110,140 @@ pub fn spawn(
     Ok(())
 }
 
-pub fn peek(id: String, lines: usize) -> Result<()> {
-    let meta = read_meta(&id)?;
-    print!("{}", capture_pane(&meta.window, lines)?);
+pub fn peek(
+    id: Option<String>,
+    run: Option<String>,
+    index: Option<usize>,
+    lines: usize,
+) -> Result<()> {
+    let target = resolve_peek_target(id, run, index)?;
+    print!("{}", target.capture(lines)?);
     Ok(())
 }
 
 /// Capture the last `lines` of a step window's pane by window name, resolving
 /// the active session. Used to fold an interactive step's output into the run.
 pub(crate) fn capture_window(window_name: &str, lines: usize) -> Result<String> {
-    let session = tmux::current_or_named_session("niles")?;
-    capture_pane(&format!("{session}:{window_name}"), lines)
+    capture_pane(&active_window_target(window_name)?, lines)
 }
 
 fn capture_pane(target: &str, lines: usize) -> Result<String> {
     tmux::capture_pane(target, lines)
 }
 
-pub fn send(id: String, message: Vec<String>) -> Result<()> {
-    if message.is_empty() {
+pub fn send(
+    run: Option<String>,
+    index: Option<usize>,
+    target_and_message: Vec<String>,
+) -> Result<()> {
+    if target_and_message.is_empty() {
         bail!("send requires a message");
     }
 
-    let meta = read_meta(&id)?;
+    let (target, message) = resolve_send_target(run, index, target_and_message)?;
     let message = message.join(" ");
-    tmux::send_line(&meta.window, &message)?;
-    println!("sent: {id}");
+    target.send(&message)?;
+    println!("sent: {}", target.label());
     Ok(())
+}
+
+impl PaneTarget {
+    fn capture(&self, lines: usize) -> Result<String> {
+        match self {
+            PaneTarget::Crew { target, .. } => capture_pane(target, lines),
+            PaneTarget::RunStep { window_name, .. } => capture_window(window_name, lines),
+        }
+    }
+
+    fn send(&self, message: &str) -> Result<()> {
+        match self {
+            PaneTarget::Crew { target, .. } => tmux::send_line(target, message),
+            PaneTarget::RunStep { window_name, .. } => {
+                tmux::send_line(&active_window_target(window_name)?, message)
+            }
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            PaneTarget::Crew { id, .. } => id.clone(),
+            PaneTarget::RunStep { run, index, .. } => format!("{run} step {index}"),
+        }
+    }
+}
+
+fn resolve_peek_target(
+    id: Option<String>,
+    run: Option<String>,
+    index: Option<usize>,
+) -> Result<PaneTarget> {
+    let has_step_target = run.is_some() || index.is_some();
+    match (id, has_step_target) {
+        (Some(_), true) => bail!("use either a crew id or --run <id> --index <N>, not both"),
+        (Some(id), false) => crew_target(id),
+        (None, true) => run_step_target(run, index),
+        (None, false) => bail!("peek requires a crew id or --run <id> --index <N>"),
+    }
+}
+
+fn resolve_send_target(
+    run: Option<String>,
+    index: Option<usize>,
+    target_and_message: Vec<String>,
+) -> Result<(PaneTarget, Vec<String>)> {
+    if run.is_some() || index.is_some() {
+        return Ok((run_step_target(run, index)?, target_and_message));
+    }
+
+    let mut parts = target_and_message.into_iter();
+    let id = parts
+        .next()
+        .context("send requires a crew id or --run <id> --index <N>")?;
+    let message = parts.collect::<Vec<_>>();
+    if message.is_empty() {
+        bail!("send requires a message");
+    }
+    Ok((crew_target(id)?, message))
+}
+
+fn crew_target(id: String) -> Result<PaneTarget> {
+    let meta = read_meta(&id)?;
+    Ok(PaneTarget::Crew {
+        id,
+        target: meta.window,
+    })
+}
+
+fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarget> {
+    let run = run.context("run-step target requires --run <id>")?;
+    let index = index.context("run-step target requires --index <N>")?;
+    if index == 0 {
+        bail!("step index must be >= 1");
+    }
+
+    let run_dir = resolve_run_dir(&run)?;
+    let state = read_state(&run_dir)?;
+    let run_id = state.id.clone();
+    let step = state
+        .steps
+        .iter()
+        .find(|step| step.index == index)
+        .with_context(|| format!("step {index} not found in run {run_id}"))?;
+    let window_name = step
+        .window
+        .clone()
+        .with_context(|| format!("step {index} in run {run_id} has no recorded window"))?;
+
+    Ok(PaneTarget::RunStep {
+        run: run_id,
+        index,
+        window_name,
+    })
+}
+
+fn active_window_target(window_name: &str) -> Result<String> {
+    let session = tmux::current_or_named_session("niles")?;
+    Ok(format!("{session}:{window_name}"))
 }
 
 pub fn status_targets() -> Result<Vec<CrewStatusTarget>> {

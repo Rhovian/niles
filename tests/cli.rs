@@ -462,6 +462,68 @@ esac
 }
 
 #[test]
+fn peek_and_send_run_step_require_recorded_window() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-window-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Prepare an interactive step"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "needs window"
+"#,
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .arg("--prepare")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        prepare.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&prepare.stdout),
+        String::from_utf8_lossy(&prepare.stderr)
+    );
+
+    let peek = Command::new(niles)
+        .args(["peek", "--run", "latest", "--index", "1", "--lines", "5"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!peek.status.success());
+    let peek_stderr = String::from_utf8_lossy(&peek.stderr);
+    assert!(peek_stderr.contains("step 1 in run"));
+    assert!(peek_stderr.contains("has no recorded window"));
+
+    let send = Command::new(niles)
+        .args(["send", "--run", "latest", "--index", "1", "continue"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!send.status.success());
+    let send_stderr = String::from_utf8_lossy(&send.stderr);
+    assert!(send_stderr.contains("step 1 in run"));
+    assert!(send_stderr.contains("has no recorded window"));
+}
+
+#[test]
 fn watch_crew_injects_actionable_status_into_supervisor_pane() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
@@ -1582,7 +1644,9 @@ commands:
         "stderr:\n{}",
         String::from_utf8_lossy(&add_review.stderr)
     );
-    assert!(String::from_utf8_lossy(&add_review.stdout).contains("added: step 2 reviewer agent echo"));
+    assert!(
+        String::from_utf8_lossy(&add_review.stdout).contains("added: step 2 reviewer agent echo")
+    );
 
     let add_check = Command::new(niles)
         .args([
@@ -1597,7 +1661,10 @@ commands:
         .output()
         .unwrap();
     assert!(add_check.status.success());
-    assert!(String::from_utf8_lossy(&add_check.stdout).contains("added: step 3 validation command check"));
+    assert!(
+        String::from_utf8_lossy(&add_check.stdout)
+            .contains("added: step 3 validation command check")
+    );
 
     // The run reopened to running with the two new pending steps.
     let status = Command::new(niles)

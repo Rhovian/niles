@@ -114,7 +114,11 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
     mark_step_running(&mut state, step_number, Some(brief.clone()));
-    if let Some(step) = state.steps.iter_mut().find(|step| step.index == step_number) {
+    if let Some(step) = state
+        .steps
+        .iter_mut()
+        .find(|step| step.index == step_number)
+    {
         step.window = Some(window_name.clone());
     }
     if matches!(state.status, RunStatus::Created) {

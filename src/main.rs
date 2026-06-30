@@ -73,8 +73,17 @@ fn main() -> Result<()> {
             brief,
             task,
         }) => crew::spawn(id, project, agent, brief, task),
-        Some(CommandName::Peek { id, lines }) => crew::peek(id, lines),
-        Some(CommandName::Send { id, message }) => crew::send(id, message),
+        Some(CommandName::Peek {
+            id,
+            run,
+            index,
+            lines,
+        }) => crew::peek(id, run, index, lines),
+        Some(CommandName::Send {
+            run,
+            index,
+            target_and_message,
+        }) => crew::send(run, index, target_and_message),
         Some(CommandName::WatchCrew {
             session,
             interval,

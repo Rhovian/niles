@@ -138,19 +138,29 @@ pub enum CommandName {
     },
     /// Capture the tail of a worker tmux pane.
     Peek {
-        /// Crew task id.
-        id: String,
+        /// Crew task id. Omit when targeting a run step with --run and --index.
+        id: Option<String>,
+        /// Run id or "latest" for a step window.
+        #[arg(long)]
+        run: Option<String>,
+        /// Step number for a run step window.
+        #[arg(short, long)]
+        index: Option<usize>,
         /// Number of lines to capture.
         #[arg(short, long, default_value_t = 40)]
         lines: usize,
     },
     /// Send a message to a worker tmux pane.
     Send {
-        /// Crew task id.
-        id: String,
-        /// Message to submit.
-        #[arg(required = true, num_args = 1.., trailing_var_arg = true)]
-        message: Vec<String>,
+        /// Run id or "latest" for a step window.
+        #[arg(long)]
+        run: Option<String>,
+        /// Step number for a run step window.
+        #[arg(short, long)]
+        index: Option<usize>,
+        /// Crew task id followed by message, or just message when --run/--index are set.
+        #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
+        target_and_message: Vec<String>,
     },
     /// Watch worker status files and wake the foreground supervisor.
     #[command(name = "watch-crew")]
