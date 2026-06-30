@@ -136,6 +136,12 @@ pub enum CommandName {
         #[arg(num_args = 0.., trailing_var_arg = true)]
         task: Vec<String>,
     },
+    /// Close a spawned crew worker and remove its metadata.
+    #[command(name = "crew-close")]
+    CrewClose {
+        /// Crew task id to close.
+        id: String,
+    },
     /// Capture the tail of a worker tmux pane.
     Peek {
         /// Crew task id. Omit when targeting a run step with --run and --index.

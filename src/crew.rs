@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -106,7 +106,33 @@ pub fn spawn(
     println!("brief: {}", meta.brief);
     println!("peek: niles peek {id}");
     println!("send: niles send {id} <message>");
+    println!("close: niles crew-close {id}");
 
+    Ok(())
+}
+
+/// Tear down a spawned crew worker. The tmux window may already be gone, so
+/// window close errors are reported but do not strand metadata.
+pub fn crew_close(id: String) -> Result<()> {
+    validate_id(&id)?;
+    let crew_dir = Utf8Path::new(CREW_DIR).join(&id);
+    let meta = read_meta_if_exists(&id)?;
+    if meta.is_none() && !crew_dir.exists() {
+        bail!("unknown crew id '{id}'");
+    }
+    let window_name = meta
+        .as_ref()
+        .map(|meta| crew_window_name(&id, meta))
+        .unwrap_or_else(|| format!("niles-{id}"));
+
+    match close_window(&window_name) {
+        Ok(()) => println!("closed window: {window_name}"),
+        Err(err) => println!("window {window_name} not closed: {err}"),
+    }
+
+    remove_file_if_exists(&meta_path(&id))?;
+    remove_dir_all_if_exists(&crew_dir)?;
+    println!("closed: {id}");
     Ok(())
 }
 
@@ -370,13 +396,46 @@ fn write_meta(id: &str, meta: &CrewMeta) -> Result<()> {
 
 fn read_meta(id: &str) -> Result<CrewMeta> {
     validate_id(id)?;
+    read_meta_if_exists(id)?.with_context(|| format!("unknown crew id '{id}'"))
+}
+
+fn read_meta_if_exists(id: &str) -> Result<Option<CrewMeta>> {
     let path = meta_path(id);
-    let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-    serde_json::from_str(&body).with_context(|| format!("failed to parse {path}"))
+    let body = match fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    };
+    serde_json::from_str(&body)
+        .map(Some)
+        .with_context(|| format!("failed to parse {path}"))
 }
 
 fn meta_path(id: &str) -> Utf8PathBuf {
     Utf8Path::new(CREW_DIR).join(format!("{id}.json"))
+}
+
+fn crew_window_name(id: &str, meta: &CrewMeta) -> String {
+    meta.window
+        .rsplit_once(':')
+        .map(|(_, window)| window.to_owned())
+        .unwrap_or_else(|| format!("niles-{id}"))
+}
+
+fn remove_file_if_exists(path: &Utf8Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
+    }
+}
+
+fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
+    }
 }
 
 fn validate_id(id: &str) -> Result<()> {

@@ -73,6 +73,7 @@ fn main() -> Result<()> {
             brief,
             task,
         }) => crew::spawn(id, project, agent, brief, task),
+        Some(CommandName::CrewClose { id }) => crew::crew_close(id),
         Some(CommandName::Peek {
             id,
             run,

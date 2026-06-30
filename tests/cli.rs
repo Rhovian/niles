@@ -418,6 +418,7 @@ esac
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles:niles-auth-fix"));
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
+    assert!(spawn_stdout.contains("close: niles crew-close auth-fix"));
 
     let meta = fs::read_to_string(workspace.join(".niles/crew/auth-fix.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
@@ -459,6 +460,122 @@ esac
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix Enter"));
+}
+
+#[test]
+fn crew_close_tears_down_worker() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-crew-close-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+
+    let crew_dir = workspace.join(".niles/crew/auth-fix");
+    fs::create_dir_all(&crew_dir).unwrap();
+    let brief = crew_dir.join("brief.md");
+    let launch = crew_dir.join("launch.sh");
+    let status = crew_dir.join("status.log");
+    fs::write(&brief, "brief").unwrap();
+    fs::write(&launch, "launch").unwrap();
+    fs::write(&status, "status").unwrap();
+    fs::write(
+        workspace.join(".niles/crew/auth-fix.json"),
+        format!(
+            r#"{{
+  "id": "auth-fix",
+  "agent": "codex",
+  "project": "{}",
+  "window": "niles:niles-auth-fix",
+  "brief": "{}",
+  "launch": "{}",
+  "status": "{}"
+}}
+"#,
+            workspace.display(),
+            brief.display(),
+            launch.display(),
+            status.display()
+        ),
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let close = Command::new(niles)
+        .args(["crew-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(
+        close.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
+    let close_stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(close_stdout.contains("closed window: niles-auth-fix"));
+    assert!(close_stdout.contains("closed: auth-fix"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("kill-window -t niles:niles-auth-fix"));
+    assert!(!workspace.join(".niles/crew/auth-fix.json").exists());
+    assert!(!workspace.join(".niles/crew/auth-fix").exists());
+}
+
+#[test]
+fn crew_close_unknown_id_errors() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-crew-close-missing-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let close = Command::new(niles)
+        .args(["crew-close", "missing"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!close.status.success());
+    assert!(
+        String::from_utf8_lossy(&close.stderr).contains("unknown crew id 'missing'"),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
 }
 
 #[test]
