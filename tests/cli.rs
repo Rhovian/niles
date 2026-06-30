@@ -1,7 +1,12 @@
 use std::{
     fs,
+    io::Write,
     os::unix::fs::PermissionsExt,
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -771,6 +776,65 @@ done
 
     let queue = fs::read_to_string(workspace.join(".niles/wake/queue.log")).unwrap();
     assert!(queue.contains("auth-fix done: tests passed"));
+}
+
+#[test]
+fn wait_ignores_existing_status_lines_and_prints_next_wake() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-wait-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let run_dir = workspace.join(".niles/runs/test-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let status_log = run_dir.join("status.log");
+    fs::write(
+        &status_log,
+        "done: old baseline wake\nworking: already running\n",
+    )
+    .unwrap();
+
+    let child = Command::new(niles)
+        .args(["wait", "test-run", "--interval", "0.05", "--timeout", "5"])
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let writer_done = Arc::new(AtomicBool::new(false));
+    let writer_status = status_log.clone();
+    let writer_done_clone = Arc::clone(&writer_done);
+    let writer = thread::spawn(move || {
+        while !writer_done_clone.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(50));
+            let mut status = fs::OpenOptions::new()
+                .append(true)
+                .open(&writer_status)
+                .unwrap();
+            writeln!(status, "done: new appended wake").unwrap();
+        }
+    });
+
+    let output = child.wait_with_output().unwrap();
+    writer_done.store(true, Ordering::SeqCst);
+    writer.join().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "done: new appended wake\n"
+    );
 }
 
 #[test]

@@ -181,6 +181,24 @@ pub enum CommandName {
         #[arg(long)]
         once: bool,
     },
+    /// Wait for the next actionable status-log wake and print it.
+    Wait {
+        /// Run id. Use --crew instead for a crew worker.
+        #[arg(required_unless_present = "crew", conflicts_with = "crew")]
+        run: Option<String>,
+        /// Crew worker id to wait on.
+        #[arg(long, conflicts_with = "run")]
+        crew: Option<String>,
+        /// Step number to prefer when several new wake lines arrive together.
+        #[arg(short, long)]
+        index: Option<usize>,
+        /// Poll interval in seconds.
+        #[arg(long, default_value_t = 2.0)]
+        interval: f64,
+        /// Maximum seconds to wait before exiting non-zero.
+        #[arg(long)]
+        timeout: Option<f64>,
+    },
     /// Resume a persisted run.
     #[command(alias = "re")]
     Resume {

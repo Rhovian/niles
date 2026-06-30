@@ -11,6 +11,7 @@ mod state;
 mod store;
 mod tmux;
 mod util;
+mod wait;
 mod wake;
 
 use anyhow::Result;
@@ -90,6 +91,13 @@ fn main() -> Result<()> {
             interval,
             once,
         }) => wake::watch_crew(session, interval, once),
+        Some(CommandName::Wait {
+            run,
+            crew,
+            index,
+            interval,
+            timeout,
+        }) => wait::wait(run, crew, index, interval, timeout),
         Some(CommandName::Resume { run, watch }) => runner::resume(RunSelector::new(run), watch),
         Some(CommandName::Status { run, json }) => runner::status(RunSelector::new(run), json),
         Some(CommandName::Watch {

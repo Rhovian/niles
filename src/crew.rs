@@ -302,6 +302,16 @@ pub fn status_targets() -> Result<Vec<CrewStatusTarget>> {
     Ok(targets)
 }
 
+pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
+    validate_id(id)?;
+    if let Some(meta) = read_meta_if_exists(id)?
+        && let Some(status) = meta.status
+    {
+        return Ok(status);
+    }
+    Ok(Utf8Path::new(CREW_DIR).join(id).join("status.log"))
+}
+
 fn write_brief(
     path: &Utf8Path,
     id: &str,
