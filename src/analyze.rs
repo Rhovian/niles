@@ -8,7 +8,10 @@ use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::{config::agents, util::write_json_pretty};
+use crate::{
+    config::{agents, version},
+    util::write_json_pretty,
+};
 
 pub fn analyze(agent: Option<String>) -> Result<()> {
     let agents = match agent {
@@ -22,6 +25,9 @@ pub fn analyze(agent: Option<String>) -> Result<()> {
     for agent in agents {
         let binary = agents::default_binary(&agent);
         let manifest = probe_agent(&agent, &binary);
+        if let Some(gate) = &manifest.version_gate {
+            println!("{}", gate.status_line());
+        }
         let path = dir.join(format!("{agent}.json"));
         write_json_pretty(&path, &manifest)?;
         println!("wrote {path}");
@@ -36,35 +42,40 @@ struct CapabilityManifest {
     binary: String,
     analyzed_at: DateTime<Utc>,
     version_probe: ProbeResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version_gate: Option<version::VersionGateReport>,
     help_probe: ProbeResult,
 }
 
 #[derive(Debug, Serialize)]
-struct ProbeResult {
-    status: ProbeStatus,
-    stdout: String,
-    stderr: String,
+pub(crate) struct ProbeResult {
+    pub(crate) status: ProbeStatus,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ProbeStatus {
+pub(crate) enum ProbeStatus {
     Success,
     Failed,
     NotFound,
 }
 
 fn probe_agent(agent: &str, binary: &str) -> CapabilityManifest {
+    let version_probe = run_probe(binary, "--version");
+    let version_gate = version::evaluate_agent_probe(agent, binary, &version_probe);
     CapabilityManifest {
         agent: agent.to_owned(),
         binary: binary.to_owned(),
         analyzed_at: Utc::now(),
-        version_probe: run_probe(binary, "--version"),
+        version_probe,
+        version_gate,
         help_probe: run_probe(binary, "--help"),
     }
 }
 
-fn run_probe(binary: &str, arg: &str) -> ProbeResult {
+pub(crate) fn run_probe(binary: &str, arg: &str) -> ProbeResult {
     let output = Command::new(binary).arg(arg).stdin(Stdio::null()).output();
 
     match output {
