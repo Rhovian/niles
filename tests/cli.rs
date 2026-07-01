@@ -661,7 +661,7 @@ esac
     assert!(log.contains("new-window -d -t niles -n niles-auth-fix"));
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
-    assert!(log.contains("send-keys -t niles:niles-auth-fix Enter"));
+    assert!(log.contains("send-keys -t niles:niles-auth-fix C-m"));
 }
 
 #[test]

@@ -1,10 +1,15 @@
 use std::{
     env,
     process::{Command, Output, Stdio},
+    thread,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
+
+const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
+const SEND_LINE_SUBMIT_KEY: &str = "C-m";
 
 fn collect_args<I, S>(args: I) -> Vec<String>
 where
@@ -62,8 +67,10 @@ pub(crate) fn capture_pane(target: &str, lines: usize) -> Result<String> {
 }
 
 pub(crate) fn send_line(target: &str, line: &str) -> Result<()> {
-    run(["send-keys", "-t", target, "-l", line])?;
-    run(["send-keys", "-t", target, "Enter"])
+    run(send_line_literal_args(target, line))?;
+    // Give the worker TUI a render tick before sending the submit keystroke.
+    thread::sleep(SEND_LINE_SUBMIT_DELAY);
+    run(send_line_submit_args(target))
 }
 
 pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
@@ -164,6 +171,14 @@ fn session_name_from_stdout(stdout: &[u8]) -> Option<String> {
     (!session.is_empty()).then_some(session)
 }
 
+fn send_line_literal_args<'a>(target: &'a str, line: &'a str) -> [&'a str; 5] {
+    ["send-keys", "-t", target, "-l", line]
+}
+
+fn send_line_submit_args(target: &str) -> [&str; 4] {
+    ["send-keys", "-t", target, SEND_LINE_SUBMIT_KEY]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,8 +186,24 @@ mod tests {
     #[test]
     fn collect_args_owns_argument_strings() {
         assert_eq!(
-            collect_args(["send-keys", "-t", "niles:step", "Enter"]),
-            ["send-keys", "-t", "niles:step", "Enter"].map(str::to_owned)
+            collect_args(["send-keys", "-t", "niles:step", SEND_LINE_SUBMIT_KEY]),
+            ["send-keys", "-t", "niles:step", SEND_LINE_SUBMIT_KEY].map(str::to_owned)
+        );
+    }
+
+    #[test]
+    fn send_line_literal_args_preserve_multiline_message_as_one_argument() {
+        assert_eq!(
+            send_line_literal_args("niles:step", "line 1\nline 2"),
+            ["send-keys", "-t", "niles:step", "-l", "line 1\nline 2"]
+        );
+    }
+
+    #[test]
+    fn send_line_submit_args_use_discrete_control_m() {
+        assert_eq!(
+            send_line_submit_args("niles:step"),
+            ["send-keys", "-t", "niles:step", SEND_LINE_SUBMIT_KEY]
         );
     }
 
