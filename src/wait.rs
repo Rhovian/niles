@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{crew, store};
 
@@ -19,9 +19,15 @@ pub fn wait(
         bail!("step index must be >= 1");
     }
 
-    let status = match (run, crew) {
-        (Some(run), None) => store::resolve_run_dir(&run)?.join("status.log"),
-        (None, Some(id)) => crew::status_log_path(&id)?,
+    let target = match (run, crew) {
+        (Some(run), None) => WaitTarget::Run {
+            status: store::resolve_run_dir(&run)?.join("status.log"),
+        },
+        (None, Some(id)) => {
+            let status = crew::status_log_path(&id)?;
+            let dir = crew_status_dir(&status)?;
+            WaitTarget::Crew { id, status, dir }
+        }
         (Some(_), Some(_)) => bail!("use either a run id or --crew <id>, not both"),
         (None, None) => bail!("wait requires a run id or --crew <id>"),
     };
@@ -31,25 +37,86 @@ pub fn wait(
         .map(|seconds| non_negative_seconds_duration(seconds, "wait timeout"))
         .transpose()?;
 
-    match wait_for_wake(&status, index, interval, timeout)? {
-        Some(line) => {
+    match wait_for_wake(&target, index, interval, timeout)? {
+        WaitResult::Line(line) => {
             println!("{line}");
             Ok(())
         }
-        None => bail!("timeout: no actionable wake line appeared in {status}"),
+        WaitResult::CrewClosed { id, line } => {
+            println!("{line}");
+            bail!("crew '{id}' closed")
+        }
+        WaitResult::Timeout => bail!(
+            "timeout: no actionable wake line appeared in {}",
+            target.status()
+        ),
+    }
+}
+
+enum WaitTarget {
+    Run {
+        status: Utf8PathBuf,
+    },
+    Crew {
+        id: String,
+        status: Utf8PathBuf,
+        dir: Utf8PathBuf,
+    },
+}
+
+enum WaitResult {
+    Line(String),
+    CrewClosed { id: String, line: String },
+    Timeout,
+}
+
+impl WaitTarget {
+    fn status(&self) -> &Utf8Path {
+        match self {
+            WaitTarget::Run { status } | WaitTarget::Crew { status, .. } => status,
+        }
+    }
+
+    fn closed_if_missing(&self) -> Option<WaitResult> {
+        match self {
+            WaitTarget::Run { .. } => None,
+            WaitTarget::Crew { id, dir, .. } if !dir.exists() => Some(WaitResult::CrewClosed {
+                id: id.clone(),
+                line: format!("closed: crew '{id}' directory removed"),
+            }),
+            WaitTarget::Crew { .. } => None,
+        }
+    }
+
+    fn result_for_line(&self, line: String) -> WaitResult {
+        match self {
+            WaitTarget::Crew { id, .. } if is_closed_wake(&line) => WaitResult::CrewClosed {
+                id: id.clone(),
+                line,
+            },
+            _ => WaitResult::Line(line),
+        }
     }
 }
 
 fn wait_for_wake(
-    status: &Utf8Path,
+    target: &WaitTarget,
     index: Option<usize>,
     interval: Duration,
     timeout: Option<Duration>,
-) -> Result<Option<String>> {
-    let mut cursor = read_lines(status)?.len();
+) -> Result<WaitResult> {
+    if let Some(result) = target.closed_if_missing() {
+        return Ok(result);
+    }
+
+    let mut cursor = read_lines(target.status())?.len();
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
     loop {
+        if let Some(result) = target.closed_if_missing() {
+            return Ok(result);
+        }
+
         let sleep_for = match deadline {
             Some(deadline) => {
                 let now = Instant::now();
@@ -66,17 +133,28 @@ fn wait_for_wake(
             thread::sleep(sleep_for);
         }
 
-        let lines = read_lines(status)?;
+        let lines = read_lines(target.status())?;
         let start = cursor.min(lines.len());
         if let Some(line) = select_wake(&lines[start..], index) {
-            return Ok(Some(line));
+            return Ok(target.result_for_line(line));
         }
         cursor = lines.len();
 
+        if let Some(result) = target.closed_if_missing() {
+            return Ok(result);
+        }
+
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            return Ok(None);
+            return Ok(WaitResult::Timeout);
         }
     }
+}
+
+fn crew_status_dir(status: &Utf8Path) -> Result<Utf8PathBuf> {
+    status
+        .parent()
+        .map(Utf8Path::to_path_buf)
+        .with_context(|| format!("crew status path has no parent directory: {status}"))
 }
 
 fn select_wake(lines: &[String], index: Option<usize>) -> Option<String> {
@@ -102,10 +180,19 @@ fn select_wake(lines: &[String], index: Option<usize>) -> Option<String> {
 }
 
 fn is_actionable_wake(line: &str) -> bool {
-    let Some((state, _)) = line.split_once(':') else {
-        return false;
-    };
-    matches!(state, "done" | "failed" | "needs-decision" | "blocked")
+    matches!(
+        wake_state(line),
+        Some("done" | "failed" | "needs-decision" | "blocked" | "closed")
+    )
+}
+
+fn is_closed_wake(line: &str) -> bool {
+    wake_state(line) == Some("closed")
+}
+
+fn wake_state(line: &str) -> Option<&str> {
+    let (state, _) = line.split_once(':')?;
+    Some(state)
 }
 
 fn mentions_step(line: &str, index: usize) -> bool {
@@ -169,5 +256,20 @@ mod tests {
     fn step_matching_does_not_confuse_prefixes() {
         assert!(!mentions_step("done: step 10 finished", 1));
         assert!(mentions_step("done: step 1 finished", 1));
+    }
+
+    #[test]
+    fn closed_is_actionable_and_terminal() {
+        assert!(is_actionable_wake("closed: auth-fix"));
+        assert!(is_closed_wake("closed: auth-fix"));
+
+        let lines = vec![
+            "working: teardown".to_owned(),
+            "closed: auth-fix".to_owned(),
+        ];
+        assert_eq!(
+            select_wake(&lines, None).as_deref(),
+            Some("closed: auth-fix")
+        );
     }
 }

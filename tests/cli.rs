@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn prepare_run(niles: &str, workspace: &Path, task: &Path) -> Output {
@@ -832,6 +832,127 @@ esac
     assert!(log.contains("kill-window -t niles:niles-auth-fix"));
     assert!(!workspace.join(".niles/crew/auth-fix.json").exists());
     assert!(!workspace.join(".niles/crew/auth-fix").exists());
+}
+
+#[test]
+fn crew_close_wakes_waiters_with_nonzero_closed_status() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-crew-close-wait-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+
+    let crew_dir = workspace.join(".niles/crew/auth-fix");
+    fs::create_dir_all(&crew_dir).unwrap();
+    let brief = crew_dir.join("brief.md");
+    let launch = crew_dir.join("launch.sh");
+    let status = crew_dir.join("status.log");
+    fs::write(&brief, "brief").unwrap();
+    fs::write(&launch, "launch").unwrap();
+    fs::write(&status, "working: close requested").unwrap();
+    fs::write(
+        workspace.join(".niles/crew/auth-fix.json"),
+        format!(
+            r#"{{
+  "id": "auth-fix",
+  "agent": "codex",
+  "project": "{}",
+  "window": "niles:niles-auth-fix",
+  "brief": "{}",
+  "launch": "{}",
+  "status": "{}"
+}}
+"#,
+            workspace.display(),
+            brief.display(),
+            launch.display(),
+            status.display()
+        ),
+    )
+    .unwrap();
+
+    let waiter = Command::new(niles)
+        .args([
+            "wait",
+            "--crew",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "5",
+        ])
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let close = Command::new(niles)
+        .args(["crew-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("crew-close", &close);
+
+    let started = Instant::now();
+    let output = waiter.wait_with_output().unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("closed:"),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("crew 'auth-fix' closed"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("timeout"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 }
 
 #[test]
