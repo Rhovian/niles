@@ -126,17 +126,11 @@ fn default_invocation(agent: &str, defaults: InvocationDefaults) -> AgentInvocat
 }
 
 fn worker_args(agent: &str) -> Vec<String> {
-    // Workers run autonomously in their own window: skip interactive approval
-    // prompts so a step runs to completion without a human driving each tool.
+    // Workers run autonomously in their own window. Codex runs fully
+    // unrestricted (no sandbox, no approvals), matching Claude's
+    // --dangerously-skip-permissions.
     match agent {
-        "codex" => [
-            "--sandbox",
-            "workspace-write",
-            "--ask-for-approval",
-            "never",
-        ]
-        .map(str::to_owned)
-        .to_vec(),
+        "codex" => vec!["--dangerously-bypass-approvals-and-sandbox".to_owned()],
         "claude" => vec!["--dangerously-skip-permissions".to_owned()],
         _ => default_args(agent),
     }
@@ -197,13 +191,7 @@ mod tests {
         assert_eq!(invocation.binary, "codex");
         assert_eq!(
             invocation.args,
-            [
-                "--sandbox",
-                "workspace-write",
-                "--ask-for-approval",
-                "never"
-            ]
-            .map(str::to_owned)
+            ["--dangerously-bypass-approvals-and-sandbox"].map(str::to_owned)
         );
         assert!(matches!(invocation.prompt, PromptMode::Arg));
     }
