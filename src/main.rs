@@ -3,7 +3,6 @@ mod cli;
 mod config;
 mod context;
 mod crew;
-mod manifest;
 mod process;
 mod runner;
 mod session;
@@ -12,6 +11,7 @@ mod store;
 mod tmux;
 mod util;
 mod wait;
+mod workspace_manifest;
 
 use anyhow::Result;
 use clap::Parser;
@@ -46,23 +46,6 @@ fn main() -> Result<()> {
         Some(CommandName::ExecStep { run, index }) => {
             runner::exec_step(RunSelector::new(run), index)
         }
-        Some(CommandName::Manifest {
-            goal,
-            project,
-            planner,
-            implementer,
-            reviewer,
-            command,
-            run,
-        }) => manifest::generate(manifest::GenerateOptions {
-            goal,
-            project,
-            planner,
-            implementer,
-            reviewer,
-            command,
-            run,
-        }),
         Some(CommandName::Spawn {
             allow_cli_mismatch,
             id,

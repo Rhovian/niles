@@ -9,7 +9,7 @@ pub struct TaskSpec {
     pub goal: String,
     #[serde(default)]
     pub workspace: Option<Utf8PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, AgentConfig>,
     #[serde(default)]
     pub steps: Vec<TaskStep>,
@@ -49,6 +49,11 @@ pub enum TaskStep {
         command: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
+    },
+    Role {
+        role: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
     },
 }
 
@@ -140,6 +145,9 @@ pub fn summarize_spec(spec: &TaskSpec) -> serde_json::Value {
             }
             TaskStep::Command { command, role } => {
                 serde_json::json!({ "command": command, "role": role })
+            }
+            TaskStep::Role { role, task } => {
+                serde_json::json!({ "role": role, "task": task })
             }
         })
         .collect::<Vec<_>>();

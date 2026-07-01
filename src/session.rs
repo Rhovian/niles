@@ -1,4 +1,6 @@
 use std::{
+    env,
+    ffi::OsStr,
     fs,
     process::{Command, Stdio},
 };
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::agents,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
+    workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
 };
 
 const SUPERVISOR_BRIEF_TEMPLATE: &str = include_str!("templates/supervisor_brief.md");
@@ -23,8 +26,36 @@ pub struct SessionMeta {
     pub brief: Utf8PathBuf,
 }
 
-pub fn run(agent: String, goal: Option<String>) -> Result<()> {
-    launch_foreground_agent(&agent, goal.as_deref())
+pub fn run(supervisor: Option<String>, goal: Option<String>) -> Result<()> {
+    let manifest = launch_prelude(supervisor.as_deref())?;
+    launch_foreground_agent(&manifest.supervisor, goal.as_deref())
+}
+
+fn launch_prelude(supervisor_override: Option<&str>) -> Result<WorkspaceManifest> {
+    require_tmux_session(env::var_os("TMUX").as_deref())?;
+
+    let mut defaults = WorkspaceManifestDefaults::default();
+    if let Some(supervisor) = supervisor_override {
+        defaults.supervisor = supervisor.to_owned();
+    }
+
+    let root = Utf8Path::new(".");
+    workspace_manifest::ensure_interactive(root, &defaults)
+}
+
+fn require_tmux_session(tmux: Option<&OsStr>) -> Result<()> {
+    if tmux_session_present(tmux) {
+        return Ok(());
+    }
+
+    bail!(
+        "Niles must be launched from inside a tmux session. Start one with `tmux new -s niles` or attach with `tmux attach`, then run `niles` again."
+    )
+}
+
+fn tmux_session_present(tmux: Option<&OsStr>) -> bool {
+    tmux.and_then(OsStr::to_str)
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
@@ -175,5 +206,49 @@ fn crew_context() -> Result<String> {
         Ok("crew: none".to_owned())
     } else {
         Ok(format!("crew: {}", ids.join(", ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tmux_session_present_accepts_nonempty_env() {
+        assert!(tmux_session_present(Some(OsStr::new(
+            "/tmp/tmux-501/default,1,0"
+        ))));
+    }
+
+    #[test]
+    fn tmux_session_present_rejects_missing_or_empty_env() {
+        assert!(!tmux_session_present(None));
+        assert!(!tmux_session_present(Some(OsStr::new(""))));
+        assert!(!tmux_session_present(Some(OsStr::new("   "))));
+    }
+
+    #[test]
+    fn require_tmux_session_errors_when_missing() {
+        let err = require_tmux_session(None).unwrap_err();
+
+        assert!(err.to_string().contains("inside a tmux session"));
+        assert!(err.to_string().contains("tmux new -s niles"));
+    }
+
+    #[test]
+    fn supervisor_prompt_args_pass_brief_as_claude_system_prompt() {
+        let args = supervisor_prompt_args("claude", "brief body".to_owned(), Some("ship it"));
+
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], "--append-system-prompt");
+        assert_eq!(args[1], "brief body");
+        assert_eq!(args[2], "Start the Niles supervisor session.");
+    }
+
+    #[test]
+    fn supervisor_brief_omits_removed_manifest_command() {
+        assert!(SUPERVISOR_BRIEF_TEMPLATE.contains("niles spawn <id>"));
+        assert!(SUPERVISOR_BRIEF_TEMPLATE.contains("niles run"));
+        assert!(!SUPERVISOR_BRIEF_TEMPLATE.contains("niles manifest"));
     }
 }

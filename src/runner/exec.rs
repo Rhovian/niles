@@ -86,6 +86,9 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
             "step {step_number} is the `{command}` command; run it captured with `niles exec-step {} {step_number}`",
             state.id
         ),
+        TaskStep::Role { role, .. } => {
+            bail!("step {step_number} role `{role}` was not resolved; check .niles/manifest.yaml")
+        }
     };
 
     let workspace = spec.workspace.clone();
@@ -371,6 +374,9 @@ pub(in crate::runner) fn execute_single_step(
             steps_dir,
         )?),
         TaskStep::Command { .. } => None,
+        TaskStep::Role { role, .. } => {
+            bail!("step {step_number} role `{role}` was not resolved; check .niles/manifest.yaml")
+        }
     };
 
     mark_step_running(state, step_number, context.clone());
@@ -405,6 +411,9 @@ pub(in crate::runner) fn execute_single_step(
                 workspace,
                 steps_dir,
             )
+        }
+        TaskStep::Role { role, .. } => {
+            bail!("step {step_number} role `{role}` was not resolved; check .niles/manifest.yaml")
         }
     }?;
 
