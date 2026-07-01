@@ -173,13 +173,13 @@ pub enum CommandName {
         /// Crew worker id to wait on.
         #[arg(long, conflicts_with = "run")]
         crew: Option<String>,
-        /// Step number to prefer when several new wake lines arrive together.
+        /// Step number to wait for.
         #[arg(short, long)]
         index: Option<usize>,
         /// Poll interval in seconds.
         #[arg(long, default_value_t = 2.0)]
         interval: f64,
-        /// Maximum seconds to wait before exiting non-zero.
+        /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
         #[arg(long)]
         timeout: Option<f64>,
     },
