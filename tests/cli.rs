@@ -1159,6 +1159,55 @@ fn wait_ignores_existing_status_lines_and_prints_next_wake() {
 }
 
 #[test]
+fn wait_index_returns_already_emitted_step_wake() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-wait-index-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let run_dir = workspace.join(".niles/runs/test-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    fs::write(
+        run_dir.join("status.log"),
+        "done: step 1 finished\nworking: step 2 running\ndone: step 2 finished\n",
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    let output = Command::new(niles)
+        .args([
+            "wait",
+            "test-run",
+            "--index",
+            "2",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "4",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_command_success("wait --index", &output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "done: step 2 finished\n"
+    );
+}
+
+#[test]
 fn agent_steps_receive_context_artifacts() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(

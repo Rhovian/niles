@@ -8,6 +8,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{crew, store};
 
+const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
 pub fn wait(
     run: Option<String>,
     crew: Option<String>,
@@ -35,7 +37,8 @@ pub fn wait(
     let interval = positive_seconds_duration(interval, "wait interval")?;
     let timeout = timeout
         .map(|seconds| non_negative_seconds_duration(seconds, "wait timeout"))
-        .transpose()?;
+        .transpose()?
+        .unwrap_or(DEFAULT_WAIT_TIMEOUT);
 
     match wait_for_wake(&target, index, interval, timeout)? {
         WaitResult::Line(line) => {
@@ -103,38 +106,26 @@ fn wait_for_wake(
     target: &WaitTarget,
     index: Option<usize>,
     interval: Duration,
-    timeout: Option<Duration>,
+    timeout: Duration,
 ) -> Result<WaitResult> {
     if let Some(result) = target.closed_if_missing() {
         return Ok(result);
     }
 
     let mut cursor = read_lines(target.status())?.len();
-    let deadline = timeout.map(|timeout| Instant::now() + timeout);
+    let deadline = Instant::now() + timeout;
 
     loop {
         if let Some(result) = target.closed_if_missing() {
             return Ok(result);
         }
 
-        let sleep_for = match deadline {
-            Some(deadline) => {
-                let now = Instant::now();
-                if now >= deadline {
-                    Duration::ZERO
-                } else {
-                    interval.min(deadline - now)
-                }
-            }
-            None => interval,
-        };
-
-        if !sleep_for.is_zero() {
-            thread::sleep(sleep_for);
-        }
-
         let lines = read_lines(target.status())?;
-        let start = cursor.min(lines.len());
+        let start = if index.is_some() {
+            0
+        } else {
+            cursor.min(lines.len())
+        };
         if let Some(line) = select_wake(&lines[start..], index) {
             return Ok(target.result_for_line(line));
         }
@@ -144,9 +135,12 @@ fn wait_for_wake(
             return Ok(result);
         }
 
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        let now = Instant::now();
+        if now >= deadline {
             return Ok(WaitResult::Timeout);
         }
+
+        thread::sleep(interval.min(deadline - now));
     }
 }
 
@@ -158,25 +152,21 @@ fn crew_status_dir(status: &Utf8Path) -> Result<Utf8PathBuf> {
 }
 
 fn select_wake(lines: &[String], index: Option<usize>) -> Option<String> {
-    let mut first_wake = None;
-
     for line in lines {
         if !is_actionable_wake(line) {
             continue;
         }
 
-        if first_wake.is_none() {
-            first_wake = Some(line.clone());
-        }
-
-        if let Some(index) = index
-            && mentions_step(line, index)
-        {
-            return Some(line.clone());
+        match index {
+            Some(index) if is_closed_wake(line) || mentions_step(line, index) => {
+                return Some(line.clone());
+            }
+            Some(_) => {}
+            None => return Some(line.clone()),
         }
     }
 
-    first_wake
+    None
 }
 
 fn is_actionable_wake(line: &str) -> bool {
@@ -249,6 +239,29 @@ mod tests {
         assert_eq!(
             select_wake(&lines, Some(2)).as_deref(),
             Some("done: step 2 finished")
+        );
+    }
+
+    #[test]
+    fn indexed_wake_ignores_generic_and_other_step_wakes() {
+        let lines = vec![
+            "done: generic wake".to_owned(),
+            "failed: step 1 failed".to_owned(),
+        ];
+
+        assert_eq!(select_wake(&lines, Some(2)), None);
+    }
+
+    #[test]
+    fn indexed_wake_keeps_closed_terminal_backstop() {
+        let lines = vec![
+            "done: generic wake".to_owned(),
+            "closed: auth-fix".to_owned(),
+        ];
+
+        assert_eq!(
+            select_wake(&lines, Some(2)).as_deref(),
+            Some("closed: auth-fix")
         );
     }
 
