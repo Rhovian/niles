@@ -100,7 +100,7 @@ pub fn generate(options: GenerateOptions) -> Result<()> {
 
     println!("manifest: {path}");
     if run {
-        runner::run(path)
+        runner::run(path, false)
     } else {
         println!("next: Run `niles run {path}`");
         Ok(())

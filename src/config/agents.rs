@@ -5,6 +5,8 @@ pub struct AgentProfile {
     pub id: &'static str,
     pub binary: &'static str,
     pub args: &'static [&'static str],
+    pub min_version: &'static str,
+    pub tested_version: &'static str,
     pub prompt: PromptMode,
 }
 
@@ -26,12 +28,16 @@ const PROFILES: &[AgentProfile] = &[
         id: "codex",
         binary: "codex",
         args: &["exec", "--sandbox", "workspace-write"],
+        min_version: "0.142.4",
+        tested_version: "0.142.4",
         prompt: PromptMode::Arg,
     },
     AgentProfile {
         id: "claude",
         binary: "claude",
         args: &["-p"],
+        min_version: "2.1.197",
+        tested_version: "2.1.197",
         prompt: PromptMode::Arg,
     },
 ];

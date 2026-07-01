@@ -36,6 +36,9 @@ pub enum CommandName {
     /// Prepare a new supervisor-driven run from a task spec.
     #[command(alias = "r")]
     Run {
+        /// Proceed even when a built-in agent CLI is below the pinned version range.
+        #[arg(long, env = "NILES_ALLOW_CLI_MISMATCH")]
+        allow_cli_mismatch: bool,
         /// YAML task specification.
         task: Utf8PathBuf,
     },
@@ -112,6 +115,9 @@ pub enum CommandName {
     },
     /// Spawn a worker agent in a tmux window.
     Spawn {
+        /// Proceed even when a built-in agent CLI is below the pinned version range.
+        #[arg(long, env = "NILES_ALLOW_CLI_MISMATCH")]
+        allow_cli_mismatch: bool,
         /// Crew task id used for window and metadata names.
         id: String,
         /// Project workspace for the worker.

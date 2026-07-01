@@ -56,6 +56,13 @@ fn assert_command_success(label: &str, output: &Output) {
     );
 }
 
+fn write_executable(path: &Path, body: &str) {
+    fs::write(path, body).unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 #[test]
 fn run_executes_steps_and_persists_state() {
     let niles = env!("CARGO_BIN_EXE_niles");
@@ -309,6 +316,169 @@ steps:
 }
 
 #[test]
+fn run_enforces_known_agent_cli_min_version_and_allows_override() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-version-run-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.1.0\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Gate codex"
+steps:
+  - agent: codex
+    task: "hello"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let blocked = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!blocked.status.success());
+    let blocked_stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(blocked_stderr.contains("codex CLI 0.1.0 is below the supported minimum"));
+    assert!(blocked_stderr.contains("--allow-cli-mismatch"));
+
+    let allowed = Command::new(niles)
+        .args(["run", "--allow-cli-mismatch"])
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("run --allow-cli-mismatch", &allowed);
+    assert!(String::from_utf8_lossy(&allowed.stdout).contains("status: created"));
+    assert!(String::from_utf8_lossy(&allowed.stderr).contains("CLI mismatch override is enabled"));
+}
+
+#[test]
+fn spawn_enforces_known_agent_cli_min_version() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-version-spawn-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '0.1.0 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "blocked-worker",
+            "--agent",
+            "claude",
+            "Fix",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!spawn.status.success());
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("claude CLI 0.1.0 is below the supported minimum"));
+    assert!(!workspace.join(".niles/crew/blocked-worker.json").exists());
+}
+
+#[test]
+fn analyze_reports_version_gate_status() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-version-analyze-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.1.0\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("analyze", &analyze);
+
+    let stdout = String::from_utf8_lossy(&analyze.stdout);
+    assert!(stdout.contains("version_gate: codex fail 0.1.0"));
+    assert!(stdout.contains("wrote .niles/capabilities/codex.json"));
+
+    let manifest = fs::read_to_string(workspace.join(".niles/capabilities/codex.json")).unwrap();
+    assert!(manifest.contains(r#""version_gate""#));
+    assert!(manifest.contains(r#""status": "fail""#));
+}
+
+#[test]
 fn bare_niles_launches_foreground_claude() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
@@ -407,6 +577,15 @@ esac
     let mut permissions = fs::metadata(&tmux).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
 
     let path = format!(
         "{}:{}",
@@ -516,6 +695,15 @@ esac
     let mut permissions = fs::metadata(&tmux).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
 
     let path = format!(
         "{}:{}",

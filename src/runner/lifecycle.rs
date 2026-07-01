@@ -5,9 +5,12 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
-    config::spec::{
-        TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, save_task,
-        summarize_spec,
+    config::{
+        spec::{
+            TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, save_task,
+            summarize_spec,
+        },
+        version,
     },
     crew,
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
@@ -19,11 +22,12 @@ use super::RunSelector;
 
 pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
     let id = format!("ask-{}-{}", slugify(&agent), timestamp_id(&Utc::now()));
-    crew::spawn(id, current_dir_utf8()?, agent, None, prompt)
+    crew::spawn(id, current_dir_utf8()?, agent, None, prompt, false)
 }
 
-pub(crate) fn run(task: Utf8PathBuf) -> Result<()> {
+pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
     let spec = with_project_config(load_task(&task)?)?;
+    version::preflight_task_agents(&spec, allow_cli_mismatch)?;
     prepare_run(spec, Some(task))
 }
 

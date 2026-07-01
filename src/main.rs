@@ -28,7 +28,10 @@ fn main() -> Result<()> {
         None => session::run(cli.supervisor, cli.goal),
         Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
-        Some(CommandName::Run { task }) => runner::run(task),
+        Some(CommandName::Run {
+            allow_cli_mismatch,
+            task,
+        }) => runner::run(task, allow_cli_mismatch),
         Some(CommandName::Step { run, index }) => runner::step(RunSelector::new(run), index),
         Some(CommandName::StepAdd {
             run,
@@ -61,12 +64,13 @@ fn main() -> Result<()> {
             run,
         }),
         Some(CommandName::Spawn {
+            allow_cli_mismatch,
             id,
             project,
             agent,
             brief,
             task,
-        }) => crew::spawn(id, project, agent, brief, task),
+        }) => crew::spawn(id, project, agent, brief, task, allow_cli_mismatch),
         Some(CommandName::CrewClose { id }) => crew::crew_close(id),
         Some(CommandName::Peek {
             id,

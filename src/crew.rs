@@ -8,6 +8,7 @@ use crate::{
     config::{
         agents,
         spec::{PromptMode, load_project_config_from},
+        version,
     },
     store::{read_state, resolve_run_dir},
     tmux,
@@ -45,6 +46,7 @@ pub fn spawn(
     agent: String,
     brief: Option<Utf8PathBuf>,
     task: Vec<String>,
+    allow_cli_mismatch: bool,
 ) -> Result<()> {
     validate_id(&id)?;
     if brief.is_none() && task.is_empty() {
@@ -52,6 +54,13 @@ pub fn spawn(
     }
 
     let project = absolute_existing_dir(&project, "project")?;
+    let config = load_project_config_from(&project)?;
+    version::preflight_agent(
+        &agent,
+        config.agents.get(&agent),
+        agents::InvocationDefaults::Worker,
+        allow_cli_mismatch,
+    )?;
     let dir = absolute_path(Utf8Path::new(CREW_DIR))?.join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
