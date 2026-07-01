@@ -1,4 +1,7 @@
-use std::{fs, io::ErrorKind};
+use std::{
+    fs,
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
+};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -117,6 +120,12 @@ pub fn crew_close(id: String) -> Result<()> {
         .as_ref()
         .map(|meta| crew_window_name(&id, meta))
         .unwrap_or_else(|| format!("niles-{id}"));
+    let status_path = meta
+        .as_ref()
+        .and_then(|meta| meta.status.as_ref())
+        .cloned()
+        .unwrap_or_else(|| crew_dir.join("status.log"));
+    append_closed_sentinel(&status_path, &id)?;
 
     match close_window(&window_name) {
         Ok(()) => println!("closed window: {window_name}"),
@@ -411,6 +420,43 @@ fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
     }
 }
 
+fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if !parent.exists() {
+        return Ok(());
+    }
+
+    let mut status = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open {path} for crew close sentinel"))?;
+    if needs_leading_newline(&mut status)
+        .with_context(|| format!("failed to inspect {path} before crew close sentinel"))?
+    {
+        status
+            .write_all(b"\n")
+            .with_context(|| format!("failed to write crew close sentinel to {path}"))?;
+    }
+    writeln!(status, "closed: {id}")
+        .with_context(|| format!("failed to write crew close sentinel to {path}"))?;
+    Ok(())
+}
+
+fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
+    if file.metadata()?.len() == 0 {
+        return Ok(false);
+    }
+
+    file.seek(SeekFrom::End(-1))?;
+    let mut byte = [0];
+    file.read_exact(&mut byte)?;
+    Ok(byte[0] != b'\n')
+}
+
 fn validate_id(id: &str) -> Result<()> {
     if id.is_empty() {
         bail!("crew id cannot be empty");
@@ -431,9 +477,33 @@ pub(crate) fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn shell_quotes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn closed_sentinel_starts_on_its_own_line() {
+        let dir = std::env::temp_dir().join(format!(
+            "niles-crew-sentinel-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = Utf8PathBuf::from_path_buf(dir.join("status.log")).unwrap();
+        fs::write(&path, "working: close requested").unwrap();
+
+        append_closed_sentinel(&path, "auth-fix").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "working: close requested\nclosed: auth-fix\n"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
