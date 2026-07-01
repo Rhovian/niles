@@ -16,6 +16,7 @@ use crate::{
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{current_dir_utf8, slugify, timestamp_id, write_json_pretty},
+    workspace_manifest,
 };
 
 use super::RunSelector;
@@ -68,7 +69,14 @@ pub(crate) fn resume(selector: RunSelector) -> Result<()> {
 
 pub(in crate::runner) fn with_project_config(spec: TaskSpec) -> Result<TaskSpec> {
     let config = load_project_config()?;
-    Ok(apply_project_config(spec, config))
+    let spec = apply_project_config(spec, config);
+    if workspace_manifest::task_uses_role_bindings(&spec) {
+        let root = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
+        let manifest = workspace_manifest::load_required(root)?;
+        workspace_manifest::resolve_task_roles(spec, &manifest)
+    } else {
+        Ok(spec)
+    }
 }
 
 fn init_run(
@@ -230,6 +238,15 @@ fn planned_step(index: usize, step: &TaskStep) -> StepRecord {
     let (role, kind, label) = match step {
         TaskStep::Agent { agent, role, .. } => (role.clone(), StepKind::Agent, agent.clone()),
         TaskStep::Command { command, role } => (role.clone(), StepKind::Command, command.clone()),
+        TaskStep::Role { role, task } => (
+            Some(role.clone()),
+            if task.is_some() {
+                StepKind::Agent
+            } else {
+                StepKind::Command
+            },
+            role.clone(),
+        ),
     };
 
     StepRecord {

@@ -4,9 +4,9 @@ use clap::{ArgAction, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(version, about, infer_subcommands = true)]
 pub struct Cli {
-    /// Agent id to launch for bare `niles`.
-    #[arg(long, default_value = "claude")]
-    pub supervisor: String,
+    /// Override and persist the supervisor agent for bare `niles`.
+    #[arg(long)]
+    pub supervisor: Option<String>,
     /// Initial goal to include in the foreground supervisor brief.
     #[arg(long)]
     pub goal: Option<String>,
@@ -87,31 +87,6 @@ pub enum CommandName {
         run: String,
         /// Step number to execute.
         index: usize,
-    },
-    /// Generate a role-based task manifest.
-    #[command(alias = "m")]
-    Manifest {
-        /// Project workspace for the generated manifest.
-        #[arg(long, default_value = ".")]
-        project: Utf8PathBuf,
-        /// Agent id to use for planning.
-        #[arg(long, default_value = "claude")]
-        planner: String,
-        /// Agent id to use for implementation.
-        #[arg(long, default_value = "codex")]
-        implementer: String,
-        /// Agent id to use for review.
-        #[arg(long, default_value = "claude")]
-        reviewer: String,
-        /// Named validation command to include.
-        #[arg(long, default_value = "test")]
-        command: String,
-        /// Prepare a run from the generated manifest.
-        #[arg(long)]
-        run: bool,
-        /// Task goal.
-        #[arg(required = true, num_args = 1..)]
-        goal: Vec<String>,
     },
     /// Spawn a worker agent in a tmux window.
     Spawn {

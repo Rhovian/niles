@@ -50,6 +50,7 @@ pub fn profile_for(agent: &str) -> Option<AgentProfile> {
     PROFILES.iter().find(|profile| profile.id == agent).copied()
 }
 
+#[allow(dead_code)]
 pub fn default_config(agent: &str) -> AgentConfig {
     match profile_for(agent) {
         Some(profile) => AgentConfig {
