@@ -2,7 +2,6 @@ mod analyze;
 mod cli;
 mod config;
 mod context;
-mod crew;
 mod process;
 mod runner;
 mod session;
@@ -11,6 +10,7 @@ mod store;
 mod tmux;
 mod util;
 mod wait;
+mod worker;
 mod workspace_manifest;
 
 use anyhow::Result;
@@ -25,7 +25,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => session::run(cli.supervisor, cli.goal),
+        None => session::run(cli.manager, cli.goal),
         Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
         Some(CommandName::Run {
@@ -53,26 +53,26 @@ fn main() -> Result<()> {
             agent,
             brief,
             task,
-        }) => crew::spawn(id, project, agent, brief, task, allow_cli_mismatch),
-        Some(CommandName::CrewClose { id }) => crew::crew_close(id),
+        }) => worker::spawn(id, project, agent, brief, task, allow_cli_mismatch),
+        Some(CommandName::WorkerClose { id }) => worker::worker_close(id),
         Some(CommandName::Peek {
             id,
             run,
             index,
             lines,
-        }) => crew::peek(id, run, index, lines),
+        }) => worker::peek(id, run, index, lines),
         Some(CommandName::Send {
             run,
             index,
             target_and_message,
-        }) => crew::send(run, index, target_and_message),
+        }) => worker::send(run, index, target_and_message),
         Some(CommandName::Wait {
             run,
-            crew,
+            worker,
             index,
             interval,
             timeout,
-        }) => wait::wait(run, crew, index, interval, timeout),
+        }) => wait::wait(run, worker, index, interval, timeout),
         Some(CommandName::Resume { run }) => runner::resume(RunSelector::new(run)),
         Some(CommandName::Status { run, json }) => runner::status(RunSelector::new(run), json),
         Some(CommandName::Watch {

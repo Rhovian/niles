@@ -65,7 +65,7 @@ fn write_executable(path: &Path, body: &str) {
 
 fn write_workspace_manifest(
     workspace: &Path,
-    supervisor: &str,
+    manager: &str,
     planner: &str,
     implementer: &str,
     reviewer: &str,
@@ -75,7 +75,7 @@ fn write_workspace_manifest(
     fs::write(
         workspace.join(".niles/manifest.yaml"),
         format!(
-            "supervisor: {supervisor}\nplanner: {planner}\nimplementer: {implementer}\nreviewer: {reviewer}\nvalidation_command: {validation_command}\n"
+            "manager: {manager}\nplanner: {planner}\nimplementer: {implementer}\nreviewer: {reviewer}\nvalidation_command: {validation_command}\n"
         ),
     )
     .unwrap();
@@ -445,7 +445,7 @@ esac
     assert!(!spawn.status.success());
     let stderr = String::from_utf8_lossy(&spawn.stderr);
     assert!(stderr.contains("claude CLI 0.1.0 is below the supported minimum"));
-    assert!(!workspace.join(".niles/crew/blocked-worker.json").exists());
+    assert!(!workspace.join(".niles/worker/blocked-worker.json").exists());
 }
 
 #[test]
@@ -517,16 +517,17 @@ fn bare_niles_errors_when_stdin_is_not_interactive() {
         .unwrap();
 
     assert!(!output.status.success());
+    assert!(workspace.join(".niles/worker").is_dir());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("stdin is not interactive"));
-    assert!(stderr.contains("choose the supervisor agent"));
+    assert!(stderr.contains("choose the manager agent"));
 }
 
 #[test]
-fn auth_spawn_peek_and_send_use_tmux_crew_metadata() {
+fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-crew-test-{}",
+        "niles-worker-test-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -597,17 +598,17 @@ esac
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles-auth-fix"));
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
-    assert!(spawn_stdout.contains("close: niles crew-close auth-fix"));
+    assert!(spawn_stdout.contains("close: niles worker-close auth-fix"));
 
-    let meta = fs::read_to_string(workspace.join(".niles/crew/auth-fix.json")).unwrap();
+    let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains("\"window\": \"niles:niles-auth-fix\""));
 
-    let brief = fs::read_to_string(workspace.join(".niles/crew/auth-fix/brief.md")).unwrap();
+    let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains("niles peek auth-fix"));
 
-    let launch = fs::read_to_string(workspace.join(".niles/crew/auth-fix/launch.sh")).unwrap();
+    let launch = fs::read_to_string(workspace.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
     assert!(launch.contains("exec 'claude'"));
 
@@ -702,16 +703,16 @@ esac
     let id = stdout
         .lines()
         .find_map(|line| line.strip_prefix("spawned: "))
-        .expect("ask output should include spawned crew id");
+        .expect("ask output should include spawned worker id");
     assert!(id.starts_with("ask-claude-"));
     assert!(stdout.contains(&format!("window: niles-{id}")));
     assert!(stdout.contains(&format!("peek: niles peek {id}")));
 
-    let meta = fs::read_to_string(workspace.join(format!(".niles/crew/{id}.json"))).unwrap();
+    let meta = fs::read_to_string(workspace.join(format!(".niles/worker/{id}.json"))).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains(&format!("\"window\": \"niles:niles-{id}\"")));
 
-    let brief = fs::read_to_string(workspace.join(format!(".niles/crew/{id}/brief.md"))).unwrap();
+    let brief = fs::read_to_string(workspace.join(format!(".niles/worker/{id}/brief.md"))).unwrap();
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains(&format!("niles peek {id}")));
 
@@ -722,10 +723,10 @@ esac
 }
 
 #[test]
-fn crew_close_tears_down_worker() {
+fn worker_close_tears_down_worker() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-crew-close-{}",
+        "niles-worker-close-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -752,16 +753,16 @@ esac
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
 
-    let crew_dir = workspace.join(".niles/crew/auth-fix");
-    fs::create_dir_all(&crew_dir).unwrap();
-    let brief = crew_dir.join("brief.md");
-    let launch = crew_dir.join("launch.sh");
-    let status = crew_dir.join("status.log");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    let brief = worker_dir.join("brief.md");
+    let launch = worker_dir.join("launch.sh");
+    let status = worker_dir.join("status.log");
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, "status").unwrap();
     fs::write(
-        workspace.join(".niles/crew/auth-fix.json"),
+        workspace.join(".niles/worker/auth-fix.json"),
         format!(
             r#"{{
   "id": "auth-fix",
@@ -788,7 +789,7 @@ esac
     );
 
     let close = Command::new(niles)
-        .args(["crew-close", "auth-fix"])
+        .args(["worker-close", "auth-fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("TMUX_LOG", &tmux_log)
@@ -807,15 +808,15 @@ esac
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("kill-window -t niles:niles-auth-fix"));
-    assert!(!workspace.join(".niles/crew/auth-fix.json").exists());
-    assert!(!workspace.join(".niles/crew/auth-fix").exists());
+    assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
 }
 
 #[test]
-fn crew_close_wakes_waiters_with_nonzero_closed_status() {
+fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-crew-close-wait-{}",
+        "niles-worker-close-wait-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -842,16 +843,16 @@ esac
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
 
-    let crew_dir = workspace.join(".niles/crew/auth-fix");
-    fs::create_dir_all(&crew_dir).unwrap();
-    let brief = crew_dir.join("brief.md");
-    let launch = crew_dir.join("launch.sh");
-    let status = crew_dir.join("status.log");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    let brief = worker_dir.join("brief.md");
+    let launch = worker_dir.join("launch.sh");
+    let status = worker_dir.join("status.log");
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, "working: close requested").unwrap();
     fs::write(
-        workspace.join(".niles/crew/auth-fix.json"),
+        workspace.join(".niles/worker/auth-fix.json"),
         format!(
             r#"{{
   "id": "auth-fix",
@@ -874,7 +875,7 @@ esac
     let waiter = Command::new(niles)
         .args([
             "wait",
-            "--crew",
+            "--worker",
             "auth-fix",
             "--interval",
             "0.05",
@@ -894,14 +895,14 @@ esac
         std::env::var("PATH").unwrap_or_default()
     );
     let close = Command::new(niles)
-        .args(["crew-close", "auth-fix"])
+        .args(["worker-close", "auth-fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
         .unwrap();
-    assert_command_success("crew-close", &close);
+    assert_command_success("worker-close", &close);
 
     let started = Instant::now();
     let output = waiter.wait_with_output().unwrap();
@@ -923,7 +924,7 @@ esac
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("crew 'auth-fix' closed"),
+        stderr.contains("worker 'auth-fix' closed"),
         "stdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
@@ -933,10 +934,10 @@ esac
 }
 
 #[test]
-fn crew_close_unknown_id_errors() {
+fn worker_close_unknown_id_errors() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
-        "niles-crew-close-missing-{}",
+        "niles-worker-close-missing-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -945,13 +946,13 @@ fn crew_close_unknown_id_errors() {
     fs::create_dir_all(&workspace).unwrap();
 
     let close = Command::new(niles)
-        .args(["crew-close", "missing"])
+        .args(["worker-close", "missing"])
         .current_dir(&workspace)
         .output()
         .unwrap();
     assert!(!close.status.success());
     assert!(
-        String::from_utf8_lossy(&close.stderr).contains("unknown crew id 'missing'"),
+        String::from_utf8_lossy(&close.stderr).contains("unknown worker id 'missing'"),
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&close.stdout),
         String::from_utf8_lossy(&close.stderr)
@@ -1573,7 +1574,7 @@ fn prepare_then_exec_step_drives_run() {
     fs::write(
         &task,
         r#"
-goal: "Exercise supervisor stepping"
+goal: "Exercise manager stepping"
 agents:
   echo:
     binary: /bin/echo

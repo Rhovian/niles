@@ -4,10 +4,10 @@ use clap::{ArgAction, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(version, about, infer_subcommands = true)]
 pub struct Cli {
-    /// Override and persist the supervisor agent for bare `niles`.
+    /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
-    pub supervisor: Option<String>,
-    /// Initial goal to include in the foreground supervisor brief.
+    pub manager: Option<String>,
+    /// Initial goal to include in the foreground manager brief.
     #[arg(long)]
     pub goal: Option<String>,
     #[command(subcommand)]
@@ -33,7 +33,7 @@ pub enum CommandName {
         #[arg(short, long)]
         agent: Option<String>,
     },
-    /// Prepare a new supervisor-driven run from a task spec.
+    /// Prepare a new manager-driven run from a task spec.
     #[command(alias = "r")]
     Run {
         /// Proceed even when a built-in agent CLI is below the pinned version range.
@@ -51,7 +51,7 @@ pub enum CommandName {
         #[arg(short, long)]
         index: Option<usize>,
     },
-    /// Append a step to an existing run (for supervisor-driven review loops).
+    /// Append a step to an existing run (for manager-driven review loops).
     #[command(name = "step-add")]
     StepAdd {
         /// Run id or "latest".
@@ -93,7 +93,7 @@ pub enum CommandName {
         /// Proceed even when a built-in agent CLI is below the pinned version range.
         #[arg(long, env = "NILES_ALLOW_CLI_MISMATCH")]
         allow_cli_mismatch: bool,
-        /// Crew task id used for window and metadata names.
+        /// Worker task id used for window and metadata names.
         id: String,
         /// Project workspace for the worker.
         #[arg(long, default_value = ".")]
@@ -108,15 +108,15 @@ pub enum CommandName {
         #[arg(num_args = 0.., trailing_var_arg = true)]
         task: Vec<String>,
     },
-    /// Close a spawned crew worker and remove its metadata.
-    #[command(name = "crew-close")]
-    CrewClose {
-        /// Crew task id to close.
+    /// Close a spawned worker and remove its metadata.
+    #[command(name = "worker-close")]
+    WorkerClose {
+        /// Worker task id to close.
         id: String,
     },
     /// Capture the tail of a worker tmux pane.
     Peek {
-        /// Crew task id. Omit when targeting a run step with --run and --index.
+        /// Worker task id. Omit when targeting a run step with --run and --index.
         id: Option<String>,
         /// Run id or "latest" for a step window.
         #[arg(long)]
@@ -136,18 +136,18 @@ pub enum CommandName {
         /// Step number for a run step window.
         #[arg(short, long)]
         index: Option<usize>,
-        /// Crew task id followed by message, or just message when --run/--index are set.
+        /// Worker task id followed by message, or just message when --run/--index are set.
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
         target_and_message: Vec<String>,
     },
     /// Wait for the next actionable status-log wake and print it.
     Wait {
-        /// Run id. Use --crew instead for a crew worker.
-        #[arg(required_unless_present = "crew", conflicts_with = "crew")]
+        /// Run id. Use --worker instead for a worker.
+        #[arg(required_unless_present = "worker", conflicts_with = "worker")]
         run: Option<String>,
-        /// Crew worker id to wait on.
+        /// Worker id to wait on.
         #[arg(long, conflicts_with = "run")]
-        crew: Option<String>,
+        worker: Option<String>,
         /// Step number to wait for.
         #[arg(short, long)]
         index: Option<usize>,

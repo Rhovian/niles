@@ -6,13 +6,13 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{crew, store};
+use crate::{store, worker};
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 pub fn wait(
     run: Option<String>,
-    crew: Option<String>,
+    worker: Option<String>,
     index: Option<usize>,
     interval: f64,
     timeout: Option<f64>,
@@ -21,17 +21,17 @@ pub fn wait(
         bail!("step index must be >= 1");
     }
 
-    let target = match (run, crew) {
+    let target = match (run, worker) {
         (Some(run), None) => WaitTarget::Run {
             status: store::resolve_run_dir(&run)?.join("status.log"),
         },
         (None, Some(id)) => {
-            let status = crew::status_log_path(&id)?;
-            let dir = crew_status_dir(&status)?;
-            WaitTarget::Crew { id, status, dir }
+            let status = worker::status_log_path(&id)?;
+            let dir = worker_status_dir(&status)?;
+            WaitTarget::Worker { id, status, dir }
         }
-        (Some(_), Some(_)) => bail!("use either a run id or --crew <id>, not both"),
-        (None, None) => bail!("wait requires a run id or --crew <id>"),
+        (Some(_), Some(_)) => bail!("use either a run id or --worker <id>, not both"),
+        (None, None) => bail!("wait requires a run id or --worker <id>"),
     };
 
     let interval = positive_seconds_duration(interval, "wait interval")?;
@@ -45,9 +45,9 @@ pub fn wait(
             println!("{line}");
             Ok(())
         }
-        WaitResult::CrewClosed { id, line } => {
+        WaitResult::WorkerClosed { id, line } => {
             println!("{line}");
-            bail!("crew '{id}' closed")
+            bail!("worker '{id}' closed")
         }
         WaitResult::Timeout => bail!(
             "timeout: no actionable wake line appeared in {}",
@@ -60,7 +60,7 @@ enum WaitTarget {
     Run {
         status: Utf8PathBuf,
     },
-    Crew {
+    Worker {
         id: String,
         status: Utf8PathBuf,
         dir: Utf8PathBuf,
@@ -69,31 +69,31 @@ enum WaitTarget {
 
 enum WaitResult {
     Line(String),
-    CrewClosed { id: String, line: String },
+    WorkerClosed { id: String, line: String },
     Timeout,
 }
 
 impl WaitTarget {
     fn status(&self) -> &Utf8Path {
         match self {
-            WaitTarget::Run { status } | WaitTarget::Crew { status, .. } => status,
+            WaitTarget::Run { status } | WaitTarget::Worker { status, .. } => status,
         }
     }
 
     fn closed_if_missing(&self) -> Option<WaitResult> {
         match self {
             WaitTarget::Run { .. } => None,
-            WaitTarget::Crew { id, dir, .. } if !dir.exists() => Some(WaitResult::CrewClosed {
+            WaitTarget::Worker { id, dir, .. } if !dir.exists() => Some(WaitResult::WorkerClosed {
                 id: id.clone(),
-                line: format!("closed: crew '{id}' directory removed"),
+                line: format!("closed: worker '{id}' directory removed"),
             }),
-            WaitTarget::Crew { .. } => None,
+            WaitTarget::Worker { .. } => None,
         }
     }
 
     fn result_for_line(&self, line: String) -> WaitResult {
         match self {
-            WaitTarget::Crew { id, .. } if is_closed_wake(&line) => WaitResult::CrewClosed {
+            WaitTarget::Worker { id, .. } if is_closed_wake(&line) => WaitResult::WorkerClosed {
                 id: id.clone(),
                 line,
             },
@@ -144,11 +144,11 @@ fn wait_for_wake(
     }
 }
 
-fn crew_status_dir(status: &Utf8Path) -> Result<Utf8PathBuf> {
+fn worker_status_dir(status: &Utf8Path) -> Result<Utf8PathBuf> {
     status
         .parent()
         .map(Utf8Path::to_path_buf)
-        .with_context(|| format!("crew status path has no parent directory: {status}"))
+        .with_context(|| format!("worker status path has no parent directory: {status}"))
 }
 
 fn select_wake(lines: &[String], index: Option<usize>) -> Option<String> {

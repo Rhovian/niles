@@ -16,7 +16,7 @@ use crate::{
     workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
 };
 
-const SUPERVISOR_BRIEF_TEMPLATE: &str = include_str!("templates/supervisor_brief.md");
+const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -26,17 +26,20 @@ pub struct SessionMeta {
     pub brief: Utf8PathBuf,
 }
 
-pub fn run(supervisor: Option<String>, goal: Option<String>) -> Result<()> {
-    let manifest = launch_prelude(supervisor.as_deref())?;
-    launch_foreground_agent(&manifest.supervisor, goal.as_deref())
+pub fn run(manager: Option<String>, goal: Option<String>) -> Result<()> {
+    let manifest = launch_prelude(manager.as_deref())?;
+    launch_foreground_agent(&manifest.manager, goal.as_deref())
 }
 
-fn launch_prelude(supervisor_override: Option<&str>) -> Result<WorkspaceManifest> {
+fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
     require_tmux_session(env::var_os("TMUX").as_deref())?;
 
+    let worker_dir = Utf8Path::new(".niles").join("worker");
+    fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
+
     let mut defaults = WorkspaceManifestDefaults::default();
-    if let Some(supervisor) = supervisor_override {
-        defaults.supervisor = supervisor.to_owned();
+    if let Some(manager) = manager_override {
+        defaults.manager = manager.to_owned();
     }
 
     let root = Utf8Path::new(".");
@@ -61,10 +64,10 @@ fn tmux_session_present(tmux: Option<&OsStr>) -> bool {
 fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
     let binary = agents::foreground_binary(agent);
     let mut args = agents::foreground_args(agent);
-    let meta = write_supervisor_session(agent, goal)?;
+    let meta = write_manager_session(agent, goal)?;
     let brief = fs::read_to_string(&meta.brief)
-        .with_context(|| format!("failed to read supervisor brief {}", meta.brief))?;
-    args.extend(supervisor_prompt_args(agent, brief, goal));
+        .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
+    args.extend(manager_prompt_args(agent, brief, goal));
 
     let status = Command::new(&binary)
         .args(&args)
@@ -87,7 +90,7 @@ fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
     }
 }
 
-fn supervisor_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec<String> {
+fn manager_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec<String> {
     let startup_prompt = startup_prompt(goal);
     match agent {
         "claude" => vec!["--append-system-prompt".to_owned(), brief, startup_prompt],
@@ -96,20 +99,20 @@ fn supervisor_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec
 }
 
 fn startup_prompt(_goal: Option<&str>) -> String {
-    "Start the Niles supervisor session.".to_owned()
+    "Start the Niles manager session.".to_owned()
 }
 
-fn write_supervisor_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta> {
+fn write_manager_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta> {
     let workspace = current_dir_utf8()?;
     let now = Utc::now();
     let id = timestamp_id(&now);
     let dir = Utf8Path::new(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
-    let path = dir.join("supervisor.md");
+    let path = dir.join("manager.md");
     let goal = goal
         .unwrap_or("No initial goal was provided. Start by asking the user what they want done.");
     let startup_context = startup_context()?;
-    let body = SUPERVISOR_BRIEF_TEMPLATE
+    let body = MANAGER_BRIEF_TEMPLATE
         .replace("{workspace}", workspace.as_str())
         .replace("{agent}", agent)
         .replace("{dir}", dir.as_str())
@@ -140,7 +143,7 @@ fn latest_session_path() -> Utf8PathBuf {
 }
 
 fn startup_context() -> Result<String> {
-    let lines = [latest_run_context()?, crew_context()?];
+    let lines = [latest_run_context()?, worker_context()?];
     Ok(lines.join("\n"))
 }
 
@@ -182,14 +185,14 @@ fn latest_run_context() -> Result<String> {
     Ok(format!("latest_run: id={id} status={status} goal={goal:?}"))
 }
 
-fn crew_context() -> Result<String> {
-    let crew_dir = Utf8Path::new(".niles").join("crew");
-    let entries = match fs::read_dir(&crew_dir) {
+fn worker_context() -> Result<String> {
+    let worker_dir = Utf8Path::new(".niles").join("worker");
+    let entries = match fs::read_dir(&worker_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok("crew: none".to_owned());
+            return Ok("worker: none".to_owned());
         }
-        Err(err) => return Err(err).with_context(|| format!("failed to read {crew_dir}")),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {worker_dir}")),
     };
     let mut ids = entries
         .filter_map(|entry| entry.ok())
@@ -203,9 +206,9 @@ fn crew_context() -> Result<String> {
         .collect::<Vec<_>>();
     ids.sort();
     if ids.is_empty() {
-        Ok("crew: none".to_owned())
+        Ok("worker: none".to_owned())
     } else {
-        Ok(format!("crew: {}", ids.join(", ")))
+        Ok(format!("worker: {}", ids.join(", ")))
     }
 }
 
@@ -236,19 +239,19 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_prompt_args_pass_brief_as_claude_system_prompt() {
-        let args = supervisor_prompt_args("claude", "brief body".to_owned(), Some("ship it"));
+    fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
+        let args = manager_prompt_args("claude", "brief body".to_owned(), Some("ship it"));
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--append-system-prompt");
         assert_eq!(args[1], "brief body");
-        assert_eq!(args[2], "Start the Niles supervisor session.");
+        assert_eq!(args[2], "Start the Niles manager session.");
     }
 
     #[test]
-    fn supervisor_brief_omits_removed_manifest_command() {
-        assert!(SUPERVISOR_BRIEF_TEMPLATE.contains("niles spawn <id>"));
-        assert!(SUPERVISOR_BRIEF_TEMPLATE.contains("niles run"));
-        assert!(!SUPERVISOR_BRIEF_TEMPLATE.contains("niles manifest"));
+    fn manager_brief_omits_removed_manifest_command() {
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("niles spawn <id>"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("niles run"));
+        assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
     }
 }

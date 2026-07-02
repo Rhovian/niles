@@ -12,18 +12,17 @@ use crate::{
         },
         version,
     },
-    crew,
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{current_dir_utf8, slugify, timestamp_id, write_json_pretty},
-    workspace_manifest,
+    worker, workspace_manifest,
 };
 
 use super::RunSelector;
 
 pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
     let id = format!("ask-{}-{}", slugify(&agent), timestamp_id(&Utc::now()));
-    crew::spawn(id, current_dir_utf8()?, agent, None, prompt, false)
+    worker::spawn(id, current_dir_utf8()?, agent, None, prompt, false)
 }
 
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
@@ -112,7 +111,7 @@ fn init_run(
     Ok((run_dir, state, state_path))
 }
 
-/// Create a run without executing it, so the foreground supervisor can drive the
+/// Create a run without executing it, so the foreground manager can drive the
 /// steps one at a time via `niles step` or `niles exec-step`.
 fn prepare_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
     let (_run_dir, state, state_path) = init_run(&spec, task_file)?;
@@ -161,7 +160,7 @@ fn print_step_commands(state: &RunState, step_index: usize) {
     );
 }
 
-/// Append a step to an existing run so the supervisor can extend it on the fly
+/// Append a step to an existing run so the manager can extend it on the fly
 /// (e.g. another code -> review cycle until the reviewer reaches consensus). The
 /// step is added to both the run's task spec and its state, and a terminal run
 /// is reopened to `running`.

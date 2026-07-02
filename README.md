@@ -24,7 +24,7 @@ niles analyze --agent codex
 niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Please run the auth tests again."
-niles wait --crew auth-fix
+niles wait --worker auth-fix
 niles run task.yaml
 niles step latest --index 1
 niles exec-step latest 1
@@ -39,7 +39,7 @@ niles diff
 niles resume
 ```
 
-Bare `niles` launches the foreground supervisor agent, currently Claude by default. Niles writes a supervisor brief under `.niles/sessions/<id>/`, passes it as hidden supervisor context, and gives the foreground agent a small startup prompt so the agent greets you with useful paths: handle the task directly, prepare a YAML workflow, resume existing Niles work, or spawn workers. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
+Bare `niles` launches the foreground manager agent, currently Claude by default. Niles writes a manager brief under `.niles/sessions/<id>/`, passes it as hidden manager context, and gives the foreground agent a small startup prompt so the agent greets you with useful paths: handle the task directly, prepare a YAML workflow, resume existing Niles work, or spawn workers. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
 
 Short aliases are part of the interface:
 
@@ -55,7 +55,7 @@ niles re
 
 The default path should feel like an axi: terse commands, obvious defaults, compact output, and YAML only when a workflow needs to be explicit.
 
-## Crew
+## Worker
 
 Spawn a worker agent in tmux:
 
@@ -63,12 +63,12 @@ Spawn a worker agent in tmux:
 niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Please rerun the failing test and report the result."
-niles wait --crew auth-fix
+niles wait --worker auth-fix
 ```
 
-Spawn writes a brief and launch script under `.niles/crew/<id>/`, records tmux metadata in `.niles/crew/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session.
+Spawn writes a brief and launch script under `.niles/worker/<id>/`, records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session.
 
-Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, the foreground supervisor uses `niles wait --crew <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism.
+Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, the foreground manager uses `niles wait --worker <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism.
 
 ## Role Workflows
 
@@ -88,9 +88,9 @@ steps:
     task: "Review the current diff and validation result."
 ```
 
-Workspace role bindings live in `.niles/manifest.yaml`. Bare `niles` creates that file on first interactive launch, prompts for the foreground supervisor agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
+Workspace role bindings live in `.niles/manifest.yaml`. Bare `niles` creates that file on first interactive launch, prompts for the foreground manager agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
 
-Role workflows label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the supervisor drives the run.
+Role workflows label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the manager drives the run.
 
 Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 

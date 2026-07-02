@@ -10,11 +10,11 @@ use crate::{
         spec::{PromptMode, TaskSpec, TaskStep, load_task},
     },
     context::{agent_prompt, write_agent_context},
-    crew,
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{absolute_path, slugify},
+    worker,
 };
 
 use super::{RunSelector, lifecycle::with_project_config, report};
@@ -26,7 +26,7 @@ const PANE_CAPTURE_LINES: usize = 2000;
 /// Launch a single pending step into its own tmux window. The window runs
 /// `niles exec-step`, so output streams live in the pane while state, diff, and
 /// exit code are captured exactly as in direct step execution. Completion
-/// appends a wake line to the run status log for the supervisor.
+/// appends a wake line to the run status log for the manager.
 pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let run_dir = selector.resolve()?;
     let state_path = state_path(&run_dir);
@@ -111,7 +111,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
     let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
-    crew::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
+    worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
 
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
@@ -142,7 +142,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     Ok(())
 }
 
-/// Mark a step complete and tear down its interactive window. The supervisor
+/// Mark a step complete and tear down its interactive window. The manager
 /// calls this once it judges the step's work finished (typically after the
 /// agent's `done:` wake), giving the human final say over window cleanup.
 pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
@@ -166,7 +166,7 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     // Capture the interactive pane before tearing it down, so the step's output
     // reaches later steps' handoff context. Best-effort: a window that already
     // exited leaves no pane, and that must not block closing the step.
-    let captured = match crew::capture_window(&window_name, PANE_CAPTURE_LINES) {
+    let captured = match worker::capture_window(&window_name, PANE_CAPTURE_LINES) {
         Ok(text) => {
             let steps_dir = run_dir.join("steps");
             fs::create_dir_all(&steps_dir)
@@ -205,7 +205,7 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     state.updated_at = Utc::now();
     write_state(&state_path, &state)?;
 
-    match crew::close_window(&window_name) {
+    match worker::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
@@ -231,11 +231,11 @@ fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent:
 }
 
 /// Append a wake contract to a step brief so the interactive agent reports back
-/// to the run status log the supervisor watches.
+/// to the run status log the manager watches.
 fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
     let status_log = absolute_path(run_dir)?.join("status.log");
     let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the supervisor:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the supervisor reviews your work and closes it.\n"
+        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the manager reviews your work and closes it.\n"
     );
     fs::OpenOptions::new()
         .append(true)
