@@ -64,6 +64,10 @@ pub fn spawn(
         agents::InvocationDefaults::Worker,
         allow_cli_mismatch,
     )?;
+    if read_meta_if_exists(&id)?.is_some() {
+        bail!("worker id '{id}' already exists");
+    }
+
     let dir = absolute_path(Utf8Path::new(WORKER_DIR))?.join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
@@ -85,14 +89,26 @@ pub fn spawn(
         .with_context(|| format!("failed to create {status_path}"))?;
 
     let window_name = format!("niles-{id}");
-    let target = spawn_agent_window(
+    let target = match spawn_agent_window(
         &window_name,
         &project,
         &agent,
         &project,
         &brief_path,
         &launch_path,
-    )?;
+    ) {
+        Ok(target) => target,
+        Err(err) => {
+            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &dir) {
+                return Err(err).context(format!(
+                    "failed to launch worker {id}; additionally failed to clean up partial worker at {dir}: {cleanup_err}"
+                ));
+            }
+            return Err(err).context(format!(
+                "failed to launch worker {id}; cleaned up partial worker at {dir}"
+            ));
+        }
+    };
 
     let meta = WorkerMeta {
         id: id.clone(),
@@ -408,6 +424,11 @@ fn read_meta_if_exists(id: &str) -> Result<Option<WorkerMeta>> {
 
 fn meta_path(id: &str) -> Utf8PathBuf {
     Utf8Path::new(WORKER_DIR).join(format!("{id}.json"))
+}
+
+fn cleanup_failed_spawn(id: &str, dir: &Utf8Path) -> Result<()> {
+    remove_file_if_exists(&meta_path(id))?;
+    remove_dir_all_if_exists(dir)
 }
 
 fn worker_window_name(id: &str, meta: &WorkerMeta) -> String {

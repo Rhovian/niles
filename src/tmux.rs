@@ -112,17 +112,31 @@ pub(crate) fn new_window(
     cwd: &Utf8Path,
     command: &str,
 ) -> Result<()> {
-    run([
+    let session_target = new_window_session_target(session);
+    run(new_window_args(&session_target, window_name, cwd, command))
+}
+
+fn new_window_session_target(session: &str) -> String {
+    format!("{session}:")
+}
+
+fn new_window_args<'a>(
+    session_target: &'a str,
+    window_name: &'a str,
+    cwd: &'a Utf8Path,
+    command: &'a str,
+) -> [&'a str; 9] {
+    [
         "new-window",
         "-d",
         "-t",
-        session,
+        session_target,
         "-n",
         window_name,
         "-c",
         cwd.as_str(),
         command,
-    ])
+    ]
 }
 
 pub(crate) fn kill_window(session: &str, window_name: &str) -> Result<()> {
@@ -228,5 +242,31 @@ mod tests {
             Some("niles".to_owned())
         );
         assert_eq!(session_name_from_stdout(b" \n"), None);
+    }
+
+    #[test]
+    fn new_window_args_target_session_with_trailing_colon() {
+        let session_target = new_window_session_target("niles");
+        let args = new_window_args(
+            &session_target,
+            "niles-auth-fix",
+            Utf8Path::new("/tmp/workspace"),
+            "sh launch.sh",
+        );
+
+        assert_eq!(
+            args,
+            [
+                "new-window",
+                "-d",
+                "-t",
+                "niles:",
+                "-n",
+                "niles-auth-fix",
+                "-c",
+                "/tmp/workspace",
+                "sh launch.sh"
+            ]
+        );
     }
 }

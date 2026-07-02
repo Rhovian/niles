@@ -650,10 +650,117 @@ esac
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("new-session -d -s niles"));
-    assert!(log.contains("new-window -d -t niles -n niles-auth-fix"));
+    assert!(log.contains("new-window -d -t niles: -n niles-auth-fix"));
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix C-m"));
+}
+
+#[test]
+fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-worker-failed-spawn-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  new-window)
+    if [ "${TMUX_FAIL_NEW_WINDOW:-}" = 1 ]; then
+      printf 'create window failed: index 1 in use\n' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let failed = Command::new(niles)
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_FAIL_NEW_WINDOW", "1")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(stderr.contains("failed to launch worker auth-fix"));
+    assert!(stderr.contains("create window failed: index 1 in use"));
+    assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
+
+    let peek = Command::new(niles)
+        .args(["peek", "auth-fix"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!peek.status.success());
+    assert!(String::from_utf8_lossy(&peek.stderr).contains("unknown worker id 'auth-fix'"));
+
+    let respawn = Command::new(niles)
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("respawn", &respawn);
+    assert!(workspace.join(".niles/worker/auth-fix.json").exists());
+    assert!(workspace.join(".niles/worker/auth-fix").is_dir());
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("new-window -d -t niles: -n niles-auth-fix"));
 }
 
 #[test]
@@ -732,7 +839,7 @@ esac
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("new-session -d -s niles"));
-    assert!(log.contains(&format!("new-window -d -t niles -n niles-{id}")));
+    assert!(log.contains(&format!("new-window -d -t niles: -n niles-{id}")));
     assert!(!workspace.join(".niles/runs").exists());
 }
 
@@ -1928,7 +2035,7 @@ steps:
     assert!(launch_body.contains(&brief.display().to_string()));
 
     let tmux = fs::read_to_string(&tmux_log).unwrap();
-    assert!(tmux.contains("new-window -d -t niles -n niles-echo-step-s1-"));
+    assert!(tmux.contains("new-window -d -t niles: -n niles-echo-step-s1-"));
     assert!(tmux.contains(&format!("-c {}", workspace.display())));
     assert!(tmux.contains(" sh "));
     assert!(tmux.contains(&launch.display().to_string()));
