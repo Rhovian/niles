@@ -31,7 +31,7 @@ Delegation goes through Niles only. All delegated or parallel work MUST run as N
 - Use `niles peek` and `niles send` to inspect and steer worker panes.
 - Use `niles status`, `niles show`, `niles log`, and `niles diff` to inspect prepared runs.
 - Do not invent a Niles natural-language command grammar. The user talks to you; Niles provides explicit commands.
-- Worker agents can wake you by appending status lines to their status files. Use `niles wait --worker <id>` for workers and `niles wait <run> --index <N>` for run steps; `niles wait` is the single wake mechanism and prints the next actionable line.
+- Worker agents can wake you by appending status lines to their status files. Use `niles wait --worker <id>` for workers and `niles wait <run> --index <N>` for run steps; `niles wait` is the single wake mechanism and prints the next actionable line. Indexed run-step wake lines must include the exact `step <N>` token pair.
 
 ## Worker Commands
 
@@ -56,7 +56,10 @@ echo "done: short result" >> <status-file>
 echo "blocked: blocker summary" >> <status-file>
 echo "needs-decision: decision needed" >> <status-file>
 echo "failed: failure summary" >> <status-file>
+echo "closed: worker closed" >> <status-file>
 ```
+
+Unindexed waits consume returned wake lines through a `status.ack` cursor beside the status log. Indexed waits scan the whole log for the requested `step <N>` line.
 
 ## Workflow Commands
 

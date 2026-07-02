@@ -6,10 +6,10 @@ The project goal is to keep orchestration deterministic while letting agents han
 
 ## Shape
 
-- Rust owns workspace state, execution, policies, persistence, and validation.
+- Rust owns workspace state, execution, persistence, run lookup, and validation.
 - Agent adapters normalize fast-changing CLIs behind a stable internal contract.
 - An analyzer probes installed agent CLIs and records their current capabilities.
-- A router agent can decide the next handoff using structured JSON decisions.
+- Workspace manifests bind manager, planner, implementer, reviewer, and validation roles to local agents and commands.
 
 ## CLI
 
@@ -39,7 +39,7 @@ niles diff
 niles resume
 ```
 
-Bare `niles` launches the foreground manager agent, currently Claude by default. Niles writes a manager brief under `.niles/sessions/<id>/`, passes it as hidden manager context, and gives the foreground agent a small startup prompt so the agent greets you with useful paths: handle the task directly, prepare a YAML workflow, resume existing Niles work, or spawn workers. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
+Bare `niles` must be launched from inside an existing tmux session; outside tmux it exits with instructions to start or attach one. Before launching the foreground manager, Niles creates `.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists. The selected manager defaults to Claude on first setup. Niles writes a manager brief under `.niles/sessions/<id>/`; for Claude, that brief is passed as hidden manager context. Other agents receive the brief in their initial prompt. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
 
 Short aliases are part of the interface:
 
@@ -68,7 +68,11 @@ niles wait --worker auth-fix
 
 Spawn writes a brief and launch script under `.niles/worker/<id>/`, records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session.
 
-Worker briefs include a status file. When a worker appends `done:`, `failed:`, `blocked:`, or `needs-decision:` lines, the foreground manager uses `niles wait --worker <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism.
+Worker briefs include a status file. The foreground manager uses `niles wait --worker <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism.
+
+## Wake Lines
+
+Actionable wake states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume returned wake lines by advancing a `status.ack` cursor beside `status.log`; old unacknowledged lines remain deliverable, and acknowledged lines are not delivered again. Indexed waits such as `niles wait <run> --index N` scan the full log for an actionable line containing the exact token pair `step N`, so generic wake lines do not satisfy indexed waits. For indexed run waits, `closed:` must also mention the matching step; worker waits treat any `closed:` line as terminal.
 
 ## Role Workflows
 
@@ -88,7 +92,7 @@ steps:
     task: "Review the current diff and validation result."
 ```
 
-Workspace role bindings live in `.niles/manifest.yaml`. Bare `niles` creates that file on first interactive launch, prompts for the foreground manager agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
+Workspace role bindings live in `.niles/manifest.yaml` with `manager`, `planner`, `implementer`, `reviewer`, and `validation_command` keys. Bare `niles` creates that file on first interactive launch, prompts for the foreground manager agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
 
 Role workflows label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the manager drives the run.
 
@@ -134,7 +138,7 @@ commands:
 
 When `binary` or `args` are omitted for a known agent, Niles resolves them from its built-in profile. The resolved invocation is an implementation detail owned by Niles so fast-changing agent CLIs can be updated in one place.
 
-Captured steps stream stdout/stderr live and also write stdout, stderr, git diff, and metadata into `.niles/runs/<id>/steps/`. Interactive agent steps run in tmux windows; close them with `niles step-close` after reviewing the worker output.
+Captured steps stream stdout/stderr live and also write stdout, stderr, git diff, and metadata into the resolved workspace's `.niles/runs/<id>/steps/`. Niles records run pointers so commands can resolve workspace-anchored runs by id or `latest`. Interactive agent steps run in tmux windows; close them with `niles step-close` after reviewing the worker output.
 
 Agent steps also get `.context.md` handoff files. These are the durable bridge between roles: the implementer can read the planner output, and the reviewer can read both validation output and the current diff without relying on terminal scrollback.
 
@@ -166,4 +170,4 @@ Resume keeps completed steps, resets the first incomplete step and everything af
 
 ## Status
 
-Niles is just starting. The first target is a sequential workflow runner with local analyzer support, persisted run logs, and public capability manifests.
+Niles currently supports sequential manager-driven runs, tmux worker windows, workspace role manifests, local analyzer support, and persisted workspace-anchored run logs.
