@@ -146,15 +146,7 @@ fn wait_for_wake(
     }
 
     let initial_lines = read_lines(target.status())?;
-    let mut cursor = match index {
-        // Indexed waits intentionally scan the whole log so already-emitted
-        // step-attributed wake lines remain visible.
-        Some(_) => initial_lines.len(),
-        // Unindexed run and worker waits consume wake lines explicitly via a
-        // status.ack cursor next to the status log. That keeps pre-attach wake
-        // lines visible until a waiter returns them.
-        None => read_ack_cursor(target.status(), initial_lines.len())?,
-    };
+    let mut scanner = WakeScanner::new(target, index, initial_lines.len())?;
     let deadline = Instant::now() + timeout;
 
     loop {
@@ -163,25 +155,9 @@ fn wait_for_wake(
         }
 
         let lines = read_lines(target.status())?;
-        let start = if index.is_some() {
-            0
-        } else {
-            cursor.min(lines.len())
-        };
-        if let Some((offset, line)) =
-            select_wake_with_offset(&lines[start..], index, target.closed_wake_match())
-        {
-            if index.is_none() {
-                write_ack_cursor(target.status(), start + offset + 1)?;
-            }
-            return Ok(target.result_for_line(line));
+        if let Some(result) = scanner.select(&lines)? {
+            return Ok(result);
         }
-        if let Some(index) = index
-            && let Some(line) = select_state_attributed_wake(target, &lines, cursor, index)?
-        {
-            return Ok(target.result_for_line(line));
-        }
-        cursor = lines.len();
 
         if let Some(result) = target.closed_if_missing() {
             return Ok(result);
@@ -193,6 +169,72 @@ fn wait_for_wake(
         }
 
         thread::sleep(interval.min(deadline - now));
+    }
+}
+
+struct WakeScanner<'a> {
+    target: &'a WaitTarget,
+    index: Option<usize>,
+    cursor: usize,
+}
+
+impl<'a> WakeScanner<'a> {
+    fn new(
+        target: &'a WaitTarget,
+        index: Option<usize>,
+        initial_line_count: usize,
+    ) -> Result<Self> {
+        let cursor = match index {
+            // Indexed waits intentionally scan the whole log for tagged wake
+            // lines; the cursor only scopes the untagged attribution fallback.
+            Some(_) => initial_line_count,
+            // Unindexed run and worker waits consume wake lines explicitly via a
+            // status.ack cursor next to the status log. That keeps pre-attach
+            // wake lines visible until a waiter returns them.
+            None => read_ack_cursor(target.status(), initial_line_count)?,
+        };
+
+        Ok(Self {
+            target,
+            index,
+            cursor,
+        })
+    }
+
+    fn select(&mut self, lines: &[String]) -> Result<Option<WaitResult>> {
+        let start = self.direct_scan_start(lines.len());
+        if let Some((offset, line)) =
+            select_wake_with_offset(&lines[start..], self.index, self.target.closed_wake_match())
+        {
+            if self.index.is_none() {
+                self.acknowledge(start + offset + 1)?;
+            }
+            return Ok(Some(self.target.result_for_line(line)));
+        }
+
+        if let Some(index) = self.index
+            && let Some(line) =
+                select_state_attributed_wake(self.target, lines, self.cursor, index)?
+        {
+            return Ok(Some(self.target.result_for_line(line)));
+        }
+
+        self.cursor = lines.len();
+        Ok(None)
+    }
+
+    fn direct_scan_start(&self, line_count: usize) -> usize {
+        if self.index.is_some() {
+            0
+        } else {
+            self.cursor.min(line_count)
+        }
+    }
+
+    fn acknowledge(&mut self, cursor: usize) -> Result<()> {
+        write_ack_cursor(self.target.status(), cursor)?;
+        self.cursor = cursor;
+        Ok(())
     }
 }
 
@@ -260,22 +302,25 @@ fn select_state_attributed_wake(
     }
 
     let start = cursor.min(lines.len());
-    Ok(select_first_untagged_wake(&lines[start..]).or_else(|| select_last_untagged_wake(lines)))
+    Ok(select_untagged_wake(&lines[start..], WakeScanOrder::First)
+        .or_else(|| select_untagged_wake(lines, WakeScanOrder::Last)))
 }
 
-fn select_first_untagged_wake(lines: &[String]) -> Option<String> {
-    lines
-        .iter()
-        .find(|line| is_untagged_actionable_wake(line))
-        .cloned()
+#[derive(Clone, Copy)]
+enum WakeScanOrder {
+    First,
+    Last,
 }
 
-fn select_last_untagged_wake(lines: &[String]) -> Option<String> {
-    lines
-        .iter()
-        .rev()
-        .find(|line| is_untagged_actionable_wake(line))
-        .cloned()
+fn select_untagged_wake(lines: &[String], order: WakeScanOrder) -> Option<String> {
+    match order {
+        WakeScanOrder::First => lines.iter().find(|line| is_untagged_actionable_wake(line)),
+        WakeScanOrder::Last => lines
+            .iter()
+            .rev()
+            .find(|line| is_untagged_actionable_wake(line)),
+    }
+    .cloned()
 }
 
 fn is_untagged_actionable_wake(line: &str) -> bool {
@@ -526,11 +571,11 @@ mod tests {
         ];
 
         assert_eq!(
-            select_first_untagged_wake(&lines[1..]).as_deref(),
+            select_untagged_wake(&lines[1..], WakeScanOrder::First).as_deref(),
             Some("done: CONSENSUS - current")
         );
         assert_eq!(
-            select_last_untagged_wake(&lines).as_deref(),
+            select_untagged_wake(&lines, WakeScanOrder::Last).as_deref(),
             Some("done: CONSENSUS - current")
         );
     }
@@ -539,7 +584,7 @@ mod tests {
     fn attributed_wake_ignores_other_step_tagged_lines() {
         let lines = vec!["done: step 1 finished".to_owned()];
 
-        assert_eq!(select_first_untagged_wake(&lines), None);
+        assert_eq!(select_untagged_wake(&lines, WakeScanOrder::First), None);
     }
 
     #[test]
