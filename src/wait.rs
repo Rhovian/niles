@@ -143,7 +143,16 @@ fn wait_for_wake(
         return Ok(result);
     }
 
-    let mut cursor = read_lines(target.status())?.len();
+    let initial_lines = read_lines(target.status())?;
+    let mut cursor = match index {
+        // Indexed waits intentionally scan the whole log so already-emitted
+        // step-attributed wake lines remain visible.
+        Some(_) => initial_lines.len(),
+        // Unindexed run and worker waits consume wake lines explicitly via a
+        // status.ack cursor next to the status log. That keeps pre-attach wake
+        // lines visible until a waiter returns them.
+        None => read_ack_cursor(target.status(), initial_lines.len())?,
+    };
     let deadline = Instant::now() + timeout;
 
     loop {
@@ -157,7 +166,12 @@ fn wait_for_wake(
         } else {
             cursor.min(lines.len())
         };
-        if let Some(line) = select_wake(&lines[start..], index, target.closed_wake_match()) {
+        if let Some((offset, line)) =
+            select_wake_with_offset(&lines[start..], index, target.closed_wake_match())
+        {
+            if index.is_none() {
+                write_ack_cursor(target.status(), start + offset + 1)?;
+            }
             return Ok(target.result_for_line(line));
         }
         if let Some(index) = index
@@ -199,22 +213,31 @@ struct AttributedStep {
     started_at: DateTime<Utc>,
 }
 
+#[cfg(test)]
 fn select_wake(
     lines: &[String],
     index: Option<usize>,
     closed_match: ClosedWakeMatch,
 ) -> Option<String> {
-    for line in lines {
+    select_wake_with_offset(lines, index, closed_match).map(|(_, line)| line)
+}
+
+fn select_wake_with_offset(
+    lines: &[String],
+    index: Option<usize>,
+    closed_match: ClosedWakeMatch,
+) -> Option<(usize, String)> {
+    for (offset, line) in lines.iter().enumerate() {
         if !is_actionable_wake(line) {
             continue;
         }
 
         match index {
             Some(index) if matches_indexed_wake(line, index, closed_match) => {
-                return Some(line.clone());
+                return Some((offset, line.clone()));
             }
             Some(_) => {}
-            None => return Some(line.clone()),
+            None => return Some((offset, line.clone())),
         }
     }
 
@@ -376,6 +399,26 @@ fn read_lines(status: &Utf8Path) -> Result<Vec<String>> {
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
         Err(err) => Err(err).with_context(|| format!("failed to read {status}")),
     }
+}
+
+fn ack_path(status: &Utf8Path) -> Utf8PathBuf {
+    status.with_extension("ack")
+}
+
+fn read_ack_cursor(status: &Utf8Path, line_count: usize) -> Result<usize> {
+    let path = ack_path(status);
+    let body = match fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    };
+
+    Ok(body.trim().parse::<usize>().unwrap_or(0).min(line_count))
+}
+
+fn write_ack_cursor(status: &Utf8Path, cursor: usize) -> Result<()> {
+    let path = ack_path(status);
+    fs::write(&path, format!("{cursor}\n")).with_context(|| format!("failed to write {path}"))
 }
 
 fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
