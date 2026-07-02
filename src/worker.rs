@@ -349,6 +349,10 @@ pub(crate) fn spawn_agent_window(
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
 ) -> Result<String> {
+    if !brief_path.is_file() {
+        bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
+    }
+
     let config = load_project_config_from(project)?;
     let invocation = agents::invocation(
         agent,

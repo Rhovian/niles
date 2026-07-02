@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::agents,
+    store,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
     workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
 };
@@ -148,20 +149,7 @@ fn startup_context() -> Result<String> {
 }
 
 fn latest_run_context() -> Result<String> {
-    let runs_dir = Utf8Path::new(".niles").join("runs");
-    let mut runs = match fs::read_dir(&runs_dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok("latest_run: none".to_owned());
-        }
-        Err(err) => return Err(err).with_context(|| format!("failed to read {runs_dir}")),
-    };
-    runs.sort();
-    let Some(run_dir) = runs.pop() else {
+    let Some(run_dir) = store::resolve_latest_run_dir()? else {
         return Ok("latest_run: none".to_owned());
     };
 
