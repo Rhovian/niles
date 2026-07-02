@@ -13,7 +13,7 @@ const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WorkspaceManifest {
-    pub supervisor: String,
+    pub manager: String,
     pub planner: String,
     pub implementer: String,
     pub reviewer: String,
@@ -22,7 +22,7 @@ pub struct WorkspaceManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceManifestDefaults {
-    pub supervisor: String,
+    pub manager: String,
     pub planner: String,
     pub implementer: String,
     pub reviewer: String,
@@ -32,7 +32,7 @@ pub struct WorkspaceManifestDefaults {
 impl Default for WorkspaceManifestDefaults {
     fn default() -> Self {
         Self {
-            supervisor: "claude".to_owned(),
+            manager: "claude".to_owned(),
             planner: "claude".to_owned(),
             implementer: "codex".to_owned(),
             reviewer: "claude".to_owned(),
@@ -164,7 +164,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     if !interactive {
         if existing.is_some() {
             bail!(
-                "workspace manifest {path} exists but stdin is not interactive; start or attach a tmux session and run `niles` interactively to choose the supervisor agent"
+                "workspace manifest {path} exists but stdin is not interactive; start or attach a tmux session and run `niles` interactively to choose the manager agent"
             );
         } else {
             bail!(
@@ -177,14 +177,14 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         writeln!(output, "Niles workspace manifest: {path}")?;
         writeln!(
             output,
-            "Choose the foreground supervisor agent. Press Enter to accept the default."
+            "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let supervisor = prompt_value(input, output, "Supervisor agent", &manifest.supervisor)?;
-        let supervisor_changed = supervisor != manifest.supervisor;
-        manifest.supervisor = supervisor;
-        if supervisor_changed {
+        let manager = prompt_value(input, output, "Manager agent", &manifest.manager)?;
+        let manager_changed = manager != manifest.manager;
+        manifest.manager = manager;
+        if manager_changed {
             save(root, &manifest)?;
-            writeln!(output, "manifest: {path} (updated supervisor)")?;
+            writeln!(output, "manifest: {path} (updated manager)")?;
         }
 
         if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
@@ -206,7 +206,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
     let defaults = WorkspaceManifest {
-        supervisor: defaults.supervisor.clone(),
+        manager: defaults.manager.clone(),
         planner: defaults.planner.clone(),
         implementer: defaults.implementer.clone(),
         reviewer: defaults.reviewer.clone(),
@@ -235,7 +235,7 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     defaults: &WorkspaceManifest,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        supervisor: prompt_value(input, output, "Supervisor agent", &defaults.supervisor)?,
+        manager: prompt_value(input, output, "Manager agent", &defaults.manager)?,
         planner: prompt_value(input, output, "Planner agent", &defaults.planner)?,
         implementer: prompt_value(input, output, "Implementer agent", &defaults.implementer)?,
         reviewer: prompt_value(input, output, "Reviewer agent", &defaults.reviewer)?,
@@ -317,7 +317,7 @@ mod tests {
         let root = temp_test_path("existing-no-role-update");
         fs::create_dir_all(root.join(".niles")).unwrap();
         let original = WorkspaceManifest {
-            supervisor: "codex".to_owned(),
+            manager: "codex".to_owned(),
             planner: "plan-old".to_owned(),
             implementer: "impl-old".to_owned(),
             reviewer: "review-old".to_owned(),
@@ -340,22 +340,22 @@ mod tests {
         let persisted = load(&root).unwrap().unwrap();
         assert_eq!(persisted, manifest);
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Supervisor agent [codex]: "));
+        assert!(output.contains("Manager agent [codex]: "));
         assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(!output.contains("(updated supervisor)"));
+        assert!(!output.contains("(updated manager)"));
         assert!(!output.contains("(updated roles)"));
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn prompts_for_supervisor_and_persists_manager_change() {
+    fn prompts_for_manager_and_persists_manager_change() {
         let root = temp_test_path("existing-prompt");
         fs::create_dir_all(root.join(".niles")).unwrap();
         fs::write(
             manifest_path(&root),
             r#"
-supervisor: codex
+manager: codex
 planner: claude
 implementer: codex
 reviewer: claude
@@ -375,18 +375,18 @@ validation_command: lint
         )
         .unwrap();
 
-        assert_eq!(manifest.supervisor, "claude");
+        assert_eq!(manifest.manager, "claude");
         assert_eq!(manifest.validation_command, "lint");
         let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted.supervisor, "claude");
+        assert_eq!(persisted.manager, "claude");
         assert_eq!(persisted.planner, "claude");
         assert_eq!(persisted.implementer, "codex");
         assert_eq!(persisted.reviewer, "claude");
         assert_eq!(persisted.validation_command, "lint");
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Niles workspace manifest: "));
-        assert!(output.contains("Supervisor agent [codex]: "));
-        assert!(output.contains("(updated supervisor)"));
+        assert!(output.contains("Manager agent [codex]: "));
+        assert!(output.contains("(updated manager)"));
         assert!(output.contains("Change any manifest roles? [y/N]: "));
         assert!(!output.contains("(updated roles)"));
 
@@ -394,13 +394,13 @@ validation_command: lint
     }
 
     #[test]
-    fn can_reconfigure_workspace_manifest_roles_after_supervisor_pick() {
+    fn can_reconfigure_workspace_manifest_roles_after_manager_pick() {
         let root = temp_test_path("existing-role-update");
         fs::create_dir_all(root.join(".niles")).unwrap();
         fs::write(
             manifest_path(&root),
             r#"
-supervisor: codex
+manager: codex
 planner: plan-old
 implementer: impl-old
 reviewer: review-old
@@ -424,7 +424,7 @@ validation_command: lint
         assert_eq!(
             manifest,
             WorkspaceManifest {
-                supervisor: "claude".to_owned(),
+                manager: "claude".to_owned(),
                 planner: "planbot".to_owned(),
                 implementer: "codebot".to_owned(),
                 reviewer: "reviewbot".to_owned(),
@@ -436,8 +436,8 @@ validation_command: lint
         assert_eq!(persisted, manifest);
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(output.contains("Supervisor agent [codex]: "));
-        assert!(output.contains("Supervisor agent [claude]: "));
+        assert!(output.contains("Manager agent [codex]: "));
+        assert!(output.contains("Manager agent [claude]: "));
         assert!(output.contains("Planner agent [plan-old]: "));
         assert!(output.contains("Implementer agent [impl-old]: "));
         assert!(output.contains("Reviewer agent [review-old]: "));
@@ -454,7 +454,7 @@ validation_command: lint
         fs::write(
             manifest_path(&root),
             r#"
-supervisor: codex
+manager: codex
 planner: claude
 implementer: codex
 reviewer: claude
@@ -475,7 +475,7 @@ validation_command: lint
         .unwrap_err();
 
         assert!(err.to_string().contains("stdin is not interactive"));
-        assert!(err.to_string().contains("choose the supervisor agent"));
+        assert!(err.to_string().contains("choose the manager agent"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -498,7 +498,7 @@ validation_command: lint
         assert_eq!(
             manifest,
             WorkspaceManifest {
-                supervisor: "codex".to_owned(),
+                manager: "codex".to_owned(),
                 planner: "claude".to_owned(),
                 implementer: "codex".to_owned(),
                 reviewer: "claude".to_owned(),
@@ -510,7 +510,7 @@ validation_command: lint
         assert_eq!(persisted, manifest);
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Niles workspace manifest not found"));
-        assert!(output.contains("Supervisor agent [claude]: "));
+        assert!(output.contains("Manager agent [claude]: "));
         assert!(output.contains("Change any manifest roles? [y/N]: "));
 
         fs::remove_dir_all(root).unwrap();
@@ -538,7 +538,7 @@ validation_command: lint
     #[test]
     fn resolves_role_steps_from_workspace_manifest() {
         let manifest = WorkspaceManifest {
-            supervisor: "claude".to_owned(),
+            manager: "claude".to_owned(),
             planner: "planbot".to_owned(),
             implementer: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
