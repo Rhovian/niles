@@ -7,16 +7,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agent_window,
     config::{agents, spec::load_project_config_from, version},
-    store::{read_state, resolve_run_dir},
+    store::{self, WorkerLocation, read_state, resolve_run_dir},
     util::{
-        absolute_existing_dir, absolute_existing_file, absolute_path, append_line,
-        read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, render_template,
-        write_json_pretty,
+        absolute_existing_dir, absolute_existing_file, append_line, read_optional_json,
+        remove_dir_all_if_exists, remove_file_if_exists, render_template, write_json_pretty,
     },
     wake::{self, WakeKind},
 };
 
-const WORKER_DIR: &str = ".niles/worker";
 const WORKER_BRIEF_TEMPLATE: &str = include_str!("templates/worker_brief.md");
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,11 +61,11 @@ pub fn spawn(
         agents::InvocationDefaults::Worker,
         allow_cli_mismatch,
     )?;
-    if read_meta_if_exists(&id)?.is_some() {
+    if resolve_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }
 
-    let dir = absolute_path(Utf8Path::new(WORKER_DIR))?.join(&id);
+    let dir = store::workspace_worker_dir(&project, &id)?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
     let brief_path = match brief {
@@ -87,6 +85,8 @@ pub fn spawn(
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 
+    store::register_worker_location(&id, &project, &dir)?;
+
     let window_name = agent_window::worker_window_name(&id);
     let target = match agent_window::spawn_agent_window(
         &window_name,
@@ -98,7 +98,7 @@ pub fn spawn(
     ) {
         Ok(target) => target,
         Err(err) => {
-            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &dir) {
+            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir) {
                 return Err(err).context(format!(
                     "failed to launch worker {id}; additionally failed to clean up partial worker at {dir}: {cleanup_err}"
                 ));
@@ -118,7 +118,7 @@ pub fn spawn(
         launch: launch_path,
         status: Some(status_path),
     };
-    write_meta(&id, &meta)?;
+    write_meta(&dir, &meta)?;
 
     println!("spawned: {id}");
     println!("window: {window_name}");
@@ -135,11 +135,9 @@ pub fn spawn(
 /// window close errors are reported but do not strand metadata.
 pub fn worker_close(id: String) -> Result<()> {
     validate_id(&id)?;
-    let worker_dir = Utf8Path::new(WORKER_DIR).join(&id);
-    let meta = read_meta_if_exists(&id)?;
-    if meta.is_none() && !worker_dir.exists() {
-        bail!("unknown worker id '{id}'");
-    }
+    let location = resolve_worker(&id)?;
+    let worker_dir = location.worker_dir.clone();
+    let meta = read_meta_if_exists(&worker_dir)?;
     let window_name = meta
         .as_ref()
         .map(|meta| agent_window::worker_window_name_from_target(&id, &meta.window))
@@ -156,7 +154,13 @@ pub fn worker_close(id: String) -> Result<()> {
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
 
-    remove_file_if_exists(&meta_path(&id))?;
+    store::unregister_worker_location(
+        &id,
+        Some(&location),
+        meta.as_ref().map(|meta| meta.project.as_path()),
+        Some(&worker_dir),
+    )?;
+    remove_file_if_exists(&meta_path(&worker_dir))?;
     remove_dir_all_if_exists(&worker_dir)?;
     println!("closed: {id}");
     Ok(())
@@ -251,7 +255,7 @@ fn resolve_send_target(
 }
 
 fn worker_target(id: String) -> Result<PaneTarget> {
-    let meta = read_meta(&id)?;
+    let meta = read_meta(&id)?.meta;
     Ok(PaneTarget::Worker {
         id,
         target: meta.window,
@@ -287,12 +291,13 @@ fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarg
 
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     validate_id(id)?;
-    if let Some(meta) = read_meta_if_exists(id)?
+    let location = resolve_worker(id)?;
+    if let Some(meta) = read_meta_if_exists(&location.worker_dir)?
         && let Some(status) = meta.status
     {
         return Ok(status);
     }
-    Ok(wake::status_log_path(&Utf8Path::new(WORKER_DIR).join(id)))
+    Ok(wake::status_log_path(&location.worker_dir))
 }
 
 fn write_brief(
@@ -321,21 +326,29 @@ fn write_brief(
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
 
-fn write_meta(id: &str, meta: &WorkerMeta) -> Result<()> {
-    let path = meta_path(id);
+fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
+    let path = meta_path(worker_dir);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
     }
     write_json_pretty(&path, meta)
 }
 
-fn read_meta(id: &str) -> Result<WorkerMeta> {
-    validate_id(id)?;
-    read_meta_if_exists(id)?.with_context(|| format!("unknown worker id '{id}'"))
+struct LoadedWorker {
+    meta: WorkerMeta,
 }
 
-fn read_meta_if_exists(id: &str) -> Result<Option<WorkerMeta>> {
-    let path = meta_path(id);
+fn read_meta(id: &str) -> Result<LoadedWorker> {
+    validate_id(id)?;
+    let location = resolve_worker(id)?;
+    let path = meta_path(&location.worker_dir);
+    let meta = read_meta_if_exists(&location.worker_dir)?
+        .with_context(|| format!("worker metadata missing for '{id}' at {path}"))?;
+    Ok(LoadedWorker { meta })
+}
+
+fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
+    let path = meta_path(worker_dir);
     read_optional_json(
         &path,
         |path| format!("failed to read {path}"),
@@ -343,13 +356,23 @@ fn read_meta_if_exists(id: &str) -> Result<Option<WorkerMeta>> {
     )
 }
 
-fn meta_path(id: &str) -> Utf8PathBuf {
-    Utf8Path::new(WORKER_DIR).join(format!("{id}.json"))
+fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
+    worker_dir.join("meta.json")
 }
 
-fn cleanup_failed_spawn(id: &str, dir: &Utf8Path) -> Result<()> {
-    remove_file_if_exists(&meta_path(id))?;
+fn cleanup_failed_spawn(id: &str, project: &Utf8Path, dir: &Utf8Path) -> Result<()> {
+    store::unregister_worker_location(id, None, Some(project), Some(dir))?;
+    remove_file_if_exists(&meta_path(dir))?;
     remove_dir_all_if_exists(dir)
+}
+
+fn resolve_worker(id: &str) -> Result<WorkerLocation> {
+    resolve_worker_if_exists(id)?.with_context(|| format!("unknown worker id '{id}'"))
+}
+
+fn resolve_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
+    validate_id(id)?;
+    store::resolve_worker_location(id)
 }
 
 fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {

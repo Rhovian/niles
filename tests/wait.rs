@@ -212,6 +212,73 @@ fn wait_worker_corrupt_ack_falls_back_to_start() {
 }
 
 #[test]
+fn wait_worker_unknown_id_errors_without_closed_backstop() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-wait-unknown");
+
+    let output = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "missing",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown worker id 'missing'"));
+    assert!(!stderr.contains("worker 'missing' closed"));
+}
+
+#[test]
+fn wait_worker_returns_closed_backstop_when_resolved_directory_is_removed() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-wait-removed");
+    let worker_root = workspace.join(".niles/worker");
+    let worker_dir = worker_root.join("auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    fs::write(worker_dir.join("status.log"), "working: still running\n").unwrap();
+    write_worker_pointer(&workspace, "auth-fix", &worker_dir);
+
+    let waiter = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "5",
+        ])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    fs::remove_dir_all(&worker_dir).unwrap();
+
+    let output = waiter.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "closed: worker 'auth-fix' directory removed\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("worker 'auth-fix' closed"));
+    assert!(!stderr.contains("timeout"));
+}
+
+#[test]
 fn wait_index_returns_already_emitted_step_wake() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-wait-index-test");
@@ -368,6 +435,27 @@ fn write_manual_run_state(run_dir: &Path, id: &str, running_step: usize) {
   ]
 }}
 "#,
+        ),
+    )
+    .unwrap();
+}
+
+fn write_worker_pointer(workspace: &Path, id: &str, worker_dir: &Path) {
+    let worker_root = workspace.join(".niles/worker");
+    fs::create_dir_all(&worker_root).unwrap();
+    fs::write(
+        worker_root.join(format!("{id}.json")),
+        format!(
+            r#"{{
+  "id": "{id}",
+  "workspace": "{}",
+  "worker_dir": "{}",
+  "local_stores": ["{}"]
+}}
+"#,
+            workspace.display(),
+            worker_dir.display(),
+            worker_root.display()
         ),
     )
     .unwrap();

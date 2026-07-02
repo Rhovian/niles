@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -6,11 +10,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     state::{RunState, StepRecord},
-    util::{absolute_path, current_dir_utf8, read_optional_json, utf8_path, write_json_pretty},
+    util::{
+        absolute_path, current_dir_utf8, read_optional_json, remove_file_if_exists, utf8_path,
+        write_json_pretty,
+    },
 };
 
 const NILES_DIR: &str = ".niles";
 const RUNS_DIR: &str = "runs";
+const WORKERS_DIR: &str = "worker";
 const LATEST_POINTER: &str = "latest.json";
 
 pub fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
@@ -35,6 +43,14 @@ pub fn workspace_run_dir(workspace: &Utf8Path, run: &str) -> Result<Utf8PathBuf>
     Ok(workspace_runs_dir(workspace)?.join(run))
 }
 
+pub(crate) fn workspace_workers_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
+    Ok(absolute_path(workspace)?.join(NILES_DIR).join(WORKERS_DIR))
+}
+
+pub(crate) fn workspace_worker_dir(workspace: &Utf8Path, worker: &str) -> Result<Utf8PathBuf> {
+    Ok(workspace_workers_dir(workspace)?.join(worker))
+}
+
 pub fn register_run_location(run: &str, workspace: &Utf8Path, run_dir: &Utf8Path) -> Result<()> {
     let pointer = RunPointer {
         id: run.to_owned(),
@@ -42,9 +58,51 @@ pub fn register_run_location(run: &str, workspace: &Utf8Path, run_dir: &Utf8Path
         run_dir: run_dir.to_path_buf(),
     };
 
-    write_local_pointer(&current_runs_dir()?, &pointer)?;
-    write_local_pointer(&workspace.join(NILES_DIR).join(RUNS_DIR), &pointer)?;
-    write_global_pointer(&pointer)
+    write_local_run_pointer(&current_runs_dir()?, &pointer)?;
+    write_local_run_pointer(&workspace.join(NILES_DIR).join(RUNS_DIR), &pointer)?;
+    write_global_run_pointer(&pointer)
+}
+
+pub(crate) fn register_worker_location(
+    worker: &str,
+    workspace: &Utf8Path,
+    worker_dir: &Utf8Path,
+) -> Result<WorkerPointer> {
+    register_worker_location_with_local_store(worker, workspace, worker_dir, current_workers_dir()?)
+}
+
+pub(crate) fn unregister_worker_location(
+    worker: &str,
+    location: Option<&WorkerLocation>,
+    workspace: Option<&Utf8Path>,
+    worker_dir: Option<&Utf8Path>,
+) -> Result<()> {
+    let mut stores = BTreeSet::new();
+    stores.insert(current_workers_dir()?);
+
+    if let Some(location) = location {
+        collect_worker_location_stores(&mut stores, location)?;
+    }
+    if let Some(pointer) = read_global_worker_pointer(worker)? {
+        collect_worker_pointer_stores(&mut stores, &pointer)?;
+    }
+    if let Some(workspace) = workspace {
+        stores.insert(workspace_workers_dir(workspace)?);
+    }
+    if let Some(worker_dir) = worker_dir
+        && let Some(parent) = worker_dir.parent()
+    {
+        stores.insert(parent.to_path_buf());
+    }
+
+    for store in stores {
+        remove_file_if_exists(&store.join(pointer_file(worker)))?;
+    }
+    remove_global_worker_pointer(worker)
+}
+
+pub(crate) fn resolve_worker_location(worker: &str) -> Result<Option<WorkerLocation>> {
+    WorkerResolver::from_current()?.named(worker)
 }
 
 pub fn resolve_run_dir(run: &str) -> Result<Utf8PathBuf> {
@@ -64,10 +122,44 @@ fn current_runs_dir() -> Result<Utf8PathBuf> {
     Ok(current_dir_utf8()?.join(NILES_DIR).join(RUNS_DIR))
 }
 
-fn write_local_pointer(runs_dir: &Utf8Path, pointer: &RunPointer) -> Result<()> {
+fn current_workers_dir() -> Result<Utf8PathBuf> {
+    Ok(current_dir_utf8()?.join(NILES_DIR).join(WORKERS_DIR))
+}
+
+fn write_local_run_pointer(runs_dir: &Utf8Path, pointer: &RunPointer) -> Result<()> {
     fs::create_dir_all(runs_dir).with_context(|| format!("failed to create {runs_dir}"))?;
-    write_pointer(runs_dir, PointerFile::Run(&pointer.id), pointer)?;
-    write_pointer(runs_dir, PointerFile::Latest, pointer)
+    write_run_pointer(runs_dir, RunPointerFile::Run(&pointer.id), pointer)?;
+    write_run_pointer(runs_dir, RunPointerFile::Latest, pointer)
+}
+
+fn write_local_worker_pointer(workers_dir: &Utf8Path, pointer: &WorkerPointer) -> Result<()> {
+    fs::create_dir_all(workers_dir).with_context(|| format!("failed to create {workers_dir}"))?;
+    write_json_pretty(&workers_dir.join(pointer_file(&pointer.id)), pointer)
+}
+
+fn register_worker_location_with_local_store(
+    worker: &str,
+    workspace: &Utf8Path,
+    worker_dir: &Utf8Path,
+    local_workers_dir: Utf8PathBuf,
+) -> Result<WorkerPointer> {
+    let workspace_workers_dir = workspace_workers_dir(workspace)?;
+    let mut local_stores = vec![local_workers_dir, workspace_workers_dir];
+    local_stores.sort();
+    local_stores.dedup();
+
+    let pointer = WorkerPointer {
+        id: worker.to_owned(),
+        workspace: workspace.to_path_buf(),
+        worker_dir: worker_dir.to_path_buf(),
+        local_stores,
+    };
+
+    for workers_dir in &pointer.local_stores {
+        write_local_worker_pointer(workers_dir, &pointer)?;
+    }
+    write_global_worker_pointer(&pointer)?;
+    Ok(pointer)
 }
 
 struct RunResolver {
@@ -82,7 +174,7 @@ impl RunResolver {
     }
 
     fn named(&self, run: &str) -> Result<Utf8PathBuf> {
-        if let Some(run_dir) = self.local_pointer(PointerFile::Run(run))? {
+        if let Some(run_dir) = self.local_pointer(RunPointerFile::Run(run))? {
             return Ok(run_dir);
         }
 
@@ -99,7 +191,7 @@ impl RunResolver {
     }
 
     fn latest(&self) -> Result<Option<Utf8PathBuf>> {
-        if let Some(run_dir) = self.local_pointer(PointerFile::Latest)? {
+        if let Some(run_dir) = self.local_pointer(RunPointerFile::Latest)? {
             return Ok(Some(run_dir));
         }
         if let Some(run_dir) = latest_local_run_dir(&self.local_runs_dir)? {
@@ -108,30 +200,59 @@ impl RunResolver {
         latest_global_run_dir()
     }
 
-    fn local_pointer(&self, pointer_file: PointerFile<'_>) -> Result<Option<Utf8PathBuf>> {
+    fn local_pointer(&self, pointer_file: RunPointerFile<'_>) -> Result<Option<Utf8PathBuf>> {
         read_pointer(&pointer_file.path(&self.local_runs_dir))
             .map(|pointer| pointer.map(|pointer| pointer.run_dir))
     }
 }
 
+struct WorkerResolver {
+    local_workers_dir: Utf8PathBuf,
+}
+
+impl WorkerResolver {
+    fn from_current() -> Result<Self> {
+        Ok(Self {
+            local_workers_dir: current_workers_dir()?,
+        })
+    }
+
+    fn named(&self, worker: &str) -> Result<Option<WorkerLocation>> {
+        if let Some(pointer) = self.local_pointer(worker)? {
+            return Ok(Some(WorkerLocation::from_pointer(pointer)));
+        }
+
+        let local_worker_dir = self.local_workers_dir.join(worker);
+        if local_worker_dir.exists() {
+            return Ok(Some(WorkerLocation::local(worker, local_worker_dir)));
+        }
+
+        Ok(resolve_global_worker(worker)?.map(WorkerLocation::from_pointer))
+    }
+
+    fn local_pointer(&self, worker: &str) -> Result<Option<WorkerPointer>> {
+        read_worker_pointer(&self.local_workers_dir.join(pointer_file(worker)))
+    }
+}
+
 #[derive(Clone, Copy)]
-enum PointerFile<'a> {
+enum RunPointerFile<'a> {
     Run(&'a str),
     Latest,
 }
 
-impl PointerFile<'_> {
+impl RunPointerFile<'_> {
     fn path(self, runs_dir: &Utf8Path) -> Utf8PathBuf {
         match self {
-            PointerFile::Run(run) => runs_dir.join(pointer_file(run)),
-            PointerFile::Latest => runs_dir.join(LATEST_POINTER),
+            RunPointerFile::Run(run) => runs_dir.join(pointer_file(run)),
+            RunPointerFile::Latest => runs_dir.join(LATEST_POINTER),
         }
     }
 }
 
-fn write_pointer(
+fn write_run_pointer(
     runs_dir: &Utf8Path,
-    pointer_file: PointerFile<'_>,
+    pointer_file: RunPointerFile<'_>,
     pointer: &RunPointer,
 ) -> Result<()> {
     write_json_pretty(&pointer_file.path(runs_dir), pointer)
@@ -164,14 +285,43 @@ fn read_pointer(path: &Utf8Path) -> Result<Option<RunPointer>> {
     )
 }
 
-fn write_global_pointer(pointer: &RunPointer) -> Result<()> {
+fn read_worker_pointer(path: &Utf8Path) -> Result<Option<WorkerPointer>> {
+    read_optional_json(
+        path,
+        |path| format!("failed to read worker pointer {path}"),
+        |path| format!("failed to parse worker pointer {path}"),
+    )
+}
+
+fn write_global_run_pointer(pointer: &RunPointer) -> Result<()> {
     let path = global_index_path()?;
     let mut index = read_global_index(&path)?;
     index.runs.insert(pointer.id.clone(), pointer.clone());
+    write_global_index(&path, &index)
+}
+
+fn write_global_worker_pointer(pointer: &WorkerPointer) -> Result<()> {
+    let path = global_index_path()?;
+    let mut index = read_global_index(&path)?;
+    index.workers.insert(pointer.id.clone(), pointer.clone());
+    write_global_index(&path, &index)
+}
+
+fn remove_global_worker_pointer(worker: &str) -> Result<()> {
+    let path = global_index_path()?;
+    let mut index = read_global_index(&path)?;
+    index.workers.remove(worker);
+    if index.runs.is_empty() && index.workers.is_empty() {
+        return remove_file_if_exists(&path);
+    }
+    write_global_index(&path, &index)
+}
+
+fn write_global_index(path: &Utf8Path, index: &GlobalIndex) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
     }
-    write_json_pretty(&path, &index)
+    write_json_pretty(path, index)
 }
 
 fn resolve_global_run(run: &str) -> Result<Option<Utf8PathBuf>> {
@@ -180,6 +330,15 @@ fn resolve_global_run(run: &str) -> Result<Option<Utf8PathBuf>> {
         .runs
         .get(run)
         .map(|pointer| pointer.run_dir.clone()))
+}
+
+fn resolve_global_worker(worker: &str) -> Result<Option<WorkerPointer>> {
+    read_global_worker_pointer(worker)
+}
+
+fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPointer>> {
+    let path = global_index_path()?;
+    Ok(read_global_index(&path)?.workers.get(worker).cloned())
 }
 
 fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
@@ -191,7 +350,7 @@ fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
         .map(|(_, pointer)| pointer.run_dir))
 }
 
-fn read_global_index(path: &Utf8Path) -> Result<RunIndex> {
+fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
     Ok(read_optional_json(
         path,
         |path| format!("failed to read {path}"),
@@ -236,10 +395,78 @@ struct RunPointer {
     run_dir: Utf8PathBuf,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct WorkerPointer {
+    pub(crate) id: String,
+    pub(crate) workspace: Utf8PathBuf,
+    pub(crate) worker_dir: Utf8PathBuf,
+    #[serde(default)]
+    pub(crate) local_stores: Vec<Utf8PathBuf>,
+}
+
+#[derive(Clone)]
+pub(crate) struct WorkerLocation {
+    pub(crate) workspace: Utf8PathBuf,
+    pub(crate) worker_dir: Utf8PathBuf,
+    pointer: Option<WorkerPointer>,
+}
+
+impl WorkerLocation {
+    fn from_pointer(pointer: WorkerPointer) -> Self {
+        Self {
+            workspace: pointer.workspace.clone(),
+            worker_dir: pointer.worker_dir.clone(),
+            pointer: Some(pointer),
+        }
+    }
+
+    fn local(_worker: &str, worker_dir: Utf8PathBuf) -> Self {
+        let workspace = worker_dir
+            .parent()
+            .and_then(Utf8Path::parent)
+            .and_then(Utf8Path::parent)
+            .unwrap_or(Utf8Path::new("."))
+            .to_path_buf();
+        Self {
+            workspace,
+            worker_dir,
+            pointer: None,
+        }
+    }
+}
+
+fn collect_worker_location_stores(
+    stores: &mut BTreeSet<Utf8PathBuf>,
+    location: &WorkerLocation,
+) -> Result<()> {
+    stores.insert(workspace_workers_dir(&location.workspace)?);
+    if let Some(parent) = location.worker_dir.parent() {
+        stores.insert(parent.to_path_buf());
+    }
+    if let Some(pointer) = &location.pointer {
+        collect_worker_pointer_stores(stores, pointer)?;
+    }
+    Ok(())
+}
+
+fn collect_worker_pointer_stores(
+    stores: &mut BTreeSet<Utf8PathBuf>,
+    pointer: &WorkerPointer,
+) -> Result<()> {
+    stores.insert(workspace_workers_dir(&pointer.workspace)?);
+    if let Some(parent) = pointer.worker_dir.parent() {
+        stores.insert(parent.to_path_buf());
+    }
+    stores.extend(pointer.local_stores.iter().cloned());
+    Ok(())
+}
+
 #[derive(Default, Deserialize, Serialize)]
-struct RunIndex {
+struct GlobalIndex {
     #[serde(default)]
     runs: BTreeMap<String, RunPointer>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    workers: BTreeMap<String, WorkerPointer>,
 }
 
 #[cfg(test)]
@@ -378,6 +605,74 @@ mod tests {
     }
 
     #[test]
+    fn registered_worker_resolves_from_invoking_project_and_unrelated_stores() {
+        let root = TempDir::new("worker-registration-resolution");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let invoker = create_dir(root.path().join("invoker"));
+        let project = create_dir(root.path().join("project"));
+        let unrelated = create_dir(root.path().join("unrelated"));
+        let worker = "auth-fix";
+        let invoker_workers_dir = invoker.join(".niles/worker");
+        let project_workers_dir = project.join(".niles/worker");
+        let unrelated_workers_dir = unrelated.join(".niles/worker");
+        let worker_dir = create_dir(project_workers_dir.join(worker));
+
+        register_worker_location_with_local_store(
+            worker,
+            &project,
+            &worker_dir,
+            invoker_workers_dir.clone(),
+        )
+        .unwrap();
+
+        assert!(invoker_workers_dir.join(pointer_file(worker)).is_file());
+        assert!(project_workers_dir.join(pointer_file(worker)).is_file());
+        assert_worker_resolves_to(&invoker_workers_dir, worker, &worker_dir);
+        assert_worker_resolves_to(&project_workers_dir, worker, &worker_dir);
+        assert_worker_resolves_to(&unrelated_workers_dir, worker, &worker_dir);
+    }
+
+    #[test]
+    fn named_worker_resolution_prefers_local_pointer_then_local_dir_then_global() {
+        let root = TempDir::new("worker-resolution-chain");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let local_workers_dir = root.path().join("workspace/.niles/worker");
+        fs::create_dir_all(&local_workers_dir).unwrap();
+
+        let worker = "auth-fix";
+        let local_pointer_target = create_dir(root.path().join("pointer-target"));
+        let local_worker_dir = create_dir(local_workers_dir.join(worker));
+        let global_target = create_dir(root.path().join("global-target"));
+        write_local_worker_pointer(
+            &local_workers_dir,
+            &worker_pointer(worker, &local_pointer_target),
+        )
+        .unwrap();
+        write_global_worker_pointer(&worker_pointer(worker, &global_target)).unwrap();
+
+        let resolver = worker_resolver_at(&local_workers_dir);
+        assert_eq!(
+            resolver.named(worker).unwrap().unwrap().worker_dir,
+            local_pointer_target
+        );
+
+        fs::remove_file(local_workers_dir.join(pointer_file(worker))).unwrap();
+        assert_eq!(
+            resolver.named(worker).unwrap().unwrap().worker_dir,
+            local_worker_dir
+        );
+
+        fs::remove_dir_all(&local_worker_dir).unwrap();
+        assert_eq!(
+            resolver.named(worker).unwrap().unwrap().worker_dir,
+            global_target
+        );
+
+        fs::remove_file(global_index_path().unwrap()).unwrap();
+        assert!(resolver.named(worker).unwrap().is_none());
+    }
+
+    #[test]
     fn stale_local_pointers_return_recorded_path_without_existence_check() {
         let root = TempDir::new("stale-pointer");
         let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
@@ -400,21 +695,47 @@ mod tests {
         }
     }
 
+    fn worker_resolver_at(local_workers_dir: &Utf8Path) -> WorkerResolver {
+        WorkerResolver {
+            local_workers_dir: local_workers_dir.to_path_buf(),
+        }
+    }
+
+    fn assert_worker_resolves_to(
+        local_workers_dir: &Utf8Path,
+        worker: &str,
+        worker_dir: &Utf8Path,
+    ) {
+        assert_eq!(
+            worker_resolver_at(local_workers_dir)
+                .named(worker)
+                .unwrap()
+                .unwrap()
+                .worker_dir,
+            worker_dir
+        );
+    }
+
     fn create_dir(path: Utf8PathBuf) -> Utf8PathBuf {
         fs::create_dir_all(&path).unwrap();
         path
     }
 
     fn write_local_run_pointer(runs_dir: &Utf8Path, run: &str, run_dir: &Utf8Path) {
-        write_pointer(runs_dir, PointerFile::Run(run), &run_pointer(run, run_dir)).unwrap();
+        write_run_pointer(
+            runs_dir,
+            RunPointerFile::Run(run),
+            &run_pointer(run, run_dir),
+        )
+        .unwrap();
     }
 
     fn write_latest_pointer(runs_dir: &Utf8Path, run: &str, run_dir: &Utf8Path) {
-        write_pointer(runs_dir, PointerFile::Latest, &run_pointer(run, run_dir)).unwrap();
+        write_run_pointer(runs_dir, RunPointerFile::Latest, &run_pointer(run, run_dir)).unwrap();
     }
 
     fn write_global_run_pointer(run: &str, run_dir: &Utf8Path) {
-        write_global_pointer(&run_pointer(run, run_dir)).unwrap();
+        super::write_global_run_pointer(&run_pointer(run, run_dir)).unwrap();
     }
 
     fn write_index(path: &Utf8Path, pointers: &[RunPointer]) {
@@ -422,7 +743,7 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
 
-        let mut index = RunIndex::default();
+        let mut index = GlobalIndex::default();
         for pointer in pointers {
             index.runs.insert(pointer.id.clone(), pointer.clone());
         }
@@ -434,6 +755,23 @@ mod tests {
             id: run.to_owned(),
             workspace: run_dir.parent().unwrap_or(Utf8Path::new("/")).to_path_buf(),
             run_dir: run_dir.to_path_buf(),
+        }
+    }
+
+    fn worker_pointer(worker: &str, worker_dir: &Utf8Path) -> WorkerPointer {
+        WorkerPointer {
+            id: worker.to_owned(),
+            workspace: worker_dir
+                .parent()
+                .and_then(Utf8Path::parent)
+                .and_then(Utf8Path::parent)
+                .unwrap_or(Utf8Path::new("/"))
+                .to_path_buf(),
+            worker_dir: worker_dir.to_path_buf(),
+            local_stores: worker_dir
+                .parent()
+                .map(|parent| vec![parent.to_path_buf()])
+                .unwrap_or_default(),
         }
     }
 
