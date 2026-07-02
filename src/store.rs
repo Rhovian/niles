@@ -48,36 +48,16 @@ pub fn register_run_location(run: &str, workspace: &Utf8Path, run_dir: &Utf8Path
 }
 
 pub fn resolve_run_dir(run: &str) -> Result<Utf8PathBuf> {
+    let resolver = RunResolver::from_current()?;
     if run == "latest" {
-        return resolve_latest_run_dir()?.context("no runs found");
+        return resolver.latest()?.context("no runs found");
     }
 
-    let runs_dir = current_runs_dir()?;
-    if let Some(run_dir) = resolve_pointer(&runs_dir, run)? {
-        return Ok(run_dir);
-    }
-
-    let local_run_dir = runs_dir.join(run);
-    if local_run_dir.exists() {
-        return Ok(local_run_dir);
-    }
-
-    if let Some(run_dir) = resolve_global_run(run)? {
-        return Ok(run_dir);
-    }
-
-    Ok(local_run_dir)
+    resolver.named(run)
 }
 
 pub fn resolve_latest_run_dir() -> Result<Option<Utf8PathBuf>> {
-    let runs_dir = current_runs_dir()?;
-    if let Some(run_dir) = resolve_latest_pointer(&runs_dir)? {
-        return Ok(Some(run_dir));
-    }
-    if let Some(run_dir) = latest_local_run_dir(&runs_dir)? {
-        return Ok(Some(run_dir));
-    }
-    latest_global_run_dir()
+    RunResolver::from_current()?.latest()
 }
 
 fn current_runs_dir() -> Result<Utf8PathBuf> {
@@ -86,18 +66,75 @@ fn current_runs_dir() -> Result<Utf8PathBuf> {
 
 fn write_local_pointer(runs_dir: &Utf8Path, pointer: &RunPointer) -> Result<()> {
     fs::create_dir_all(runs_dir).with_context(|| format!("failed to create {runs_dir}"))?;
-    write_json_pretty(&runs_dir.join(pointer_file(&pointer.id)), pointer)?;
-    write_json_pretty(&runs_dir.join(LATEST_POINTER), pointer)
+    write_pointer(runs_dir, PointerFile::Run(&pointer.id), pointer)?;
+    write_pointer(runs_dir, PointerFile::Latest, pointer)
 }
 
-fn resolve_pointer(runs_dir: &Utf8Path, run: &str) -> Result<Option<Utf8PathBuf>> {
-    let path = runs_dir.join(pointer_file(run));
-    read_pointer(&path).map(|pointer| pointer.map(|pointer| pointer.run_dir))
+struct RunResolver {
+    local_runs_dir: Utf8PathBuf,
 }
 
-fn resolve_latest_pointer(runs_dir: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
-    read_pointer(&runs_dir.join(LATEST_POINTER))
-        .map(|pointer| pointer.map(|pointer| pointer.run_dir))
+impl RunResolver {
+    fn from_current() -> Result<Self> {
+        Ok(Self {
+            local_runs_dir: current_runs_dir()?,
+        })
+    }
+
+    fn named(&self, run: &str) -> Result<Utf8PathBuf> {
+        if let Some(run_dir) = self.local_pointer(PointerFile::Run(run))? {
+            return Ok(run_dir);
+        }
+
+        let local_run_dir = self.local_runs_dir.join(run);
+        if local_run_dir.exists() {
+            return Ok(local_run_dir);
+        }
+
+        if let Some(run_dir) = resolve_global_run(run)? {
+            return Ok(run_dir);
+        }
+
+        Ok(local_run_dir)
+    }
+
+    fn latest(&self) -> Result<Option<Utf8PathBuf>> {
+        if let Some(run_dir) = self.local_pointer(PointerFile::Latest)? {
+            return Ok(Some(run_dir));
+        }
+        if let Some(run_dir) = latest_local_run_dir(&self.local_runs_dir)? {
+            return Ok(Some(run_dir));
+        }
+        latest_global_run_dir()
+    }
+
+    fn local_pointer(&self, pointer_file: PointerFile<'_>) -> Result<Option<Utf8PathBuf>> {
+        read_pointer(&pointer_file.path(&self.local_runs_dir))
+            .map(|pointer| pointer.map(|pointer| pointer.run_dir))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PointerFile<'a> {
+    Run(&'a str),
+    Latest,
+}
+
+impl PointerFile<'_> {
+    fn path(self, runs_dir: &Utf8Path) -> Utf8PathBuf {
+        match self {
+            PointerFile::Run(run) => runs_dir.join(pointer_file(run)),
+            PointerFile::Latest => runs_dir.join(LATEST_POINTER),
+        }
+    }
+}
+
+fn write_pointer(
+    runs_dir: &Utf8Path,
+    pointer_file: PointerFile<'_>,
+    pointer: &RunPointer,
+) -> Result<()> {
+    write_json_pretty(&pointer_file.path(runs_dir), pointer)
 }
 
 fn latest_local_run_dir(runs_dir: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
