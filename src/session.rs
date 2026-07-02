@@ -14,6 +14,7 @@ use crate::{
     config::agents,
     store,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
+    wake,
     workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
 };
 
@@ -118,7 +119,11 @@ fn write_manager_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta>
         .replace("{agent}", agent)
         .replace("{dir}", dir.as_str())
         .replace("{goal}", goal)
-        .replace("{startup_context}", &startup_context);
+        .replace("{startup_context}", &startup_context)
+        .replace(
+            "{worker_wake_examples}",
+            &wake::manager_worker_contract_examples("<status-file>"),
+        );
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),

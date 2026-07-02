@@ -1,3 +1,4 @@
+mod agent_window;
 mod analyze;
 mod cli;
 mod config;
@@ -10,6 +11,7 @@ mod store;
 mod tmux;
 mod util;
 mod wait;
+mod wake;
 mod worker;
 mod workspace_manifest;
 

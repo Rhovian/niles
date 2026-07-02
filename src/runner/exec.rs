@@ -5,6 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
+    agent_window,
     config::{
         agents,
         spec::{PromptMode, TaskSpec, TaskStep},
@@ -13,8 +14,8 @@ use crate::{
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{absolute_path, append_line, slugify},
-    worker,
+    util::{absolute_path, append_line, render_template, slugify},
+    wake::{self, WakeKind},
 };
 
 use super::{RunSelector, lifecycle::load_spec_for_run, report};
@@ -22,6 +23,7 @@ use super::{RunSelector, lifecycle::load_spec_for_run, report};
 /// Scrollback lines captured from an interactive step window on close. Large
 /// enough to hold an agent's session; `context.rs` truncates when embedding.
 const PANE_CAPTURE_LINES: usize = 2000;
+const STEP_WAKE_CONTRACT_TEMPLATE: &str = include_str!("../templates/step_wake_contract.md");
 
 struct LoadedRun {
     run_dir: Utf8PathBuf,
@@ -115,11 +117,12 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     append_wake_contract(&brief, &run.run_dir, step_number)?;
 
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
-    let window_name = step_window_name(&run.state.id, step_number, role.as_deref(), agent);
+    let window_name =
+        agent_window::step_window_name(&run.state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     ensure_step_brief_exists(&brief, step_number)?;
     if let Err(err) =
-        worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
+        agent_window::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
     {
         return Err(record_step_error_or_context(
             err,
@@ -153,7 +156,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     println!("window: {window_name}");
     println!("run: {}", run.state.id);
     println!("brief: {brief}");
-    println!("status_log: {}", run.run_dir.join("status.log"));
+    println!("status_log: {}", wake::status_log_path(&run.run_dir));
     println!(
         "on_done: niles step-close {} --index {step_number}",
         run.state.id
@@ -179,12 +182,12 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     let window_name = record
         .window
         .clone()
-        .unwrap_or_else(|| format!("niles-{}-s{index}", run.state.id));
+        .unwrap_or_else(|| agent_window::legacy_step_window_name(&run.state.id, index));
 
     // Capture the interactive pane before tearing it down, so the step's output
     // reaches later steps' handoff context. Best-effort: a window that already
     // exited leaves no pane, and that must not block closing the step.
-    let captured = match worker::capture_window(&window_name, PANE_CAPTURE_LINES) {
+    let captured = match agent_window::capture_window(&window_name, PANE_CAPTURE_LINES) {
         Ok(text) => {
             let steps_dir = ensure_steps_dir(&run.run_dir)?;
             let path = steps_dir.join(format!("{index:03}-{}.pane.txt", slugify(&label)));
@@ -222,9 +225,9 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     }
     run.state.updated_at = Utc::now();
     write_state(&run.state_path, &run.state)?;
-    append_run_status(&run.run_dir, &format!("closed: step {index}"))?;
+    append_run_status(&run.run_dir, &wake::step_line(WakeKind::Closed, index, ""))?;
 
-    match worker::close_window(&window_name) {
+    match agent_window::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
@@ -235,26 +238,18 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     Ok(())
 }
 
-/// Self-descriptive tmux window name for a step, e.g. `niles-claude-planner-s1-9000z`.
-/// The agent + role make it readable in `tmux list-windows`; the step number and
-/// a short run-id tail keep it unique across repeated roles and concurrent runs.
-fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent: &str) -> String {
-    let shortid = &run_id[run_id.len().saturating_sub(6)..];
-    let role = role.unwrap_or("step");
-    format!(
-        "niles-{}-{}-s{step_number}-{}",
-        slugify(agent),
-        slugify(role),
-        slugify(shortid)
-    )
-}
-
 /// Append a wake contract to a step brief so the interactive agent reports back
 /// to the run status log the manager watches.
 fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
-    let status_log = absolute_path(run_dir)?.join("status.log");
-    let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager. The wake line must include the `step {step_number}` token pair:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\necho \"failed: step {step_number} <reason>\" >> {status_log}\necho \"blocked: step {step_number} <blocking issues>\" >> {status_log}\necho \"needs-decision: step {step_number} <decision needed>\" >> {status_log}\n```\n\nLeave this window open; the manager reviews your work and closes it.\n"
+    let status_log = wake::status_log_path(&absolute_path(run_dir)?);
+    let step_token = wake::step_token(step_number);
+    let wake_examples = wake::step_contract_examples(step_number, &status_log);
+    let footer = render_template(
+        STEP_WAKE_CONTRACT_TEMPLATE,
+        &[
+            ("{step_token}", &step_token),
+            ("{wake_examples}", &wake_examples),
+        ],
     );
     fs::OpenOptions::new()
         .append(true)
@@ -349,7 +344,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
     if failed {
         append_run_status(
             &run.run_dir,
-            &format!("failed: step {index} {label} exit {exit}"),
+            &wake::step_line(WakeKind::Failed, index, &format!("{label} exit {exit}")),
         )?;
         println!("status: failed");
         if let Some(step) = run.state.steps.iter().find(|step| step.index == index) {
@@ -371,7 +366,11 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
     append_run_status(
         &run.run_dir,
-        &format!("done: step {index} {role_label}{label} exit {exit}"),
+        &wake::step_line(
+            WakeKind::Done,
+            index,
+            &format!("{role_label}{label} exit {exit}"),
+        ),
     )?;
     println!("step {index}: completed");
     if all_completed {
@@ -381,7 +380,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 }
 
 fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
-    let path = run_dir.join("status.log");
+    let path = wake::status_log_path(run_dir);
     append_line(
         &path,
         line,
@@ -402,7 +401,11 @@ fn record_step_error(
     mark_step_failed(state, state_path, index)?;
     append_run_status(
         run_dir,
-        &format!("failed: step {index} {phase} error: {}", status_detail(err)),
+        &wake::step_line(
+            WakeKind::Failed,
+            index,
+            &format!("{phase} error: {}", status_detail(err)),
+        ),
     )
 }
 

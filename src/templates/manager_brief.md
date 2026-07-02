@@ -52,11 +52,7 @@ Workers are tmux windows named `niles-<id>`. Metadata and briefs live under `.ni
 Each worker brief includes a status file path. Actionable status lines use:
 
 ```sh
-echo "done: short result" >> <status-file>
-echo "blocked: blocker summary" >> <status-file>
-echo "needs-decision: decision needed" >> <status-file>
-echo "failed: failure summary" >> <status-file>
-echo "closed: worker closed" >> <status-file>
+{worker_wake_examples}
 ```
 
 Unindexed waits consume returned wake lines through a `status.ack` cursor beside the status log. Indexed waits scan the whole log for the requested `step <N>` line.
