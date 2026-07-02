@@ -10,6 +10,7 @@ mod store;
 mod tmux;
 mod util;
 mod wait;
+mod wake;
 mod worker;
 mod workspace_manifest;
 

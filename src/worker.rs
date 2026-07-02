@@ -16,6 +16,7 @@ use crate::{
         absolute_existing_dir, absolute_existing_file, absolute_path, append_line,
         read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, write_json_pretty,
     },
+    wake::{self, WakeKind},
 };
 
 const WORKER_DIR: &str = ".niles/worker";
@@ -81,7 +82,7 @@ pub fn spawn(
     };
 
     let launch_path = dir.join("launch.sh");
-    let status_path = dir.join("status.log");
+    let status_path = wake::status_log_path(&dir);
     fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -149,7 +150,7 @@ pub fn worker_close(id: String) -> Result<()> {
         .as_ref()
         .and_then(|meta| meta.status.as_ref())
         .cloned()
-        .unwrap_or_else(|| worker_dir.join("status.log"));
+        .unwrap_or_else(|| wake::status_log_path(&worker_dir));
     append_closed_sentinel(&status_path, &id)?;
 
     match close_window(&window_name) {
@@ -306,7 +307,7 @@ pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     {
         return Ok(status);
     }
-    Ok(Utf8Path::new(WORKER_DIR).join(id).join("status.log"))
+    Ok(wake::status_log_path(&Utf8Path::new(WORKER_DIR).join(id)))
 }
 
 fn write_brief(
@@ -318,10 +319,11 @@ fn write_brief(
 ) -> Result<()> {
     let status_path = path
         .parent()
-        .map(|parent| parent.join("status.log"))
+        .map(wake::status_log_path)
         .unwrap_or_else(|| Utf8PathBuf::from("status.log"));
+    let wake_examples = wake::worker_contract_examples(&status_path);
     let body = format!(
-        "# Niles Worker Brief\n\nid: {id}\nproject: {project}\nagent: {agent}\nstatus_file: {status_path}\n\n## Task\n\n{task}\n\n## Operating Notes\n\nWork autonomously in this tmux window. Report concise status and final results in your terminal output. The foreground Niles manager can inspect this pane with `niles peek {id}` and steer it with `niles send {id} <message>`.\n\n## Wake Contract\n\nAppend actionable status lines to the status file so Niles can wake the foreground manager:\n\n```sh\necho \"done: short result\" >> {status_path}\necho \"blocked: blocker summary\" >> {status_path}\necho \"needs-decision: decision needed\" >> {status_path}\necho \"failed: failure summary\" >> {status_path}\n```\n\nUse `working:` sparingly for durable phase changes; it is recorded but does not wake the manager.\n"
+        "# Niles Worker Brief\n\nid: {id}\nproject: {project}\nagent: {agent}\nstatus_file: {status_path}\n\n## Task\n\n{task}\n\n## Operating Notes\n\nWork autonomously in this tmux window. Report concise status and final results in your terminal output. The foreground Niles manager can inspect this pane with `niles peek {id}` and steer it with `niles send {id} <message>`.\n\n## Wake Contract\n\nAppend actionable status lines to the status file so Niles can wake the foreground manager:\n\n```sh\n{wake_examples}\n```\n\nUse `working:` sparingly for durable phase changes; it is recorded but does not wake the manager.\n"
     );
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
@@ -445,7 +447,7 @@ fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {
 
     append_line(
         path,
-        &format!("closed: {id}"),
+        &wake::line(WakeKind::Closed, id),
         |path| format!("failed to open {path} for worker close sentinel"),
         |path| format!("failed to inspect {path} before worker close sentinel"),
         |path| format!("failed to write worker close sentinel to {path}"),

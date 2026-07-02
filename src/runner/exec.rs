@@ -14,6 +14,7 @@ use crate::{
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{absolute_path, append_line, slugify},
+    wake::{self, WakeKind},
     worker,
 };
 
@@ -153,7 +154,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     println!("window: {window_name}");
     println!("run: {}", run.state.id);
     println!("brief: {brief}");
-    println!("status_log: {}", run.run_dir.join("status.log"));
+    println!("status_log: {}", wake::status_log_path(&run.run_dir));
     println!(
         "on_done: niles step-close {} --index {step_number}",
         run.state.id
@@ -222,7 +223,7 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     }
     run.state.updated_at = Utc::now();
     write_state(&run.state_path, &run.state)?;
-    append_run_status(&run.run_dir, &format!("closed: step {index}"))?;
+    append_run_status(&run.run_dir, &wake::step_line(WakeKind::Closed, index, ""))?;
 
     match worker::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
@@ -252,9 +253,11 @@ fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent:
 /// Append a wake contract to a step brief so the interactive agent reports back
 /// to the run status log the manager watches.
 fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
-    let status_log = absolute_path(run_dir)?.join("status.log");
+    let status_log = wake::status_log_path(&absolute_path(run_dir)?);
+    let step_token = wake::step_token(step_number);
+    let wake_examples = wake::step_contract_examples(step_number, &status_log);
     let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager. The wake line must include the `step {step_number}` token pair:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\necho \"failed: step {step_number} <reason>\" >> {status_log}\necho \"blocked: step {step_number} <blocking issues>\" >> {status_log}\necho \"needs-decision: step {step_number} <decision needed>\" >> {status_log}\n```\n\nLeave this window open; the manager reviews your work and closes it.\n"
+        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager. The wake line must include the `{step_token}` token pair:\n\n```sh\n{wake_examples}\n```\n\nLeave this window open; the manager reviews your work and closes it.\n"
     );
     fs::OpenOptions::new()
         .append(true)
@@ -349,7 +352,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
     if failed {
         append_run_status(
             &run.run_dir,
-            &format!("failed: step {index} {label} exit {exit}"),
+            &wake::step_line(WakeKind::Failed, index, &format!("{label} exit {exit}")),
         )?;
         println!("status: failed");
         if let Some(step) = run.state.steps.iter().find(|step| step.index == index) {
@@ -371,7 +374,11 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
     append_run_status(
         &run.run_dir,
-        &format!("done: step {index} {role_label}{label} exit {exit}"),
+        &wake::step_line(
+            WakeKind::Done,
+            index,
+            &format!("{role_label}{label} exit {exit}"),
+        ),
     )?;
     println!("step {index}: completed");
     if all_completed {
@@ -381,7 +388,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 }
 
 fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
-    let path = run_dir.join("status.log");
+    let path = wake::status_log_path(run_dir);
     append_line(
         &path,
         line,
@@ -402,7 +409,11 @@ fn record_step_error(
     mark_step_failed(state, state_path, index)?;
     append_run_status(
         run_dir,
-        &format!("failed: step {index} {phase} error: {}", status_detail(err)),
+        &wake::step_line(
+            WakeKind::Failed,
+            index,
+            &format!("{phase} error: {}", status_detail(err)),
+        ),
     )
 }
 

@@ -13,8 +13,15 @@ use crate::{
     state::{RunState, StepStatus},
     store,
     util::{read_optional_json, read_optional_to_string},
+    wake::{
+        WakeKind, is_actionable_wake, is_closed_wake, is_untagged_actionable_wake, mentions_step,
+        status_log_path,
+    },
     worker,
 };
+
+#[cfg(test)]
+use crate::wake::mentions_any_step;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -33,7 +40,7 @@ pub fn wait(
         (Some(run), None) => {
             let run_dir = store::resolve_run_dir(&run)?;
             WaitTarget::Run {
-                status: run_dir.join("status.log"),
+                status: status_log_path(&run_dir),
                 run_dir,
             }
         }
@@ -118,7 +125,10 @@ impl WaitTarget {
             WaitTarget::Run { .. } => None,
             WaitTarget::Worker { id, dir, .. } if !dir.exists() => Some(WaitResult::WorkerClosed {
                 id: id.clone(),
-                line: format!("closed: worker '{id}' directory removed"),
+                line: crate::wake::line(
+                    WakeKind::Closed,
+                    &format!("worker '{id}' directory removed"),
+                ),
             }),
             WaitTarget::Worker { .. } => None,
         }
@@ -323,62 +333,9 @@ fn select_untagged_wake(lines: &[String], order: WakeScanOrder) -> Option<String
     .cloned()
 }
 
-fn is_untagged_actionable_wake(line: &str) -> bool {
-    is_actionable_wake(line) && !mentions_any_step(line)
-}
-
 fn matches_indexed_wake(line: &str, index: usize, closed_match: ClosedWakeMatch) -> bool {
     mentions_step(line, index)
         || (closed_match == ClosedWakeMatch::AnyClosed && is_closed_wake(line))
-}
-
-fn is_actionable_wake(line: &str) -> bool {
-    matches!(
-        wake_state(line),
-        Some("done" | "failed" | "needs-decision" | "blocked" | "closed")
-    )
-}
-
-fn is_closed_wake(line: &str) -> bool {
-    wake_state(line) == Some("closed")
-}
-
-fn wake_state(line: &str) -> Option<&str> {
-    let (state, _) = line.split_once(':')?;
-    Some(state)
-}
-
-fn mentions_step(line: &str, index: usize) -> bool {
-    let index = index.to_string();
-    let mut previous_was_step = false;
-
-    for token in line
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty())
-    {
-        if previous_was_step && token == index {
-            return true;
-        }
-        previous_was_step = token == "step";
-    }
-
-    false
-}
-
-fn mentions_any_step(line: &str) -> bool {
-    let mut previous_was_step = false;
-
-    for token in line
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty())
-    {
-        if previous_was_step && token.chars().all(|ch| ch.is_ascii_digit()) {
-            return true;
-        }
-        previous_was_step = token == "step";
-    }
-
-    false
 }
 
 fn read_optional_run_state(run_dir: &Utf8Path) -> Result<Option<RunState>> {
