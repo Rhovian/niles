@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-};
+use std::fs;
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -15,7 +12,10 @@ use crate::{
     },
     store::{read_state, resolve_run_dir},
     tmux,
-    util::{absolute_existing_dir, absolute_existing_file, absolute_path, write_json_pretty},
+    util::{
+        absolute_existing_dir, absolute_existing_file, absolute_path, append_line,
+        read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, write_json_pretty,
+    },
 };
 
 const WORKER_DIR: &str = ".niles/worker";
@@ -412,14 +412,11 @@ fn read_meta(id: &str) -> Result<WorkerMeta> {
 
 fn read_meta_if_exists(id: &str) -> Result<Option<WorkerMeta>> {
     let path = meta_path(id);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
-    };
-    serde_json::from_str(&body)
-        .map(Some)
-        .with_context(|| format!("failed to parse {path}"))
+    read_optional_json(
+        &path,
+        |path| format!("failed to read {path}"),
+        |path| format!("failed to parse {path}"),
+    )
 }
 
 fn meta_path(id: &str) -> Utf8PathBuf {
@@ -438,22 +435,6 @@ fn worker_window_name(id: &str, meta: &WorkerMeta) -> String {
         .unwrap_or_else(|| format!("niles-{id}"))
 }
 
-fn remove_file_if_exists(path: &Utf8Path) -> Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
-    }
-}
-
-fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
-    }
-}
-
 fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {
     let Some(parent) = path.parent() else {
         return Ok(());
@@ -462,33 +443,13 @@ fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {
         return Ok(());
     }
 
-    let mut status = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("failed to open {path} for worker close sentinel"))?;
-    if needs_leading_newline(&mut status)
-        .with_context(|| format!("failed to inspect {path} before worker close sentinel"))?
-    {
-        status
-            .write_all(b"\n")
-            .with_context(|| format!("failed to write worker close sentinel to {path}"))?;
-    }
-    writeln!(status, "closed: {id}")
-        .with_context(|| format!("failed to write worker close sentinel to {path}"))?;
-    Ok(())
-}
-
-fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
-    if file.metadata()?.len() == 0 {
-        return Ok(false);
-    }
-
-    file.seek(SeekFrom::End(-1))?;
-    let mut byte = [0];
-    file.read_exact(&mut byte)?;
-    Ok(byte[0] != b'\n')
+    append_line(
+        path,
+        &format!("closed: {id}"),
+        |path| format!("failed to open {path} for worker close sentinel"),
+        |path| format!("failed to inspect {path} before worker close sentinel"),
+        |path| format!("failed to write worker close sentinel to {path}"),
+    )
 }
 
 fn validate_id(id: &str) -> Result<()> {

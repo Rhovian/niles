@@ -11,7 +11,9 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     state::{RunState, StepStatus},
-    store, worker,
+    store,
+    util::{read_optional_json, read_optional_to_string},
+    worker,
 };
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -336,14 +338,11 @@ fn mentions_any_step(line: &str) -> bool {
 
 fn read_optional_run_state(run_dir: &Utf8Path) -> Result<Option<RunState>> {
     let path = store::state_path(run_dir);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
-    };
-    serde_json::from_str(&body)
-        .map(Some)
-        .with_context(|| format!("failed to parse {path}"))
+    read_optional_json(
+        &path,
+        |path| format!("failed to read {path}"),
+        |path| format!("failed to parse {path}"),
+    )
 }
 
 fn uniquely_attributed_step(state: &RunState) -> Option<AttributedStep> {
@@ -394,11 +393,11 @@ fn status_may_contain_post_launch_lines(
 }
 
 fn read_lines(status: &Utf8Path) -> Result<Vec<String>> {
-    match fs::read_to_string(status) {
-        Ok(body) => Ok(body.lines().map(str::to_owned).collect()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-        Err(err) => Err(err).with_context(|| format!("failed to read {status}")),
-    }
+    Ok(
+        read_optional_to_string(status, |status| format!("failed to read {status}"))?
+            .map(|body| body.lines().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    )
 }
 
 fn ack_path(status: &Utf8Path) -> Utf8PathBuf {
@@ -407,10 +406,9 @@ fn ack_path(status: &Utf8Path) -> Utf8PathBuf {
 
 fn read_ack_cursor(status: &Utf8Path, line_count: usize) -> Result<usize> {
     let path = ack_path(status);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    let Some(body) = read_optional_to_string(&path, |path| format!("failed to read {path}"))?
+    else {
+        return Ok(0);
     };
 
     Ok(body.trim().parse::<usize>().unwrap_or(0).min(line_count))

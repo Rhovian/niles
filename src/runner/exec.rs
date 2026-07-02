@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    io::{Read, Seek, SeekFrom, Write},
-};
+use std::{fs, io::Write};
 
 use anyhow::{Context, Error, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -16,7 +13,7 @@ use crate::{
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{absolute_path, slugify},
+    util::{absolute_path, append_line, slugify},
     worker,
 };
 
@@ -363,19 +360,13 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
 fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
     let path = run_dir.join("status.log");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("failed to open {path}"))?;
-    if needs_leading_newline(&mut file)
-        .with_context(|| format!("failed to inspect {path} before status append"))?
-    {
-        file.write_all(b"\n")
-            .with_context(|| format!("failed to write {path}"))?;
-    }
-    writeln!(file, "{line}").with_context(|| format!("failed to write {path}"))
+    append_line(
+        &path,
+        line,
+        |path| format!("failed to open {path}"),
+        |path| format!("failed to inspect {path} before status append"),
+        |path| format!("failed to write {path}"),
+    )
 }
 
 fn record_step_error(
@@ -412,17 +403,6 @@ fn status_detail(err: &Error) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
-    if file.metadata()?.len() == 0 {
-        return Ok(false);
-    }
-
-    file.seek(SeekFrom::End(-1))?;
-    let mut byte = [0];
-    file.read_exact(&mut byte)?;
-    Ok(byte[0] != b'\n')
 }
 
 fn ensure_step_brief_exists(brief: &Utf8Path, step_number: usize) -> Result<()> {

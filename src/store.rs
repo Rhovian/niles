@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     state::{RunState, StepRecord},
-    util::{absolute_path, current_dir_utf8, utf8_path, write_json_pretty},
+    util::{absolute_path, current_dir_utf8, read_optional_json, utf8_path, write_json_pretty},
 };
 
 const NILES_DIR: &str = ".niles";
@@ -120,15 +120,11 @@ fn latest_local_run_dir(runs_dir: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
 }
 
 fn read_pointer(path: &Utf8Path) -> Result<Option<RunPointer>> {
-    match fs::read_to_string(path) {
-        Ok(body) => {
-            let pointer = serde_json::from_str(&body)
-                .with_context(|| format!("failed to parse run pointer {path}"))?;
-            Ok(Some(pointer))
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).with_context(|| format!("failed to read run pointer {path}")),
-    }
+    read_optional_json(
+        path,
+        |path| format!("failed to read run pointer {path}"),
+        |path| format!("failed to parse run pointer {path}"),
+    )
 }
 
 fn write_global_pointer(pointer: &RunPointer) -> Result<()> {
@@ -159,11 +155,12 @@ fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
 }
 
 fn read_global_index(path: &Utf8Path) -> Result<RunIndex> {
-    match fs::read_to_string(path) {
-        Ok(body) => serde_json::from_str(&body).with_context(|| format!("failed to parse {path}")),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(RunIndex::default()),
-        Err(err) => Err(err).with_context(|| format!("failed to read {path}")),
-    }
+    Ok(read_optional_json(
+        path,
+        |path| format!("failed to read {path}"),
+        |path| format!("failed to parse {path}"),
+    )?
+    .unwrap_or_default())
 }
 
 fn global_index_path() -> Result<Utf8PathBuf> {
