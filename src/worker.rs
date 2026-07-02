@@ -10,12 +10,14 @@ use crate::{
     store::{read_state, resolve_run_dir},
     util::{
         absolute_existing_dir, absolute_existing_file, absolute_path, append_line,
-        read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, write_json_pretty,
+        read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, render_template,
+        write_json_pretty,
     },
     wake::{self, WakeKind},
 };
 
 const WORKER_DIR: &str = ".niles/worker";
+const WORKER_BRIEF_TEMPLATE: &str = include_str!("templates/worker_brief.md");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WorkerMeta {
@@ -305,8 +307,16 @@ fn write_brief(
         .map(wake::status_log_path)
         .unwrap_or_else(|| Utf8PathBuf::from("status.log"));
     let wake_examples = wake::worker_contract_examples(&status_path);
-    let body = format!(
-        "# Niles Worker Brief\n\nid: {id}\nproject: {project}\nagent: {agent}\nstatus_file: {status_path}\n\n## Task\n\n{task}\n\n## Operating Notes\n\nWork autonomously in this tmux window. Report concise status and final results in your terminal output. The foreground Niles manager can inspect this pane with `niles peek {id}` and steer it with `niles send {id} <message>`.\n\n## Wake Contract\n\nAppend actionable status lines to the status file so Niles can wake the foreground manager:\n\n```sh\n{wake_examples}\n```\n\nUse `working:` sparingly for durable phase changes; it is recorded but does not wake the manager.\n"
+    let body = render_template(
+        WORKER_BRIEF_TEMPLATE,
+        &[
+            ("{id}", id),
+            ("{project}", project.as_str()),
+            ("{agent}", agent),
+            ("{status_path}", status_path.as_str()),
+            ("{task}", task),
+            ("{wake_examples}", &wake_examples),
+        ],
     );
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }

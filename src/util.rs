@@ -143,6 +143,31 @@ pub fn append_line(
     writeln!(file, "{line}").with_context(|| write_context(path))
 }
 
+pub fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut rendered = String::with_capacity(template.len());
+    let mut rest = template;
+
+    while let Some(start) = rest.find('{') {
+        rendered.push_str(&rest[..start]);
+        let candidate = &rest[start..];
+        let Some(end) = candidate.find('}') else {
+            rendered.push_str(candidate);
+            return rendered;
+        };
+
+        let placeholder = &candidate[..=end];
+        if let Some((_, value)) = replacements.iter().find(|(key, _)| *key == placeholder) {
+            rendered.push_str(value);
+        } else {
+            rendered.push_str(placeholder);
+        }
+        rest = &candidate[end + 1..];
+    }
+
+    rendered.push_str(rest);
+    rendered
+}
+
 fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
     if file.metadata()?.len() == 0 {
         return Ok(false);
@@ -253,6 +278,25 @@ mod tests {
         assert!(err.to_string().contains("brief path is not a file"));
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn render_template_replaces_known_placeholders_once() {
+        assert_eq!(
+            render_template(
+                "id={id} task={task} again={id}",
+                &[("{id}", "auth-fix"), ("{task}", "ship {id}")]
+            ),
+            "id=auth-fix task=ship {id} again=auth-fix"
+        );
+    }
+
+    #[test]
+    fn render_template_preserves_unknown_and_unclosed_placeholders() {
+        assert_eq!(
+            render_template("known={id} unknown={missing} tail={", &[("{id}", "run")]),
+            "known=run unknown={missing} tail={"
+        );
     }
 
     fn temp_test_path(label: &str) -> Utf8PathBuf {

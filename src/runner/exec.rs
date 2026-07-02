@@ -14,7 +14,7 @@ use crate::{
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{absolute_path, append_line, slugify},
+    util::{absolute_path, append_line, render_template, slugify},
     wake::{self, WakeKind},
 };
 
@@ -23,6 +23,7 @@ use super::{RunSelector, lifecycle::load_spec_for_run, report};
 /// Scrollback lines captured from an interactive step window on close. Large
 /// enough to hold an agent's session; `context.rs` truncates when embedding.
 const PANE_CAPTURE_LINES: usize = 2000;
+const STEP_WAKE_CONTRACT_TEMPLATE: &str = include_str!("../templates/step_wake_contract.md");
 
 struct LoadedRun {
     run_dir: Utf8PathBuf,
@@ -243,8 +244,12 @@ fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize
     let status_log = wake::status_log_path(&absolute_path(run_dir)?);
     let step_token = wake::step_token(step_number);
     let wake_examples = wake::step_contract_examples(step_number, &status_log);
-    let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager. The wake line must include the `{step_token}` token pair:\n\n```sh\n{wake_examples}\n```\n\nLeave this window open; the manager reviews your work and closes it.\n"
+    let footer = render_template(
+        STEP_WAKE_CONTRACT_TEMPLATE,
+        &[
+            ("{step_token}", &step_token),
+            ("{wake_examples}", &wake_examples),
+        ],
     );
     fs::OpenOptions::new()
         .append(true)
