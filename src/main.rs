@@ -1,3 +1,4 @@
+mod agent_window;
 mod analyze;
 mod cli;
 mod config;

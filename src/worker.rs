@@ -5,13 +5,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{
-        agents,
-        spec::{PromptMode, load_project_config_from},
-        version,
-    },
+    agent_window,
+    config::{agents, spec::load_project_config_from, version},
     store::{read_state, resolve_run_dir},
-    tmux,
     util::{
         absolute_existing_dir, absolute_existing_file, absolute_path, append_line,
         read_optional_json, remove_dir_all_if_exists, remove_file_if_exists, write_json_pretty,
@@ -89,8 +85,8 @@ pub fn spawn(
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 
-    let window_name = format!("niles-{id}");
-    let target = match spawn_agent_window(
+    let window_name = agent_window::worker_window_name(&id);
+    let target = match agent_window::spawn_agent_window(
         &window_name,
         &project,
         &agent,
@@ -144,8 +140,8 @@ pub fn worker_close(id: String) -> Result<()> {
     }
     let window_name = meta
         .as_ref()
-        .map(|meta| worker_window_name(&id, meta))
-        .unwrap_or_else(|| format!("niles-{id}"));
+        .map(|meta| agent_window::worker_window_name_from_target(&id, &meta.window))
+        .unwrap_or_else(|| agent_window::worker_window_name(&id));
     let status_path = meta
         .as_ref()
         .and_then(|meta| meta.status.as_ref())
@@ -153,7 +149,7 @@ pub fn worker_close(id: String) -> Result<()> {
         .unwrap_or_else(|| wake::status_log_path(&worker_dir));
     append_closed_sentinel(&status_path, &id)?;
 
-    match close_window(&window_name) {
+    match agent_window::close_window(&window_name) {
         Ok(()) => println!("closed window: {window_name}"),
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
@@ -175,16 +171,6 @@ pub fn peek(
     Ok(())
 }
 
-/// Capture the last `lines` of a step window's pane by window name, resolving
-/// the active session. Used to fold an interactive step's output into the run.
-pub(crate) fn capture_window(window_name: &str, lines: usize) -> Result<String> {
-    capture_pane(&active_window_target(window_name)?, lines)
-}
-
-fn capture_pane(target: &str, lines: usize) -> Result<String> {
-    tmux::capture_pane(target, lines)
-}
-
 pub fn send(
     run: Option<String>,
     index: Option<usize>,
@@ -204,16 +190,18 @@ pub fn send(
 impl PaneTarget {
     fn capture(&self, lines: usize) -> Result<String> {
         match self {
-            PaneTarget::Worker { target, .. } => capture_pane(target, lines),
-            PaneTarget::RunStep { window_name, .. } => capture_window(window_name, lines),
+            PaneTarget::Worker { target, .. } => agent_window::capture_target(target, lines),
+            PaneTarget::RunStep { window_name, .. } => {
+                agent_window::capture_window(window_name, lines)
+            }
         }
     }
 
     fn send(&self, message: &str) -> Result<()> {
         match self {
-            PaneTarget::Worker { target, .. } => tmux::send_line(target, message),
+            PaneTarget::Worker { target, .. } => agent_window::send_target(target, message),
             PaneTarget::RunStep { window_name, .. } => {
-                tmux::send_line(&active_window_target(window_name)?, message)
+                agent_window::send_window(window_name, message)
             }
         }
     }
@@ -295,11 +283,6 @@ fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarg
     })
 }
 
-fn active_window_target(window_name: &str) -> Result<String> {
-    let session = tmux::current_or_named_session("niles")?;
-    Ok(format!("{session}:{window_name}"))
-}
-
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     validate_id(id)?;
     if let Some(meta) = read_meta_if_exists(id)?
@@ -326,77 +309,6 @@ fn write_brief(
         "# Niles Worker Brief\n\nid: {id}\nproject: {project}\nagent: {agent}\nstatus_file: {status_path}\n\n## Task\n\n{task}\n\n## Operating Notes\n\nWork autonomously in this tmux window. Report concise status and final results in your terminal output. The foreground Niles manager can inspect this pane with `niles peek {id}` and steer it with `niles send {id} <message>`.\n\n## Wake Contract\n\nAppend actionable status lines to the status file so Niles can wake the foreground manager:\n\n```sh\n{wake_examples}\n```\n\nUse `working:` sparingly for durable phase changes; it is recorded but does not wake the manager.\n"
     );
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
-}
-
-fn write_launch_script(
-    path: &Utf8Path,
-    invocation: &agents::AgentInvocation,
-    brief_path: &Utf8Path,
-) -> Result<()> {
-    let mut body = String::new();
-    body.push_str("#!/bin/sh\n");
-    body.push_str("set -eu\n");
-    body.push_str("BRIEF=");
-    body.push_str(&shell_quote(brief_path.as_str()));
-    body.push('\n');
-    if invocation.binary == "claude" {
-        body.push_str("export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false\n");
-    }
-    body.push_str("exec ");
-    body.push_str(&shell_quote(&invocation.binary));
-    for arg in &invocation.args {
-        body.push(' ');
-        body.push_str(&shell_quote(arg));
-    }
-    match invocation.prompt {
-        PromptMode::Arg => body.push_str(" \"$(cat \"$BRIEF\")\"\n"),
-        PromptMode::Stdin => body.push_str(" < \"$BRIEF\"\n"),
-    }
-
-    fs::write(path, body).with_context(|| format!("failed to write {path}"))
-}
-
-/// Launch `agent` interactively in a fresh tmux window driven by `brief_path`,
-/// returning its `session:window` target. Shared by `spawn` and per-step
-/// orchestration so both use the same interactive invocation and launch script.
-pub(crate) fn spawn_agent_window(
-    window_name: &str,
-    cwd: &Utf8Path,
-    agent: &str,
-    project: &Utf8Path,
-    brief_path: &Utf8Path,
-    launch_path: &Utf8Path,
-) -> Result<String> {
-    if !brief_path.is_file() {
-        bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
-    }
-
-    let config = load_project_config_from(project)?;
-    let invocation = agents::invocation(
-        agent,
-        config.agents.get(agent),
-        agents::InvocationDefaults::Worker,
-    );
-    write_launch_script(launch_path, &invocation, brief_path)?;
-    let command = format!("sh {}", shell_quote(launch_path.as_str()));
-    open_window(window_name, cwd, &command)
-}
-
-/// Kill a tmux window by name in the active session. Used to tear down a step
-/// window once the manager decides the step is done.
-pub(crate) fn close_window(window_name: &str) -> Result<()> {
-    let session = tmux::current_or_named_session("niles")?;
-    tmux::kill_window(&session, window_name)
-}
-
-/// Open a detached tmux window running `command` in `cwd` and return its
-/// `session:window` target. Shared by `spawn` and the per-step orchestrator.
-pub(crate) fn open_window(window_name: &str, cwd: &Utf8Path, command: &str) -> Result<String> {
-    let session = tmux::current_or_named_session("niles")?;
-    tmux::ensure_window_available(&session, window_name)?;
-    let target = format!("{session}:{window_name}");
-    tmux::new_window(&session, window_name, cwd, command)?;
-    Ok(target)
 }
 
 fn write_meta(id: &str, meta: &WorkerMeta) -> Result<()> {
@@ -430,13 +342,6 @@ fn cleanup_failed_spawn(id: &str, dir: &Utf8Path) -> Result<()> {
     remove_dir_all_if_exists(dir)
 }
 
-fn worker_window_name(id: &str, meta: &WorkerMeta) -> String {
-    meta.window
-        .rsplit_once(':')
-        .map(|(_, window)| window.to_owned())
-        .unwrap_or_else(|| format!("niles-{id}"))
-}
-
 fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {
     let Some(parent) = path.parent() else {
         return Ok(());
@@ -467,19 +372,10 @@ fn validate_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn shell_quotes_single_quotes() {
-        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-    }
 
     #[test]
     fn closed_sentinel_starts_on_its_own_line() {

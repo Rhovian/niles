@@ -5,6 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
+    agent_window,
     config::{
         agents,
         spec::{PromptMode, TaskSpec, TaskStep},
@@ -15,7 +16,6 @@ use crate::{
     store::{read_state, state_path, write_state},
     util::{absolute_path, append_line, slugify},
     wake::{self, WakeKind},
-    worker,
 };
 
 use super::{RunSelector, lifecycle::load_spec_for_run, report};
@@ -116,11 +116,12 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     append_wake_contract(&brief, &run.run_dir, step_number)?;
 
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
-    let window_name = step_window_name(&run.state.id, step_number, role.as_deref(), agent);
+    let window_name =
+        agent_window::step_window_name(&run.state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     ensure_step_brief_exists(&brief, step_number)?;
     if let Err(err) =
-        worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
+        agent_window::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
     {
         return Err(record_step_error_or_context(
             err,
@@ -180,12 +181,12 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     let window_name = record
         .window
         .clone()
-        .unwrap_or_else(|| format!("niles-{}-s{index}", run.state.id));
+        .unwrap_or_else(|| agent_window::legacy_step_window_name(&run.state.id, index));
 
     // Capture the interactive pane before tearing it down, so the step's output
     // reaches later steps' handoff context. Best-effort: a window that already
     // exited leaves no pane, and that must not block closing the step.
-    let captured = match worker::capture_window(&window_name, PANE_CAPTURE_LINES) {
+    let captured = match agent_window::capture_window(&window_name, PANE_CAPTURE_LINES) {
         Ok(text) => {
             let steps_dir = ensure_steps_dir(&run.run_dir)?;
             let path = steps_dir.join(format!("{index:03}-{}.pane.txt", slugify(&label)));
@@ -225,7 +226,7 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     write_state(&run.state_path, &run.state)?;
     append_run_status(&run.run_dir, &wake::step_line(WakeKind::Closed, index, ""))?;
 
-    match worker::close_window(&window_name) {
+    match agent_window::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
@@ -234,20 +235,6 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
         println!("status: completed");
     }
     Ok(())
-}
-
-/// Self-descriptive tmux window name for a step, e.g. `niles-claude-planner-s1-9000z`.
-/// The agent + role make it readable in `tmux list-windows`; the step number and
-/// a short run-id tail keep it unique across repeated roles and concurrent runs.
-fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent: &str) -> String {
-    let shortid = &run_id[run_id.len().saturating_sub(6)..];
-    let role = role.unwrap_or("step");
-    format!(
-        "niles-{}-{}-s{step_number}-{}",
-        slugify(agent),
-        slugify(role),
-        slugify(shortid)
-    )
 }
 
 /// Append a wake contract to a step brief so the interactive agent reports back
