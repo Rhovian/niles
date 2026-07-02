@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    io::{Read, Seek, SeekFrom, Write},
-};
+use std::{fs, io::Write};
 
 use anyhow::{Context, Error, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -16,7 +13,7 @@ use crate::{
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{absolute_path, slugify},
+    util::{absolute_path, append_line, slugify},
     worker,
 };
 
@@ -26,18 +23,34 @@ use super::{RunSelector, lifecycle::load_spec_for_run, report};
 /// enough to hold an agent's session; `context.rs` truncates when embedding.
 const PANE_CAPTURE_LINES: usize = 2000;
 
+struct LoadedRun {
+    run_dir: Utf8PathBuf,
+    state_path: Utf8PathBuf,
+    state: RunState,
+}
+
+fn load_run(selector: RunSelector) -> Result<LoadedRun> {
+    let run_dir = selector.resolve()?;
+    let state_path = state_path(&run_dir);
+    let state = read_state(&run_dir)?;
+    Ok(LoadedRun {
+        run_dir,
+        state_path,
+        state,
+    })
+}
+
 /// Launch a single pending step into its own tmux window. The window runs
 /// `niles exec-step`, so output streams live in the pane while state, diff, and
 /// exit code are captured exactly as in direct step execution. Completion
 /// appends a wake line to the run status log for the manager.
 pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
-    let run_dir = selector.resolve()?;
-    let state_path = state_path(&run_dir);
-    let mut state = read_state(&run_dir)?;
+    let mut run = load_run(selector)?;
 
     let step_number = match index {
         Some(index) => index,
-        None => state
+        None => run
+            .state
             .steps
             .iter()
             .find(|step| matches!(step.status, StepStatus::Pending))
@@ -45,7 +58,8 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
             .context("run has no pending steps to launch")?,
     };
 
-    let record = state
+    let record = run
+        .state
         .steps
         .iter()
         .find(|step| step.index == step_number)
@@ -59,7 +73,8 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
 
     // Handoff context for step N folds in every prior step's output, so a step
     // can only launch once all earlier steps have completed.
-    if let Some(prior) = state
+    if let Some(prior) = run
+        .state
         .steps
         .iter()
         .find(|step| step.index < step_number && !matches!(step.status, StepStatus::Completed))
@@ -71,33 +86,25 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
         );
     }
 
-    let spec = load_spec_for_run(&state)?;
-    let position = step_number
-        .checked_sub(1)
-        .context("step index must be >= 1")?;
-    let task_step = spec
-        .steps
-        .get(position)
-        .with_context(|| format!("step {step_number} is out of range for this task"))?;
+    let spec = load_spec_for_run(&run.state)?;
+    let task_step = task_step(&spec, step_number)?;
     let (agent, task, role) = match task_step {
         TaskStep::Agent { agent, task, role } => (agent, task, role),
         TaskStep::Command { command, .. } => bail!(
             "step {step_number} is the `{command}` command; run it captured with `niles exec-step {} {step_number}`",
-            state.id
+            run.state.id
         ),
         TaskStep::Role { role, .. } => {
             bail!("step {step_number} role `{role}` was not resolved; check .niles/manifest.yaml")
         }
     };
 
-    let workspace = spec.workspace.clone();
-    let workspace = workspace.as_deref().unwrap_or(Utf8Path::new("."));
-    let steps_dir = run_dir.join("steps");
-    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+    let workspace = spec_workspace(&spec);
+    let steps_dir = ensure_steps_dir(&run.run_dir)?;
 
     // Brief = handoff context plus a wake contract pointing at this run's log.
     let brief = write_agent_context(
-        &state,
+        &run.state,
         step_number,
         role.as_deref(),
         agent,
@@ -105,55 +112,51 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
         workspace,
         &steps_dir,
     )?;
-    append_wake_contract(&brief, &run_dir, step_number)?;
+    append_wake_contract(&brief, &run.run_dir, step_number)?;
 
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
-    let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
+    let window_name = step_window_name(&run.state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     ensure_step_brief_exists(&brief, step_number)?;
     if let Err(err) =
         worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
     {
-        if let Err(record_err) = record_step_error(
-            &mut state,
-            &state_path,
-            &run_dir,
+        return Err(record_step_error_or_context(
+            err,
+            &mut run.state,
+            &run.state_path,
+            &run.run_dir,
             step_number,
             "launch",
-            &err,
-        ) {
-            return Err(err).context(format!(
-                "additionally failed to record launch failure for step {step_number}: {record_err}"
-            ));
-        }
-        return Err(err);
+        ));
     }
 
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
-    mark_step_running(&mut state, step_number, Some(brief.clone()));
-    if let Some(step) = state
+    mark_step_running(&mut run.state, step_number, Some(brief.clone()));
+    if let Some(step) = run
+        .state
         .steps
         .iter_mut()
         .find(|step| step.index == step_number)
     {
         step.window = Some(window_name.clone());
     }
-    if matches!(state.status, RunStatus::Created) {
-        state.status = RunStatus::Running;
+    if matches!(run.state.status, RunStatus::Created) {
+        run.state.status = RunStatus::Running;
     }
-    state.updated_at = Utc::now();
-    write_state(&state_path, &state)?;
+    run.state.updated_at = Utc::now();
+    write_state(&run.state_path, &run.state)?;
 
     println!("step: {step_number}");
     println!("agent: {agent}");
     println!("window: {window_name}");
-    println!("run: {}", state.id);
+    println!("run: {}", run.state.id);
     println!("brief: {brief}");
-    println!("status_log: {}", run_dir.join("status.log"));
+    println!("status_log: {}", run.run_dir.join("status.log"));
     println!(
         "on_done: niles step-close {} --index {step_number}",
-        state.id
+        run.state.id
     );
     Ok(())
 }
@@ -162,11 +165,10 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
 /// calls this once it judges the step's work finished (typically after the
 /// agent's `done:` wake), giving the human final say over window cleanup.
 pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
-    let run_dir = selector.resolve()?;
-    let state_path = state_path(&run_dir);
-    let mut state = read_state(&run_dir)?;
+    let mut run = load_run(selector)?;
 
-    let record = state
+    let record = run
+        .state
         .steps
         .iter()
         .find(|step| step.index == index)
@@ -177,16 +179,14 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     let window_name = record
         .window
         .clone()
-        .unwrap_or_else(|| format!("niles-{}-s{index}", state.id));
+        .unwrap_or_else(|| format!("niles-{}-s{index}", run.state.id));
 
     // Capture the interactive pane before tearing it down, so the step's output
     // reaches later steps' handoff context. Best-effort: a window that already
     // exited leaves no pane, and that must not block closing the step.
     let captured = match worker::capture_window(&window_name, PANE_CAPTURE_LINES) {
         Ok(text) => {
-            let steps_dir = run_dir.join("steps");
-            fs::create_dir_all(&steps_dir)
-                .with_context(|| format!("failed to create {steps_dir}"))?;
+            let steps_dir = ensure_steps_dir(&run.run_dir)?;
             let path = steps_dir.join(format!("{index:03}-{}.pane.txt", slugify(&label)));
             fs::write(&path, text).with_context(|| format!("failed to write {path}"))?;
             Some(path)
@@ -197,7 +197,8 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
         }
     };
 
-    let step = state
+    let step = run
+        .state
         .steps
         .iter_mut()
         .find(|step| step.index == index)
@@ -211,16 +212,17 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
         step.stdout = Some(path);
     }
 
-    let all_completed = state
+    let all_completed = run
+        .state
         .steps
         .iter()
         .all(|step| matches!(step.status, StepStatus::Completed));
     if all_completed {
-        state.status = RunStatus::Completed;
+        run.state.status = RunStatus::Completed;
     }
-    state.updated_at = Utc::now();
-    write_state(&state_path, &state)?;
-    append_run_status(&run_dir, &format!("closed: step {index}"))?;
+    run.state.updated_at = Utc::now();
+    write_state(&run.state_path, &run.state)?;
+    append_run_status(&run.run_dir, &format!("closed: step {index}"))?;
 
     match worker::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
@@ -262,37 +264,52 @@ fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize
         .with_context(|| format!("failed to write {brief}"))
 }
 
+fn task_step(spec: &TaskSpec, step_number: usize) -> Result<&TaskStep> {
+    let position = step_position(step_number)?;
+    spec.steps
+        .get(position)
+        .with_context(|| format!("step {step_number} is out of range for this task"))
+}
+
+fn step_position(step_number: usize) -> Result<usize> {
+    step_number
+        .checked_sub(1)
+        .context("step index must be >= 1")
+}
+
+fn spec_workspace(spec: &TaskSpec) -> &Utf8Path {
+    spec.workspace.as_deref().unwrap_or(Utf8Path::new("."))
+}
+
+fn ensure_steps_dir(run_dir: &Utf8Path) -> Result<Utf8PathBuf> {
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+    Ok(steps_dir)
+}
+
 /// Execute one run step in-process (invoked inside the per-step tmux window).
 /// Records state for one step, then appends a `done:` or `failed:` wake line to
 /// the run status log.
 pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
-    let run_dir = selector.resolve()?;
-    let state_path = state_path(&run_dir);
-    let mut state = read_state(&run_dir)?;
+    let mut run = load_run(selector)?;
 
-    let spec = load_spec_for_run(&state)?;
+    let spec = load_spec_for_run(&run.state)?;
 
-    let position = index.checked_sub(1).context("step index must be >= 1")?;
-    let step = spec
-        .steps
-        .get(position)
-        .with_context(|| format!("step {index} is out of range for this task"))?;
+    let step = task_step(&spec, index)?;
 
-    let workspace = spec.workspace.clone();
-    let workspace = workspace.as_deref().unwrap_or(Utf8Path::new("."));
-    let steps_dir = run_dir.join("steps");
-    fs::create_dir_all(&steps_dir).with_context(|| format!("failed to create {steps_dir}"))?;
+    let workspace = spec_workspace(&spec);
+    let steps_dir = ensure_steps_dir(&run.run_dir)?;
 
-    if matches!(state.status, RunStatus::Created) {
-        state.status = RunStatus::Running;
-        state.updated_at = Utc::now();
-        write_state(&state_path, &state)?;
+    if matches!(run.state.status, RunStatus::Created) {
+        run.state.status = RunStatus::Running;
+        run.state.updated_at = Utc::now();
+        write_state(&run.state_path, &run.state)?;
     }
 
     let failed = match execute_single_step(
         &spec,
-        &mut state,
-        &state_path,
+        &mut run.state,
+        &run.state_path,
         &steps_dir,
         workspace,
         step,
@@ -301,18 +318,19 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
     ) {
         Ok(failed) => failed,
         Err(err) => {
-            if let Err(record_err) =
-                record_step_error(&mut state, &state_path, &run_dir, index, "exec", &err)
-            {
-                return Err(err).context(format!(
-                    "additionally failed to record exec failure for step {index}: {record_err}"
-                ));
-            }
-            return Err(err);
+            return Err(record_step_error_or_context(
+                err,
+                &mut run.state,
+                &run.state_path,
+                &run.run_dir,
+                index,
+                "exec",
+            ));
         }
     };
 
-    let record = state
+    let record = run
+        .state
         .steps
         .iter()
         .find(|step| step.index == index)
@@ -330,28 +348,29 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
     if failed {
         append_run_status(
-            &run_dir,
+            &run.run_dir,
             &format!("failed: step {index} {label} exit {exit}"),
         )?;
         println!("status: failed");
-        if let Some(step) = state.steps.iter().find(|step| step.index == index) {
+        if let Some(step) = run.state.steps.iter().find(|step| step.index == index) {
             report::print_failure_summary(step);
         }
         bail!("step {index} failed");
     }
 
-    let all_completed = state
+    let all_completed = run
+        .state
         .steps
         .iter()
         .all(|step| matches!(step.status, StepStatus::Completed));
     if all_completed {
-        state.status = RunStatus::Completed;
-        state.updated_at = Utc::now();
-        write_state(&state_path, &state)?;
+        run.state.status = RunStatus::Completed;
+        run.state.updated_at = Utc::now();
+        write_state(&run.state_path, &run.state)?;
     }
 
     append_run_status(
-        &run_dir,
+        &run.run_dir,
         &format!("done: step {index} {role_label}{label} exit {exit}"),
     )?;
     println!("step {index}: completed");
@@ -363,19 +382,13 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
 fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
     let path = run_dir.join("status.log");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("failed to open {path}"))?;
-    if needs_leading_newline(&mut file)
-        .with_context(|| format!("failed to inspect {path} before status append"))?
-    {
-        file.write_all(b"\n")
-            .with_context(|| format!("failed to write {path}"))?;
-    }
-    writeln!(file, "{line}").with_context(|| format!("failed to write {path}"))
+    append_line(
+        &path,
+        line,
+        |path| format!("failed to open {path}"),
+        |path| format!("failed to inspect {path} before status append"),
+        |path| format!("failed to write {path}"),
+    )
 }
 
 fn record_step_error(
@@ -391,6 +404,22 @@ fn record_step_error(
         run_dir,
         &format!("failed: step {index} {phase} error: {}", status_detail(err)),
     )
+}
+
+fn record_step_error_or_context(
+    err: Error,
+    state: &mut RunState,
+    state_path: &Utf8Path,
+    run_dir: &Utf8Path,
+    index: usize,
+    phase: &str,
+) -> Error {
+    match record_step_error(state, state_path, run_dir, index, phase, &err) {
+        Ok(()) => err,
+        Err(record_err) => err.context(format!(
+            "additionally failed to record {phase} failure for step {index}: {record_err}"
+        )),
+    }
 }
 
 fn mark_step_failed(state: &mut RunState, state_path: &Utf8Path, index: usize) -> Result<()> {
@@ -412,17 +441,6 @@ fn status_detail(err: &Error) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
-    if file.metadata()?.len() == 0 {
-        return Ok(false);
-    }
-
-    file.seek(SeekFrom::End(-1))?;
-    let mut byte = [0];
-    file.read_exact(&mut byte)?;
-    Ok(byte[0] != b'\n')
 }
 
 fn ensure_step_brief_exists(brief: &Utf8Path, step_number: usize) -> Result<()> {

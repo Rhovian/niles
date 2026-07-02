@@ -62,13 +62,21 @@ fn niles_home(workspace: &Path) -> PathBuf {
 }
 
 fn temp_workspace(prefix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
+    let workspace = std::env::temp_dir().join(format!(
         "{prefix}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-    ))
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    workspace
+}
+
+fn write_task(workspace: &Path, body: &str) -> PathBuf {
+    let task = workspace.join("task.yaml");
+    fs::write(&task, body).unwrap();
+    task
 }
 
 fn run_id(output: &Output) -> String {
@@ -107,18 +115,10 @@ fn write_workspace_manifest(
 #[test]
 fn run_executes_steps_and_persists_state() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Exercise test runner"
 agents:
@@ -131,8 +131,7 @@ steps:
 commands:
   pwd: pwd
 "#,
-    )
-    .unwrap();
+    );
 
     let output = prepare_run(niles, &workspace, &task);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -210,14 +209,7 @@ commands:
 #[test]
 fn run_captures_git_diff_after_each_step() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-diff-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-diff-test");
 
     assert!(
         Command::new("git")
@@ -256,9 +248,8 @@ fn run_captures_git_diff_after_each_step() {
             .success()
     );
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Capture diff"
 steps:
@@ -266,8 +257,7 @@ steps:
 commands:
   edit: printf 'after\n' > tracked.txt
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
     drive_exec_steps(niles, &workspace, [1]);
@@ -296,14 +286,7 @@ commands:
 #[test]
 fn run_uses_project_config_defaults() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-config-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-config-test");
 
     fs::write(
         workspace.join("niles.yaml"),
@@ -317,9 +300,8 @@ commands:
     )
     .unwrap();
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Use project config"
 steps:
@@ -327,8 +309,7 @@ steps:
     task: "configured agent"
   - command: marker
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
     drive_exec_steps(niles, &workspace, 1..=2);
@@ -359,14 +340,7 @@ steps:
 #[test]
 fn run_enforces_known_agent_cli_min_version_and_allows_override() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-version-run-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-version-run-test");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -380,17 +354,15 @@ esac
 "#,
     );
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Gate codex"
 steps:
   - agent: codex
     task: "hello"
 "#,
-    )
-    .unwrap();
+    );
 
     let path = format!(
         "{}:{}",
@@ -426,14 +398,7 @@ steps:
 #[test]
 fn spawn_enforces_known_agent_cli_min_version() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-version-spawn-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-version-spawn-test");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -475,14 +440,7 @@ esac
 #[test]
 fn analyze_reports_version_gate_status() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-version-analyze-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-version-analyze-test");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -523,14 +481,7 @@ esac
 #[test]
 fn bare_niles_errors_when_stdin_is_not_interactive() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-session-noninteractive-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-session-noninteractive-test");
     write_workspace_manifest(&workspace, "claude", "claude", "codex", "claude", "test");
 
     let output = Command::new(niles)
@@ -550,14 +501,7 @@ fn bare_niles_errors_when_stdin_is_not_interactive() {
 #[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-worker-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-worker-test");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -669,14 +613,7 @@ esac
 #[test]
 fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-worker-failed-spawn-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-worker-failed-spawn");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -776,14 +713,7 @@ esac
 #[test]
 fn ask_spawns_one_off_worker_window() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-ask-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-ask-test");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -856,14 +786,7 @@ esac
 #[test]
 fn worker_close_tears_down_worker() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-worker-close-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-worker-close");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -946,14 +869,7 @@ esac
 #[test]
 fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-worker-close-wait-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-worker-close-wait");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -1067,14 +983,7 @@ esac
 #[test]
 fn worker_close_unknown_id_errors() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-worker-close-missing-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-worker-close-missing");
 
     let close = Command::new(niles)
         .args(["worker-close", "missing"])
@@ -1093,18 +1002,10 @@ fn worker_close_unknown_id_errors() {
 #[test]
 fn peek_and_send_run_step_require_recorded_window() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-window-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-window-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Prepare an interactive step"
 agents:
@@ -1114,8 +1015,7 @@ steps:
   - agent: echo
     task: "needs window"
 "#,
-    )
-    .unwrap();
+    );
 
     let prepare = Command::new(niles)
         .arg("run")
@@ -1155,14 +1055,7 @@ steps:
 #[test]
 fn wait_skips_acknowledged_status_lines_and_prints_next_wake() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-wait-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-wait-test");
 
     let run_dir = workspace.join(".niles/runs/test-run");
     fs::create_dir_all(&run_dir).unwrap();
@@ -1359,14 +1252,7 @@ fn wait_worker_corrupt_ack_falls_back_to_start() {
 #[test]
 fn wait_index_returns_already_emitted_step_wake() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-wait-index-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-wait-index-test");
 
     let run_dir = workspace.join(".niles/runs/test-run");
     fs::create_dir_all(&run_dir).unwrap();
@@ -1408,14 +1294,7 @@ fn wait_index_returns_already_emitted_step_wake() {
 #[test]
 fn wait_index_accepts_untagged_wake_attributed_to_running_step() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-wait-index-attributed-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-wait-index-attributed-test");
 
     let run_dir = workspace.join(".niles/runs/test-run");
     fs::create_dir_all(&run_dir).unwrap();
@@ -1458,14 +1337,7 @@ fn wait_index_accepts_untagged_wake_attributed_to_running_step() {
 #[test]
 fn wait_index_rejects_untagged_wake_attributed_to_another_step() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-wait-index-other-attributed-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-wait-index-other-attributed-test");
 
     let run_dir = workspace.join(".niles/runs/test-run");
     fs::create_dir_all(&run_dir).unwrap();
@@ -1542,14 +1414,7 @@ fn write_manual_run_state(run_dir: &Path, id: &str, running_step: usize) {
 #[test]
 fn agent_steps_receive_context_artifacts() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-context-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-context-test");
 
     fs::write(
         workspace.join("agent.sh"),
@@ -1564,9 +1429,8 @@ fi
     )
     .unwrap();
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Use context handoffs"
 agents:
@@ -1588,8 +1452,7 @@ steps:
 commands:
   validate: printf 'validation ok\n'
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
     let steps = drive_exec_steps(niles, &workspace, 1..=4);
@@ -1652,18 +1515,10 @@ commands:
 #[test]
 fn run_prints_actionable_failure_summary() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-failure-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-failure-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Fail usefully"
 steps:
@@ -1672,8 +1527,7 @@ commands:
   fail:
     run: "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo tail-line-$i >&2; done; exit 7"
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
     let output = exec_step_output(niles, &workspace, 1);
@@ -1710,25 +1564,16 @@ commands:
 #[test]
 fn exec_step_error_appends_failed_backstop() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-exec-error-backstop-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-exec-error-backstop");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Exec error backstop"
 steps:
   - command: missing
 "#,
-    )
-    .unwrap();
+    );
 
     let prepare = prepare_run(niles, &workspace, &task);
     let id = run_id(&prepare);
@@ -1755,18 +1600,10 @@ steps:
 #[test]
 fn resume_continues_from_first_incomplete_step() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-resume-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-resume-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Resume failed run"
 steps:
@@ -1778,8 +1615,7 @@ commands:
   gate: test -f allow
   last: printf 'last\n' >> trace.txt
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
     let first = exec_step_output(niles, &workspace, 1);
@@ -1838,14 +1674,7 @@ commands:
 #[test]
 fn manifest_command_is_removed() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-manifest-removed-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-manifest-removed-test");
 
     let output = Command::new(niles)
         .args(["manifest", "Ship", "workflow"])
@@ -1862,18 +1691,10 @@ fn manifest_command_is_removed() {
 #[test]
 fn status_shows_running_and_pending_steps() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-running-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-running-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Show running state"
 steps:
@@ -1885,8 +1706,7 @@ commands:
   slow: sleep 1
   fast: printf 'done\n'
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
 
@@ -1933,18 +1753,10 @@ commands:
 #[test]
 fn watch_streams_run_state_until_completion() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-watch-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-watch-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Watch running state"
 steps:
@@ -1956,8 +1768,7 @@ commands:
   slow: sleep 3
   fast: printf 'done\n'
 "#,
-    )
-    .unwrap();
+    );
 
     prepare_run(niles, &workspace, &task);
 
@@ -2020,18 +1831,10 @@ commands:
 #[test]
 fn prepare_then_exec_step_drives_run() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-test");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Exercise manager stepping"
 agents:
@@ -2044,8 +1847,7 @@ steps:
 commands:
   pwd: pwd
 "#,
-    )
-    .unwrap();
+    );
 
     // prepare: create the run without executing it.
     let prepare = Command::new(niles)
@@ -2142,13 +1944,7 @@ commands:
 #[test]
 fn run_prepared_from_foreign_cwd_uses_workspace_store() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let root = std::env::temp_dir().join(format!(
-        "niles-foreign-cwd-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = temp_workspace("niles-foreign-cwd");
     let invocation = root.join("invocation");
     let workspace = root.join("workspace");
     let other = root.join("other");
@@ -2268,13 +2064,7 @@ commands:
 #[test]
 fn step_launch_from_foreign_cwd_uses_workspace_brief_and_status_log() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let root = std::env::temp_dir().join(format!(
-        "niles-foreign-step-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = temp_workspace("niles-foreign-step");
     let invocation = root.join("invocation");
     let workspace = root.join("workspace");
     let home = root.join("home");
@@ -2391,14 +2181,7 @@ steps:
 #[test]
 fn step_launch_failure_appends_failed_backstop() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-launch-failure-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-launch-failure");
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -2419,9 +2202,8 @@ esac
 "#,
     );
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Launch failure"
 agents:
@@ -2431,8 +2213,7 @@ steps:
   - agent: echo
     task: "interactive hello"
 "#,
-    )
-    .unwrap();
+    );
 
     let prepare = Command::new(niles)
         .arg("run")
@@ -2480,18 +2261,10 @@ steps:
 #[test]
 fn step_guards_block_out_of_order_and_command_steps() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-guard-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-guard");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Guard checks"
 agents:
@@ -2504,8 +2277,7 @@ steps:
 commands:
   pwd: pwd
 "#,
-    )
-    .unwrap();
+    );
 
     let prepare = Command::new(niles)
         .arg("run")
@@ -2550,18 +2322,10 @@ commands:
 #[test]
 fn step_close_marks_step_completed() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-close-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-close");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "Close checks"
 agents:
@@ -2571,8 +2335,7 @@ steps:
   - agent: echo
     task: "only step"
 "#,
-    )
-    .unwrap();
+    );
 
     let prepare = Command::new(niles)
         .arg("run")
@@ -2647,18 +2410,10 @@ steps:
 #[test]
 fn step_add_appends_to_run_and_reopens() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = std::env::temp_dir().join(format!(
-        "niles-step-add-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = temp_workspace("niles-step-add");
 
-    let task = workspace.join("task.yaml");
-    fs::write(
-        &task,
+    let task = write_task(
+        &workspace,
         r#"
 goal: "step-add"
 agents:
@@ -2672,8 +2427,7 @@ commands:
   check:
     run: "true"
 "#,
-    )
-    .unwrap();
+    );
 
     let run = String::from_utf8(
         Command::new(niles)

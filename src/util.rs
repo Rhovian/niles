@@ -1,9 +1,13 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 
 pub fn slugify(value: &str) -> String {
     let mut slug = String::new();
@@ -64,19 +68,52 @@ pub fn absolute_path_from(base: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {
 }
 
 pub fn absolute_existing_dir(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
+    absolute_existing_path(path, description, "directory", Utf8Path::is_dir)
+}
+
+pub fn absolute_existing_file(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
+    absolute_existing_path(path, description, "file", Utf8Path::is_file)
+}
+
+fn absolute_existing_path(
+    path: &Utf8Path,
+    description: &str,
+    kind: &str,
+    exists_as_kind: fn(&Utf8Path) -> bool,
+) -> Result<Utf8PathBuf> {
     let path = absolute_path(path)?;
-    if !path.is_dir() {
-        bail!("{description} path is not a directory: {path}");
+    if !exists_as_kind(&path) {
+        bail!("{description} path is not a {kind}: {path}");
     }
     Ok(path)
 }
 
-pub fn absolute_existing_file(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
-    let path = absolute_path(path)?;
-    if !path.is_file() {
-        bail!("{description} path is not a file: {path}");
+pub fn read_optional_to_string(
+    path: &Utf8Path,
+    read_context: impl FnOnce(&Utf8Path) -> String,
+) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(body) => Ok(Some(body)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| read_context(path)),
     }
-    Ok(path)
+}
+
+pub fn read_optional_json<T>(
+    path: &Utf8Path,
+    read_context: impl FnOnce(&Utf8Path) -> String,
+    parse_context: impl FnOnce(&Utf8Path) -> String,
+) -> Result<Option<T>>
+where
+    T: DeserializeOwned,
+{
+    let Some(body) = read_optional_to_string(path, read_context)? else {
+        return Ok(None);
+    };
+
+    serde_json::from_str(&body)
+        .map(Some)
+        .with_context(|| parse_context(path))
 }
 
 pub fn write_json_pretty<T>(path: &Utf8Path, value: &T) -> Result<()>
@@ -85,6 +122,52 @@ where
 {
     fs::write(path, serde_json::to_string_pretty(value)?)
         .with_context(|| format!("failed to write {path}"))
+}
+
+pub fn append_line(
+    path: &Utf8Path,
+    line: &str,
+    open_context: impl FnOnce(&Utf8Path) -> String,
+    inspect_context: impl FnOnce(&Utf8Path) -> String,
+    write_context: impl Fn(&Utf8Path) -> String,
+) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)
+        .with_context(|| open_context(path))?;
+    if needs_leading_newline(&mut file).with_context(|| inspect_context(path))? {
+        file.write_all(b"\n").with_context(|| write_context(path))?;
+    }
+    writeln!(file, "{line}").with_context(|| write_context(path))
+}
+
+fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
+    if file.metadata()?.len() == 0 {
+        return Ok(false);
+    }
+
+    file.seek(SeekFrom::End(-1))?;
+    let mut byte = [0];
+    file.read_exact(&mut byte)?;
+    Ok(byte[0] != b'\n')
+}
+
+pub fn remove_file_if_exists(path: &Utf8Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
+    }
+}
+
+pub fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
+    }
 }
 
 #[cfg(test)]
