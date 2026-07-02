@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 pub struct RunState {
     pub id: String,
     pub goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Utf8PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_root: Option<Utf8PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_file: Option<Utf8PathBuf>,
     pub created_at: DateTime<Utc>,

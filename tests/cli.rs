@@ -2,7 +2,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{
         Arc,
@@ -17,6 +17,7 @@ fn prepare_run(niles: &str, workspace: &Path, task: &Path) -> Output {
         .arg("run")
         .arg(task)
         .current_dir(workspace)
+        .env("NILES_HOME", niles_home(workspace))
         .output()
         .unwrap();
     assert_command_success("run", &output);
@@ -54,6 +55,18 @@ fn assert_command_success(label: &str, output: &Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn niles_home(workspace: &Path) -> PathBuf {
+    workspace.join(".niles-test-home")
+}
+
+fn run_id(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("run: "))
+        .expect("run output should include run id")
+        .to_owned()
 }
 
 fn write_executable(path: &Path, body: &str) {
@@ -392,6 +405,7 @@ steps:
         .arg(&task)
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
     assert_command_success("run --allow-cli-mismatch", &allowed);
@@ -990,6 +1004,7 @@ steps:
         .arg("run")
         .arg(&task)
         .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
     assert!(
@@ -1187,7 +1202,7 @@ commands:
         .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(run_stdout.contains("context: .niles/runs/"));
+    assert!(run_stdout.contains(".niles/runs/"));
 
     let implementer_log = Command::new(niles)
         .arg("log")
@@ -1224,7 +1239,8 @@ commands:
         .output()
         .unwrap();
     assert!(show.status.success());
-    assert!(String::from_utf8_lossy(&show.stdout).contains("context .niles/runs/"));
+    assert!(String::from_utf8_lossy(&show.stdout).contains("context "));
+    assert!(String::from_utf8_lossy(&show.stdout).contains(".niles/runs/"));
 
     let status_json = Command::new(niles)
         .arg("status")
@@ -1233,7 +1249,8 @@ commands:
         .output()
         .unwrap();
     assert!(status_json.status.success());
-    assert!(String::from_utf8_lossy(&status_json.stdout).contains("\"context\": \".niles/runs/"));
+    assert!(String::from_utf8_lossy(&status_json.stdout).contains("\"context\": "));
+    assert!(String::from_utf8_lossy(&status_json.stdout).contains(".niles/runs/"));
 }
 
 #[test]
@@ -1274,8 +1291,9 @@ commands:
     assert!(stderr.contains("failure:"));
     assert!(stderr.contains("step: 1 command fail"));
     assert!(stderr.contains("exit: 7"));
-    assert!(stderr.contains("stderr: .niles/runs/"));
-    assert!(stderr.contains("diff: .niles/runs/"));
+    assert!(stderr.contains("stderr: "));
+    assert!(stderr.contains("diff: "));
+    assert!(stderr.contains(".niles/runs/"));
     assert!(stderr.contains("stderr tail:"));
     assert!(stderr.contains("  tail-line-2"));
     assert!(stderr.contains("  tail-line-13"));
@@ -1593,6 +1611,7 @@ commands:
         .arg("run")
         .arg(&task)
         .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
     assert!(
@@ -1660,6 +1679,7 @@ commands:
         .unwrap()
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
         .max()
         .unwrap();
     let status_log = fs::read_to_string(run_dir.join("status.log")).unwrap();
@@ -1676,6 +1696,251 @@ commands:
     assert!(final_stdout.contains("status: completed"));
     assert!(final_stdout.contains("1,agent,echo,completed,0"));
     assert!(final_stdout.contains("2,command,pwd,completed,0"));
+}
+
+#[test]
+fn run_prepared_from_foreign_cwd_uses_workspace_store() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = std::env::temp_dir().join(format!(
+        "niles-foreign-cwd-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let invocation = root.join("invocation");
+    let workspace = root.join("workspace");
+    let other = root.join("other");
+    let home = root.join("home");
+    fs::create_dir_all(&invocation).unwrap();
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&other).unwrap();
+
+    let task = invocation.join("task.yaml");
+    fs::write(
+        &task,
+        format!(
+            r#"
+goal: "Drive from a foreign cwd"
+workspace: "{}"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "foreign hello"
+  - command: pwd
+commands:
+  pwd: pwd
+"#,
+            workspace.display()
+        ),
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("run", &prepare);
+    let id = run_id(&prepare);
+    let workspace_run_dir = workspace.join(".niles/runs").join(&id);
+    let invocation_run_dir = invocation.join(".niles/runs").join(&id);
+
+    assert!(workspace_run_dir.join("state.json").exists());
+    assert!(workspace_run_dir.join("plan.json").exists());
+    assert!(!invocation_run_dir.join("state.json").exists());
+
+    let status = Command::new(niles)
+        .args(["status", &id])
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("status from invocation cwd", &status);
+    assert!(String::from_utf8_lossy(&status.stdout).contains("status: created"));
+
+    let status_from_other = Command::new(niles)
+        .args(["status", &id])
+        .current_dir(&other)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("status from unrelated cwd", &status_from_other);
+    assert!(String::from_utf8_lossy(&status_from_other.stdout).contains("status: created"));
+
+    let step1 = Command::new(niles)
+        .args(["exec-step", &id, "1"])
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("exec-step 1 from invocation cwd", &step1);
+    assert!(String::from_utf8_lossy(&step1.stdout).contains("foreign hello"));
+
+    let status_log = fs::read_to_string(workspace_run_dir.join("status.log")).unwrap();
+    assert!(status_log.contains("done: step 1 "));
+    assert!(!invocation_run_dir.join("status.log").exists());
+
+    let wait = Command::new(niles)
+        .args([
+            "wait",
+            &id,
+            "--index",
+            "1",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&other)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("wait from unrelated cwd", &wait);
+    assert!(String::from_utf8_lossy(&wait.stdout).contains("done: step 1 "));
+
+    let step2 = Command::new(niles)
+        .args(["exec-step", &id, "2"])
+        .current_dir(&other)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("exec-step 2 from unrelated cwd", &step2);
+    let step2_stdout = String::from_utf8_lossy(&step2.stdout);
+    assert!(step2_stdout.contains(&workspace.display().to_string()));
+    assert!(step2_stdout.contains("status: completed"));
+
+    let log = Command::new(niles)
+        .args(["log", &id, "--step", "1"])
+        .current_dir(&other)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("log from unrelated cwd", &log);
+    assert!(String::from_utf8_lossy(&log.stdout).contains("foreign hello"));
+}
+
+#[test]
+fn step_launch_from_foreign_cwd_uses_workspace_brief_and_status_log() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = std::env::temp_dir().join(format!(
+        "niles-foreign-step-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let invocation = root.join("invocation");
+    let workspace = root.join("workspace");
+    let home = root.join("home");
+    let bin = root.join("bin");
+    fs::create_dir_all(&invocation).unwrap();
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+
+    let tmux_log = root.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let task = invocation.join("task.yaml");
+    fs::write(
+        &task,
+        format!(
+            r#"
+goal: "Launch from a foreign cwd"
+workspace: "{}"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "interactive foreign hello"
+"#,
+            workspace.display()
+        ),
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("run", &prepare);
+    let id = run_id(&prepare);
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let step = Command::new(niles)
+        .args(["step", &id, "--index", "1"])
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("step from invocation cwd", &step);
+
+    let workspace_run_dir = workspace.join(".niles/runs").join(&id);
+    let brief = workspace_run_dir.join("steps/001-echo.context.md");
+    let launch = workspace_run_dir.join("steps/001-launch.sh");
+    assert!(brief.exists());
+    assert!(launch.exists());
+    assert!(
+        !invocation
+            .join(".niles/runs")
+            .join(&id)
+            .join("state.json")
+            .exists()
+    );
+
+    let step_stdout = String::from_utf8_lossy(&step.stdout);
+    assert!(step_stdout.contains(&format!("brief: {}", brief.display())));
+    assert!(step_stdout.contains(&format!(
+        "status_log: {}",
+        workspace_run_dir.join("status.log").display()
+    )));
+
+    let brief_body = fs::read_to_string(&brief).unwrap();
+    assert!(brief_body.contains(&format!("workspace: {}", workspace.display())));
+    assert!(brief_body.contains(&workspace_run_dir.join("status.log").display().to_string()));
+
+    let launch_body = fs::read_to_string(&launch).unwrap();
+    assert!(launch_body.contains(&brief.display().to_string()));
+
+    let tmux = fs::read_to_string(&tmux_log).unwrap();
+    assert!(tmux.contains("new-window -d -t niles -n niles-echo-step-s1-"));
+    assert!(tmux.contains(&format!("-c {}", workspace.display())));
+    assert!(tmux.contains(" sh "));
+    assert!(tmux.contains(&launch.display().to_string()));
+
+    let status = Command::new(niles)
+        .args(["status", &id])
+        .current_dir(&invocation)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("status from invocation cwd", &status);
+    assert!(String::from_utf8_lossy(&status.stdout).contains("1,agent,echo,running,-"));
 }
 
 #[test]
@@ -1712,6 +1977,7 @@ commands:
         .arg("run")
         .arg(&task)
         .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
     assert!(prepare.status.success());
@@ -1778,6 +2044,7 @@ steps:
         .arg("run")
         .arg(&task)
         .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
     assert!(prepare.status.success());
@@ -1845,6 +2112,7 @@ commands:
             .arg("run")
             .arg(&task)
             .current_dir(&workspace)
+            .env("NILES_HOME", niles_home(&workspace))
             .output()
             .unwrap()
             .stdout,

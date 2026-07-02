@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::{
     config::{
         agents,
-        spec::{PromptMode, TaskSpec, TaskStep, load_task},
+        spec::{PromptMode, TaskSpec, TaskStep},
     },
     context::{agent_prompt, write_agent_context},
     process::{ProcessSpec, run_process},
@@ -17,7 +17,7 @@ use crate::{
     worker,
 };
 
-use super::{RunSelector, lifecycle::with_project_config, report};
+use super::{RunSelector, lifecycle::load_spec_for_run, report};
 
 /// Scrollback lines captured from an interactive step window on close. Large
 /// enough to hold an agent's session; `context.rs` truncates when embedding.
@@ -68,11 +68,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
         );
     }
 
-    let task_file = state
-        .task_file
-        .clone()
-        .context("run has no task file; only task-backed runs support stepping")?;
-    let spec = with_project_config(load_task(&task_file)?)?;
+    let spec = load_spec_for_run(&state)?;
     let position = step_number
         .checked_sub(1)
         .context("step index must be >= 1")?;
@@ -111,6 +107,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let launch_path = steps_dir.join(format!("{step_number:03}-launch.sh"));
     let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
+    ensure_step_brief_exists(&brief, step_number)?;
     worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
 
     // Mark the step running now that the window exists, so a follow-up `step`
@@ -253,11 +250,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
     let state_path = state_path(&run_dir);
     let mut state = read_state(&run_dir)?;
 
-    let task_file = state
-        .task_file
-        .clone()
-        .context("run has no task file; only task-backed runs support step execution")?;
-    let spec = with_project_config(load_task(&task_file)?)?;
+    let spec = load_spec_for_run(&state)?;
 
     let position = index.checked_sub(1).context("step index must be >= 1")?;
     let step = spec
@@ -347,6 +340,14 @@ fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
         .with_context(|| format!("failed to open {path}"))?
         .write_all(body.as_bytes())
         .with_context(|| format!("failed to write {path}"))
+}
+
+fn ensure_step_brief_exists(brief: &Utf8Path, step_number: usize) -> Result<()> {
+    if brief.is_file() {
+        Ok(())
+    } else {
+        bail!("cannot launch step {step_number}: brief does not exist at {brief}")
+    }
 }
 
 /// Run one step: build its handoff context, mark it running, execute it, and

@@ -55,6 +55,14 @@ pub fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(current_dir_utf8()?.join(path))
 }
 
+pub fn absolute_path_from(base: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
+}
+
 pub fn absolute_existing_dir(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
     let path = absolute_path(path)?;
     if !path.is_dir() {
@@ -98,6 +106,24 @@ mod tests {
             absolute_path(Utf8Path::new("relative/path")).unwrap(),
             cwd.join("relative/path")
         );
+    }
+
+    #[test]
+    fn absolute_path_from_joins_relative_paths_to_base() {
+        let base = Utf8Path::new("/tmp/niles-base");
+
+        assert_eq!(
+            absolute_path_from(base, Utf8Path::new("relative/path")),
+            base.join("relative/path")
+        );
+    }
+
+    #[test]
+    fn absolute_path_from_keeps_absolute_paths() {
+        let base = Utf8Path::new("/tmp/niles-base");
+        let path = Utf8Path::new("/tmp/niles-absolute-path-test");
+
+        assert_eq!(absolute_path_from(base, path), path);
     }
 
     #[test]

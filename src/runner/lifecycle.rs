@@ -7,14 +7,17 @@ use chrono::Utc;
 use crate::{
     config::{
         spec::{
-            TaskSpec, TaskStep, apply_project_config, load_project_config, load_task, save_task,
-            summarize_spec,
+            TaskSpec, TaskStep, apply_project_config, load_project_config,
+            load_project_config_from, load_task, save_task, summarize_spec,
         },
         version,
     },
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
-    util::{current_dir_utf8, slugify, timestamp_id, write_json_pretty},
+    util::{
+        absolute_existing_dir, absolute_existing_file, absolute_path, absolute_path_from,
+        current_dir_utf8, slugify, timestamp_id, write_json_pretty,
+    },
     worker, workspace_manifest,
 };
 
@@ -26,6 +29,7 @@ pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
 }
 
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
+    let task = absolute_existing_file(&task, "task")?;
     let spec = with_project_config(load_task(&task)?)?;
     version::preflight_task_agents(&spec, allow_cli_mismatch)?;
     prepare_run(spec, Some(task))
@@ -43,11 +47,7 @@ pub(crate) fn resume(selector: RunSelector) -> Result<()> {
         return Ok(());
     }
 
-    let task_file = state
-        .task_file
-        .clone()
-        .context("run has no task file; only task-backed runs can be resumed")?;
-    let spec = with_project_config(load_task(&task_file)?)?;
+    let spec = load_spec_for_run(&state)?;
     let resume_from = first_incomplete_step(&state).context("run has no incomplete steps")?;
     validate_resume_shape(&state, &spec)?;
     reset_steps_from(&mut state, &spec, resume_from)?;
@@ -67,8 +67,36 @@ pub(crate) fn resume(selector: RunSelector) -> Result<()> {
 }
 
 pub(in crate::runner) fn with_project_config(spec: TaskSpec) -> Result<TaskSpec> {
+    let config_root = current_dir_utf8()?;
     let config = load_project_config()?;
     let spec = apply_project_config(spec, config);
+    with_normalized_workspace(spec, &config_root)
+}
+
+pub(in crate::runner) fn load_spec_for_run(state: &RunState) -> Result<TaskSpec> {
+    let task_file = state
+        .task_file
+        .clone()
+        .context("run has no task file; only task-backed runs support this command")?;
+    let config_root = state
+        .config_root
+        .as_deref()
+        .or_else(|| task_file.parent())
+        .unwrap_or(Utf8Path::new("."));
+    let config = load_project_config_from(config_root)?;
+    let mut spec = apply_project_config(load_task(&task_file)?, config);
+    if let Some(workspace) = &state.workspace {
+        spec.workspace = Some(workspace.clone());
+    }
+    with_normalized_workspace(spec, config_root)
+}
+
+fn with_normalized_workspace(mut spec: TaskSpec, config_root: &Utf8Path) -> Result<TaskSpec> {
+    let config_root = absolute_path(config_root)?;
+    let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
+    let workspace = absolute_path_from(&config_root, workspace);
+    spec.workspace = Some(absolute_existing_dir(&workspace, "workspace")?);
+
     if workspace_manifest::task_uses_role_bindings(&spec) {
         let root = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
         let manifest = workspace_manifest::load_required(root)?;
@@ -88,13 +116,20 @@ fn init_run(
 
     let now = Utc::now();
     let id = timestamp_id(&now);
-    let run_dir = Utf8Path::new(".niles").join("runs").join(&id);
+    let workspace = spec
+        .workspace
+        .clone()
+        .context("run spec has no resolved workspace")?;
+    let config_root = current_dir_utf8()?;
+    let run_dir = crate::store::workspace_run_dir(&workspace, &id)?;
     fs::create_dir_all(&run_dir).with_context(|| format!("failed to create {run_dir}"))?;
     let plan = summarize_spec(spec);
 
     let state = RunState {
         id,
         goal: spec.goal.clone(),
+        workspace: Some(workspace.clone()),
+        config_root: Some(config_root),
         task_file,
         created_at: now,
         updated_at: now,
@@ -107,6 +142,7 @@ fn init_run(
 
     let plan_path = run_dir.join("plan.json");
     write_json_pretty(&plan_path, &plan)?;
+    crate::store::register_run_location(&state.id, &workspace, &run_dir)?;
 
     Ok((run_dir, state, state_path))
 }
