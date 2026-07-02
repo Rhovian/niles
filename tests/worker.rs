@@ -3,7 +3,9 @@ mod common;
 use common::*;
 use std::{
     fs,
+    io::Write,
     os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -55,6 +57,7 @@ esac
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-test");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -105,6 +108,7 @@ esac
         ])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -121,7 +125,7 @@ esac
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
     assert!(spawn_stdout.contains("close: niles worker-close auth-fix"));
 
-    let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix.json")).unwrap();
+    let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains("\"window\": \"niles:niles-auth-fix\""));
 
@@ -137,6 +141,7 @@ esac
         .args(["peek", "auth-fix", "--lines", "7"])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -148,6 +153,7 @@ esac
         .args(["send", "auth-fix", "continue", "please"])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -164,9 +170,144 @@ esac
 }
 
 #[test]
+fn spawned_worker_resolves_from_invoking_project_and_unrelated_cwds() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = temp_workspace("niles-worker-cross-cwd");
+    let home = niles_home(&root);
+    let invoker = root.join("invoker");
+    let project = root.join("project");
+    let unrelated = root.join("unrelated");
+    fs::create_dir_all(&invoker).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&unrelated).unwrap();
+
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = root.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  capture-pane) printf 'pane output\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let spawn = Command::new(niles)
+        .arg("spawn")
+        .arg("auth-fix")
+        .arg("--project")
+        .arg(&project)
+        .arg("--agent")
+        .arg("claude")
+        .args(["Fix", "auth"])
+        .current_dir(&invoker)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd spawn", &spawn);
+
+    let worker_dir = project.join(".niles/worker/auth-fix");
+    let status = worker_dir.join("status.log");
+    assert!(worker_dir.join("meta.json").is_file());
+    assert!(invoker.join(".niles/worker/auth-fix.json").is_file());
+    assert!(project.join(".niles/worker/auth-fix.json").is_file());
+    assert!(!invoker.join(".niles/worker/auth-fix").exists());
+
+    for cwd in [&invoker, &project, &unrelated] {
+        let peek = Command::new(niles)
+            .args(["peek", "auth-fix", "--lines", "7"])
+            .current_dir(cwd)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert_command_success("cross-cwd peek", &peek);
+        assert_eq!(String::from_utf8_lossy(&peek.stdout), "pane output\n");
+    }
+
+    let send = Command::new(niles)
+        .args(["send", "auth-fix", "continue", "please"])
+        .current_dir(&unrelated)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd send", &send);
+
+    for (index, cwd) in [&invoker, &project, &unrelated].into_iter().enumerate() {
+        let mut status_file = fs::OpenOptions::new().append(true).open(&status).unwrap();
+        writeln!(status_file, "done: wake {index}").unwrap();
+
+        let wait = Command::new(niles)
+            .args([
+                "wait",
+                "--worker",
+                "auth-fix",
+                "--interval",
+                "0.05",
+                "--timeout",
+                "0",
+            ])
+            .current_dir(cwd)
+            .env("NILES_HOME", &home)
+            .output()
+            .unwrap();
+        assert_command_success("cross-cwd wait", &wait);
+        assert_eq!(
+            String::from_utf8_lossy(&wait.stdout),
+            format!("done: wake {index}\n")
+        );
+    }
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&unrelated)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd worker-close", &close);
+
+    assert!(!invoker.join(".niles/worker/auth-fix.json").exists());
+    assert!(!project.join(".niles/worker/auth-fix.json").exists());
+    assert!(!worker_dir.exists());
+    assert_global_index_lacks(&home, "auth-fix");
+}
+
+#[test]
 fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-failed-spawn");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -218,6 +359,7 @@ esac
         ])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_FAIL_NEW_WINDOW", "1")
         .env_remove("TMUX")
@@ -229,10 +371,12 @@ esac
     assert!(stderr.contains("create window failed: index 1 in use"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    assert_global_index_lacks(&home, "auth-fix");
 
     let peek = Command::new(niles)
         .args(["peek", "auth-fix"])
         .current_dir(&workspace)
+        .env("NILES_HOME", &home)
         .output()
         .unwrap();
     assert!(!peek.status.success());
@@ -251,6 +395,7 @@ esac
         ])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -258,6 +403,7 @@ esac
     assert_command_success("respawn", &respawn);
     assert!(workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(workspace.join(".niles/worker/auth-fix").is_dir());
+    assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("new-window -d -t niles: -n niles-auth-fix"));
@@ -267,6 +413,7 @@ esac
 fn ask_spawns_one_off_worker_window() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-ask-test");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -307,6 +454,7 @@ esac
         .args(["ask", "-a", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -322,7 +470,7 @@ esac
     assert!(stdout.contains(&format!("window: niles-{id}")));
     assert!(stdout.contains(&format!("peek: niles peek {id}")));
 
-    let meta = fs::read_to_string(workspace.join(format!(".niles/worker/{id}.json"))).unwrap();
+    let meta = fs::read_to_string(workspace.join(format!(".niles/worker/{id}/meta.json"))).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains(&format!("\"window\": \"niles:niles-{id}\"")));
 
@@ -340,6 +488,7 @@ esac
 fn worker_close_tears_down_worker() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-close");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -360,34 +509,7 @@ esac
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
 
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let brief = worker_dir.join("brief.md");
-    let launch = worker_dir.join("launch.sh");
-    let status = worker_dir.join("status.log");
-    fs::write(&brief, "brief").unwrap();
-    fs::write(&launch, "launch").unwrap();
-    fs::write(&status, "status").unwrap();
-    fs::write(
-        workspace.join(".niles/worker/auth-fix.json"),
-        format!(
-            r#"{{
-  "id": "auth-fix",
-  "agent": "codex",
-  "project": "{}",
-  "window": "niles:niles-auth-fix",
-  "brief": "{}",
-  "launch": "{}",
-  "status": "{}"
-}}
-"#,
-            workspace.display(),
-            brief.display(),
-            launch.display(),
-            status.display()
-        ),
-    )
-    .unwrap();
+    write_worker_fixture(&workspace, "auth-fix", "status");
 
     let path = format!(
         "{}:{}",
@@ -399,6 +521,7 @@ esac
         .args(["worker-close", "auth-fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -417,12 +540,14 @@ esac
     assert!(log.contains("kill-window -t niles:niles-auth-fix"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    assert_global_index_lacks(&home, "auth-fix");
 }
 
 #[test]
 fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-close-wait");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -443,34 +568,7 @@ esac
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux, permissions).unwrap();
 
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let brief = worker_dir.join("brief.md");
-    let launch = worker_dir.join("launch.sh");
-    let status = worker_dir.join("status.log");
-    fs::write(&brief, "brief").unwrap();
-    fs::write(&launch, "launch").unwrap();
-    fs::write(&status, "working: close requested").unwrap();
-    fs::write(
-        workspace.join(".niles/worker/auth-fix.json"),
-        format!(
-            r#"{{
-  "id": "auth-fix",
-  "agent": "codex",
-  "project": "{}",
-  "window": "niles:niles-auth-fix",
-  "brief": "{}",
-  "launch": "{}",
-  "status": "{}"
-}}
-"#,
-            workspace.display(),
-            brief.display(),
-            launch.display(),
-            status.display()
-        ),
-    )
-    .unwrap();
+    write_worker_fixture(&workspace, "auth-fix", "working: close requested");
 
     let waiter = Command::new(niles)
         .args([
@@ -483,6 +581,7 @@ esac
             "5",
         ])
         .current_dir(&workspace)
+        .env("NILES_HOME", &home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -498,6 +597,7 @@ esac
         .args(["worker-close", "auth-fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
+        .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
@@ -537,10 +637,12 @@ esac
 fn worker_close_unknown_id_errors() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-close-missing");
+    let home = niles_home(&workspace);
 
     let close = Command::new(niles)
         .args(["worker-close", "missing"])
         .current_dir(&workspace)
+        .env("NILES_HOME", &home)
         .output()
         .unwrap();
     assert!(!close.status.success());
@@ -603,4 +705,61 @@ steps:
     let send_stderr = String::from_utf8_lossy(&send.stderr);
     assert!(send_stderr.contains("step 1 in run"));
     assert!(send_stderr.contains("has no recorded window"));
+}
+
+fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBuf {
+    let worker_root = workspace.join(".niles/worker");
+    let worker_dir = worker_root.join(id);
+    fs::create_dir_all(&worker_dir).unwrap();
+    let brief = worker_dir.join("brief.md");
+    let launch = worker_dir.join("launch.sh");
+    let status = worker_dir.join("status.log");
+    fs::write(&brief, "brief").unwrap();
+    fs::write(&launch, "launch").unwrap();
+    fs::write(&status, status_body).unwrap();
+    fs::write(
+        worker_root.join(format!("{id}.json")),
+        format!(
+            r#"{{
+  "id": "{id}",
+  "workspace": "{}",
+  "worker_dir": "{}",
+  "local_stores": ["{}"]
+}}
+"#,
+            workspace.display(),
+            worker_dir.display(),
+            worker_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        worker_dir.join("meta.json"),
+        format!(
+            r#"{{
+  "id": "{id}",
+  "agent": "codex",
+  "project": "{}",
+  "window": "niles:niles-auth-fix",
+  "brief": "{}",
+  "launch": "{}",
+  "status": "{}"
+}}
+"#,
+            workspace.display(),
+            brief.display(),
+            launch.display(),
+            status.display()
+        ),
+    )
+    .unwrap();
+    worker_dir
+}
+
+fn assert_global_index_lacks(home: &Path, id: &str) {
+    let path = home.join("runs/index.json");
+    if path.exists() {
+        let index = fs::read_to_string(&path).unwrap();
+        assert!(!index.contains(id), "global index retained {id}:\n{index}");
+    }
 }
