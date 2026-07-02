@@ -1,6 +1,9 @@
-use std::{fs, io::Write};
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom, Write},
+};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Error, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
@@ -108,7 +111,23 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let window_name = step_window_name(&state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     ensure_step_brief_exists(&brief, step_number)?;
-    worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)?;
+    if let Err(err) =
+        worker::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
+    {
+        if let Err(record_err) = record_step_error(
+            &mut state,
+            &state_path,
+            &run_dir,
+            step_number,
+            "launch",
+            &err,
+        ) {
+            return Err(err).context(format!(
+                "additionally failed to record launch failure for step {step_number}: {record_err}"
+            ));
+        }
+        return Err(err);
+    }
 
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
@@ -201,6 +220,7 @@ pub(crate) fn step_close(selector: RunSelector, index: usize) -> Result<()> {
     }
     state.updated_at = Utc::now();
     write_state(&state_path, &state)?;
+    append_run_status(&run_dir, &format!("closed: step {index}"))?;
 
     match worker::close_window(&window_name) {
         Ok(()) => println!("closed: {window_name}"),
@@ -232,7 +252,7 @@ fn step_window_name(run_id: &str, step_number: usize, role: Option<&str>, agent:
 fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize) -> Result<()> {
     let status_log = absolute_path(run_dir)?.join("status.log");
     let footer = format!(
-        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\n```\n\nUse `failed:`, `blocked:`, or `needs-decision:` instead of `done:` when appropriate. Leave this window open; the manager reviews your work and closes it.\n"
+        "\n## Wake Contract\n\nWhen this step's work is complete, append one line to the run status log so `niles wait` can wake the manager. The wake line must include the `step {step_number}` token pair:\n\n```sh\necho \"done: step {step_number} <short result>\" >> {status_log}\necho \"failed: step {step_number} <reason>\" >> {status_log}\necho \"blocked: step {step_number} <blocking issues>\" >> {status_log}\necho \"needs-decision: step {step_number} <decision needed>\" >> {status_log}\n```\n\nLeave this window open; the manager reviews your work and closes it.\n"
     );
     fs::OpenOptions::new()
         .append(true)
@@ -269,7 +289,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
         write_state(&state_path, &state)?;
     }
 
-    let failed = execute_single_step(
+    let failed = match execute_single_step(
         &spec,
         &mut state,
         &state_path,
@@ -278,7 +298,19 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
         step,
         index,
         false,
-    )?;
+    ) {
+        Ok(failed) => failed,
+        Err(err) => {
+            if let Err(record_err) =
+                record_step_error(&mut state, &state_path, &run_dir, index, "exec", &err)
+            {
+                return Err(err).context(format!(
+                    "additionally failed to record exec failure for step {index}: {record_err}"
+                ));
+            }
+            return Err(err);
+        }
+    };
 
     let record = state
         .steps
@@ -331,15 +363,66 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
 fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
     let path = run_dir.join("status.log");
-    let mut body = line.to_owned();
-    body.push('\n');
-    fs::OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(&path)
-        .with_context(|| format!("failed to open {path}"))?
-        .write_all(body.as_bytes())
-        .with_context(|| format!("failed to write {path}"))
+        .with_context(|| format!("failed to open {path}"))?;
+    if needs_leading_newline(&mut file)
+        .with_context(|| format!("failed to inspect {path} before status append"))?
+    {
+        file.write_all(b"\n")
+            .with_context(|| format!("failed to write {path}"))?;
+    }
+    writeln!(file, "{line}").with_context(|| format!("failed to write {path}"))
+}
+
+fn record_step_error(
+    state: &mut RunState,
+    state_path: &Utf8Path,
+    run_dir: &Utf8Path,
+    index: usize,
+    phase: &str,
+    err: &Error,
+) -> Result<()> {
+    mark_step_failed(state, state_path, index)?;
+    append_run_status(
+        run_dir,
+        &format!("failed: step {index} {phase} error: {}", status_detail(err)),
+    )
+}
+
+fn mark_step_failed(state: &mut RunState, state_path: &Utf8Path, index: usize) -> Result<()> {
+    let now = Utc::now();
+    if let Some(step) = state.steps.iter_mut().find(|step| step.index == index) {
+        if step.started_at.is_none() {
+            step.started_at = Some(now);
+        }
+        step.status = StepStatus::Failed;
+        step.finished_at = Some(now);
+    }
+    state.status = RunStatus::Failed;
+    state.updated_at = now;
+    write_state(state_path, state)
+}
+
+fn status_detail(err: &Error) -> String {
+    err.to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
+    if file.metadata()?.len() == 0 {
+        return Ok(false);
+    }
+
+    file.seek(SeekFrom::End(-1))?;
+    let mut byte = [0];
+    file.read_exact(&mut byte)?;
+    Ok(byte[0] != b'\n')
 }
 
 fn ensure_step_brief_exists(brief: &Utf8Path, step_number: usize) -> Result<()> {
@@ -537,5 +620,43 @@ fn print_step_start(step_number: usize, role: Option<&str>, kind: &str, label: &
 fn print_step_context(context: Option<&Utf8Path>) {
     if let Some(context) = context {
         println!("context: {context}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn wake_contract_requires_step_token_for_all_actionable_lines() {
+        let dir = temp_test_dir("wake-contract");
+        let run_dir = Utf8PathBuf::from_path_buf(dir.join("run")).unwrap();
+        let brief = Utf8PathBuf::from_path_buf(dir.join("brief.md")).unwrap();
+        fs::create_dir_all(&run_dir).unwrap();
+        fs::write(&brief, "# Brief\n").unwrap();
+
+        append_wake_contract(&brief, &run_dir, 5).unwrap();
+
+        let body = fs::read_to_string(&brief).unwrap();
+        assert!(body.contains("done: step 5 <short result>"));
+        assert!(body.contains("failed: step 5 <reason>"));
+        assert!(body.contains("blocked: step 5 <blocking issues>"));
+        assert!(body.contains("needs-decision: step 5 <decision needed>"));
+        assert!(body.contains("must include the `step 5` token pair"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn temp_test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "niles-{label}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

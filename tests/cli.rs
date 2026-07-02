@@ -1251,6 +1251,140 @@ fn wait_index_returns_already_emitted_step_wake() {
 }
 
 #[test]
+fn wait_index_accepts_untagged_wake_attributed_to_running_step() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-wait-index-attributed-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let run_dir = workspace.join(".niles/runs/test-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    write_manual_run_state(&run_dir, "test-run", 2);
+    fs::write(
+        run_dir.join("status.log"),
+        "done: CONSENSUS - reviewer approved the change\n",
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    let output = Command::new(niles)
+        .args([
+            "wait",
+            "test-run",
+            "--index",
+            "2",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_command_success("wait --index attributed", &output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "done: CONSENSUS - reviewer approved the change\n"
+    );
+}
+
+#[test]
+fn wait_index_rejects_untagged_wake_attributed_to_another_step() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-wait-index-other-attributed-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let run_dir = workspace.join(".niles/runs/test-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    write_manual_run_state(&run_dir, "test-run", 1);
+    fs::write(
+        run_dir.join("status.log"),
+        "done: CONSENSUS - reviewer approved the change\n",
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .args([
+            "wait",
+            "test-run",
+            "--index",
+            "2",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("timeout"));
+}
+
+fn write_manual_run_state(run_dir: &Path, id: &str, running_step: usize) {
+    let step1_status = if running_step == 1 {
+        "running"
+    } else {
+        "completed"
+    };
+    let step2_status = if running_step == 2 {
+        "running"
+    } else {
+        "pending"
+    };
+    fs::write(
+        run_dir.join("state.json"),
+        format!(
+            r#"{{
+  "id": "{id}",
+  "goal": "manual wait test",
+  "created_at": "2000-01-01T00:00:00Z",
+  "updated_at": "2000-01-01T00:00:00Z",
+  "status": "running",
+  "steps": [
+    {{
+      "index": 1,
+      "kind": "agent",
+      "label": "one",
+      "status": "{step1_status}",
+      "started_at": "2000-01-01T00:00:00Z"
+    }},
+    {{
+      "index": 2,
+      "kind": "agent",
+      "label": "two",
+      "status": "{step2_status}",
+      "started_at": "2000-01-01T00:01:00Z"
+    }}
+  ]
+}}
+"#,
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
 fn agent_steps_receive_context_artifacts() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = std::env::temp_dir().join(format!(
@@ -1416,6 +1550,51 @@ commands:
     assert!(status_stdout.contains("status: failed"));
     assert!(status_stdout.contains("1,command,fail,failed,7"));
     assert!(status_stdout.contains("--stderr`"));
+}
+
+#[test]
+fn exec_step_error_appends_failed_backstop() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-exec-error-backstop-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Exec error backstop"
+steps:
+  - command: missing
+"#,
+    )
+    .unwrap();
+
+    let prepare = prepare_run(niles, &workspace, &task);
+    let id = run_id(&prepare);
+    let output = exec_step_output(niles, &workspace, 1);
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown command `missing`"));
+
+    let status_log =
+        fs::read_to_string(workspace.join(".niles/runs").join(&id).join("status.log")).unwrap();
+    assert!(status_log.contains("failed: step 1 exec error: unknown command `missing`"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("status", &status);
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: failed"));
+    assert!(status_stdout.contains("1,command,missing,failed,-"));
 }
 
 #[test]
@@ -2030,6 +2209,10 @@ steps:
     let brief_body = fs::read_to_string(&brief).unwrap();
     assert!(brief_body.contains(&format!("workspace: {}", workspace.display())));
     assert!(brief_body.contains(&workspace_run_dir.join("status.log").display().to_string()));
+    assert!(brief_body.contains("done: step 1 <short result>"));
+    assert!(brief_body.contains("failed: step 1 <reason>"));
+    assert!(brief_body.contains("blocked: step 1 <blocking issues>"));
+    assert!(brief_body.contains("needs-decision: step 1 <decision needed>"));
 
     let launch_body = fs::read_to_string(&launch).unwrap();
     assert!(launch_body.contains(&brief.display().to_string()));
@@ -2048,6 +2231,95 @@ steps:
         .unwrap();
     assert_command_success("status from invocation cwd", &status);
     assert!(String::from_utf8_lossy(&status.stdout).contains("1,agent,echo,running,-"));
+}
+
+#[test]
+fn step_launch_failure_appends_failed_backstop() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = std::env::temp_dir().join(format!(
+        "niles-step-launch-failure-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  new-window)
+    printf 'create window failed: index 1 in use\n' >&2
+    exit 1
+    ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let task = workspace.join("task.yaml");
+    fs::write(
+        &task,
+        r#"
+goal: "Launch failure"
+agents:
+  echo:
+    binary: /bin/echo
+steps:
+  - agent: echo
+    task: "interactive hello"
+"#,
+    )
+    .unwrap();
+
+    let prepare = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert_command_success("run", &prepare);
+    let id = run_id(&prepare);
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let step = Command::new(niles)
+        .args(["step", "latest", "--index", "1"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("PATH", &path)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!step.status.success());
+    assert!(String::from_utf8_lossy(&step.stderr).contains("new-window"));
+
+    let run_dir = workspace.join(".niles/runs").join(&id);
+    let status_log = fs::read_to_string(run_dir.join("status.log")).unwrap();
+    assert!(status_log.contains("failed: step 1 launch error:"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert_command_success("status", &status);
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("status: failed"));
+    assert!(status_stdout.contains("1,agent,echo,failed,-"));
 }
 
 #[test]
@@ -2155,6 +2427,25 @@ steps:
         .output()
         .unwrap();
     assert!(prepare.status.success());
+    let id = run_id(&prepare);
+
+    let waiter = Command::new(niles)
+        .args([
+            "wait",
+            "latest",
+            "--index",
+            "1",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "5",
+        ])
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
 
     // step-close finalizes the step and reports completion. Window teardown is
     // best-effort (no live window in the test env) and must not fail the call.
@@ -2172,6 +2463,21 @@ steps:
     let close_stdout = String::from_utf8_lossy(&close.stdout);
     assert!(close_stdout.contains("step 1: completed"));
     assert!(close_stdout.contains("status: completed"));
+
+    let started = Instant::now();
+    let wait = waiter.wait_with_output().unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&wait.stdout),
+        String::from_utf8_lossy(&wait.stderr)
+    );
+    assert_command_success("wait for step-close", &wait);
+    assert_eq!(String::from_utf8_lossy(&wait.stdout), "closed: step 1\n");
+
+    let status_log =
+        fs::read_to_string(workspace.join(".niles/runs").join(&id).join("status.log")).unwrap();
+    assert!(status_log.contains("closed: step 1"));
 
     let status = Command::new(niles)
         .arg("status")
