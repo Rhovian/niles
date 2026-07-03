@@ -54,6 +54,23 @@ esac
 }
 
 #[test]
+fn spawn_rejects_reserved_archive_worker_id() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-reserved-archive");
+
+    let spawn = Command::new(niles)
+        .args(["spawn", "archive", "--agent", "claude", "Fix", "auth"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("worker id 'archive' is reserved"));
+    assert!(!workspace.join(".niles/worker/archive").exists());
+}
+
+#[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-test");

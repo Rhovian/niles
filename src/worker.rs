@@ -599,6 +599,9 @@ fn validate_id(id: &str) -> Result<()> {
     if id.is_empty() {
         bail!("worker id cannot be empty");
     }
+    if id == "archive" {
+        bail!("worker id 'archive' is reserved for closed worker archives");
+    }
     if !id
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
