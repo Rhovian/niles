@@ -6,6 +6,7 @@ use chrono::Utc;
 
 use crate::{
     config::{
+        agents,
         spec::{
             TaskSpec, TaskStep, apply_project_config, load_project_config,
             load_project_config_from, load_task, save_task, summarize_spec,
@@ -134,7 +135,7 @@ fn init_run(
         created_at: now,
         updated_at: now,
         status: RunStatus::Created,
-        steps: planned_steps(spec),
+        steps: planned_steps(spec)?,
     };
 
     let state_path = run_dir.join("state.json");
@@ -231,12 +232,14 @@ pub(crate) fn step_add(
         (None, None) => bail!("step-add requires --agent <id> or --command <name>"),
     };
 
+    let index = state.steps.len() + 1;
+    let record = planned_step(index, &new_step)?;
+
     let mut spec = load_task(&task_file)?;
     spec.steps.push(new_step.clone());
     save_task(&task_file, &spec)?;
 
-    let index = state.steps.len() + 1;
-    state.steps.push(planned_step(index, &new_step));
+    state.steps.push(record);
     if matches!(state.status, RunStatus::Completed | RunStatus::Failed) {
         state.status = RunStatus::Running;
     }
@@ -261,7 +264,7 @@ pub(crate) fn step_add(
     Ok(())
 }
 
-fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
+fn planned_steps(spec: &TaskSpec) -> Result<Vec<StepRecord>> {
     spec.steps
         .iter()
         .enumerate()
@@ -269,10 +272,15 @@ fn planned_steps(spec: &TaskSpec) -> Vec<StepRecord> {
         .collect()
 }
 
-fn planned_step(index: usize, step: &TaskStep) -> StepRecord {
-    let (role, kind, label) = match step {
-        TaskStep::Agent { agent, role, .. } => (role.clone(), StepKind::Agent, agent.clone()),
-        TaskStep::Command { command, role } => (role.clone(), StepKind::Command, command.clone()),
+fn planned_step(index: usize, step: &TaskStep) -> Result<StepRecord> {
+    let (role, kind, label, tier) = match step {
+        TaskStep::Agent { agent, role, .. } => {
+            let spec = agents::parse_spec(agent)?;
+            (role.clone(), StepKind::Agent, agent.clone(), spec.tier())
+        }
+        TaskStep::Command { command, role } => {
+            (role.clone(), StepKind::Command, command.clone(), None)
+        }
         TaskStep::Role { role, task } => (
             Some(role.clone()),
             if task.is_some() {
@@ -281,14 +289,22 @@ fn planned_step(index: usize, step: &TaskStep) -> StepRecord {
                 StepKind::Command
             },
             role.clone(),
+            None,
         ),
     };
 
-    StepRecord {
+    let (agent_family, model, effort) = tier
+        .map(|tier| (Some(tier.family), tier.model, tier.effort))
+        .unwrap_or((None, None, None));
+
+    Ok(StepRecord {
         index,
         role,
         kind,
         label,
+        agent_family,
+        model,
+        effort,
         status: StepStatus::Pending,
         started_at: None,
         finished_at: None,
@@ -298,7 +314,7 @@ fn planned_step(index: usize, step: &TaskStep) -> StepRecord {
         diff: None,
         context: None,
         window: None,
-    }
+    })
 }
 
 fn first_incomplete_step(state: &RunState) -> Option<usize> {
@@ -310,7 +326,7 @@ fn first_incomplete_step(state: &RunState) -> Option<usize> {
 }
 
 fn validate_resume_shape(state: &RunState, spec: &TaskSpec) -> Result<()> {
-    let planned = planned_steps(spec);
+    let planned = planned_steps(spec)?;
     if planned.len() != state.steps.len() {
         bail!(
             "cannot resume: task now has {} steps, but run state has {}",
@@ -336,7 +352,7 @@ fn validate_resume_shape(state: &RunState, spec: &TaskSpec) -> Result<()> {
 }
 
 fn reset_steps_from(state: &mut RunState, spec: &TaskSpec, start_step: usize) -> Result<()> {
-    for planned in planned_steps(spec)
+    for planned in planned_steps(spec)?
         .into_iter()
         .filter(|step| step.index >= start_step)
     {

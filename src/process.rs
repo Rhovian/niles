@@ -89,6 +89,9 @@ pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
         role: spec.role,
         kind: spec.kind,
         label: spec.label.to_owned(),
+        agent_family: None,
+        model: None,
+        effort: None,
         status: if status.success() {
             StepStatus::Completed
         } else {

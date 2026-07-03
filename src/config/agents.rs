@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use anyhow::{Result, bail};
+
 use crate::config::spec::{AgentConfig, PromptMode};
 
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +25,22 @@ pub struct AgentInvocation {
     pub binary: String,
     pub args: Vec<String>,
     pub prompt: PromptMode,
+    pub spec: AgentSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSpec {
+    original: String,
+    family: String,
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTier {
+    pub family: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
 }
 
 const PROFILES: &[AgentProfile] = &[
@@ -50,9 +70,22 @@ pub fn profile_for(agent: &str) -> Option<AgentProfile> {
     PROFILES.iter().find(|profile| profile.id == agent).copied()
 }
 
+pub fn parse_spec(agent: &str) -> Result<AgentSpec> {
+    AgentSpec::parse(agent)
+}
+
+pub fn config_for<'a>(
+    configs: &'a BTreeMap<String, AgentConfig>,
+    agent: &str,
+) -> Result<Option<&'a AgentConfig>> {
+    let spec = AgentSpec::parse(agent)?;
+    Ok(configs.get(agent).or_else(|| configs.get(spec.family())))
+}
+
 #[allow(dead_code)]
 pub fn default_config(agent: &str) -> AgentConfig {
-    match profile_for(agent) {
+    let family = family_or_self(agent);
+    match profile_for(&family) {
         Some(profile) => AgentConfig {
             binary: Some(profile.binary.to_owned()),
             args: profile_args(profile),
@@ -67,17 +100,20 @@ pub fn default_config(agent: &str) -> AgentConfig {
 }
 
 pub fn default_binary(agent: &str) -> String {
-    profile_for(agent)
+    let family = family_or_self(agent);
+    profile_for(&family)
         .map(|profile| profile.binary.to_owned())
-        .unwrap_or_else(|| agent.to_owned())
+        .unwrap_or(family)
 }
 
 pub fn default_args(agent: &str) -> Vec<String> {
-    profile_for(agent).map(profile_args).unwrap_or_default()
+    let family = family_or_self(agent);
+    profile_for(&family).map(profile_args).unwrap_or_default()
 }
 
 pub fn default_prompt(agent: &str) -> PromptMode {
-    profile_for(agent)
+    let family = family_or_self(agent);
+    profile_for(&family)
         .map(|profile| profile.prompt)
         .unwrap_or(PromptMode::Arg)
 }
@@ -86,10 +122,11 @@ pub fn invocation(
     agent: &str,
     config: Option<&AgentConfig>,
     defaults: InvocationDefaults,
-) -> AgentInvocation {
-    let default_invocation = default_invocation(agent, defaults);
+) -> Result<AgentInvocation> {
+    let spec = AgentSpec::parse(agent)?;
+    let default_invocation = default_invocation(&spec, defaults);
 
-    match config {
+    let mut invocation = match config {
         Some(config) => AgentInvocation {
             binary: config.binary.clone().unwrap_or(default_invocation.binary),
             args: if config.args.is_empty() {
@@ -98,30 +135,39 @@ pub fn invocation(
                 config.args.clone()
             },
             prompt: config.prompt,
+            spec,
         },
         None => default_invocation,
-    }
+    };
+    invocation.args.extend(mapped_tier_args(&invocation.spec)?);
+    Ok(invocation)
 }
 
-pub fn foreground_binary(agent: &str) -> String {
-    default_binary(agent)
+pub fn foreground_invocation(agent: &str) -> Result<AgentInvocation> {
+    let spec = AgentSpec::parse(agent)?;
+    let mut invocation = AgentInvocation {
+        binary: default_binary(spec.family()),
+        args: Vec::new(),
+        prompt: worker_prompt(spec.family()),
+        spec,
+    };
+    invocation.args.extend(mapped_tier_args(&invocation.spec)?);
+    Ok(invocation)
 }
 
-pub fn foreground_args(_agent: &str) -> Vec<String> {
-    Vec::new()
-}
-
-fn default_invocation(agent: &str, defaults: InvocationDefaults) -> AgentInvocation {
+fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentInvocation {
     match defaults {
         InvocationDefaults::Default => AgentInvocation {
-            binary: default_binary(agent),
-            args: default_args(agent),
-            prompt: default_prompt(agent),
+            binary: default_binary(spec.family()),
+            args: default_args(spec.family()),
+            prompt: default_prompt(spec.family()),
+            spec: spec.clone(),
         },
         InvocationDefaults::Worker => AgentInvocation {
-            binary: default_binary(agent),
-            args: worker_args(agent),
-            prompt: worker_prompt(agent),
+            binary: default_binary(spec.family()),
+            args: worker_args(spec.family()),
+            prompt: worker_prompt(spec.family()),
+            spec: spec.clone(),
         },
     }
 }
@@ -146,6 +192,169 @@ fn worker_prompt(agent: &str) -> PromptMode {
 
 fn profile_args(profile: AgentProfile) -> Vec<String> {
     profile.args.iter().map(|arg| (*arg).to_owned()).collect()
+}
+
+fn family_or_self(agent: &str) -> String {
+    AgentSpec::parse(agent)
+        .map(|spec| spec.family().to_owned())
+        .unwrap_or_else(|_| agent.to_owned())
+}
+
+fn mapped_tier_args(spec: &AgentSpec) -> Result<Vec<String>> {
+    match spec.family() {
+        "codex" => codex_tier_args(spec),
+        "claude" => claude_tier_args(spec),
+        _ if spec.model().is_some() || spec.effort().is_some() => bail!(
+            "agent `{}` does not support model/effort qualifiers",
+            spec.family()
+        ),
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn codex_tier_args(spec: &AgentSpec) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    if let Some(model) = spec.model() {
+        args.extend(["--model".to_owned(), model.to_owned()]);
+    }
+    if let Some(effort) = spec.effort() {
+        args.extend([
+            "--config".to_owned(),
+            format!("model_reasoning_effort=\"{effort}\""),
+        ]);
+    }
+    Ok(args)
+}
+
+fn claude_tier_args(spec: &AgentSpec) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    if let Some(model) = spec.model() {
+        args.extend(["--model".to_owned(), model.to_owned()]);
+    }
+    if let Some(effort) = spec.effort() {
+        args.extend(["--effort".to_owned(), effort.to_owned()]);
+    }
+    Ok(args)
+}
+
+impl AgentSpec {
+    pub fn parse(agent: &str) -> Result<Self> {
+        let parts = agent.split(':').collect::<Vec<_>>();
+        if parts.is_empty() || parts.len() > 3 {
+            bail!("invalid agent spec `{agent}`; expected family[:model[:effort]]");
+        }
+        if parts.iter().any(|part| part.trim().is_empty()) {
+            bail!("invalid agent spec `{agent}`; family, model, and effort cannot be empty");
+        }
+
+        let family = parts[0].to_owned();
+        let model = parts
+            .get(1)
+            .map(|value| normalize_model(&family, value))
+            .transpose()?;
+        let effort = parts
+            .get(2)
+            .map(|value| normalize_effort(&family, value))
+            .transpose()?;
+
+        if effort.is_some() && model.is_none() {
+            bail!("invalid agent spec `{agent}`; effort requires a model");
+        }
+        if model.is_some() && profile_for(&family).is_none() {
+            bail!("agent `{family}` does not support model/effort qualifiers");
+        }
+
+        Ok(Self {
+            original: agent.to_owned(),
+            family,
+            model,
+            effort,
+        })
+    }
+
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
+    pub fn family(&self) -> &str {
+        &self.family
+    }
+
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    pub fn tier(&self) -> Option<AgentTier> {
+        if self.model.is_none() && self.effort.is_none() {
+            return None;
+        }
+
+        Some(AgentTier {
+            family: self.family.clone(),
+            model: self.model.clone(),
+            effort: self.effort.clone(),
+        })
+    }
+}
+
+fn normalize_model(family: &str, model: &str) -> Result<String> {
+    let normalized = model.to_ascii_lowercase();
+    match family {
+        "codex" if supported_codex_model(&normalized) => Ok(normalized),
+        "claude" if supported_claude_model(&normalized) => Ok(normalized),
+        "codex" | "claude" => {
+            bail!("unsupported {family} model `{model}` in agent spec")
+        }
+        _ => Ok(model.to_owned()),
+    }
+}
+
+fn normalize_effort(family: &str, effort: &str) -> Result<String> {
+    let normalized = match effort.to_ascii_lowercase().as_str() {
+        "med" => "medium".to_owned(),
+        value => value.to_owned(),
+    };
+
+    match family {
+        "codex"
+            if matches!(
+                normalized.as_str(),
+                "minimal" | "low" | "medium" | "high" | "xhigh"
+            ) =>
+        {
+            Ok(normalized)
+        }
+        "claude"
+            if matches!(
+                normalized.as_str(),
+                "low" | "medium" | "high" | "xhigh" | "max"
+            ) =>
+        {
+            Ok(normalized)
+        }
+        "codex" | "claude" => {
+            bail!("unsupported {family} effort `{effort}` in agent spec")
+        }
+        _ => Ok(effort.to_owned()),
+    }
+}
+
+fn supported_codex_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gpt-5" | "gpt-5.4" | "gpt-5.5" | "gpt-5-codex" | "o3" | "o3-pro" | "o4-mini"
+    )
+}
+
+fn supported_claude_model(model: &str) -> bool {
+    matches!(model, "opus" | "sonnet" | "fable")
+        || model.starts_with("claude-opus-")
+        || model.starts_with("claude-sonnet-")
+        || model.starts_with("claude-fable-")
 }
 
 #[cfg(test)]
@@ -175,7 +384,7 @@ mod tests {
 
     #[test]
     fn invocation_applies_default_agent_args() {
-        let invocation = invocation("codex", None, InvocationDefaults::Default);
+        let invocation = invocation("codex", None, InvocationDefaults::Default).unwrap();
 
         assert_eq!(invocation.binary, "codex");
         assert_eq!(
@@ -187,7 +396,7 @@ mod tests {
 
     #[test]
     fn invocation_applies_worker_defaults() {
-        let invocation = invocation("codex", None, InvocationDefaults::Worker);
+        let invocation = invocation("codex", None, InvocationDefaults::Worker).unwrap();
 
         assert_eq!(invocation.binary, "codex");
         assert_eq!(
@@ -195,5 +404,73 @@ mod tests {
             ["--dangerously-bypass-approvals-and-sandbox"].map(str::to_owned)
         );
         assert!(matches!(invocation.prompt, PromptMode::Arg));
+    }
+
+    #[test]
+    fn parses_agent_model_effort_specs() {
+        let codex = AgentSpec::parse("codex:gpt-5.5:xhigh").unwrap();
+        assert_eq!(codex.original(), "codex:gpt-5.5:xhigh");
+        assert_eq!(codex.family(), "codex");
+        assert_eq!(codex.model(), Some("gpt-5.5"));
+        assert_eq!(codex.effort(), Some("xhigh"));
+
+        let claude = AgentSpec::parse("claude:sonnet:med").unwrap();
+        assert_eq!(claude.family(), "claude");
+        assert_eq!(claude.model(), Some("sonnet"));
+        assert_eq!(claude.effort(), Some("medium"));
+
+        let bare = AgentSpec::parse("custom").unwrap();
+        assert_eq!(bare.family(), "custom");
+        assert_eq!(bare.model(), None);
+        assert_eq!(bare.effort(), None);
+    }
+
+    #[test]
+    fn rejects_invalid_agent_specs() {
+        assert!(AgentSpec::parse("codex:gpt-5.5:xhigh:extra").is_err());
+        assert!(AgentSpec::parse("codex::xhigh").is_err());
+        assert!(AgentSpec::parse("custom:model:high").is_err());
+        assert!(AgentSpec::parse("codex:bogus:high").is_err());
+        assert!(AgentSpec::parse("claude:opus:turbo").is_err());
+        assert!(AgentSpec::parse("codex:gpt-5.5:max").is_err());
+    }
+
+    #[test]
+    fn invocation_maps_codex_model_effort_flags() {
+        let invocation =
+            invocation("codex:gpt-5.5:xhigh", None, InvocationDefaults::Default).unwrap();
+
+        assert_eq!(invocation.binary, "codex");
+        assert_eq!(
+            invocation.args,
+            [
+                "exec",
+                "--sandbox",
+                "workspace-write",
+                "--model",
+                "gpt-5.5",
+                "--config",
+                "model_reasoning_effort=\"xhigh\""
+            ]
+            .map(str::to_owned)
+        );
+    }
+
+    #[test]
+    fn invocation_maps_claude_model_effort_flags() {
+        let invocation = invocation("claude:opus:max", None, InvocationDefaults::Worker).unwrap();
+
+        assert_eq!(invocation.binary, "claude");
+        assert_eq!(
+            invocation.args,
+            [
+                "--dangerously-skip-permissions",
+                "--model",
+                "opus",
+                "--effort",
+                "max"
+            ]
+            .map(str::to_owned)
+        );
     }
 }

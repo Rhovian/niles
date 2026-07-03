@@ -36,6 +36,12 @@ pub struct StepRecord {
     pub role: Option<String>,
     pub kind: StepKind,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub status: StepStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,

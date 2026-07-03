@@ -52,9 +52,10 @@ pub(crate) fn preflight_task_agents(
 
     let mut reports = Vec::new();
     for agent in agents {
+        let config = agents::config_for(&spec.agents, agent)?;
         if let Some(report) = preflight_agent(
             agent,
-            spec.agents.get(agent),
+            config,
             InvocationDefaults::Default,
             allow_cli_mismatch,
         )? {
@@ -70,13 +71,14 @@ pub(crate) fn preflight_agent(
     defaults: InvocationDefaults,
     allow_cli_mismatch: bool,
 ) -> Result<Option<VersionGateReport>> {
-    let Some(profile) = agents::profile_for(agent) else {
+    let spec = agents::parse_spec(agent)?;
+    let Some(profile) = agents::profile_for(spec.family()) else {
         return Ok(None);
     };
 
-    let invocation = agents::invocation(agent, config, defaults);
+    let invocation = agents::invocation(agent, config, defaults)?;
     let probe = run_probe(&invocation.binary, "--version");
-    let report = evaluate_probe(agent, &invocation.binary, profile, &probe);
+    let report = evaluate_probe(spec.family(), &invocation.binary, profile, &probe);
     handle_preflight_report(&report, allow_cli_mismatch)?;
     Ok(Some(report))
 }

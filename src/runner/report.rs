@@ -82,7 +82,7 @@ pub(crate) fn show(selector: RunSelector) -> Result<()> {
     println!("steps:");
     for step in &state.steps {
         println!(
-            "  {}. {}{} {} {}{}{}",
+            "  {}. {}{} {} {}{}{}{}",
             step.index,
             step.role
                 .as_deref()
@@ -97,7 +97,8 @@ pub(crate) fn show(selector: RunSelector) -> Result<()> {
             step.context
                 .as_ref()
                 .map(|path| format!(" context {path}"))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            agent_tier_suffix(step)
         );
     }
 
@@ -119,6 +120,7 @@ fn print_status(state: &RunState) {
     }
 
     print_steps_table(state);
+    print_agent_tiers(state);
 
     let focus_step = state
         .steps
@@ -169,6 +171,7 @@ pub(in crate::runner) fn print_watch_snapshot(state: &RunState) {
         println!("steps[0]:");
     } else {
         print_steps_table(state);
+        print_agent_tiers(state);
     }
 }
 
@@ -207,6 +210,44 @@ fn print_steps_table(state: &RunState) {
             );
         }
     }
+}
+
+fn print_agent_tiers(state: &RunState) {
+    let tiered_steps = state
+        .steps
+        .iter()
+        .filter(|step| step.model.is_some() || step.effort.is_some())
+        .collect::<Vec<_>>();
+    if tiered_steps.is_empty() {
+        return;
+    }
+
+    println!(
+        "agent_tiers[{}]{{index,agent_family,model,effort}}:",
+        tiered_steps.len()
+    );
+    for step in tiered_steps {
+        println!(
+            "  {},{},{},{}",
+            step.index,
+            step.agent_family.as_deref().unwrap_or("-"),
+            step.model.as_deref().unwrap_or("-"),
+            step.effort.as_deref().unwrap_or("-")
+        );
+    }
+}
+
+fn agent_tier_suffix(step: &StepRecord) -> String {
+    if step.model.is_none() && step.effort.is_none() {
+        return String::new();
+    }
+
+    format!(
+        " agent_family {} model {} effort {}",
+        step.agent_family.as_deref().unwrap_or("-"),
+        step.model.as_deref().unwrap_or("-"),
+        step.effort.as_deref().unwrap_or("-")
+    )
 }
 
 pub(crate) fn log(

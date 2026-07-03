@@ -38,7 +38,7 @@ Delegation goes through Niles only. All delegated or parallel work MUST run as N
 Spawn a worker:
 
 ```sh
-niles spawn <id> --project <path> --agent <codex|claude> "<task>"
+niles spawn <id> --project <path> --agent <codex|claude[:model[:effort]]> "<task>"
 ```
 
 Inspect or steer a worker:
@@ -49,6 +49,7 @@ niles send <id> "<message>"
 ```
 
 Workers are tmux windows named `niles-<id>`. Metadata and briefs live under `.niles/worker/`.
+Use model/effort qualifiers when a worker needs a specific tier, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.
 Each worker brief includes a status file path. Actionable status lines use:
 
 ```sh

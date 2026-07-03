@@ -22,6 +22,12 @@ const WORKER_BRIEF_TEMPLATE: &str = include_str!("templates/worker_brief.md");
 struct WorkerMeta {
     id: String,
     agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     project: Utf8PathBuf,
     window: String,
     brief: Utf8PathBuf,
@@ -54,11 +60,13 @@ pub fn spawn(
         bail!("spawn requires either --brief or task text");
     }
 
+    let agent_spec = agents::parse_spec(&agent)?;
     let project = absolute_existing_dir(&project, "project")?;
     let config = load_project_config_from(&project)?;
+    let agent_config = agents::config_for(&config.agents, &agent)?;
     version::preflight_agent(
         &agent,
-        config.agents.get(&agent),
+        agent_config,
         agents::InvocationDefaults::Worker,
         allow_cli_mismatch,
     )?;
@@ -113,6 +121,9 @@ pub fn spawn(
     let meta = WorkerMeta {
         id: id.clone(),
         agent,
+        agent_family: agent_spec.tier().map(|tier| tier.family),
+        model: agent_spec.model().map(str::to_owned),
+        effort: agent_spec.effort().map(str::to_owned),
         project,
         window: target.clone(),
         brief: brief_path,
@@ -124,12 +135,25 @@ pub fn spawn(
     println!("spawned: {id}");
     println!("window: {window_name}");
     println!("agent: {}", meta.agent);
+    print_worker_tier(&meta);
     println!("brief: {}", meta.brief);
     println!("peek: niles peek {id}");
     println!("send: niles send {id} <message>");
     println!("close: niles worker-close {id}");
 
     Ok(())
+}
+
+fn print_worker_tier(meta: &WorkerMeta) {
+    if let Some(family) = &meta.agent_family {
+        println!("agent_family: {family}");
+    }
+    if let Some(model) = &meta.model {
+        println!("model: {model}");
+    }
+    if let Some(effort) = &meta.effort {
+        println!("effort: {effort}");
+    }
 }
 
 /// Tear down a spawned worker. The tmux window may already be gone, so
