@@ -574,11 +574,8 @@ struct AgentStep<'a> {
 }
 
 fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
-    let config = agents::invocation(
-        step.agent,
-        step.spec.agents.get(step.agent),
-        agents::InvocationDefaults::Default,
-    );
+    let config = agents::config_for(&step.spec.agents, step.agent)?;
+    let config = agents::invocation(step.agent, config, agents::InvocationDefaults::Default)?;
     let mut args = config.args;
     let prompt = agent_prompt(step.task, step.context_path.as_deref())?;
     let stdin = match config.prompt {
@@ -589,7 +586,7 @@ fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
         PromptMode::Stdin => Some(prompt),
     };
 
-    run_process(ProcessSpec {
+    let mut record = run_process(ProcessSpec {
         step_number: step.step_number,
         role: step.role,
         kind: StepKind::Agent,
@@ -600,7 +597,17 @@ fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
         workspace: step.workspace,
         steps_dir: step.steps_dir,
         context_path: step.context_path,
-    })
+    })?;
+    apply_agent_tier(&mut record, &config.spec);
+    Ok(record)
+}
+
+fn apply_agent_tier(record: &mut StepRecord, spec: &agents::AgentSpec) {
+    if let Some(tier) = spec.tier() {
+        record.agent_family = Some(tier.family);
+        record.model = tier.model;
+        record.effort = tier.effort;
+    }
 }
 
 fn run_command_step(

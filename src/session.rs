@@ -25,6 +25,12 @@ const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
 pub struct SessionMeta {
     pub id: String,
     pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub workspace: Utf8PathBuf,
     pub brief: Utf8PathBuf,
 }
@@ -65,12 +71,14 @@ fn tmux_session_present(tmux: Option<&OsStr>) -> bool {
 }
 
 fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
-    let binary = agents::foreground_binary(agent);
-    let mut args = agents::foreground_args(agent);
-    let meta = write_manager_session(agent, goal)?;
+    let invocation = agents::foreground_invocation(agent)?;
+    let binary = invocation.binary;
+    let mut args = invocation.args;
+    let family = invocation.spec.family().to_owned();
+    let meta = write_manager_session(&invocation.spec, goal)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    args.extend(manager_prompt_args(agent, brief, goal));
+    args.extend(manager_prompt_args(&family, brief, goal));
 
     let status = Command::new(&binary)
         .args(&args)
@@ -105,7 +113,7 @@ fn startup_prompt(_goal: Option<&str>) -> String {
     "Start the Niles manager session.".to_owned()
 }
 
-fn write_manager_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta> {
+fn write_manager_session(agent: &agents::AgentSpec, goal: Option<&str>) -> Result<SessionMeta> {
     let workspace = current_dir_utf8()?;
     let now = Utc::now();
     let id = timestamp_id(&now);
@@ -117,7 +125,7 @@ fn write_manager_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta>
     let startup_context = startup_context()?;
     let body = MANAGER_BRIEF_TEMPLATE
         .replace("{workspace}", workspace.as_str())
-        .replace("{agent}", agent)
+        .replace("{agent}", agent.original())
         .replace("{dir}", dir.as_str())
         .replace("{goal}", goal)
         .replace("{startup_context}", &startup_context)
@@ -128,7 +136,10 @@ fn write_manager_session(agent: &str, goal: Option<&str>) -> Result<SessionMeta>
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
-        agent: agent.to_owned(),
+        agent: agent.original().to_owned(),
+        agent_family: agent.tier().map(|tier| tier.family),
+        model: agent.model().map(str::to_owned),
+        effort: agent.effort().map(str::to_owned),
         workspace,
         brief: path,
     };

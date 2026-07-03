@@ -117,7 +117,7 @@ commands:
     run: cargo test
 ```
 
-Niles has built-in profiles for common agents such as `codex` and `claude`. Task files and project config can still override agents, commands, and workspace values locally when a project needs an explicit invocation.
+Niles has built-in profiles for common agents such as `codex` and `claude`. Agent references can optionally select a family-specific model and effort tier with `family:model[:effort]`, for example `codex:gpt-5.5:xhigh`, `codex:gpt-5.4`, `claude:opus:max`, or `claude:sonnet:med`. Task files, `niles spawn --agent`, and workspace manifest role bindings all accept this syntax. Task files and project config can still override agents, commands, and workspace values locally when a project needs an explicit invocation.
 
 ## Example Task
 

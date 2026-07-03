@@ -66,11 +66,8 @@ pub(crate) fn spawn_agent_window(
     }
 
     let config = load_project_config_from(project)?;
-    let invocation = agents::invocation(
-        agent,
-        config.agents.get(agent),
-        agents::InvocationDefaults::Worker,
-    );
+    let config = agents::config_for(&config.agents, agent)?;
+    let invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
     write_launch_script(launch_path, &invocation, brief_path)?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     open_window(window_name, cwd, &command)

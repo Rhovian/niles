@@ -23,8 +23,9 @@ pub fn analyze(agent: Option<String>) -> Result<()> {
     fs::create_dir_all(&dir).context("failed to create capability directory")?;
 
     for agent in agents {
-        let binary = agents::default_binary(&agent);
-        let manifest = probe_agent(&agent, &binary);
+        let spec = agents::parse_spec(&agent)?;
+        let binary = agents::default_binary(spec.family());
+        let manifest = probe_agent(&spec, &binary);
         if let Some(gate) = &manifest.version_gate {
             println!("{}", gate.status_line());
         }
@@ -62,11 +63,11 @@ pub(crate) enum ProbeStatus {
     NotFound,
 }
 
-fn probe_agent(agent: &str, binary: &str) -> CapabilityManifest {
+fn probe_agent(agent: &agents::AgentSpec, binary: &str) -> CapabilityManifest {
     let version_probe = run_probe(binary, "--version");
-    let version_gate = version::evaluate_agent_probe(agent, binary, &version_probe);
+    let version_gate = version::evaluate_agent_probe(agent.family(), binary, &version_probe);
     CapabilityManifest {
-        agent: agent.to_owned(),
+        agent: agent.original().to_owned(),
         binary: binary.to_owned(),
         analyzed_at: Utc::now(),
         version_probe,

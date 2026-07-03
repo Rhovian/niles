@@ -131,7 +131,7 @@ Agents own judgment-heavy work:
 
 For workflow files, `niles run` only prepares run state; the foreground manager advances each step explicitly with `niles step` or `niles exec-step`.
 
-Agent steps resolve to subprocess invocations through agent profiles. Built-in profiles are intentionally small and live in code, so agent CLI churn can be absorbed in one place.
+Agent steps resolve to subprocess invocations through agent profiles. Built-in profiles are intentionally small and live in code, so agent CLI churn can be absorbed in one place. Agent references support `family:model[:effort]` qualifiers for built-in families; Niles maps Codex tiers to `--model` plus `model_reasoning_effort` config, and Claude tiers to `--model` plus `--effort`.
 
 Interactive worker windows use worker defaults. For built-in Codex and Claude workers, those defaults bypass agent approval or sandbox prompts: Codex launches with `--dangerously-bypass-approvals-and-sandbox`, and Claude launches with `--dangerously-skip-permissions`. Niles does not enforce an approval-policy gate around worker actions. Captured agent steps use the normal agent profile defaults unless the task or project config overrides them.
 

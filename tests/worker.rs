@@ -170,6 +170,139 @@ esac
 }
 
 #[test]
+fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-tier-test");
+    let home = niles_home(&workspace);
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let codex_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "codex-hi",
+            "--project",
+            ".",
+            "--agent",
+            "codex:gpt-5.5:xhigh",
+            "Fix",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("codex tiered spawn", &codex_spawn);
+    let codex_stdout = String::from_utf8_lossy(&codex_spawn.stdout);
+    assert!(codex_stdout.contains("agent: codex:gpt-5.5:xhigh"));
+    assert!(codex_stdout.contains("agent_family: codex"));
+    assert!(codex_stdout.contains("model: gpt-5.5"));
+    assert!(codex_stdout.contains("effort: xhigh"));
+
+    let codex_meta =
+        fs::read_to_string(workspace.join(".niles/worker/codex-hi/meta.json")).unwrap();
+    assert!(codex_meta.contains(r#""agent": "codex:gpt-5.5:xhigh""#));
+    assert!(codex_meta.contains(r#""agent_family": "codex""#));
+    assert!(codex_meta.contains(r#""model": "gpt-5.5""#));
+    assert!(codex_meta.contains(r#""effort": "xhigh""#));
+
+    let codex_launch =
+        fs::read_to_string(workspace.join(".niles/worker/codex-hi/launch.sh")).unwrap();
+    assert!(codex_launch.contains("'--dangerously-bypass-approvals-and-sandbox'"));
+    assert!(codex_launch.contains("'--model' 'gpt-5.5'"));
+    assert!(codex_launch.contains("'--config' 'model_reasoning_effort=\"xhigh\"'"));
+
+    let claude_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "claude-max",
+            "--project",
+            ".",
+            "--agent",
+            "claude:opus:max",
+            "Review",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("claude tiered spawn", &claude_spawn);
+
+    let claude_meta =
+        fs::read_to_string(workspace.join(".niles/worker/claude-max/meta.json")).unwrap();
+    assert!(claude_meta.contains(r#""agent": "claude:opus:max""#));
+    assert!(claude_meta.contains(r#""agent_family": "claude""#));
+    assert!(claude_meta.contains(r#""model": "opus""#));
+    assert!(claude_meta.contains(r#""effort": "max""#));
+
+    let claude_launch =
+        fs::read_to_string(workspace.join(".niles/worker/claude-max/launch.sh")).unwrap();
+    assert!(claude_launch.contains("'--dangerously-skip-permissions'"));
+    assert!(claude_launch.contains("'--model' 'opus'"));
+    assert!(claude_launch.contains("'--effort' 'max'"));
+}
+
+#[test]
+fn spawn_rejects_invalid_model_effort_specs() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-invalid-tier-test");
+
+    let spawn = Command::new(niles)
+        .args(["spawn", "bad-worker", "--agent", "claude:opus:turbo", "Fix"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    assert!(String::from_utf8_lossy(&spawn.stderr).contains("unsupported claude effort `turbo`"));
+    assert!(!workspace.join(".niles/worker/bad-worker").exists());
+}
+
+#[test]
 fn spawned_worker_resolves_from_invoking_project_and_unrelated_cwds() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-cross-cwd");

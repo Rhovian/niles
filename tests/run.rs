@@ -312,6 +312,154 @@ steps:
 }
 
 #[test]
+fn agent_steps_map_model_effort_specs_into_invocations_and_status() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-run-tier-test");
+
+    let codex = workspace.join("codex");
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+esac
+for arg in "$@"; do
+  printf '[%s]\n' "$arg"
+done
+"#,
+    );
+
+    let task = write_task(
+        &workspace,
+        &format!(
+            r#"
+goal: "Run tiered codex"
+agents:
+  codex:
+    binary: {}
+steps:
+  - agent: codex:gpt-5.5:xhigh
+    task: "hello tier"
+"#,
+            codex.display()
+        ),
+    );
+
+    let prepare = prepare_run(niles, &workspace, &task);
+    assert!(String::from_utf8_lossy(&prepare.stdout).contains("codex:gpt-5.5:xhigh"));
+
+    let step = exec_step_output(niles, &workspace, 1);
+    assert_command_success("tiered codex exec-step", &step);
+    let step_stdout = String::from_utf8_lossy(&step.stdout);
+    assert!(step_stdout.contains("[exec]"));
+    assert!(step_stdout.contains("[--sandbox]"));
+    assert!(step_stdout.contains("[workspace-write]"));
+    assert!(step_stdout.contains("[--model]"));
+    assert!(step_stdout.contains("[gpt-5.5]"));
+    assert!(step_stdout.contains("[--config]"));
+    assert!(step_stdout.contains("[model_reasoning_effort=\"xhigh\"]"));
+
+    let status = Command::new(niles)
+        .arg("status")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("status", &status);
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("agent_tiers[1]{index,agent_family,model,effort}:"));
+    assert!(status_stdout.contains("1,codex,gpt-5.5,xhigh"));
+
+    let show = Command::new(niles)
+        .arg("show")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("show", &show);
+    assert!(
+        String::from_utf8_lossy(&show.stdout)
+            .contains("agent_family codex model gpt-5.5 effort xhigh")
+    );
+}
+
+#[test]
+fn manifest_role_bindings_accept_model_effort_agent_specs() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-manifest-tier-test");
+
+    let claude = workspace.join("claude");
+    write_executable(
+        &claude,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+esac
+for arg in "$@"; do
+  printf '[%s]\n' "$arg"
+done
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            r#"
+agents:
+  claude:
+    binary: {}
+"#,
+            claude.display()
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(workspace.join(".niles")).unwrap();
+    fs::write(
+        workspace.join(".niles/manifest.yaml"),
+        r#"
+manager: "claude:opus:max"
+planner: "claude:sonnet:med"
+implementer: "claude:sonnet:med"
+reviewer: "claude:opus:max"
+validation_command: "test"
+"#,
+    )
+    .unwrap();
+
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "Resolve tiered manifest role"
+steps:
+  - role: implementer
+    task: "implement with sonnet"
+"#,
+    );
+
+    let prepare = prepare_run(niles, &workspace, &task);
+    let prepare_stdout = String::from_utf8_lossy(&prepare.stdout);
+    assert!(prepare_stdout.contains("1 implementer agent claude:sonnet:med"));
+
+    let step = exec_step_output(niles, &workspace, 1);
+    assert_command_success("tiered manifest exec-step", &step);
+    let step_stdout = String::from_utf8_lossy(&step.stdout);
+    assert!(step_stdout.contains("[-p]"));
+    assert!(step_stdout.contains("[--model]"));
+    assert!(step_stdout.contains("[sonnet]"));
+    assert!(step_stdout.contains("[--effort]"));
+    assert!(step_stdout.contains("[medium]"));
+
+    let status_json = Command::new(niles)
+        .arg("status")
+        .arg("--json")
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("status --json", &status_json);
+    let status_json_stdout = String::from_utf8_lossy(&status_json.stdout);
+    assert!(status_json_stdout.contains(r#""agent_family": "claude""#));
+    assert!(status_json_stdout.contains(r#""model": "sonnet""#));
+    assert!(status_json_stdout.contains(r#""effort": "medium""#));
+}
+
+#[test]
 fn run_enforces_known_agent_cli_min_version_and_allows_override() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-version-run-test");
@@ -408,6 +556,61 @@ esac
     let manifest = fs::read_to_string(workspace.join(".niles/capabilities/codex.json")).unwrap();
     assert!(manifest.contains(r#""version_gate""#));
     assert!(manifest.contains(r#""status": "fail""#));
+}
+
+#[test]
+fn analyze_validates_agent_specs_and_keeps_tiered_version_gate() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-tiered-analyze-test");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let valid = Command::new(niles)
+        .args(["analyze", "--agent", "codex:gpt-5.5:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("tiered analyze", &valid);
+    let stdout = String::from_utf8_lossy(&valid.stdout);
+    assert!(stdout.contains("version_gate: codex pass 0.142.4"));
+    assert!(stdout.contains("wrote .niles/capabilities/codex:gpt-5.5:xhigh.json"));
+
+    let manifest =
+        fs::read_to_string(workspace.join(".niles/capabilities/codex:gpt-5.5:xhigh.json")).unwrap();
+    assert!(manifest.contains(r#""agent": "codex:gpt-5.5:xhigh""#));
+    assert!(manifest.contains(r#""version_gate""#));
+
+    let invalid = Command::new(niles)
+        .args(["analyze", "--agent", "codex:bogus:wat"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unsupported codex model `bogus`"));
+    assert!(
+        !workspace
+            .join(".niles/capabilities/codex:bogus:wat.json")
+            .exists()
+    );
 }
 
 #[test]
