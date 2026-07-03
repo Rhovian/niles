@@ -93,7 +93,7 @@ This keeps handoffs explicit without expanding the task YAML format. A tmux sess
 
 Status logs use five actionable wake states: `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. `closed:` is terminal for worker waits; for indexed run waits it must mention the matching step.
 
-Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume wake lines by writing a numeric cursor to `status.ack` beside the status log. That keeps pre-attach wake lines visible until a waiter returns them, then prevents the same line from being returned again.
+Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume wake lines by writing a numeric cursor to `status.ack` beside the status log. That keeps pre-attach wake lines visible until a waiter returns them, then prevents the same line from being returned again. Because these waits are single-consumer, an active unindexed waiter records its pid and start time in `status.waiter`; a second unindexed waiter on the same status log fails at attach instead of silently stealing a wake. Each consumed wake is also recorded in `status.ack.log`.
 
 Indexed waits such as `niles wait <run> --index N` intentionally scan the full log for an actionable line that contains the exact token pair `step N`. Generic `done:` or `failed:` lines do not satisfy an indexed wait.
 

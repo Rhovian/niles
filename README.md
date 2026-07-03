@@ -72,7 +72,7 @@ Worker briefs include a status file. The foreground manager uses `niles wait --w
 
 ## Wake Lines
 
-Actionable wake states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume returned wake lines by advancing a `status.ack` cursor beside `status.log`; old unacknowledged lines remain deliverable, and acknowledged lines are not delivered again. Indexed waits such as `niles wait <run> --index N` scan the full log for an actionable line containing the exact token pair `step N`, so generic wake lines do not satisfy indexed waits. For indexed run waits, `closed:` must also mention the matching step; worker waits treat any `closed:` line as terminal.
+Actionable wake states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume returned wake lines by advancing a `status.ack` cursor beside `status.log`; old unacknowledged lines remain deliverable, and acknowledged lines are not delivered again. Only one unindexed wait may attach to a status log at a time: the active waiter is recorded in `status.waiter` with its pid and start time, and a duplicate wait fails loudly instead of stealing the wake. Each consumed wake is recorded in `status.ack.log` for later diagnosis. Indexed waits such as `niles wait <run> --index N` scan the full log for an actionable line containing the exact token pair `step N`, so generic wake lines do not satisfy indexed waits. For indexed run waits, `closed:` must also mention the matching step; worker waits treat any `closed:` line as terminal.
 
 ## Role Workflows
 

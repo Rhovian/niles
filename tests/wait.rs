@@ -178,6 +178,121 @@ fn wait_worker_does_not_redeliver_consumed_wake_and_delivers_next() {
 }
 
 #[test]
+fn wait_worker_rejects_second_unindexed_wait_while_first_is_attached() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-wait-duplicate");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    let status_log = worker_dir.join("status.log");
+    fs::write(&status_log, "working: first waiter is attached\n").unwrap();
+
+    let first = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "5",
+        ])
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    wait_for_path(&worker_dir.join("status.waiter"));
+
+    let second = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "5",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stdout).is_empty());
+    let second_stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second_stderr.contains("another unindexed wait is already attached"));
+    assert!(second_stderr.contains("pid"));
+    assert!(second_stderr.contains("status.waiter"));
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(&status_log)
+        .unwrap();
+    writeln!(status, "done: first waiter wake").unwrap();
+
+    let first = first.wait_with_output().unwrap();
+    assert_command_success("first wait --worker duplicate", &first);
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout),
+        "done: first waiter wake\n"
+    );
+    assert!(!worker_dir.join("status.waiter").exists());
+
+    let ack_log = fs::read_to_string(worker_dir.join("status.ack.log")).unwrap();
+    assert!(ack_log.contains(r#""event":"wake-consumed""#));
+    assert!(ack_log.contains(r#""line":"done: first waiter wake""#));
+    assert!(ack_log.contains(r#""pid":"#));
+}
+
+#[test]
+fn wait_run_rejects_second_unindexed_wait_while_first_is_attached() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-run-wait-duplicate");
+    let run_dir = workspace.join(".niles/runs/test-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let status_log = run_dir.join("status.log");
+    fs::write(&status_log, "working: first waiter is attached\n").unwrap();
+
+    let first = Command::new(niles)
+        .args(["wait", "test-run", "--interval", "0.05", "--timeout", "5"])
+        .current_dir(&workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    wait_for_path(&run_dir.join("status.waiter"));
+
+    let second = Command::new(niles)
+        .args(["wait", "test-run", "--interval", "0.05", "--timeout", "5"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stdout).is_empty());
+    let second_stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second_stderr.contains("another unindexed wait is already attached"));
+    assert!(second_stderr.contains("pid"));
+    assert!(second_stderr.contains("status.waiter"));
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(&status_log)
+        .unwrap();
+    writeln!(status, "done: run waiter wake").unwrap();
+
+    let first = first.wait_with_output().unwrap();
+    assert_command_success("first wait run duplicate", &first);
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout),
+        "done: run waiter wake\n"
+    );
+    assert!(!run_dir.join("status.waiter").exists());
+}
+
+#[test]
 fn wait_worker_corrupt_ack_falls_back_to_start() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-wait-corrupt-ack");
@@ -395,6 +510,14 @@ fn wait_index_rejects_untagged_wake_attributed_to_another_step() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("timeout"));
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !path.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(path.exists(), "{} did not appear", path.display());
 }
 
 fn write_manual_run_state(run_dir: &Path, id: &str, running_step: usize) {
