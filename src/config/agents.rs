@@ -146,13 +146,27 @@ pub fn invocation(
     Ok(invocation)
 }
 
-pub fn foreground_invocation(agent: &str) -> Result<AgentInvocation> {
+pub fn foreground_invocation(agent: &str, config: Option<&AgentConfig>) -> Result<AgentInvocation> {
     let spec = AgentSpec::parse(agent)?;
-    let mut invocation = AgentInvocation {
+    let default_invocation = AgentInvocation {
         binary: default_binary(spec.family()),
         args: Vec::new(),
         prompt: worker_prompt(spec.family()),
-        spec,
+        spec: spec.clone(),
+    };
+
+    let mut invocation = match config {
+        Some(config) => AgentInvocation {
+            binary: config.binary.clone().unwrap_or(default_invocation.binary),
+            args: if config.args.is_empty() {
+                default_invocation.args
+            } else {
+                config.args.clone()
+            },
+            prompt: config.prompt,
+            spec,
+        },
+        None => default_invocation,
     };
     invocation.args.extend(mapped_tier_args(&invocation.spec)?);
     Ok(invocation)
@@ -314,11 +328,10 @@ fn canonical_family(family: &str) -> Option<String> {
 fn normalize_model(family: &str, model: &str) -> Result<String> {
     let normalized = model.to_ascii_lowercase();
     match family {
-        "codex" if supported_codex_model(&normalized) => Ok(normalized),
-        "claude" if supported_claude_model(&normalized) => Ok(normalized),
-        "codex" | "claude" => {
-            bail!("unsupported {family} model `{model}` in agent spec")
-        }
+        "codex" | "claude" if is_model_token(&normalized) => Ok(normalized),
+        "codex" | "claude" => bail!(
+            "invalid {family} model `{model}` in agent spec; expected letters, digits, '.', '_', or '-'"
+        ),
         _ => Ok(model.to_owned()),
     }
 }
@@ -351,6 +364,36 @@ fn normalize_effort(family: &str, effort: &str) -> Result<String> {
         }
         _ => Ok(effort.to_owned()),
     }
+}
+
+pub(crate) fn validate_static_model(spec: &AgentSpec) -> Result<()> {
+    let Some(model) = spec.model() else {
+        return Ok(());
+    };
+
+    match spec.family() {
+        "codex" if supported_codex_model(model) => Ok(()),
+        "claude" if supported_claude_model(model) => Ok(()),
+        "codex" | "claude" => bail!(
+            "unsupported {} model `{model}` in agent spec",
+            spec.family()
+        ),
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn default_model_aliases(family: &str) -> &'static [&'static str] {
+    match family {
+        "codex" => &["o3", "o3-pro", "o4-mini"],
+        "claude" => &["opus", "sonnet", "fable", "haiku"],
+        _ => &[],
+    }
+}
+
+fn is_model_token(model: &str) -> bool {
+    model
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
 }
 
 fn supported_codex_model(model: &str) -> bool {
@@ -411,6 +454,34 @@ mod tests {
     }
 
     #[test]
+    fn foreground_invocation_preserves_builtin_manager_defaults() {
+        let invocation = foreground_invocation("claude:opus:max", None).unwrap();
+
+        assert_eq!(invocation.binary, "claude");
+        assert_eq!(
+            invocation.args,
+            ["--model", "opus", "--effort", "max"].map(str::to_owned)
+        );
+        assert!(matches!(invocation.prompt, PromptMode::Arg));
+    }
+
+    #[test]
+    fn foreground_invocation_uses_configured_custom_manager_binary_and_args() {
+        let config = AgentConfig {
+            binary: Some("/tmp/custom-manager".to_owned()),
+            args: ["--mode", "manager"].map(str::to_owned).to_vec(),
+            prompt: PromptMode::Arg,
+        };
+
+        let invocation = foreground_invocation("gemini", Some(&config)).unwrap();
+
+        assert_eq!(invocation.binary, "/tmp/custom-manager");
+        assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
+        assert_eq!(invocation.spec.family(), "gemini");
+        assert!(matches!(invocation.prompt, PromptMode::Arg));
+    }
+
+    #[test]
     fn parses_agent_model_effort_specs() {
         let codex = AgentSpec::parse("codex:gpt-5.5:xhigh").unwrap();
         assert_eq!(codex.original(), "codex:gpt-5.5:xhigh");
@@ -435,6 +506,9 @@ mod tests {
         assert_eq!(codex_full.family(), "codex");
         assert_eq!(codex_full.model(), Some("gpt-5.5-codex"));
 
+        let future = AgentSpec::parse("codex:omega:xhigh").unwrap();
+        assert_eq!(future.model(), Some("omega"));
+
         let bare = AgentSpec::parse("custom").unwrap();
         assert_eq!(bare.family(), "custom");
         assert_eq!(bare.model(), None);
@@ -446,9 +520,17 @@ mod tests {
         assert!(AgentSpec::parse("codex:gpt-5.5:xhigh:extra").is_err());
         assert!(AgentSpec::parse("codex::xhigh").is_err());
         assert!(AgentSpec::parse("custom:model:high").is_err());
-        assert!(AgentSpec::parse("codex:bogus:high").is_err());
         assert!(AgentSpec::parse("claude:opus:turbo").is_err());
         assert!(AgentSpec::parse("codex:gpt-5.5:max").is_err());
+        assert!(AgentSpec::parse("codex:not a model:high").is_err());
+    }
+
+    #[test]
+    fn static_validation_rejects_unknown_builtin_models() {
+        let spec = AgentSpec::parse("codex:omega:high").unwrap();
+        let err = validate_static_model(&spec).unwrap_err().to_string();
+
+        assert!(err.contains("unsupported codex model `omega`"));
     }
 
     #[test]

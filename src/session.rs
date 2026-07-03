@@ -2,7 +2,8 @@ use std::{
     env,
     ffi::OsStr,
     fs,
-    process::{Command, Stdio},
+    io::Write,
+    process::{Command, ExitStatus, Stdio},
 };
 
 use anyhow::{Context, Result, bail};
@@ -11,7 +12,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::agents,
+    config::{
+        agents,
+        spec::{PromptMode, load_project_config_from},
+    },
     schema::{self, ArtifactKind},
     store,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
@@ -71,22 +75,17 @@ fn tmux_session_present(tmux: Option<&OsStr>) -> bool {
 }
 
 fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
-    let invocation = agents::foreground_invocation(agent)?;
+    let invocation = foreground_invocation_for_project(Utf8Path::new("."), agent)?;
     let binary = invocation.binary;
     let mut args = invocation.args;
     let family = invocation.spec.family().to_owned();
     let meta = write_manager_session(&invocation.spec, goal)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    args.extend(manager_prompt_args(&family, brief, goal));
+    let prompt = manager_prompt_io(&family, invocation.prompt, brief, goal);
+    args.extend(prompt.args);
 
-    let status = Command::new(&binary)
-        .args(&args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .with_context(|| format!("failed to launch foreground agent `{binary}`"))?;
+    let status = run_foreground_process(&binary, &args, prompt.stdin.as_deref())?;
 
     if status.success() {
         Ok(())
@@ -101,12 +100,85 @@ fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
     }
 }
 
+fn run_foreground_process(
+    binary: &str,
+    args: &[String],
+    stdin: Option<&str>,
+) -> Result<ExitStatus> {
+    let mut command = Command::new(binary);
+    command
+        .args(args)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    match stdin {
+        Some(stdin) => {
+            let mut child = command
+                .stdin(Stdio::piped())
+                .spawn()
+                .with_context(|| format!("failed to launch foreground agent `{binary}`"))?;
+            let mut child_stdin = child
+                .stdin
+                .take()
+                .context("failed to open foreground agent stdin pipe")?;
+            child_stdin.write_all(stdin.as_bytes()).with_context(|| {
+                format!("failed to write foreground agent stdin for `{binary}`")
+            })?;
+            drop(child_stdin);
+            child
+                .wait()
+                .with_context(|| format!("failed to wait for foreground agent `{binary}`"))
+        }
+        None => command
+            .stdin(Stdio::inherit())
+            .status()
+            .with_context(|| format!("failed to launch foreground agent `{binary}`")),
+    }
+}
+
+fn foreground_invocation_for_project(
+    root: &Utf8Path,
+    agent: &str,
+) -> Result<agents::AgentInvocation> {
+    let config = load_project_config_from(root)?;
+    let agent_config = agents::config_for(&config.agents, agent)?;
+    agents::foreground_invocation(agent, agent_config)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForegroundPrompt {
+    args: Vec<String>,
+    stdin: Option<String>,
+}
+
+fn manager_prompt_io(
+    agent: &str,
+    prompt: PromptMode,
+    brief: String,
+    goal: Option<&str>,
+) -> ForegroundPrompt {
+    match prompt {
+        PromptMode::Arg => ForegroundPrompt {
+            args: manager_prompt_args(agent, brief, goal),
+            stdin: None,
+        },
+        PromptMode::Stdin => ForegroundPrompt {
+            args: Vec::new(),
+            stdin: Some(manager_stdin_prompt(brief, goal)),
+        },
+    }
+}
+
 fn manager_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec<String> {
     let startup_prompt = startup_prompt(goal);
     match agent {
         "claude" => vec!["--append-system-prompt".to_owned(), brief, startup_prompt],
         _ => vec![format!("{brief}\n\n{startup_prompt}")],
     }
+}
+
+fn manager_stdin_prompt(brief: String, goal: Option<&str>) -> String {
+    format!("{brief}\n\n{}", startup_prompt(goal))
 }
 
 fn startup_prompt(_goal: Option<&str>) -> String {
@@ -219,6 +291,11 @@ fn worker_context() -> Result<String> {
 mod tests {
     use super::*;
 
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     #[test]
     fn tmux_session_present_accepts_nonempty_env() {
         assert!(tmux_session_present(Some(OsStr::new(
@@ -242,6 +319,124 @@ mod tests {
     }
 
     #[test]
+    fn foreground_invocation_for_project_preserves_builtin_manager_defaults() {
+        let root = temp_test_path("builtin-manager");
+
+        let invocation = foreground_invocation_for_project(&root, "claude:opus:max").unwrap();
+
+        assert_eq!(invocation.binary, "claude");
+        assert_eq!(
+            invocation.args,
+            ["--model", "opus", "--effort", "max"].map(str::to_owned)
+        );
+    }
+
+    #[test]
+    fn foreground_invocation_for_project_uses_configured_custom_manager() {
+        let root = temp_test_path("custom-manager");
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join("custom-manager");
+        fs::write(
+            root.join("niles.yaml"),
+            format!(
+                r#"
+agents:
+  gemini:
+    binary: {}
+    args:
+      - --mode
+      - manager
+"#,
+                binary
+            ),
+        )
+        .unwrap();
+
+        let invocation = foreground_invocation_for_project(&root, "gemini").unwrap();
+
+        assert_eq!(invocation.binary, binary.as_str());
+        assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
+        assert_eq!(invocation.spec.family(), "gemini");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_custom_manager_stdin_prompt_keeps_prompt_out_of_args() {
+        let root = temp_test_path("custom-manager-stdin");
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join("custom-manager");
+        fs::write(
+            root.join("niles.yaml"),
+            format!(
+                r#"
+agents:
+  gemini:
+    binary: {}
+    args:
+      - --mode
+      - manager
+    prompt: stdin
+"#,
+                binary
+            ),
+        )
+        .unwrap();
+
+        let invocation = foreground_invocation_for_project(&root, "gemini").unwrap();
+        let prompt = manager_prompt_io(
+            invocation.spec.family(),
+            invocation.prompt,
+            "brief body".to_owned(),
+            Some("ship it"),
+        );
+        let mut args = invocation.args;
+        args.extend(prompt.args);
+
+        assert!(matches!(invocation.prompt, PromptMode::Stdin));
+        assert_eq!(args, ["--mode", "manager"].map(str::to_owned));
+        assert!(args.iter().all(|arg| !arg.contains("brief body")));
+        assert_eq!(
+            prompt.stdin.as_deref(),
+            Some("brief body\n\nStart the Niles manager session.")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_foreground_process_writes_stdin_without_prompt_args() {
+        let root = temp_test_path("foreground-stdin-process");
+        fs::create_dir_all(&root).unwrap();
+        let script = root.join("manager");
+        let args_log = root.join("args.log");
+        let stdin_log = root.join("stdin.log");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\n",
+                args_log, stdin_log
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let args = ["--mode", "manager"].map(str::to_owned);
+        let prompt = "brief body\n\nStart the Niles manager session.";
+        let status = run_foreground_process(script.as_str(), &args, Some(prompt)).unwrap();
+
+        assert!(status.success());
+        let args_body = fs::read_to_string(args_log).unwrap();
+        assert_eq!(args_body, "--mode\nmanager\n");
+        assert!(!args_body.contains("brief body"));
+        assert_eq!(fs::read_to_string(stdin_log).unwrap(), prompt);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
         let args = manager_prompt_args("claude", "brief body".to_owned(), Some("ship it"));
 
@@ -252,9 +447,37 @@ mod tests {
     }
 
     #[test]
+    fn manager_prompt_io_preserves_claude_arg_mode_system_prompt() {
+        let prompt = manager_prompt_io(
+            "claude",
+            PromptMode::Arg,
+            "brief body".to_owned(),
+            Some("ship it"),
+        );
+
+        assert_eq!(prompt.stdin, None);
+        assert_eq!(prompt.args.len(), 3);
+        assert_eq!(prompt.args[0], "--append-system-prompt");
+        assert_eq!(prompt.args[1], "brief body");
+        assert_eq!(prompt.args[2], "Start the Niles manager session.");
+    }
+
+    #[test]
     fn manager_brief_omits_removed_manifest_command() {
         assert!(MANAGER_BRIEF_TEMPLATE.contains("niles spawn <id>"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("niles run"));
         assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
+    }
+
+    fn temp_test_path(label: &str) -> Utf8PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "niles-session-{label}-{}-{nanos}",
+            std::process::id()
+        )))
+        .unwrap()
     }
 }

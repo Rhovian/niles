@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeSet, env, fmt};
 
 use anyhow::{Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     analyze::{ProbeResult, ProbeStatus, run_probe},
@@ -20,7 +20,7 @@ struct SemVer {
     patch: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum VersionGateStatus {
     Pass,
@@ -28,7 +28,7 @@ pub(crate) enum VersionGateStatus {
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct VersionGateReport {
     pub agent: String,
     pub binary: String,

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, BufRead, IsTerminal, Write},
 };
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{
         agents,
-        spec::{CommandConfig, TaskSpec, TaskStep},
+        spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
     },
     schema::{self, ArtifactKind},
 };
@@ -157,6 +158,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
 ) -> Result<WorkspaceManifest> {
+    let agent_configs = load_project_config_from(root)?.agents;
     let path = manifest_path(root);
     let mut recreating = false;
     let existing = match load(root) {
@@ -191,7 +193,13 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let manager = prompt_agent_value(input, output, "Manager agent", &manifest.manager)?;
+        let manager = prompt_agent_value(
+            input,
+            output,
+            "Manager agent",
+            &manifest.manager,
+            &agent_configs,
+        )?;
         let manager_changed = manager != manifest.manager;
         manifest.manager = manager;
         if manager_changed {
@@ -204,7 +212,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
                 output,
                 "Choose persistent agents for this workspace. Press Enter to accept a default."
             )?;
-            manifest = prompt_manifest_values(input, output, &manifest)?;
+            manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
             save(root, &manifest)?;
             writeln!(output, "manifest: {path} (updated roles)")?;
         }
@@ -228,7 +236,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         reviewer: defaults.reviewer.clone(),
         validation_command: defaults.validation_command.clone(),
     };
-    let mut manifest = prompt_manifest_values(input, output, &defaults)?;
+    let mut manifest = prompt_manifest_values(input, output, &defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -237,7 +245,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        manifest = prompt_manifest_values(input, output, &manifest)?;
+        manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
         save(root, &manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
     }
@@ -249,12 +257,37 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
     defaults: &WorkspaceManifest,
+    agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: prompt_agent_value(input, output, "Manager agent", &defaults.manager)?,
-        planner: prompt_agent_value(input, output, "Planner agent", &defaults.planner)?,
-        implementer: prompt_agent_value(input, output, "Implementer agent", &defaults.implementer)?,
-        reviewer: prompt_agent_value(input, output, "Reviewer agent", &defaults.reviewer)?,
+        manager: prompt_agent_value(
+            input,
+            output,
+            "Manager agent",
+            &defaults.manager,
+            agent_configs,
+        )?,
+        planner: prompt_agent_value(
+            input,
+            output,
+            "Planner agent",
+            &defaults.planner,
+            agent_configs,
+        )?,
+        implementer: prompt_agent_value(
+            input,
+            output,
+            "Implementer agent",
+            &defaults.implementer,
+            agent_configs,
+        )?,
+        reviewer: prompt_agent_value(
+            input,
+            output,
+            "Reviewer agent",
+            &defaults.reviewer,
+            agent_configs,
+        )?,
         validation_command: prompt_value(
             input,
             output,
@@ -297,14 +330,33 @@ fn prompt_agent_value<R: BufRead, W: Write>(
     output: &mut W,
     label: &str,
     default: &str,
+    agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
     loop {
         let value = prompt_value(input, output, label, default)?;
-        match agents::parse_spec(&value) {
-            Ok(_) => return Ok(value),
+        match validate_manifest_agent(&value, agent_configs) {
+            Ok(()) => return Ok(value),
             Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
         }
     }
+}
+
+fn validate_manifest_agent(
+    value: &str,
+    agent_configs: &BTreeMap<String, AgentConfig>,
+) -> Result<()> {
+    let spec = agents::parse_spec(value)?;
+    if agents::profile_for(spec.family()).is_some()
+        || agent_configs.contains_key(spec.original())
+        || agent_configs.contains_key(spec.family())
+    {
+        return Ok(());
+    }
+
+    bail!(
+        "unknown agent `{}`; configure it in niles.yaml or choose codex/claude",
+        spec.family()
+    )
 }
 
 fn prompt_value<R: BufRead, W: Write>(
@@ -465,7 +517,7 @@ validation_command: lint
     }
 
     #[test]
-    fn rejects_invalid_agent_specs_before_persisting_manifest_values() {
+    fn rejects_invalid_or_unknown_agent_specs_before_persisting_manifest_values() {
         let root = temp_test_path("invalid-agent-prompt");
         fs::create_dir_all(root.join(".niles")).unwrap();
         let original = WorkspaceManifest {
@@ -478,7 +530,7 @@ validation_command: lint
         save(&root, &original).unwrap();
 
         let mut input = Cursor::new(
-            b"claude:opus:turbo\nclaude:haiku:low\ny\n\nclaude:nope:low\nclaude:haiku:max\ncodex\nclaude\nlint\n"
+            b"gemini\nclaude:opus:turbo\nclaude:future:low\ny\n\ngemini\nclaude:new-model:max\ncodex\nclaude\nlint\n"
                 .to_vec(),
         );
         let mut output = Vec::new();
@@ -491,8 +543,8 @@ validation_command: lint
         )
         .unwrap();
 
-        assert_eq!(manifest.manager, "claude:haiku:low");
-        assert_eq!(manifest.planner, "claude:haiku:max");
+        assert_eq!(manifest.manager, "claude:future:low");
+        assert_eq!(manifest.planner, "claude:new-model:max");
         assert_eq!(manifest.implementer, "codex");
         assert_eq!(manifest.reviewer, "claude");
         assert_eq!(manifest.validation_command, "lint");
@@ -500,8 +552,11 @@ validation_command: lint
         assert_eq!(persisted, manifest);
 
         let output = String::from_utf8(output).unwrap();
+        assert!(output.contains(
+            "Invalid agent spec: unknown agent `gemini`; configure it in niles.yaml or choose codex/claude"
+        ));
         assert!(output.contains("Invalid agent spec: unsupported claude effort `turbo`"));
-        assert!(output.contains("Invalid agent spec: unsupported claude model `nope`"));
+        assert!(!output.contains("unsupported claude model"));
         assert!(output.contains("Manager agent [codex]: "));
         assert!(output.contains("Planner agent [claude]: "));
 
@@ -512,6 +567,19 @@ validation_command: lint
     fn can_reconfigure_workspace_manifest_roles_after_manager_pick() {
         let root = temp_test_path("existing-role-update");
         fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            root.join("niles.yaml"),
+            r#"
+agents:
+  planbot:
+    binary: /bin/echo
+  codebot:
+    binary: /bin/echo
+  reviewbot:
+    binary: /bin/echo
+"#,
+        )
+        .unwrap();
         fs::write(
             manifest_path(&root),
             r#"
@@ -673,6 +741,43 @@ niles_schema: 2
         assert!(output.contains("Niles workspace manifest not found"));
         assert!(output.contains("Manager agent [claude]: "));
         assert!(output.contains("Change any manifest roles? [y/N]: "));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_custom_manager_is_accepted_by_manifest_prompt() {
+        let root = temp_test_path("custom-manager-prompt");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("niles.yaml"),
+            r#"
+agents:
+  gemini:
+    binary: /bin/echo
+"#,
+        )
+        .unwrap();
+        let mut input = Cursor::new(b"gemini\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
+        let mut output = Vec::new();
+
+        let manifest = ensure_interactive_with_io(
+            &root,
+            &WorkspaceManifestDefaults::default(),
+            true,
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.manager, "gemini");
+        let persisted = load(&root).unwrap().unwrap();
+        assert_eq!(persisted, manifest);
+        assert!(
+            !String::from_utf8(output)
+                .unwrap()
+                .contains("Invalid agent spec")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
