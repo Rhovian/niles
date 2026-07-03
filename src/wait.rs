@@ -175,6 +175,14 @@ fn wait_for_wake(
         if let Some(result) = target.closed_if_missing() {
             return Ok(result);
         }
+        if let Some(waiter) = &waiter
+            && let Err(err) = waiter.verify()
+        {
+            if let Some(result) = target.closed_if_missing() {
+                return Ok(result);
+            }
+            return Err(err);
+        }
 
         let lines = read_lines(target.status())?;
         if let Some(result) = scanner.select(&lines)? {
@@ -289,29 +297,77 @@ impl WaiterGuard {
             started_at,
             token: format!("{pid}-{}", timestamp_id(&started_at)),
         };
+        let body = format!("{}\n", serde_json::to_string_pretty(&registration)?);
 
+        for retry in 0..=1 {
+            match Self::try_create(&path, registration.clone(), &body)? {
+                Some(guard) => return Ok(guard),
+                None => {
+                    resolve_existing_waiter(status, &path)?;
+                    if retry == 1 {
+                        bail!(
+                            "waiter registration changed while attaching to {status}; retry wait"
+                        );
+                    }
+                }
+            }
+        }
+
+        unreachable!()
+    }
+
+    fn try_create(
+        path: &Utf8Path,
+        registration: WaiterRegistration,
+        body: &str,
+    ) -> Result<Option<Self>> {
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path)
+            .open(path)
         {
             Ok(mut file) => {
-                let body = serde_json::to_string_pretty(&registration)?;
-                let write_result = file
+                if let Err(err) = file
                     .write_all(body.as_bytes())
-                    .and_then(|()| file.write_all(b"\n"))
-                    .with_context(|| format!("failed to write {path}"));
-                if let Err(err) = write_result {
-                    let _ = fs::remove_file(&path);
+                    .with_context(|| format!("failed to write {path}"))
+                {
+                    let _ = fs::remove_file(path);
                     return Err(err);
                 }
-                Ok(Self { path, registration })
+                Ok(Some(Self {
+                    path: path.to_path_buf(),
+                    registration,
+                }))
             }
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-                bail_existing_waiter(status, &path)
-            }
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(None),
             Err(err) => Err(err).with_context(|| format!("failed to create {path}")),
         }
+    }
+
+    fn verify(&self) -> Result<()> {
+        let registration = read_optional_json::<WaiterRegistration>(
+            &self.path,
+            |path| format!("failed to read {path}"),
+            |path| format!("failed to parse {path}"),
+        )
+        .with_context(|| {
+            format!(
+                "waiter registration was removed/replaced while waiting: {}",
+                self.path
+            )
+        })?;
+
+        if registration
+            .as_ref()
+            .is_some_and(|registration| registration.token == self.registration.token)
+        {
+            return Ok(());
+        }
+
+        bail!(
+            "waiter registration was removed/replaced while waiting: {}",
+            self.path
+        )
     }
 }
 
@@ -331,22 +387,35 @@ impl Drop for WaiterGuard {
     }
 }
 
-fn bail_existing_waiter(status: &Utf8Path, path: &Utf8Path) -> Result<WaiterGuard> {
+fn resolve_existing_waiter(status: &Utf8Path, path: &Utf8Path) -> Result<()> {
     match read_optional_json::<WaiterRegistration>(
         path,
         |path| format!("failed to read {path}"),
         |path| format!("failed to parse {path}"),
     ) {
-        Ok(Some(waiter)) => bail!(
-            "another unindexed wait is already attached to {status} (pid {}, since {}); \
-             active waiter registration: {path}; remove that file if the waiter is stale",
-            waiter.pid,
-            waiter.started_at.to_rfc3339()
-        ),
-        Ok(None) => bail!(
-            "another unindexed wait appears to be attached to {status}; \
-             active waiter registration: {path}; remove that file if the waiter is stale"
-        ),
+        Ok(Some(waiter)) if process_is_running(waiter.pid)? => {
+            bail!(
+                "another unindexed wait is already attached to {status} (pid {}, since {}; pid {} is running); \
+                 active waiter registration: {path}",
+                waiter.pid,
+                waiter.started_at.to_rfc3339(),
+                waiter.pid
+            )
+        }
+        Ok(Some(waiter)) => {
+            log_stale_waiter_reclaimed(status, &waiter)?;
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed to remove stale waiter registration {path}")
+                    });
+                }
+            }
+            Ok(())
+        }
+        Ok(None) => Ok(()),
         Err(err) => bail!(
             "another unindexed wait appears to be attached to {status}, but {path} could not be read: {err}; \
              remove that file if the waiter is stale"
@@ -554,6 +623,47 @@ fn log_ack_consumption(
         |path| format!("failed to inspect {path}"),
         |path| format!("failed to write {path}"),
     )
+}
+
+fn log_stale_waiter_reclaimed(status: &Utf8Path, waiter: &WaiterRegistration) -> Result<()> {
+    let path = ack_log_path(status);
+    let record = serde_json::json!({
+        "event": "stale-waiter-reclaimed",
+        "pid": waiter.pid,
+        "started_at": waiter.started_at.to_rfc3339(),
+        "token": &waiter.token,
+        "reclaimed_at": Utc::now().to_rfc3339(),
+    });
+    let line = serde_json::to_string(&record)?;
+    append_line(
+        &path,
+        &line,
+        |path| format!("failed to open {path}"),
+        |path| format!("failed to inspect {path}"),
+        |path| format!("failed to write {path}"),
+    )
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> Result<bool> {
+    let pid = libc::pid_t::try_from(pid)
+        .with_context(|| format!("waiter pid {pid} does not fit platform pid_t"))?;
+    let result = unsafe { libc::kill(pid, 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+
+    let err = std::io::Error::last_os_error();
+    match err.raw_os_error() {
+        Some(code) if code == libc::ESRCH => Ok(false),
+        Some(code) if code == libc::EPERM => Ok(true),
+        _ => Err(err).with_context(|| format!("failed to check whether pid {pid} is running")),
+    }
+}
+
+#[cfg(not(unix))]
+fn process_is_running(_pid: u32) -> Result<bool> {
+    Ok(true)
 }
 
 fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
