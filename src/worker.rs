@@ -2,6 +2,7 @@ use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
     store::{self, WorkerLocation, read_state, resolve_run_dir},
     util::{
         absolute_existing_dir, absolute_existing_file, append_line, remove_dir_all_if_exists,
-        remove_file_if_exists, render_template, write_json_pretty,
+        remove_file_if_exists, render_template, timestamp_id, write_json_pretty,
     },
     wake::{self, WakeKind},
 };
@@ -74,11 +75,14 @@ pub fn spawn(
         agents::InvocationDefaults::Worker,
         allow_cli_mismatch,
     )?;
-    if resolve_worker_if_exists(&id)?.is_some() {
+    if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }
 
     let dir = store::workspace_worker_dir(&project, &id)?;
+    if dir.exists() {
+        archive_worker_dir(&id, &project, &dir, Utc::now())?;
+    }
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
     let brief_path = match brief {
@@ -165,7 +169,7 @@ fn print_worker_tier(meta: &WorkerMeta) {
 /// window close errors are reported but do not strand metadata.
 pub fn worker_close(id: String) -> Result<()> {
     validate_id(&id)?;
-    let location = resolve_worker(&id)?;
+    let location = resolve_live_worker(&id)?;
     let worker_dir = location.worker_dir.clone();
     let meta = read_meta_if_exists(&worker_dir)?;
     let window_name = meta
@@ -190,25 +194,46 @@ pub fn worker_close(id: String) -> Result<()> {
         Err(err) => println!("window {window_name} not closed: {err}"),
     }
 
+    let archive_dir = archive_worker_dir(
+        &id,
+        meta.as_ref()
+            .map(|meta| meta.project.as_path())
+            .unwrap_or(location.workspace.as_path()),
+        &worker_dir,
+        Utc::now(),
+    )?;
     store::unregister_worker_location(
         &id,
         Some(&location),
         meta.as_ref().map(|meta| meta.project.as_path()),
         Some(&worker_dir),
     )?;
-    remove_file_if_exists(&meta_path(&worker_dir))?;
+    println!("archive: {archive_dir}");
     println!("closed: {id}");
     Ok(())
 }
 
 pub fn report(id: String) -> Result<()> {
     validate_id(&id)?;
-    let location = resolve_worker(&id)?;
-    let path = report_path(&location.worker_dir);
+    if let Some(location) = resolve_live_worker_if_exists(&id)? {
+        return print_report(&id, &report_path(&location.worker_dir), None);
+    }
+
+    let Some(archive) = latest_archive(&id)? else {
+        bail!("no report found for worker '{id}': no live worker or archive found");
+    };
+    let path = report_path(&archive.archive_dir);
+    print_report(&id, &path, Some(&archive.archive_dir))
+}
+
+fn print_report(id: &str, path: &Utf8Path, archive_dir: Option<&Utf8Path>) -> Result<()> {
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            let final_pane = final_pane_path(&location.worker_dir);
+            let final_pane = path
+                .parent()
+                .map(final_pane_path)
+                .unwrap_or_else(|| Utf8PathBuf::from(FINAL_PANE_FILE));
             if final_pane.exists() {
                 bail!(
                     "no report found for worker '{id}' at {path}; final pane snapshot is available at {final_pane}"
@@ -220,6 +245,9 @@ pub fn report(id: String) -> Result<()> {
         }
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
+    if let Some(archive_dir) = archive_dir {
+        eprintln!("serving archived report from {path} (archive: {archive_dir})");
+    }
     print!("{body}");
     Ok(())
 }
@@ -440,9 +468,68 @@ fn capture_final_pane(
         Some(meta) => agent_window::capture_target(&meta.window, FINAL_PANE_CAPTURE_LINES),
         None => agent_window::capture_window(window_name, FINAL_PANE_CAPTURE_LINES),
     }?;
+    if text.is_empty() {
+        return Ok(None);
+    }
     let path = final_pane_path(worker_dir);
     fs::write(&path, text).with_context(|| format!("failed to write {path}"))?;
     Ok(Some(path))
+}
+
+fn archive_worker_dir(
+    id: &str,
+    workspace: &Utf8Path,
+    worker_dir: &Utf8Path,
+    archived_at: DateTime<Utc>,
+) -> Result<Utf8PathBuf> {
+    if !worker_dir.exists() {
+        return Ok(worker_dir.to_path_buf());
+    }
+    let archive_root = archive_root(worker_dir)?;
+    fs::create_dir_all(&archive_root)
+        .with_context(|| format!("failed to create {archive_root}"))?;
+    let archive_dir = archive_root.join(format!("{id}-{}", timestamp_id(&archived_at)));
+    move_dir(worker_dir, &archive_dir)?;
+    store::register_worker_archive(id, workspace, &archive_dir, archived_at)?;
+    Ok(archive_dir)
+}
+
+fn archive_root(worker_dir: &Utf8Path) -> Result<Utf8PathBuf> {
+    let workers_dir = worker_dir
+        .parent()
+        .with_context(|| format!("worker dir {worker_dir} has no parent"))?;
+    Ok(workers_dir.join("archive"))
+}
+
+fn move_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(err) if err.raw_os_error() == Some(libc::EXDEV) => {
+            copy_dir_all(source, destination)?;
+            remove_dir_all_if_exists(source)
+        }
+        Err(err) => Err(err).with_context(|| format!("failed to move {source} to {destination}")),
+    }
+}
+
+fn copy_dir_all(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("failed to create {destination}"))?;
+    for entry in fs::read_dir(source).with_context(|| format!("failed to read {source}"))? {
+        let entry = entry.with_context(|| format!("failed to read entry in {source}"))?;
+        let path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| anyhow::anyhow!("path is not UTF-8: {}", path.display()))?;
+        let target = destination.join(entry.file_name().to_string_lossy().as_ref());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {path}"))?;
+        if file_type.is_dir() {
+            copy_dir_all(&path, &target)?;
+        } else {
+            fs::copy(&path, &target)
+                .with_context(|| format!("failed to copy {path} to {target}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_failed_spawn(id: &str, project: &Utf8Path, dir: &Utf8Path) -> Result<()> {
@@ -458,6 +545,37 @@ fn resolve_worker(id: &str) -> Result<WorkerLocation> {
 fn resolve_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
     validate_id(id)?;
     store::resolve_worker_location(id)
+}
+
+fn resolve_live_worker(id: &str) -> Result<WorkerLocation> {
+    resolve_live_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))
+}
+
+fn resolve_live_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
+    let Some(location) = resolve_worker_if_exists(id)? else {
+        return Ok(None);
+    };
+    Ok(read_meta_if_exists(&location.worker_dir)?
+        .is_some()
+        .then_some(location))
+}
+
+fn no_live_worker_message(id: &str) -> String {
+    match latest_archive(id) {
+        Ok(Some(archive)) => format!(
+            "no live worker '{id}'; latest archive: {}",
+            archive.archive_dir
+        ),
+        Ok(None) => format!("no live worker '{id}'"),
+        Err(err) => format!("no live worker '{id}'; failed to inspect archives: {err}"),
+    }
+}
+
+fn latest_archive(id: &str) -> Result<Option<store::WorkerArchivePointer>> {
+    Ok(store::resolve_worker_archives(id)?
+        .into_iter()
+        .rev()
+        .find(|archive| archive.archive_dir.exists()))
 }
 
 fn append_closed_sentinel(path: &Utf8Path, id: &str) -> Result<()> {

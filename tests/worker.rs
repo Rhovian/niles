@@ -541,13 +541,13 @@ esac
 
     assert!(!invoker.join(".niles/worker/auth-fix.json").exists());
     assert!(!project.join(".niles/worker/auth-fix.json").exists());
-    assert!(worker_dir.is_dir());
-    assert!(!worker_dir.join("meta.json").exists());
+    assert!(!worker_dir.exists());
+    let archive_dir = latest_archive_dir(&project, "auth-fix");
     assert_eq!(
-        fs::read_to_string(worker_dir.join("final-pane.txt")).unwrap(),
+        fs::read_to_string(archive_dir.join("final-pane.txt")).unwrap(),
         "pane output\n"
     );
-    assert_global_index_lacks(&home, "auth-fix");
+    assert_global_index_lacks_live_worker(&home, "auth-fix");
 }
 
 #[test]
@@ -784,6 +784,7 @@ esac
     );
     let close_stdout = String::from_utf8_lossy(&close.stdout);
     assert!(close_stdout.contains("pane:"));
+    assert!(close_stdout.contains("archive:"));
     assert!(close_stdout.contains("closed window: niles-auth-fix"));
     assert!(close_stdout.contains("closed: auth-fix"));
 
@@ -791,17 +792,295 @@ esac
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -2000"));
     assert!(log.contains("kill-window -t niles:niles-auth-fix"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
-    assert!(worker_dir.is_dir());
-    assert!(!worker_dir.join("meta.json").exists());
+    assert!(!worker_dir.exists());
+    let archive_dir = latest_archive_dir(&workspace, "auth-fix");
     assert_eq!(
-        fs::read_to_string(worker_dir.join("final-pane.txt")).unwrap(),
+        fs::read_to_string(archive_dir.join("final-pane.txt")).unwrap(),
         "final pane\n"
     );
     assert_eq!(
-        fs::read_to_string(worker_dir.join("report.md")).unwrap(),
+        fs::read_to_string(archive_dir.join("report.md")).unwrap(),
         "durable report\n"
     );
-    assert_global_index_lacks(&home, "auth-fix");
+    assert_global_index_lacks_live_worker(&home, "auth-fix");
+}
+
+#[test]
+fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-respawn-same-cwd");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    let first = Command::new(niles)
+        .args([
+            "spawn",
+            "reviewer",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "FIRST",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("first spawn", &first);
+
+    let worker_dir = workspace.join(".niles/worker/reviewer");
+    fs::write(worker_dir.join("report.md"), "first report\n").unwrap();
+    fs::write(worker_dir.join("status.log"), "done: first\n").unwrap();
+
+    let close = Command::new(niles)
+        .args(["worker-close", "reviewer"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "first pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("close first worker", &close);
+    assert!(!worker_dir.exists());
+
+    let archive_dir = latest_archive_dir(&workspace, "reviewer");
+    assert_eq!(
+        fs::read_to_string(archive_dir.join("report.md")).unwrap(),
+        "first report\n"
+    );
+
+    let second = Command::new(niles)
+        .args([
+            "spawn",
+            "reviewer",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "SECOND",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("respawn after close", &second);
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("status.log")).unwrap(),
+        ""
+    );
+    assert!(!worker_dir.join("report.md").exists());
+    assert!(!worker_dir.join("final-pane.txt").exists());
+    assert!(
+        fs::read_to_string(worker_dir.join("brief.md"))
+            .unwrap()
+            .contains("SECOND")
+    );
+}
+
+#[test]
+fn respawn_after_cross_cwd_close_does_not_inherit_archived_state() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = temp_workspace("niles-worker-respawn-cross-cwd");
+    let home = niles_home(&root);
+    let invoker = root.join("invoker");
+    let project = root.join("project");
+    let unrelated = root.join("unrelated");
+    fs::create_dir_all(&invoker).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&unrelated).unwrap();
+    let (bin, tmux_log) = write_worker_test_bins(&root);
+    let path = path_with_bin(&bin);
+
+    let first = Command::new(niles)
+        .arg("spawn")
+        .arg("job1")
+        .arg("--project")
+        .arg(&project)
+        .args(["--agent", "claude", "FIRST"])
+        .current_dir(&invoker)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd first spawn", &first);
+
+    let worker_dir = project.join(".niles/worker/job1");
+    fs::write(worker_dir.join("report.md"), "first worker report\n").unwrap();
+    fs::write(
+        worker_dir.join("status.log"),
+        "working: first\ndone: first result\n",
+    )
+    .unwrap();
+
+    let close = Command::new(niles)
+        .args(["worker-close", "job1"])
+        .current_dir(&unrelated)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "first pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd close", &close);
+    assert!(!worker_dir.exists());
+
+    let second = Command::new(niles)
+        .arg("spawn")
+        .arg("job1")
+        .arg("--project")
+        .arg(&project)
+        .args(["--agent", "claude", "SECOND"])
+        .current_dir(&invoker)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("cross-cwd respawn", &second);
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("status.log")).unwrap(),
+        ""
+    );
+    assert!(!worker_dir.join("report.md").exists());
+    assert!(!worker_dir.join("final-pane.txt").exists());
+    assert!(
+        fs::read_to_string(worker_dir.join("brief.md"))
+            .unwrap()
+            .contains("SECOND")
+    );
+}
+
+#[test]
+fn report_falls_back_to_most_recent_archive_from_unrelated_cwd() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = temp_workspace("niles-worker-report-archive");
+    let home = niles_home(&root);
+    let workspace = root.join("workspace");
+    let unrelated = root.join("unrelated");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&unrelated).unwrap();
+    let (bin, tmux_log) = write_worker_test_bins(&root);
+    let path = path_with_bin(&bin);
+
+    for (task, report_body) in [("FIRST", "first report\n"), ("SECOND", "second report\n")] {
+        let spawn = Command::new(niles)
+            .args([
+                "spawn",
+                "reviewer",
+                "--project",
+                ".",
+                "--agent",
+                "claude",
+                task,
+            ])
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert_command_success("spawn archived report worker", &spawn);
+
+        let worker_dir = workspace.join(".niles/worker/reviewer");
+        fs::write(worker_dir.join("report.md"), report_body).unwrap();
+
+        let close = Command::new(niles)
+            .args(["worker-close", "reviewer"])
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env("TMUX_CAPTURE", task)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert_command_success("close archived report worker", &close);
+    }
+
+    let report = Command::new(niles)
+        .args(["report", "reviewer"])
+        .current_dir(&unrelated)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("archived report from unrelated cwd", &report);
+    assert_eq!(String::from_utf8_lossy(&report.stdout), "second report\n");
+    let stderr = String::from_utf8_lossy(&report.stderr);
+    assert!(stderr.contains("serving archived report from"));
+    assert!(stderr.contains(".niles/worker/archive/reviewer-"));
+}
+
+#[test]
+fn worker_close_on_archived_worker_errors_and_mentions_archive() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-double-close");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture(&workspace, "auth-fix", "working: close requested");
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("first close", &close);
+
+    let second = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!second.status.success());
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(stderr.contains("no live worker 'auth-fix'"));
+    assert!(stderr.contains(".niles/worker/archive/auth-fix-"));
+}
+
+#[test]
+fn worker_close_does_not_write_or_advertise_empty_final_pane() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-empty-pane-close");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture(&workspace, "auth-fix", "working: close requested");
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE_EMPTY", "1")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("close empty pane worker", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(!stdout.contains("pane:"));
+    let archive_dir = latest_archive_dir(&workspace, "auth-fix");
+    assert!(!archive_dir.join("final-pane.txt").exists());
 }
 
 #[test]
@@ -943,7 +1222,7 @@ fn worker_close_unknown_id_errors() {
         .unwrap();
     assert!(!close.status.success());
     assert!(
-        String::from_utf8_lossy(&close.stderr).contains("unknown worker id 'missing'"),
+        String::from_utf8_lossy(&close.stderr).contains("no live worker 'missing'"),
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&close.stdout),
         String::from_utf8_lossy(&close.stderr)
@@ -1038,7 +1317,7 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
   "id": "{id}",
   "agent": "codex",
   "project": "{}",
-  "window": "niles:niles-auth-fix",
+  "window": "niles:niles-{id}",
   "brief": "{}",
   "launch": "{}",
   "status": "{}"
@@ -1054,10 +1333,86 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
     worker_dir
 }
 
+fn write_worker_test_bins(root: &Path) -> (PathBuf, PathBuf) {
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = root.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  list-windows) exit 0 ;;
+  capture-pane)
+    if [ "${TMUX_CAPTURE_EMPTY:-}" = 1 ]; then
+      exit 0
+    fi
+    printf '%s\n' "${TMUX_CAPTURE:-pane output}"
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    (bin, tmux_log)
+}
+
+fn path_with_bin(bin: &Path) -> String {
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+fn latest_archive_dir(workspace: &Path, id: &str) -> PathBuf {
+    let archive_root = workspace.join(".niles/worker/archive");
+    let prefix = format!("{id}-");
+    let mut archives = fs::read_dir(&archive_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    archives.sort();
+    archives.pop().expect("expected worker archive")
+}
+
 fn assert_global_index_lacks(home: &Path, id: &str) {
     let path = home.join("runs/index.json");
     if path.exists() {
         let index = fs::read_to_string(&path).unwrap();
         assert!(!index.contains(id), "global index retained {id}:\n{index}");
     }
+}
+
+fn assert_global_index_lacks_live_worker(home: &Path, id: &str) {
+    let path = home.join("runs/index.json");
+    if !path.exists() {
+        return;
+    }
+    let index: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(
+        index
+            .get("workers")
+            .and_then(|workers| workers.get(id))
+            .is_none(),
+        "global index retained live worker {id}:\n{index:#}"
+    );
 }

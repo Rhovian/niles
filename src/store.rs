@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -98,6 +99,40 @@ pub(crate) fn unregister_worker_location(
     remove_global_worker_pointer(worker)
 }
 
+pub(crate) fn register_worker_archive(
+    worker: &str,
+    workspace: &Utf8Path,
+    archive_dir: &Utf8Path,
+    archived_at: DateTime<Utc>,
+) -> Result<WorkerArchivePointer> {
+    let pointer = WorkerArchivePointer {
+        id: worker.to_owned(),
+        workspace: workspace.to_path_buf(),
+        archive_dir: archive_dir.to_path_buf(),
+        archived_at,
+    };
+    write_global_worker_archive_pointer(&pointer)?;
+    Ok(pointer)
+}
+
+pub(crate) fn resolve_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
+    let mut archives = BTreeMap::new();
+    for archive in local_worker_archives(worker)? {
+        archives.insert(archive.archive_dir.clone(), archive);
+    }
+    for archive in global_worker_archives(worker)? {
+        archives.insert(archive.archive_dir.clone(), archive);
+    }
+
+    let mut archives = archives.into_values().collect::<Vec<_>>();
+    archives.sort_by(|left, right| {
+        left.archived_at
+            .cmp(&right.archived_at)
+            .then_with(|| left.archive_dir.cmp(&right.archive_dir))
+    });
+    Ok(archives)
+}
+
 pub(crate) fn resolve_worker_location(worker: &str) -> Result<Option<WorkerLocation>> {
     WorkerResolver::from_current()?.named(worker)
 }
@@ -121,6 +156,10 @@ fn current_runs_dir() -> Result<Utf8PathBuf> {
 
 fn current_workers_dir() -> Result<Utf8PathBuf> {
     Ok(current_dir_utf8()?.join(NILES_DIR).join(WORKERS_DIR))
+}
+
+fn worker_archive_root(workers_dir: &Utf8Path) -> Utf8PathBuf {
+    workers_dir.join("archive")
 }
 
 fn write_local_run_pointer(runs_dir: &Utf8Path, pointer: &RunPointer) -> Result<()> {
@@ -296,11 +335,25 @@ fn write_global_worker_pointer(pointer: &WorkerPointer) -> Result<()> {
     write_global_index(&path, &index)
 }
 
+fn write_global_worker_archive_pointer(pointer: &WorkerArchivePointer) -> Result<()> {
+    let path = global_index_path()?;
+    let mut index = read_global_index(&path)?;
+    let archives = index.worker_archives.entry(pointer.id.clone()).or_default();
+    archives.retain(|archive| archive.archive_dir != pointer.archive_dir);
+    archives.push(pointer.clone());
+    archives.sort_by(|left, right| {
+        left.archived_at
+            .cmp(&right.archived_at)
+            .then_with(|| left.archive_dir.cmp(&right.archive_dir))
+    });
+    write_global_index(&path, &index)
+}
+
 fn remove_global_worker_pointer(worker: &str) -> Result<()> {
     let path = global_index_path()?;
     let mut index = read_global_index(&path)?;
     index.workers.remove(worker);
-    if index.runs.is_empty() && index.workers.is_empty() {
+    if index.runs.is_empty() && index.workers.is_empty() && index.worker_archives.is_empty() {
         return remove_file_if_exists(&path);
     }
     write_global_index(&path, &index)
@@ -328,6 +381,15 @@ fn resolve_global_worker(worker: &str) -> Result<Option<WorkerPointer>> {
 fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPointer>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?.workers.get(worker).cloned())
+}
+
+fn global_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
+    let path = global_index_path()?;
+    Ok(read_global_index(&path)?
+        .worker_archives
+        .get(worker)
+        .cloned()
+        .unwrap_or_default())
 }
 
 fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
@@ -386,6 +448,14 @@ pub(crate) struct WorkerPointer {
     pub(crate) worker_dir: Utf8PathBuf,
     #[serde(default)]
     pub(crate) local_stores: Vec<Utf8PathBuf>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct WorkerArchivePointer {
+    pub(crate) id: String,
+    pub(crate) workspace: Utf8PathBuf,
+    pub(crate) archive_dir: Utf8PathBuf,
+    pub(crate) archived_at: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -451,6 +521,56 @@ struct GlobalIndex {
     runs: BTreeMap<String, RunPointer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     workers: BTreeMap<String, WorkerPointer>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    worker_archives: BTreeMap<String, Vec<WorkerArchivePointer>>,
+}
+
+fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
+    let archive_root = worker_archive_root(&current_workers_dir()?);
+    let entries = match fs::read_dir(&archive_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {archive_root}")),
+    };
+
+    let mut archives = Vec::new();
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+            continue;
+        };
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let Some(archived_at) = worker_archive_timestamp(worker, name) else {
+            continue;
+        };
+        archives.push(WorkerArchivePointer {
+            id: worker.to_owned(),
+            workspace: workspace_from_worker_archive_dir(&path),
+            archive_dir: path,
+            archived_at,
+        });
+    }
+    Ok(archives)
+}
+
+fn worker_archive_timestamp(worker: &str, archive_name: &str) -> Option<DateTime<Utc>> {
+    let timestamp = archive_name.strip_prefix(&format!("{worker}-"))?;
+    let timestamp = NaiveDateTime::parse_from_str(timestamp, "%Y%m%dT%H%M%S%fZ").ok()?;
+    Some(DateTime::from_naive_utc_and_offset(timestamp, Utc))
+}
+
+fn workspace_from_worker_archive_dir(archive_dir: &Utf8Path) -> Utf8PathBuf {
+    archive_dir
+        .parent()
+        .and_then(Utf8Path::parent)
+        .and_then(Utf8Path::parent)
+        .and_then(Utf8Path::parent)
+        .unwrap_or(Utf8Path::new("."))
+        .to_path_buf()
 }
 
 #[cfg(test)]
