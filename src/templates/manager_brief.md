@@ -55,7 +55,7 @@ Each worker brief includes a status file path. Actionable status lines use:
 {worker_wake_examples}
 ```
 
-Unindexed waits consume returned wake lines through a `status.ack` cursor beside the status log. Indexed waits scan the whole log for the requested `step <N>` line.
+Unindexed waits consume returned wake lines through a `status.ack` cursor beside the status log. Only one unindexed wait may attach to a status log at a time; duplicate unindexed waits fail with the active waiter's `status.waiter` pid/start-time registration instead of silently stealing a wake. Consumed wakes are logged in `status.ack.log`. Indexed waits scan the whole log for the requested `step <N>` line.
 
 ## Workflow Commands
 

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Write},
     thread,
     time::{Duration, Instant},
 };
@@ -8,12 +8,13 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     schema::{self, ArtifactKind},
     state::{RunState, StepStatus},
     store,
-    util::read_optional_to_string,
+    util::{append_line, read_optional_to_string, timestamp_id},
     wake::{
         WakeKind, is_actionable_wake, is_closed_wake, is_untagged_actionable_wake, mentions_step,
         status_log_path,
@@ -156,13 +157,31 @@ fn wait_for_wake(
         return Ok(result);
     }
 
+    let waiter = if index.is_none() {
+        Some(WaiterGuard::register(target.status())?)
+    } else {
+        None
+    };
     let initial_lines = read_lines(target.status())?;
-    let mut scanner = WakeScanner::new(target, index, initial_lines.len())?;
+    let mut scanner = WakeScanner::new(
+        target,
+        index,
+        initial_lines.len(),
+        waiter.as_ref().map(|guard| guard.registration.clone()),
+    )?;
     let deadline = Instant::now() + timeout;
 
     loop {
         if let Some(result) = target.closed_if_missing() {
             return Ok(result);
+        }
+        if let Some(waiter) = &waiter
+            && let Err(err) = waiter.verify()
+        {
+            if let Some(result) = target.closed_if_missing() {
+                return Ok(result);
+            }
+            return Err(err);
         }
 
         let lines = read_lines(target.status())?;
@@ -187,6 +206,7 @@ struct WakeScanner<'a> {
     target: &'a WaitTarget,
     index: Option<usize>,
     cursor: usize,
+    waiter: Option<WaiterRegistration>,
 }
 
 impl<'a> WakeScanner<'a> {
@@ -194,14 +214,16 @@ impl<'a> WakeScanner<'a> {
         target: &'a WaitTarget,
         index: Option<usize>,
         initial_line_count: usize,
+        waiter: Option<WaiterRegistration>,
     ) -> Result<Self> {
         let cursor = match index {
             // Indexed waits intentionally scan the whole log for tagged wake
             // lines; the cursor only scopes the untagged attribution fallback.
             Some(_) => initial_line_count,
             // Unindexed run and worker waits consume wake lines explicitly via a
-            // status.ack cursor next to the status log. That keeps pre-attach
-            // wake lines visible until a waiter returns them.
+            // status.ack cursor next to the status log. A status.waiter guard
+            // makes that single-consumer contract visible before this scanner is
+            // constructed, so duplicate waiters cannot silently steal wakes.
             None => read_ack_cursor(target.status(), initial_line_count)?,
         };
 
@@ -209,6 +231,7 @@ impl<'a> WakeScanner<'a> {
             target,
             index,
             cursor,
+            waiter,
         })
     }
 
@@ -218,7 +241,7 @@ impl<'a> WakeScanner<'a> {
             select_wake_with_offset(&lines[start..], self.index, self.target.closed_wake_match())
         {
             if self.index.is_none() {
-                self.acknowledge(start + offset + 1)?;
+                self.acknowledge(start + offset + 1, &line)?;
             }
             return Ok(Some(self.target.result_for_line(line)));
         }
@@ -242,10 +265,181 @@ impl<'a> WakeScanner<'a> {
         }
     }
 
-    fn acknowledge(&mut self, cursor: usize) -> Result<()> {
+    fn acknowledge(&mut self, cursor: usize, line: &str) -> Result<()> {
+        if let Some(waiter) = &self.waiter {
+            log_ack_consumption(self.target.status(), cursor, line, waiter)?;
+        }
         write_ack_cursor(self.target.status(), cursor)?;
         self.cursor = cursor;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct WaiterRegistration {
+    pid: u32,
+    started_at: DateTime<Utc>,
+    token: String,
+}
+
+struct WaiterGuard {
+    path: Utf8PathBuf,
+    registration: WaiterRegistration,
+}
+
+impl WaiterGuard {
+    fn register(status: &Utf8Path) -> Result<Self> {
+        let path = waiter_path(status);
+        let started_at = Utc::now();
+        let pid = std::process::id();
+        let registration = WaiterRegistration {
+            pid,
+            started_at,
+            token: format!("{pid}-{}", timestamp_id(&started_at)),
+        };
+        let body = format!("{}\n", serde_json::to_string_pretty(&registration)?);
+
+        for retry in 0..=1 {
+            match Self::try_create(&path, registration.clone(), &body)? {
+                Some(guard) => return Ok(guard),
+                None => {
+                    resolve_existing_waiter(status, &path)?;
+                    if retry == 1 {
+                        bail!(
+                            "waiter registration changed while attaching to {status}; retry wait"
+                        );
+                    }
+                }
+            }
+        }
+
+        unreachable!()
+    }
+
+    fn try_create(
+        path: &Utf8Path,
+        registration: WaiterRegistration,
+        body: &str,
+    ) -> Result<Option<Self>> {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut file) => {
+                if let Err(err) = file
+                    .write_all(body.as_bytes())
+                    .with_context(|| format!("failed to write {path}"))
+                {
+                    let _ = fs::remove_file(path);
+                    return Err(err);
+                }
+                Ok(Some(Self {
+                    path: path.to_path_buf(),
+                    registration,
+                }))
+            }
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(None),
+            Err(err) => Err(err).with_context(|| format!("failed to create {path}")),
+        }
+    }
+
+    fn verify(&self) -> Result<()> {
+        let registration = read_optional_json::<WaiterRegistration>(
+            &self.path,
+            |path| format!("failed to read {path}"),
+            |path| format!("failed to parse {path}"),
+        )
+        .with_context(|| {
+            format!(
+                "waiter registration was removed/replaced while waiting: {}",
+                self.path
+            )
+        })?;
+
+        if registration
+            .as_ref()
+            .is_some_and(|registration| registration.token == self.registration.token)
+        {
+            return Ok(());
+        }
+
+        bail!(
+            "waiter registration was removed/replaced while waiting: {}",
+            self.path
+        )
+    }
+}
+
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        let Ok(Some(registration)) = read_optional_json::<WaiterRegistration>(
+            &self.path,
+            |_| String::new(),
+            |_| String::new(),
+        ) else {
+            return;
+        };
+
+        if registration.token == self.registration.token {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+// The waiter guard is ephemeral wake-protocol state (like status.ack), not a
+// durable stamped artifact class, so it is read with a plain JSON reader
+// rather than schema::read_optional_json.
+fn read_optional_json<T>(
+    path: &Utf8Path,
+    read_context: impl FnOnce(&Utf8Path) -> String,
+    parse_context: impl FnOnce(&Utf8Path) -> String,
+) -> Result<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let Some(body) = read_optional_to_string(path, read_context)? else {
+        return Ok(None);
+    };
+
+    serde_json::from_str(&body)
+        .map(Some)
+        .with_context(|| parse_context(path))
+}
+
+fn resolve_existing_waiter(status: &Utf8Path, path: &Utf8Path) -> Result<()> {
+    match read_optional_json::<WaiterRegistration>(
+        path,
+        |path| format!("failed to read {path}"),
+        |path| format!("failed to parse {path}"),
+    ) {
+        Ok(Some(waiter)) if process_is_running(waiter.pid)? => {
+            bail!(
+                "another unindexed wait is already attached to {status} (pid {}, since {}; pid {} is running); \
+                 active waiter registration: {path}",
+                waiter.pid,
+                waiter.started_at.to_rfc3339(),
+                waiter.pid
+            )
+        }
+        Ok(Some(waiter)) => {
+            log_stale_waiter_reclaimed(status, &waiter)?;
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed to remove stale waiter registration {path}")
+                    });
+                }
+            }
+            Ok(())
+        }
+        Ok(None) => Ok(()),
+        Err(err) => bail!(
+            "another unindexed wait appears to be attached to {status}, but {path} could not be read: {err}; \
+             remove that file if the waiter is stale"
+        ),
     }
 }
 
@@ -403,6 +597,14 @@ fn ack_path(status: &Utf8Path) -> Utf8PathBuf {
     status.with_extension("ack")
 }
 
+fn ack_log_path(status: &Utf8Path) -> Utf8PathBuf {
+    status.with_extension("ack.log")
+}
+
+fn waiter_path(status: &Utf8Path) -> Utf8PathBuf {
+    status.with_extension("waiter")
+}
+
 fn read_ack_cursor(status: &Utf8Path, line_count: usize) -> Result<usize> {
     let path = ack_path(status);
     let Some(body) = read_optional_to_string(&path, |path| format!("failed to read {path}"))?
@@ -416,6 +618,72 @@ fn read_ack_cursor(status: &Utf8Path, line_count: usize) -> Result<usize> {
 fn write_ack_cursor(status: &Utf8Path, cursor: usize) -> Result<()> {
     let path = ack_path(status);
     fs::write(&path, format!("{cursor}\n")).with_context(|| format!("failed to write {path}"))
+}
+
+fn log_ack_consumption(
+    status: &Utf8Path,
+    cursor: usize,
+    line: &str,
+    waiter: &WaiterRegistration,
+) -> Result<()> {
+    let path = ack_log_path(status);
+    let record = serde_json::json!({
+        "event": "wake-consumed",
+        "cursor": cursor,
+        "pid": waiter.pid,
+        "started_at": waiter.started_at.to_rfc3339(),
+        "token": &waiter.token,
+        "line": line,
+    });
+    let line = serde_json::to_string(&record)?;
+    append_line(
+        &path,
+        &line,
+        |path| format!("failed to open {path}"),
+        |path| format!("failed to inspect {path}"),
+        |path| format!("failed to write {path}"),
+    )
+}
+
+fn log_stale_waiter_reclaimed(status: &Utf8Path, waiter: &WaiterRegistration) -> Result<()> {
+    let path = ack_log_path(status);
+    let record = serde_json::json!({
+        "event": "stale-waiter-reclaimed",
+        "pid": waiter.pid,
+        "started_at": waiter.started_at.to_rfc3339(),
+        "token": &waiter.token,
+        "reclaimed_at": Utc::now().to_rfc3339(),
+    });
+    let line = serde_json::to_string(&record)?;
+    append_line(
+        &path,
+        &line,
+        |path| format!("failed to open {path}"),
+        |path| format!("failed to inspect {path}"),
+        |path| format!("failed to write {path}"),
+    )
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> Result<bool> {
+    let pid = libc::pid_t::try_from(pid)
+        .with_context(|| format!("waiter pid {pid} does not fit platform pid_t"))?;
+    let result = unsafe { libc::kill(pid, 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+
+    let err = std::io::Error::last_os_error();
+    match err.raw_os_error() {
+        Some(code) if code == libc::ESRCH => Ok(false),
+        Some(code) if code == libc::EPERM => Ok(true),
+        _ => Err(err).with_context(|| format!("failed to check whether pid {pid} is running")),
+    }
+}
+
+#[cfg(not(unix))]
+fn process_is_running(_pid: u32) -> Result<bool> {
+    Ok(true)
 }
 
 fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
