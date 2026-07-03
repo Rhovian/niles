@@ -116,6 +116,8 @@ esac
         .args([
             "spawn",
             "auth-fix",
+            "--task",
+            "auth",
             "--project",
             ".",
             "--agent",
@@ -139,15 +141,21 @@ esac
     let spawn_stdout = String::from_utf8_lossy(&spawn.stdout);
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles-auth-fix"));
+    assert!(spawn_stdout.contains("task: auth"));
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
     assert!(spawn_stdout.contains("report: niles report auth-fix"));
     assert!(spawn_stdout.contains("close: niles worker-close auth-fix"));
+    assert!(spawn_stdout.contains("close_task: niles worker-close --task auth"));
+    assert!(spawn_stdout.contains("workers: niles workers"));
 
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
+    assert!(meta.contains("\"task_label\": \"auth\""));
     assert!(meta.contains("\"window\": \"niles:niles-auth-fix\""));
+    assert!(meta.contains("\"created_at\":"));
 
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
+    assert!(brief.contains("task_label: auth"));
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains("niles peek auth-fix"));
     assert!(brief.contains("report_file:"));
@@ -189,6 +197,25 @@ esac
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix C-m"));
+}
+
+#[test]
+fn spawn_rejects_reserved_archive_task_label() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-reserved-task-label");
+
+    let spawn = Command::new(niles)
+        .args([
+            "spawn", "auth-fix", "--task", "archive", "--agent", "claude", "Fix", "auth",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("task label 'archive' is reserved"));
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
 }
 
 #[test]
@@ -823,6 +850,282 @@ esac
 }
 
 #[test]
+fn workers_lists_live_workers_with_task_age_and_last_status() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-workers-list");
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture_with_task(
+        &workspace,
+        "auth-fix",
+        "working: running tests\ndone: ready for review\n",
+        Some("auth"),
+    );
+    write_worker_fixture(
+        &workspace,
+        "reviewer",
+        "working: reading diff\nblocked: needs clarification\n",
+    );
+    let archive = workspace.join(".niles/worker/archive/old-worker-20000101T000000000000000Z");
+    fs::create_dir_all(&archive).unwrap();
+    fs::write(archive.join("status.log"), "done: archived\n").unwrap();
+
+    let output = Command::new(niles)
+        .arg("workers")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_WINDOWS", "niles-auth-fix")
+        .output()
+        .unwrap();
+
+    assert_command_success("workers", &output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("workers[2]{id,agent,task,age,window,last_status}:"));
+    assert!(stdout.lines().any(|line| {
+        line.contains("auth-fix,codex,auth,")
+            && line.contains(",live,")
+            && line.contains("done: ready for review")
+    }));
+    assert!(stdout.lines().any(|line| {
+        line.contains("reviewer,codex,-,")
+            && line.contains(",window-dead,")
+            && line.contains("blocked: needs clarification")
+    }));
+    assert!(!stdout.contains("old-worker"));
+}
+
+#[test]
+fn worker_close_by_task_closes_matching_workers_only() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-task");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture_with_task(&workspace, "auth-one", "working: one", Some("auth"));
+    write_worker_fixture_with_task(&workspace, "auth-two", "working: two", Some("auth"));
+    write_worker_fixture_with_task(&workspace, "docs-one", "working: docs", Some("docs"));
+
+    let close = Command::new(niles)
+        .args(["worker-close", "--task", "auth"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+
+    assert_command_success("worker-close --task", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("workers[2]{id,status,archive}:"));
+    assert!(stdout.contains("auth-one,closed,"));
+    assert!(stdout.contains("auth-two,closed,"));
+    assert!(!stdout.contains("docs-one,closed,"));
+
+    assert!(!workspace.join(".niles/worker/auth-one").exists());
+    assert!(!workspace.join(".niles/worker/auth-two").exists());
+    assert!(workspace.join(".niles/worker/docs-one").exists());
+
+    let archive_one = latest_archive_dir(&workspace, "auth-one");
+    let archive_two = latest_archive_dir(&workspace, "auth-two");
+    assert!(
+        fs::read_to_string(archive_one.join("status.log"))
+            .unwrap()
+            .contains("closed: auth-one")
+    );
+    assert!(
+        fs::read_to_string(archive_two.join("status.log"))
+            .unwrap()
+            .contains("closed: auth-two")
+    );
+}
+
+#[test]
+fn worker_close_all_is_scoped_to_invoking_workspace() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = temp_workspace("niles-worker-close-scope");
+    let workspace_a = root.join("workspace-a");
+    let workspace_b = root.join("workspace-b");
+    fs::create_dir_all(&workspace_a).unwrap();
+    fs::create_dir_all(&workspace_b).unwrap();
+    let home = niles_home(&root);
+    let (bin, tmux_log) = write_worker_test_bins(&root);
+    let path = path_with_bin(&bin);
+
+    for (workspace, id, label) in [
+        (&workspace_a, "alpha", "task-a"),
+        (&workspace_b, "bravo", "task-b"),
+    ] {
+        let spawn = Command::new(niles)
+            .args([
+                "spawn",
+                id,
+                "--task",
+                label,
+                "--project",
+                ".",
+                "--agent",
+                "claude",
+                "Fix",
+            ])
+            .current_dir(workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert_command_success("scoped close spawn", &spawn);
+    }
+
+    let close = Command::new(niles)
+        .args(["worker-close", "--all"])
+        .current_dir(&workspace_a)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("workspace-scoped worker-close --all", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("workers[1]{id,status,archive}:"));
+    assert!(stdout.contains("alpha,closed,"));
+    assert!(!stdout.contains("bravo"));
+
+    assert!(!workspace_a.join(".niles/worker/alpha").exists());
+    assert!(workspace_b.join(".niles/worker/bravo").exists());
+    assert!(workspace_b.join(".niles/worker/bravo/meta.json").exists());
+
+    let close_foreign_task = Command::new(niles)
+        .args(["worker-close", "--task", "task-b"])
+        .current_dir(&workspace_a)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!close_foreign_task.status.success());
+    assert!(
+        String::from_utf8_lossy(&close_foreign_task.stderr)
+            .contains("no live workers with task label task-b")
+    );
+    assert!(workspace_b.join(".niles/worker/bravo").exists());
+}
+
+#[test]
+fn worker_close_zero_match_behaviors_are_distinct() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-zero");
+
+    let close_all = Command::new(niles)
+        .args(["worker-close", "--all"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert_command_success("empty worker-close --all", &close_all);
+    assert_eq!(
+        String::from_utf8_lossy(&close_all.stdout),
+        "no live workers\n"
+    );
+
+    write_worker_fixture_with_task(&workspace, "docs-one", "working: docs", Some("docs"));
+
+    let close_task = Command::new(niles)
+        .args(["worker-close", "--task", "missing"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert!(!close_task.status.success());
+    assert!(String::from_utf8_lossy(&close_task.stdout).is_empty());
+    assert!(
+        String::from_utf8_lossy(&close_task.stderr)
+            .contains("no live workers with task label missing")
+    );
+}
+
+#[test]
+fn worker_close_by_task_reports_selection_failures_and_closes_matches() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-task-selection-failure");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_corrupt_worker_fixture(&workspace, "bad-meta");
+    write_worker_fixture_with_task(&workspace, "good-worker", "working: close me", Some("auth"));
+
+    let close = Command::new(niles)
+        .args(["worker-close", "--task", "auth"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+
+    assert!(!close.status.success());
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("workers[2]{id,status,archive}:"));
+    assert!(stdout.contains("bad-meta,failed,-"));
+    assert!(stdout.contains("good-worker,closed,"));
+    let stderr = String::from_utf8_lossy(&close.stderr);
+    assert!(stderr.contains("worker bad-meta close failed"));
+    assert!(stderr.contains("worker-close --task auth failed for 1 worker(s): bad-meta"));
+
+    assert!(workspace.join(".niles/worker/bad-meta").exists());
+    assert!(!workspace.join(".niles/worker/good-worker").exists());
+    assert!(latest_archive_dir(&workspace, "good-worker").exists());
+}
+
+#[test]
+fn worker_close_all_reports_partial_failures_without_aborting_rest() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-all-partial");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_corrupt_worker_fixture(&workspace, "bad-meta");
+    write_worker_fixture(&workspace, "good-worker", "working: close me");
+
+    let close = Command::new(niles)
+        .args(["worker-close", "--all"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_CAPTURE", "pane")
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+
+    assert!(!close.status.success());
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("workers[2]{id,status,archive}:"));
+    assert!(stdout.contains("bad-meta,failed,-"));
+    assert!(stdout.contains("good-worker,closed,"));
+    let stderr = String::from_utf8_lossy(&close.stderr);
+    assert!(stderr.contains("worker bad-meta close failed"));
+    assert!(stderr.contains("worker-close --all failed for 1 worker(s): bad-meta"));
+
+    assert!(workspace.join(".niles/worker/bad-meta").exists());
+    assert!(!workspace.join(".niles/worker/good-worker").exists());
+    assert!(latest_archive_dir(&workspace, "good-worker").exists());
+}
+
+#[test]
 fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-respawn-same-cwd");
@@ -1300,6 +1603,15 @@ steps:
 }
 
 fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBuf {
+    write_worker_fixture_with_task(workspace, id, status_body, None)
+}
+
+fn write_worker_fixture_with_task(
+    workspace: &Path,
+    id: &str,
+    status_body: &str,
+    task_label: Option<&str>,
+) -> PathBuf {
     let worker_root = workspace.join(".niles/worker");
     let worker_dir = worker_root.join(id);
     fs::create_dir_all(&worker_dir).unwrap();
@@ -1326,6 +1638,9 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
         ),
     )
     .unwrap();
+    let task_label_field = task_label
+        .map(|label| format!(",\n  \"task_label\": \"{label}\""))
+        .unwrap_or_default();
     fs::write(
         worker_dir.join("meta.json"),
         format!(
@@ -1337,13 +1652,31 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
   "window": "niles:niles-{id}",
   "brief": "{}",
   "launch": "{}",
-  "status": "{}"
+  "status": "{}"{task_label_field}
 }}
 "#,
             workspace.display(),
             brief.display(),
             launch.display(),
             status.display()
+        ),
+    )
+    .unwrap();
+    worker_dir
+}
+
+fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBuf {
+    let worker_dir = workspace.join(".niles/worker").join(id);
+    fs::create_dir_all(&worker_dir).unwrap();
+    fs::write(worker_dir.join("status.log"), "working: bad metadata\n").unwrap();
+    fs::write(
+        worker_dir.join("meta.json"),
+        format!(
+            r#"{{
+  "id": "{id}",
+  "agent": "codex"
+}}
+"#
         ),
     )
     .unwrap();
@@ -1360,7 +1693,12 @@ fn write_worker_test_bins(root: &Path) -> (PathBuf, PathBuf) {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    if [ -n "${TMUX_WINDOWS:-}" ]; then
+      printf '%s\n' "$TMUX_WINDOWS"
+    fi
+    exit 0
+    ;;
   capture-pane)
     if [ "${TMUX_CAPTURE_EMPTY:-}" = 1 ]; then
       exit 0

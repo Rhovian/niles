@@ -178,6 +178,65 @@ fn wait_worker_does_not_redeliver_consumed_wake_and_delivers_next() {
 }
 
 #[test]
+fn wait_worker_second_sequential_wait_returns_followup_wake() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-wait-followup");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    let status_log = worker_dir.join("status.log");
+    fs::write(&status_log, "done: first result\n").unwrap();
+
+    let first = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("first sequential wait --worker", &first);
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout),
+        "done: first result\n"
+    );
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(&status_log)
+        .unwrap();
+    writeln!(status, "done: follow-up result").unwrap();
+
+    let second = Command::new(niles)
+        .args([
+            "wait",
+            "--worker",
+            "auth-fix",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("second sequential wait --worker", &second);
+    assert_eq!(
+        String::from_utf8_lossy(&second.stdout),
+        "done: follow-up result\n"
+    );
+    assert!(!worker_dir.join("status.waiter").exists());
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
+        "2\n"
+    );
+}
+
+#[test]
 fn wait_worker_rejects_second_unindexed_wait_while_first_is_attached() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-wait-duplicate");

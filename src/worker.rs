@@ -1,4 +1,4 @@
-use std::{fs, io::ErrorKind};
+use std::{fs, io::ErrorKind, time::SystemTime};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -33,6 +33,10 @@ struct WorkerMeta {
     model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at: Option<DateTime<Utc>>,
     project: Utf8PathBuf,
     window: String,
     brief: Utf8PathBuf,
@@ -54,6 +58,7 @@ enum PaneTarget {
 
 pub fn spawn(
     id: String,
+    task_label: Option<String>,
     project: Utf8PathBuf,
     agent: String,
     brief: Option<Utf8PathBuf>,
@@ -61,6 +66,9 @@ pub fn spawn(
     allow_cli_mismatch: bool,
 ) -> Result<()> {
     validate_id(&id)?;
+    if let Some(label) = &task_label {
+        validate_task_label(label)?;
+    }
     if brief.is_none() && task.is_empty() {
         bail!("spawn requires either --brief or task text");
     }
@@ -89,7 +97,14 @@ pub fn spawn(
         Some(path) => absolute_existing_file(&path, "brief")?,
         None => {
             let path = dir.join("brief.md");
-            write_brief(&path, &id, &project, &agent, &task.join(" "))?;
+            write_brief(
+                &path,
+                &id,
+                task_label.as_deref(),
+                &project,
+                &agent,
+                &task.join(" "),
+            )?;
             path
         }
     };
@@ -132,6 +147,8 @@ pub fn spawn(
         agent_family: agent_spec.tier().map(|tier| tier.family),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
+        task_label,
+        created_at: Some(Utc::now()),
         project,
         window: target.clone(),
         brief: brief_path,
@@ -144,11 +161,18 @@ pub fn spawn(
     println!("window: {window_name}");
     println!("agent: {}", meta.agent);
     print_worker_tier(&meta);
+    if let Some(label) = &meta.task_label {
+        println!("task: {label}");
+    }
     println!("brief: {}", meta.brief);
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
     println!("close: niles worker-close {id}");
+    if let Some(label) = &meta.task_label {
+        println!("close_task: niles worker-close --task {label}");
+    }
+    println!("workers: niles workers");
 
     Ok(())
 }
@@ -165,52 +189,314 @@ fn print_worker_tier(meta: &WorkerMeta) {
     }
 }
 
-/// Tear down a spawned worker. The tmux window may already be gone, so
-/// window close errors are reported but do not strand metadata.
-pub fn worker_close(id: String) -> Result<()> {
-    validate_id(&id)?;
-    let location = resolve_live_worker(&id)?;
+struct WorkerCloseOutcome {
+    id: String,
+    archive_dir: Utf8PathBuf,
+    pane_path: Option<Utf8PathBuf>,
+    pane_error: Option<String>,
+    window_name: String,
+    window_error: Option<String>,
+}
+
+/// Tear down spawned workers. The tmux window may already be gone, so window
+/// close errors are reported but do not strand metadata.
+pub fn worker_close(id: Option<String>, task_label: Option<String>, all: bool) -> Result<()> {
+    match (id, task_label, all) {
+        (Some(id), None, false) => {
+            let outcome = close_worker_once(&id)?;
+            print_single_close_outcome(&outcome);
+            Ok(())
+        }
+        (None, Some(label), false) => close_workers_by_task(&label),
+        (None, None, true) => close_all_workers(),
+        _ => bail!("use a worker id, --task <label>, or --all"),
+    }
+}
+
+fn close_workers_by_task(label: &str) -> Result<()> {
+    validate_task_label(label)?;
+    let selection = select_worker_ids_by_task(label)?;
+    if selection.ids.is_empty() && selection.failures.is_empty() {
+        bail!("no live workers with task label {label}");
+    }
+    close_worker_group(format!("--task {label}"), selection.ids, selection.failures)
+}
+
+fn close_all_workers() -> Result<()> {
+    let ids = close_all_worker_ids()?;
+    if ids.is_empty() {
+        println!("no live workers");
+        return Ok(());
+    }
+    close_worker_group("--all".to_owned(), ids, Vec::new())
+}
+
+struct WorkerCloseSelection {
+    ids: Vec<String>,
+    failures: Vec<(String, String)>,
+}
+
+fn close_worker_group(
+    selection: String,
+    ids: Vec<String>,
+    selection_failures: Vec<(String, String)>,
+) -> Result<()> {
+    println!(
+        "workers[{}]{{id,status,archive}}:",
+        ids.len() + selection_failures.len()
+    );
+
+    let mut failures = Vec::new();
+    for (id, err) in selection_failures {
+        println!("  {id},failed,-");
+        eprintln!("worker {id} close failed: {err}");
+        failures.push(id);
+    }
+    for id in ids {
+        match close_worker_once(&id) {
+            Ok(outcome) => print_group_close_success(&outcome),
+            Err(err) => {
+                println!("  {id},failed,-");
+                eprintln!("worker {id} close failed: {err:#}");
+                failures.push(id);
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "worker-close {selection} failed for {} worker(s): {}",
+            failures.len(),
+            failures.join(", ")
+        )
+    }
+}
+
+fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
+    let mut ids = Vec::new();
+    let mut failures = Vec::new();
+    for entry in store::resolve_workspace_worker_locations()? {
+        let meta_path = meta_path(&entry.location.worker_dir);
+        if !meta_path.exists() {
+            continue;
+        }
+        match read_meta_if_exists(&entry.location.worker_dir) {
+            Ok(Some(meta)) if meta.task_label.as_deref() == Some(label) => ids.push(entry.id),
+            Ok(_) => {}
+            Err(err) => failures.push((entry.id, format!("{err:#}"))),
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    failures.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(WorkerCloseSelection { ids, failures })
+}
+
+fn print_single_close_outcome(outcome: &WorkerCloseOutcome) {
+    if let Some(path) = &outcome.pane_path {
+        println!("pane: {path}");
+    }
+    if let Some(err) = &outcome.pane_error {
+        println!("pane not captured for worker {}: {err}", outcome.id);
+    }
+    if let Some(err) = &outcome.window_error {
+        println!("window {} not closed: {err}", outcome.window_name);
+    } else {
+        println!("closed window: {}", outcome.window_name);
+    }
+    println!("archive: {}", outcome.archive_dir);
+    println!("closed: {}", outcome.id);
+}
+
+fn print_group_close_success(outcome: &WorkerCloseOutcome) {
+    println!("  {},closed,{}", outcome.id, outcome.archive_dir);
+    if let Some(err) = &outcome.pane_error {
+        println!("  {},pane-not-captured,{err}", outcome.id);
+    }
+    if let Some(err) = &outcome.window_error {
+        println!("  {},window-not-closed,{err}", outcome.id);
+    }
+}
+
+fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
+    validate_id(id)?;
+    let location = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
     let worker_dir = location.worker_dir.clone();
-    let meta = read_meta_if_exists(&worker_dir)?;
-    let window_name = meta
-        .as_ref()
-        .map(|meta| agent_window::worker_window_name_from_target(&id, &meta.window))
-        .unwrap_or_else(|| agent_window::worker_window_name(&id));
+    let meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
+    let window_name = agent_window::worker_window_name_from_target(id, &meta.window);
     let status_path = meta
+        .status
         .as_ref()
-        .and_then(|meta| meta.status.as_ref())
         .cloned()
         .unwrap_or_else(|| wake::status_log_path(&worker_dir));
-    append_closed_sentinel(&status_path, &id)?;
+    append_closed_sentinel(&status_path, id)?;
 
-    match capture_final_pane(&worker_dir, meta.as_ref(), &window_name) {
-        Ok(Some(path)) => println!("pane: {path}"),
-        Ok(None) => {}
-        Err(err) => println!("pane not captured for worker {id}: {err}"),
-    }
+    let (pane_path, pane_error) = match capture_final_pane(&worker_dir, Some(&meta), &window_name) {
+        Ok(path) => (path, None),
+        Err(err) => (None, Some(err.to_string())),
+    };
+    let captured_pane = pane_path.is_some();
 
-    match agent_window::close_window(&window_name) {
-        Ok(()) => println!("closed window: {window_name}"),
-        Err(err) => println!("window {window_name} not closed: {err}"),
-    }
+    let window_error = agent_window::close_window(&window_name)
+        .err()
+        .map(|err| err.to_string());
 
-    let archive_dir = archive_worker_dir(
-        &id,
-        meta.as_ref()
-            .map(|meta| meta.project.as_path())
-            .unwrap_or(location.workspace.as_path()),
-        &worker_dir,
-        Utc::now(),
-    )?;
+    let archive_dir = archive_worker_dir(id, &meta.project, &worker_dir, Utc::now())?;
+    let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
     store::unregister_worker_location(
-        &id,
+        id,
         Some(&location),
-        meta.as_ref().map(|meta| meta.project.as_path()),
+        Some(meta.project.as_path()),
         Some(&worker_dir),
     )?;
-    println!("archive: {archive_dir}");
-    println!("closed: {id}");
+    Ok(WorkerCloseOutcome {
+        id: id.to_owned(),
+        archive_dir,
+        pane_path,
+        pane_error,
+        window_name,
+        window_error,
+    })
+}
+
+struct LiveWorker {
+    id: String,
+    location: WorkerLocation,
+    meta: WorkerMeta,
+}
+
+pub fn workers() -> Result<()> {
+    let workers = live_workers()?;
+    println!(
+        "workers[{}]{{id,agent,task,age,window,last_status}}:",
+        workers.len()
+    );
+
+    let now = Utc::now();
+    for worker in workers {
+        let task = worker.meta.task_label.as_deref().unwrap_or("-");
+        let age = worker_age(&worker, now);
+        let window = worker_window_state(&worker.meta);
+        let status = last_status_line(&worker)?;
+        println!(
+            "  {},{},{},{},{},{}",
+            worker.id,
+            display_agent(&worker.meta),
+            task,
+            age,
+            window.as_str(),
+            status.unwrap_or_else(|| "-".to_owned())
+        );
+    }
+
     Ok(())
+}
+
+fn live_workers() -> Result<Vec<LiveWorker>> {
+    let mut workers = Vec::new();
+    for entry in store::resolve_worker_locations()? {
+        let meta_path = meta_path(&entry.location.worker_dir);
+        if !meta_path.exists() {
+            continue;
+        }
+        let Some(meta) = read_meta_if_exists(&entry.location.worker_dir)? else {
+            continue;
+        };
+        workers.push(LiveWorker {
+            id: entry.id,
+            location: entry.location,
+            meta,
+        });
+    }
+    workers.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(workers)
+}
+
+fn close_all_worker_ids() -> Result<Vec<String>> {
+    let mut ids = store::resolve_workspace_worker_locations()?
+        .into_iter()
+        .filter(|entry| meta_path(&entry.location.worker_dir).exists())
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+fn display_agent(meta: &WorkerMeta) -> &str {
+    &meta.agent
+}
+
+enum WorkerWindowState {
+    Live,
+    Dead,
+}
+
+impl WorkerWindowState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Dead => "window-dead",
+        }
+    }
+}
+
+fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
+    match agent_window::target_exists(&meta.window) {
+        Ok(true) => WorkerWindowState::Live,
+        Ok(false) | Err(_) => WorkerWindowState::Dead,
+    }
+}
+
+fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
+    let started_at = worker
+        .meta
+        .created_at
+        .or_else(|| path_time(&meta_path(&worker.location.worker_dir)))
+        .unwrap_or(now);
+    let seconds = now.signed_duration_since(started_at).num_seconds().max(0);
+
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 60 * 60 {
+        format!("{}m", seconds / 60)
+    } else if seconds < 60 * 60 * 24 {
+        format!("{}h", seconds / (60 * 60))
+    } else {
+        format!("{}d", seconds / (60 * 60 * 24))
+    }
+}
+
+fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .map(system_time_to_utc)
+}
+
+fn system_time_to_utc(time: SystemTime) -> DateTime<Utc> {
+    DateTime::<Utc>::from(time)
+}
+
+fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
+    let status_path = worker
+        .meta
+        .status
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| wake::status_log_path(&worker.location.worker_dir));
+    let body = match fs::read_to_string(&status_path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {status_path}")),
+    };
+    Ok(body
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_owned))
 }
 
 pub fn report(id: String) -> Result<()> {
@@ -389,6 +675,7 @@ pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
 fn write_brief(
     path: &Utf8Path,
     id: &str,
+    task_label: Option<&str>,
     project: &Utf8Path,
     agent: &str,
     task: &str,
@@ -406,6 +693,7 @@ fn write_brief(
         WORKER_BRIEF_TEMPLATE,
         &[
             ("{id}", id),
+            ("{task_label}", task_label.unwrap_or("-")),
             ("{project}", project.as_str()),
             ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
@@ -547,10 +835,6 @@ fn resolve_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
     store::resolve_worker_location(id)
 }
 
-fn resolve_live_worker(id: &str) -> Result<WorkerLocation> {
-    resolve_live_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))
-}
-
 fn resolve_live_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
     let Some(location) = resolve_worker_if_exists(id)? else {
         return Ok(None);
@@ -607,6 +891,22 @@ fn validate_id(id: &str) -> Result<()> {
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
     {
         bail!("worker id may only contain ASCII letters, numbers, '-' and '_'");
+    }
+    Ok(())
+}
+
+fn validate_task_label(label: &str) -> Result<()> {
+    if label.is_empty() {
+        bail!("task label cannot be empty");
+    }
+    if label == "archive" {
+        bail!("task label 'archive' is reserved for closed worker archives");
+    }
+    if !label
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        bail!("task label may only contain ASCII letters, numbers, '-' and '_'");
     }
     Ok(())
 }

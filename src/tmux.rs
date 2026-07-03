@@ -151,6 +151,23 @@ pub(crate) fn kill_window(session: &str, window_name: &str) -> Result<()> {
     run(["kill-window", "-t", &format!("{session}:{window_name}")])
 }
 
+pub(crate) fn target_exists(target: &str) -> Result<bool> {
+    let Some((session, window_name)) = target.rsplit_once(':') else {
+        return Ok(false);
+    };
+    if session.is_empty() || window_name.is_empty() {
+        return Ok(false);
+    }
+
+    let output = output(["list-windows", "-t", session, "-F", "#{window_name}"])
+        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    Ok(window_list_contains(&output.stdout, window_name))
+}
+
 fn current_session_name() -> Result<Option<String>> {
     let output =
         output(["display-message", "-p", "#S"]).context("failed to query current tmux session")?;

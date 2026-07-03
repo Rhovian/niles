@@ -55,12 +55,26 @@ fn main() -> Result<()> {
         Some(CommandName::Spawn {
             allow_cli_mismatch,
             id,
+            task_label,
             project,
             agent,
             brief,
             task,
-        }) => worker::spawn(id, project, agent, brief, task, allow_cli_mismatch),
-        Some(CommandName::WorkerClose { id }) => worker::worker_close(id),
+        }) => worker::spawn(
+            id,
+            task_label,
+            project,
+            agent,
+            brief,
+            task,
+            allow_cli_mismatch,
+        ),
+        Some(CommandName::WorkerClose {
+            id,
+            task_label,
+            all,
+        }) => worker::worker_close(id, task_label, all),
+        Some(CommandName::Workers) => worker::workers(),
         Some(CommandName::Report { id }) => worker::report(id),
         Some(CommandName::Peek {
             id,

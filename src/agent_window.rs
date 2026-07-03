@@ -126,6 +126,10 @@ pub(crate) fn close_window(window_name: &str) -> Result<()> {
     tmux::kill_window(&session, window_name)
 }
 
+pub(crate) fn target_exists(target: &str) -> Result<bool> {
+    tmux::target_exists(target)
+}
+
 /// Open a detached tmux window running `command` in `cwd` and return its
 /// `session:window` target.
 pub(crate) fn open_window(window_name: &str, cwd: &Utf8Path, command: &str) -> Result<String> {

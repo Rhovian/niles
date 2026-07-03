@@ -26,7 +26,7 @@ use super::RunSelector;
 
 pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
     let id = format!("ask-{}-{}", slugify(&agent), timestamp_id(&Utc::now()));
-    worker::spawn(id, current_dir_utf8()?, agent, None, prompt, false)
+    worker::spawn(id, None, current_dir_utf8()?, agent, None, prompt, false)
 }
 
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
