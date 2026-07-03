@@ -137,6 +137,10 @@ pub(crate) fn resolve_worker_location(worker: &str) -> Result<Option<WorkerLocat
     WorkerResolver::from_current()?.named(worker)
 }
 
+pub(crate) fn resolve_worker_locations() -> Result<Vec<WorkerListEntry>> {
+    WorkerResolver::from_current()?.all()
+}
+
 pub fn resolve_run_dir(run: &str) -> Result<Utf8PathBuf> {
     let resolver = RunResolver::from_current()?;
     if run == "latest" {
@@ -266,8 +270,73 @@ impl WorkerResolver {
         Ok(resolve_global_worker(worker)?.map(WorkerLocation::from_pointer))
     }
 
+    fn all(&self) -> Result<Vec<WorkerListEntry>> {
+        let mut by_id = BTreeMap::<String, WorkerLocation>::new();
+        self.collect_local(&mut by_id)?;
+
+        for pointer in read_global_index(&global_index_path()?)?
+            .workers
+            .into_values()
+        {
+            let id = pointer.id.clone();
+            by_id
+                .entry(id)
+                .or_insert_with(|| WorkerLocation::from_pointer(pointer));
+        }
+
+        Ok(by_id
+            .into_iter()
+            .map(|(id, location)| WorkerListEntry { id, location })
+            .collect())
+    }
+
     fn local_pointer(&self, worker: &str) -> Result<Option<WorkerPointer>> {
         read_worker_pointer(&self.local_workers_dir.join(pointer_file(worker)))
+    }
+
+    fn collect_local(&self, by_id: &mut BTreeMap<String, WorkerLocation>) -> Result<()> {
+        let entries = match fs::read_dir(&self.local_workers_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to read {}", self.local_workers_dir));
+            }
+        };
+
+        let mut paths = entries
+            .map(|entry| {
+                let entry = entry.with_context(|| {
+                    format!("failed to read entry in {}", self.local_workers_dir)
+                })?;
+                Utf8PathBuf::from_path_buf(entry.path())
+                    .map_err(|path| anyhow::anyhow!("worker path is not UTF-8: {}", path.display()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        paths.sort();
+
+        for path in paths.iter().filter(|path| path.extension() == Some("json")) {
+            if let Some(pointer) = read_worker_pointer(path)? {
+                let id = pointer.id.clone();
+                by_id
+                    .entry(id)
+                    .or_insert_with(|| WorkerLocation::from_pointer(pointer));
+            }
+        }
+
+        for path in paths.iter().filter(|path| path.is_dir()) {
+            let Some(id) = path.file_name() else {
+                continue;
+            };
+            if id == "archive" {
+                continue;
+            }
+            by_id
+                .entry(id.to_owned())
+                .or_insert_with(|| WorkerLocation::local(id, path.to_path_buf()));
+        }
+
+        Ok(())
     }
 }
 
@@ -463,6 +532,12 @@ pub(crate) struct WorkerLocation {
     pub(crate) workspace: Utf8PathBuf,
     pub(crate) worker_dir: Utf8PathBuf,
     pointer: Option<WorkerPointer>,
+}
+
+#[derive(Clone)]
+pub(crate) struct WorkerListEntry {
+    pub(crate) id: String,
+    pub(crate) location: WorkerLocation,
 }
 
 impl WorkerLocation {

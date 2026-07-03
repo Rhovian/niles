@@ -101,6 +101,9 @@ pub enum CommandName {
         allow_cli_mismatch: bool,
         /// Worker task id used for window and metadata names.
         id: String,
+        /// Task label for grouping warm workers.
+        #[arg(long = "task", value_name = "LABEL")]
+        task_label: Option<String>,
         /// Project workspace for the worker.
         #[arg(long, default_value = ".")]
         project: Utf8PathBuf,
@@ -114,12 +117,24 @@ pub enum CommandName {
         #[arg(num_args = 0.., trailing_var_arg = true)]
         task: Vec<String>,
     },
-    /// Close a spawned worker and remove its metadata.
+    /// Close spawned worker windows and archive their metadata.
     #[command(name = "worker-close")]
     WorkerClose {
-        /// Worker task id to close.
-        id: String,
+        /// Worker id to close.
+        #[arg(
+            required_unless_present_any = ["task_label", "all"],
+            conflicts_with_all = ["task_label", "all"]
+        )]
+        id: Option<String>,
+        /// Close every live worker with this task label.
+        #[arg(long = "task", value_name = "LABEL", conflicts_with = "all")]
+        task_label: Option<String>,
+        /// Close every live worker.
+        #[arg(long, action = ArgAction::SetTrue)]
+        all: bool,
     },
+    /// List live spawned workers.
+    Workers,
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.

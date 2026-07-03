@@ -43,13 +43,17 @@ niles ask "fix the failing test"
 Worker agents can also be spawned into tmux windows:
 
 ```sh
-niles spawn auth-fix --project ../my-app --agent codex "Fix the flaky login test"
+niles spawn auth-fix --task auth --project ../my-app --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Run the auth tests again."
 niles wait --worker auth-fix
+niles workers
+niles worker-close --task auth
 ```
 
-Worker briefs include a status-file wake contract. `niles wait` polls the relevant worker or run status log on demand and prints the next actionable line. It is the single wake-delivery mechanism.
+Worker briefs include a status-file wake contract. `niles wait` polls the relevant worker or run status log on demand and prints the next actionable line. It is the single wake-delivery mechanism. Workers and reviewer workers stay warm after `done:` so the manager can inspect, send follow-up, and wait again; `done:` is a wake, not a terminate request. Cleanup happens at task or wave integration with `niles worker-close <id>`, `niles worker-close --task <label>`, or `niles worker-close --all`.
+
+Task labels are stored in worker metadata and group warm workers for cleanup. They use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`, `_`, `-`) and reserve `archive`, matching the worker archive directory namespace.
 
 Explicit workflow files remain the durable automation path:
 
@@ -93,7 +97,7 @@ This keeps handoffs explicit without expanding the task YAML format. A tmux sess
 
 Status logs use five actionable wake states: `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. `closed:` is terminal for worker waits; for indexed run waits it must mention the matching step.
 
-Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume wake lines by writing a numeric cursor to `status.ack` beside the status log. That keeps pre-attach wake lines visible until a waiter returns them, then prevents the same line from being returned again. Because these waits are single-consumer, an active unindexed waiter records its pid and start time in `status.waiter`; a second unindexed waiter on the same status log fails at attach instead of silently stealing a wake. Each consumed wake is also recorded in `status.ack.log`.
+Unindexed waits, including `niles wait --worker <id>` and `niles wait <run>`, consume wake lines by writing a numeric cursor to `status.ack` beside the status log. That keeps pre-attach wake lines visible until a waiter returns them, then prevents the same line from being returned again. Re-running `niles wait --worker <id>` after the previous wait has returned is the send -> wait loop primitive: the next sequential wait attaches normally and returns the next actionable line. Because these waits are single-consumer, an active unindexed waiter records its pid and start time in `status.waiter`; a concurrent second unindexed waiter on the same status log fails at attach instead of silently stealing a wake. Each consumed wake is also recorded in `status.ack.log`.
 
 Indexed waits such as `niles wait <run> --index N` intentionally scan the full log for an actionable line that contains the exact token pair `step N`. Generic `done:` or `failed:` lines do not satisfy an indexed wait.
 
