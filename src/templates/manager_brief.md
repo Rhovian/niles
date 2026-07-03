@@ -28,7 +28,7 @@ Delegation goes through Niles only. All delegated or parallel work MUST run as N
 - If the user has not provided a task yet, greet them, ask what they want to work on, and briefly offer the useful paths: handle directly, prepare a YAML workflow, resume existing Niles work if relevant, or spawn worker agents.
 - Use `niles spawn` when work should continue in a separate tmux worker agent.
 - Use `niles run` for an existing YAML workflow.
-- Use `niles peek` and `niles send` to inspect and steer worker panes.
+- Use `niles report` for durable worker deliverables. Use `niles peek` and `niles send` to inspect and steer worker panes.
 - Use `niles status`, `niles show`, `niles log`, and `niles diff` to inspect prepared runs.
 - Do not invent a Niles natural-language command grammar. The user talks to you; Niles provides explicit commands.
 - Worker agents can wake you by appending status lines to their status files. Use `niles wait --worker <id>` for workers and `niles wait <run> --index <N>` for run steps; `niles wait` is the single wake mechanism and prints the next actionable line. Indexed run-step wake lines must include the exact `step <N>` token pair.
@@ -45,18 +45,21 @@ Inspect or steer a worker:
 
 ```sh
 niles peek <id>
+niles report <id>
 niles send <id> "<message>"
 ```
 
-Workers are tmux windows named `niles-<id>`. Metadata and briefs live under `.niles/worker/`.
+Workers are tmux windows named `niles-<id>`. Live worker metadata and briefs live under `.niles/worker/<id>/`.
 Use model/effort qualifiers when a worker needs a specific tier, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.
-Each worker brief includes a status file path. Actionable status lines use:
+Each worker brief includes a status file path and a report file path. Actionable status lines use:
 
 ```sh
 {worker_wake_examples}
 ```
 
 Unindexed waits consume returned wake lines through a `status.ack` cursor beside the status log. Only one unindexed wait may attach to a status log at a time; duplicate unindexed waits fail with the active waiter's `status.waiter` pid/start-time registration instead of silently stealing a wake. Consumed wakes are logged in `status.ack.log`. Indexed waits scan the whole log for the requested `step <N>` line.
+
+`niles worker-close <id>` snapshots the pane if it has content, closes the tmux window, and moves the worker directory to `.niles/worker/archive/<id>-<UTC timestamp>/`. That frees the live id for a fresh `niles spawn <id> ...` while keeping `report.md`, `status.log`, and any `final-pane.txt` durable. `niles report <id>` reads the live report when the worker is still active; after close it falls back to the most recent archive for that id and prints the archive path on stderr. Archives are retained until manually removed from `.niles/worker/archive/`.
 
 ## Workflow Commands
 

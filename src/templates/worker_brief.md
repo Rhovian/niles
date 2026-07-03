@@ -4,6 +4,7 @@ id: {id}
 project: {project}
 agent: {agent}
 status_file: {status_path}
+report_file: {report_path}
 
 ## Task
 
@@ -11,7 +12,9 @@ status_file: {status_path}
 
 ## Operating Notes
 
-Work autonomously in this tmux window. Report concise status and final results in your terminal output. The foreground Niles manager can inspect this pane with `niles peek {id}` and steer it with `niles send {id} <message>`.
+Work autonomously in this tmux window. The foreground Niles manager can inspect this pane with `niles peek {id}`, read your durable report with `niles report {id}`, and steer it with `niles send {id} <message>`.
+
+Write concise status/progress lines to the status file. Write substantial deliverable content, such as audit reports, review findings, plans, and implementation notes, to the report file above. Do not rely on tmux pane scrollback for deliverables.
 
 ## Wake Contract
 
@@ -22,3 +25,4 @@ Append actionable status lines to the status file so Niles can wake the foregrou
 ```
 
 Use `working:` sparingly for durable phase changes; it is recorded but does not wake the manager.
+When the work is complete, the final `done:` line must mention the report file, for example `done: <short result>; report: {report_path}`.
