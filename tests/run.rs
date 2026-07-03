@@ -30,6 +30,14 @@ commands:
     );
 
     let output = prepare_run(niles, &workspace, &task);
+    let id = run_id(&output);
+    let state_path = workspace.join(".niles/runs").join(&id).join("state.json");
+    let state_body = fs::read_to_string(&state_path).unwrap();
+    assert!(state_body.contains(r#""niles_schema": 2"#));
+    let pointer_body =
+        fs::read_to_string(workspace.join(".niles/runs").join(format!("{id}.json"))).unwrap();
+    assert!(pointer_body.contains(r#""niles_schema": 2"#));
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("status: created"));
     assert!(stdout.contains("next: niles step "));
@@ -100,6 +108,76 @@ commands:
         .unwrap();
     assert!(alias.status.success());
     assert!(String::from_utf8_lossy(&alias.stdout).contains("niles-test-"));
+}
+
+#[test]
+fn parseable_legacy_run_state_is_stamped_on_next_state_write() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-legacy-state-stamp");
+
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "Stamp legacy state"
+steps:
+  - command: ok
+commands:
+  ok: printf 'ok\n'
+"#,
+    );
+
+    let output = prepare_run(niles, &workspace, &task);
+    let id = run_id(&output);
+    let state_path = workspace.join(".niles/runs").join(&id).join("state.json");
+    let state_body = fs::read_to_string(&state_path).unwrap();
+    let legacy_state = state_body
+        .lines()
+        .filter(|line| !line.contains("niles_schema"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&state_path, legacy_state).unwrap();
+
+    let exec = exec_step_output(niles, &workspace, 1);
+    assert_command_success("exec-step legacy state", &exec);
+    let rewritten = fs::read_to_string(&state_path).unwrap();
+    assert!(rewritten.contains(r#""niles_schema": 2"#));
+    assert!(rewritten.contains(r#""status": "completed""#));
+}
+
+#[test]
+fn old_run_state_reports_schema_skew_without_raw_serde_error() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-old-run-state");
+    let run_dir = workspace.join(".niles/runs/old-run");
+    fs::create_dir_all(&run_dir).unwrap();
+    fs::write(run_dir.join("state.json"), r#"{"id":"old-run"}"#).unwrap();
+
+    let output = Command::new(niles)
+        .args(["status", "old-run"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("run state"));
+    assert!(stderr.contains("state.json"));
+    assert!(stderr.contains("schema 1"));
+    assert!(stderr.contains("expects 2"));
+    assert!(stderr.contains("remove the run directory"));
+    assert!(!stderr.contains("missing field"));
+
+    let json_output = Command::new(niles)
+        .args(["status", "old-run", "--json"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert!(!json_output.status.success());
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    assert!(json_stderr.contains("run state"));
+    assert!(json_stderr.contains("schema 1"));
+    assert!(!json_stderr.contains("missing field"));
 }
 
 #[test]

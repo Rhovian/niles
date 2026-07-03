@@ -412,6 +412,7 @@ fn write_manual_run_state(run_dir: &Path, id: &str, running_step: usize) {
         run_dir.join("state.json"),
         format!(
             r#"{{
+  "niles_schema": 2,
   "id": "{id}",
   "goal": "manual wait test",
   "created_at": "2000-01-01T00:00:00Z",
@@ -447,6 +448,7 @@ fn write_worker_pointer(workspace: &Path, id: &str, worker_dir: &Path) {
         worker_root.join(format!("{id}.json")),
         format!(
             r#"{{
+  "niles_schema": 2,
   "id": "{id}",
   "workspace": "{}",
   "worker_dir": "{}",
