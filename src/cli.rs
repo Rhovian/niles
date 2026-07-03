@@ -2,7 +2,11 @@ use camino::Utf8PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(version, about, infer_subcommands = true)]
+#[command(
+    version = crate::build_info::CLAP_VERSION,
+    about,
+    infer_subcommands = true
+)]
 pub struct Cli {
     /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
@@ -27,12 +31,14 @@ pub enum CommandName {
         prompt: Vec<String>,
     },
     /// Probe configured agent CLIs and write local capability manifests.
-    #[command(alias = "doctor", alias = "scan")]
+    #[command(alias = "scan")]
     Analyze {
         /// Agent id to probe. Defaults to codex and claude.
         #[arg(short, long)]
         agent: Option<String>,
     },
+    /// Report binary identity, workspace schema state, and dev-mode staleness.
+    Doctor,
     /// Prepare a new manager-driven run from a task spec.
     #[command(alias = "r")]
     Run {

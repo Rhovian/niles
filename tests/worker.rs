@@ -544,6 +544,41 @@ esac
 }
 
 #[test]
+fn worker_close_old_metadata_reports_schema_skew_without_raw_serde_error() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-old-meta");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::create_dir_all(&worker_dir).unwrap();
+    fs::write(
+        worker_dir.join("meta.json"),
+        r#"{
+  "id": "auth-fix",
+  "agent": "codex",
+  "window": "niles:niles-auth-fix",
+  "brief": "brief.md",
+  "launch": "launch.sh"
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("worker metadata"));
+    assert!(stderr.contains("meta.json"));
+    assert!(stderr.contains("schema 1"));
+    assert!(stderr.contains("expects 2"));
+    assert!(stderr.contains("remove the worker dir and respawn"));
+    assert!(!stderr.contains("missing field"));
+}
+
+#[test]
 fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-close-wait");
@@ -721,6 +756,7 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
         worker_root.join(format!("{id}.json")),
         format!(
             r#"{{
+  "niles_schema": 2,
   "id": "{id}",
   "workspace": "{}",
   "worker_dir": "{}",
@@ -737,6 +773,7 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
         worker_dir.join("meta.json"),
         format!(
             r#"{{
+  "niles_schema": 2,
   "id": "{id}",
   "agent": "codex",
   "project": "{}",

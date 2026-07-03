@@ -10,9 +10,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 use crate::{
+    schema::{self, ArtifactKind},
     state::{RunState, StepStatus},
     store,
-    util::{read_optional_json, read_optional_to_string},
+    util::read_optional_to_string,
     wake::{
         WakeKind, is_actionable_wake, is_closed_wake, is_untagged_actionable_wake, mentions_step,
         status_log_path,
@@ -340,11 +341,7 @@ fn matches_indexed_wake(line: &str, index: usize, closed_match: ClosedWakeMatch)
 
 fn read_optional_run_state(run_dir: &Utf8Path) -> Result<Option<RunState>> {
     let path = store::state_path(run_dir);
-    read_optional_json(
-        &path,
-        |path| format!("failed to read {path}"),
-        |path| format!("failed to parse {path}"),
-    )
+    schema::read_optional_json(&path, ArtifactKind::RunState)
 }
 
 fn uniquely_attributed_step(state: &RunState) -> Option<AttributedStep> {

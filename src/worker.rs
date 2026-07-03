@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agent_window,
     config::{agents, spec::load_project_config_from, version},
+    schema::{self, ArtifactKind},
     store::{self, WorkerLocation, read_state, resolve_run_dir},
     util::{
-        absolute_existing_dir, absolute_existing_file, append_line, read_optional_json,
-        remove_dir_all_if_exists, remove_file_if_exists, render_template, write_json_pretty,
+        absolute_existing_dir, absolute_existing_file, append_line, remove_dir_all_if_exists,
+        remove_file_if_exists, render_template, write_json_pretty,
     },
     wake::{self, WakeKind},
 };
@@ -349,11 +350,7 @@ fn read_meta(id: &str) -> Result<LoadedWorker> {
 
 fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    read_optional_json(
-        &path,
-        |path| format!("failed to read {path}"),
-        |path| format!("failed to parse {path}"),
-    )
+    schema::read_optional_json(&path, ArtifactKind::WorkerMetadata)
 }
 
 fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {

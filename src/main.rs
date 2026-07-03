@@ -1,10 +1,13 @@
 mod agent_window;
 mod analyze;
+mod build_info;
 mod cli;
 mod config;
 mod context;
+mod doctor;
 mod process;
 mod runner;
+mod schema;
 mod session;
 mod state;
 mod store;
@@ -30,6 +33,7 @@ fn main() -> Result<()> {
         None => session::run(cli.manager, cli.goal),
         Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
+        Some(CommandName::Doctor) => doctor::doctor(),
         Some(CommandName::Run {
             allow_cli_mismatch,
             task,

@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 
 pub fn slugify(value: &str) -> String {
     let mut slug = String::new();
@@ -99,29 +99,11 @@ pub fn read_optional_to_string(
     }
 }
 
-pub fn read_optional_json<T>(
-    path: &Utf8Path,
-    read_context: impl FnOnce(&Utf8Path) -> String,
-    parse_context: impl FnOnce(&Utf8Path) -> String,
-) -> Result<Option<T>>
-where
-    T: DeserializeOwned,
-{
-    let Some(body) = read_optional_to_string(path, read_context)? else {
-        return Ok(None);
-    };
-
-    serde_json::from_str(&body)
-        .map(Some)
-        .with_context(|| parse_context(path))
-}
-
 pub fn write_json_pretty<T>(path: &Utf8Path, value: &T) -> Result<()>
 where
     T: Serialize + ?Sized,
 {
-    fs::write(path, serde_json::to_string_pretty(value)?)
-        .with_context(|| format!("failed to write {path}"))
+    crate::schema::write_json(path, value)
 }
 
 pub fn append_line(

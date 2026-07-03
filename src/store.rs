@@ -9,11 +9,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    schema::{self, ArtifactKind},
     state::{RunState, StepRecord},
-    util::{
-        absolute_path, current_dir_utf8, read_optional_json, remove_file_if_exists, utf8_path,
-        write_json_pretty,
-    },
+    util::{absolute_path, current_dir_utf8, remove_file_if_exists, utf8_path, write_json_pretty},
 };
 
 const NILES_DIR: &str = ".niles";
@@ -27,8 +25,7 @@ pub fn write_state(path: &Utf8Path, state: &RunState) -> Result<()> {
 
 pub fn read_state(run_dir: &Utf8Path) -> Result<RunState> {
     let path = state_path(run_dir);
-    let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-    serde_json::from_str(&body).with_context(|| format!("failed to parse {path}"))
+    schema::read_json(&path, ArtifactKind::RunState)
 }
 
 pub fn state_path(run_dir: &Utf8Path) -> Utf8PathBuf {
@@ -278,19 +275,11 @@ fn latest_local_run_dir(runs_dir: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
 }
 
 fn read_pointer(path: &Utf8Path) -> Result<Option<RunPointer>> {
-    read_optional_json(
-        path,
-        |path| format!("failed to read run pointer {path}"),
-        |path| format!("failed to parse run pointer {path}"),
-    )
+    schema::read_optional_json(path, ArtifactKind::RunPointer)
 }
 
 fn read_worker_pointer(path: &Utf8Path) -> Result<Option<WorkerPointer>> {
-    read_optional_json(
-        path,
-        |path| format!("failed to read worker pointer {path}"),
-        |path| format!("failed to parse worker pointer {path}"),
-    )
+    schema::read_optional_json(path, ArtifactKind::WorkerPointer)
 }
 
 fn write_global_run_pointer(pointer: &RunPointer) -> Result<()> {
@@ -351,12 +340,7 @@ fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
 }
 
 fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
-    Ok(read_optional_json(
-        path,
-        |path| format!("failed to read {path}"),
-        |path| format!("failed to parse {path}"),
-    )?
-    .unwrap_or_default())
+    Ok(schema::read_optional_json(path, ArtifactKind::GlobalIndex)?.unwrap_or_default())
 }
 
 fn global_index_path() -> Result<Utf8PathBuf> {
@@ -549,8 +533,12 @@ mod tests {
         let named_error = resolver.named("bad").unwrap_err().to_string();
         let latest_error = resolver.latest().unwrap_err().to_string();
 
-        assert!(named_error.contains("failed to parse run pointer"));
-        assert!(latest_error.contains("failed to parse run pointer"));
+        assert!(named_error.contains("run pointer"));
+        assert!(named_error.contains("malformed JSON"));
+        assert!(named_error.contains("schema is unknown"));
+        assert!(latest_error.contains("run pointer"));
+        assert!(latest_error.contains("malformed JSON"));
+        assert!(latest_error.contains("schema is unknown"));
     }
 
     #[test]
@@ -783,7 +771,7 @@ mod tests {
 
     impl ScopedEnv {
         fn new(niles_home: &Utf8Path, home: &Utf8Path) -> Self {
-            let lock = ENV_LOCK.lock().unwrap();
+            let lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
             let previous_home = env::var_os("HOME");
             let previous_niles_home = env::var_os("NILES_HOME");
             set_env("NILES_HOME", niles_home.as_str());

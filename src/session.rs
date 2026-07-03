@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::agents,
+    schema::{self, ArtifactKind},
     store,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
     wake,
@@ -159,10 +160,8 @@ fn latest_run_context() -> Result<String> {
     };
 
     let state_path = run_dir.join("state.json");
-    let body = fs::read_to_string(&state_path)
-        .with_context(|| format!("failed to read latest run state {state_path}"))?;
-    let value = serde_json::from_str::<serde_json::Value>(&body)
-        .with_context(|| format!("failed to parse latest run state {state_path}"))?;
+    let value =
+        schema::read_json_value_as::<crate::state::RunState>(&state_path, ArtifactKind::RunState)?;
     let id = value
         .get("id")
         .and_then(|value| value.as_str())

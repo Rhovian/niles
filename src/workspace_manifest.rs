@@ -7,7 +7,10 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::config::spec::{CommandConfig, TaskSpec, TaskStep};
+use crate::{
+    config::spec::{CommandConfig, TaskSpec, TaskStep},
+    schema::{self, ArtifactKind},
+};
 
 const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
 
@@ -47,14 +50,7 @@ pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
 
 pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let path = manifest_path(root);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
-    };
-    serde_yaml::from_str(&body)
-        .with_context(|| format!("failed to parse workspace manifest {path}"))
-        .map(Some)
+    schema::read_optional_yaml(&path, ArtifactKind::WorkspaceManifest)
 }
 
 pub fn load_required(root: &Utf8Path) -> Result<WorkspaceManifest> {
@@ -72,8 +68,7 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
         .parent()
         .with_context(|| format!("workspace manifest path has no parent: {path}"))?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
-    let body = serde_yaml::to_string(manifest).context("failed to serialize workspace manifest")?;
-    fs::write(&path, body).with_context(|| format!("failed to write {path}"))
+    schema::write_yaml(&path, manifest)
 }
 
 pub fn ensure_interactive(
@@ -360,6 +355,7 @@ planner: claude
 implementer: codex
 reviewer: claude
 validation_command: lint
+niles_schema: 2
 "#,
         )
         .unwrap();
@@ -405,6 +401,7 @@ planner: plan-old
 implementer: impl-old
 reviewer: review-old
 validation_command: lint
+niles_schema: 2
 "#,
         )
         .unwrap();
@@ -459,6 +456,7 @@ planner: claude
 implementer: codex
 reviewer: claude
 validation_command: lint
+niles_schema: 2
 "#,
         )
         .unwrap();

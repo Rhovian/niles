@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
+    schema::{self, ArtifactKind},
     state::{RunState, RunStatus, StepRecord, StepStatus},
     store::{read_state, selected_step, state_path},
 };
@@ -19,7 +20,8 @@ pub(crate) fn status(selector: RunSelector, json: bool) -> Result<()> {
     let run_dir = selector.resolve()?;
     let path = state_path(&run_dir);
     if json {
-        let state = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+        let state = schema::read_json_value_as::<RunState>(&path, ArtifactKind::RunState)?;
+        let state = serde_json::to_string_pretty(&state).context("failed to format run state")?;
         println!("{state}");
     } else {
         let state = read_state(&run_dir)?;
