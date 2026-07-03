@@ -141,6 +141,10 @@ pub(crate) fn resolve_worker_locations() -> Result<Vec<WorkerListEntry>> {
     WorkerResolver::from_current()?.all()
 }
 
+pub(crate) fn resolve_workspace_worker_locations() -> Result<Vec<WorkerListEntry>> {
+    WorkerResolver::from_current()?.local_directories()
+}
+
 pub fn resolve_run_dir(run: &str) -> Result<Utf8PathBuf> {
     let resolver = RunResolver::from_current()?;
     if run == "latest" {
@@ -290,30 +294,29 @@ impl WorkerResolver {
             .collect())
     }
 
+    fn local_directories(&self) -> Result<Vec<WorkerListEntry>> {
+        let mut workers = self
+            .local_paths()?
+            .into_iter()
+            .filter(|path| path.is_dir())
+            .filter_map(|path| {
+                let id = path.file_name()?.to_owned();
+                (id != "archive").then(|| WorkerListEntry {
+                    id: id.clone(),
+                    location: WorkerLocation::local(&id, path),
+                })
+            })
+            .collect::<Vec<_>>();
+        workers.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(workers)
+    }
+
     fn local_pointer(&self, worker: &str) -> Result<Option<WorkerPointer>> {
         read_worker_pointer(&self.local_workers_dir.join(pointer_file(worker)))
     }
 
     fn collect_local(&self, by_id: &mut BTreeMap<String, WorkerLocation>) -> Result<()> {
-        let entries = match fs::read_dir(&self.local_workers_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("failed to read {}", self.local_workers_dir));
-            }
-        };
-
-        let mut paths = entries
-            .map(|entry| {
-                let entry = entry.with_context(|| {
-                    format!("failed to read entry in {}", self.local_workers_dir)
-                })?;
-                Utf8PathBuf::from_path_buf(entry.path())
-                    .map_err(|path| anyhow::anyhow!("worker path is not UTF-8: {}", path.display()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        paths.sort();
+        let paths = self.local_paths()?;
 
         for path in paths.iter().filter(|path| path.extension() == Some("json")) {
             if let Some(pointer) = read_worker_pointer(path)? {
@@ -337,6 +340,29 @@ impl WorkerResolver {
         }
 
         Ok(())
+    }
+
+    fn local_paths(&self) -> Result<Vec<Utf8PathBuf>> {
+        let entries = match fs::read_dir(&self.local_workers_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed to read {}", self.local_workers_dir));
+            }
+        };
+
+        let mut paths = entries
+            .map(|entry| {
+                let entry = entry.with_context(|| {
+                    format!("failed to read entry in {}", self.local_workers_dir)
+                })?;
+                Utf8PathBuf::from_path_buf(entry.path())
+                    .map_err(|path| anyhow::anyhow!("worker path is not UTF-8: {}", path.display()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        paths.sort();
+        Ok(paths)
     }
 }
 

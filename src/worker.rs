@@ -216,11 +216,18 @@ pub fn worker_close(id: Option<String>, task_label: Option<String>, all: bool) -
 fn close_workers_by_task(label: &str) -> Result<()> {
     validate_task_label(label)?;
     let selection = select_worker_ids_by_task(label)?;
+    if selection.ids.is_empty() && selection.failures.is_empty() {
+        bail!("no live workers with task label {label}");
+    }
     close_worker_group(format!("--task {label}"), selection.ids, selection.failures)
 }
 
 fn close_all_workers() -> Result<()> {
     let ids = close_all_worker_ids()?;
+    if ids.is_empty() {
+        println!("no live workers");
+        return Ok(());
+    }
     close_worker_group("--all".to_owned(), ids, Vec::new())
 }
 
@@ -270,7 +277,7 @@ fn close_worker_group(
 fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
     let mut failures = Vec::new();
-    for entry in store::resolve_worker_locations()? {
+    for entry in store::resolve_workspace_worker_locations()? {
         let meta_path = meta_path(&entry.location.worker_dir);
         if !meta_path.exists() {
             continue;
@@ -363,7 +370,7 @@ struct LiveWorker {
 pub fn workers() -> Result<()> {
     let workers = live_workers()?;
     println!(
-        "workers[{}]{{id,agent,task,age,last_status}}:",
+        "workers[{}]{{id,agent,task,age,window,last_status}}:",
         workers.len()
     );
 
@@ -371,13 +378,15 @@ pub fn workers() -> Result<()> {
     for worker in workers {
         let task = worker.meta.task_label.as_deref().unwrap_or("-");
         let age = worker_age(&worker, now);
+        let window = worker_window_state(&worker.meta);
         let status = last_status_line(&worker)?;
         println!(
-            "  {},{},{},{},{}",
+            "  {},{},{},{},{},{}",
             worker.id,
             display_agent(&worker.meta),
             task,
             age,
+            window.as_str(),
             status.unwrap_or_else(|| "-".to_owned())
         );
     }
@@ -406,7 +415,7 @@ fn live_workers() -> Result<Vec<LiveWorker>> {
 }
 
 fn close_all_worker_ids() -> Result<Vec<String>> {
-    let mut ids = store::resolve_worker_locations()?
+    let mut ids = store::resolve_workspace_worker_locations()?
         .into_iter()
         .filter(|entry| meta_path(&entry.location.worker_dir).exists())
         .map(|entry| entry.id)
@@ -418,6 +427,27 @@ fn close_all_worker_ids() -> Result<Vec<String>> {
 
 fn display_agent(meta: &WorkerMeta) -> &str {
     &meta.agent
+}
+
+enum WorkerWindowState {
+    Live,
+    Dead,
+}
+
+impl WorkerWindowState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Dead => "window-dead",
+        }
+    }
+}
+
+fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
+    match agent_window::target_exists(&meta.window) {
+        Ok(true) => WorkerWindowState::Live,
+        Ok(false) | Err(_) => WorkerWindowState::Dead,
+    }
 }
 
 fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {

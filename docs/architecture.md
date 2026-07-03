@@ -51,9 +51,11 @@ niles workers
 niles worker-close --task auth
 ```
 
-Worker briefs include a status-file wake contract. `niles wait` polls the relevant worker or run status log on demand and prints the next actionable line. It is the single wake-delivery mechanism. Workers and reviewer workers stay warm after `done:` so the manager can inspect, send follow-up, and wait again; `done:` is a wake, not a terminate request. Cleanup happens at task or wave integration with `niles worker-close <id>`, `niles worker-close --task <label>`, or `niles worker-close --all`.
+Worker briefs include a status-file wake contract. `niles wait` polls the relevant worker or run status log on demand and prints the next actionable line. It is the single wake-delivery mechanism. Workers and reviewer workers stay warm after `done:` so the manager can inspect, send follow-up, and wait again; `done:` is a wake, not a terminate request. Cleanup happens at task or wave integration with `niles worker-close <id>`, `niles worker-close --task <label>`, or `niles worker-close --all`. Group cleanup is scoped to the invoking workspace's live worker directories; it does not close workers discovered only through the global index.
 
 Task labels are stored in worker metadata and group warm workers for cleanup. They use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`, `_`, `-`) and reserve `archive`, matching the worker archive directory namespace.
+
+`niles workers` reads worker metadata and probes the recorded tmux target. Rows with metadata but no tmux window are marked `window-dead` so stale worker directories are visible as cleanup candidates rather than healthy warm panes.
 
 Explicit workflow files remain the durable automation path:
 

@@ -73,9 +73,11 @@ niles worker-close --task auth
 
 Spawn writes a brief and launch script under `.niles/worker/<id>/`, records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window. If you are already inside tmux, the worker appears in your current session; otherwise Niles uses a detached `niles` session. `--task <label>` records a task label in worker metadata so a task or wave can be cleaned up as a group.
 
-Worker briefs include a status file. The foreground manager uses `niles wait --worker <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism. Workers stay warm after `done:`; `done:` means the manager should wake, inspect, and optionally send follow-up, not close the worker. The normal lifecycle is spawn -> (`wait` <-> `send`)* -> cleanup. Use `niles workers` to list live workers, `niles worker-close <id>` to close one, `niles worker-close --task <label>` to close a task group, or `niles worker-close --all` to close all live workers. Batch close reports each worker and continues after individual failures.
+Worker briefs include a status file. The foreground manager uses `niles wait --worker <id>` to block until the next actionable wake and print it. `niles wait` is the single wake-delivery mechanism. Workers stay warm after `done:`; `done:` means the manager should wake, inspect, and optionally send follow-up, not close the worker. The normal lifecycle is spawn -> (`wait` <-> `send`)* -> cleanup. Use `niles workers` to list live workers, `niles worker-close <id>` to close one, `niles worker-close --task <label>` to close a current-workspace task group, or `niles worker-close --all` to close all live workers in the current workspace. Batch close reports each worker and continues after individual failures. `--task <label>` exits nonzero when no live workers match the label; `--all` prints `no live workers` and exits successfully when there is nothing to close.
 
 Task labels share the worker id-adjacent namespace: they may contain only ASCII letters, numbers, `_`, and `-`, and `archive` is reserved because `.niles/worker/archive/` stores closed worker archives.
+
+`niles workers` includes a window health column. `window-dead` means worker metadata remains, but the recorded tmux window is not currently present.
 
 ## Wake Lines
 
