@@ -14,7 +14,7 @@ use crate::{
     schema::{self, ArtifactKind},
     state::{RunState, StepStatus},
     store,
-    util::{append_line, read_optional_json, read_optional_to_string, timestamp_id},
+    util::{append_line, read_optional_to_string, timestamp_id},
     wake::{
         WakeKind, is_actionable_wake, is_closed_wake, is_untagged_actionable_wake, mentions_step,
         status_log_path,
@@ -385,6 +385,26 @@ impl Drop for WaiterGuard {
             let _ = fs::remove_file(&self.path);
         }
     }
+}
+
+// The waiter guard is ephemeral wake-protocol state (like status.ack), not a
+// durable stamped artifact class, so it is read with a plain JSON reader
+// rather than schema::read_optional_json.
+fn read_optional_json<T>(
+    path: &Utf8Path,
+    read_context: impl FnOnce(&Utf8Path) -> String,
+    parse_context: impl FnOnce(&Utf8Path) -> String,
+) -> Result<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let Some(body) = read_optional_to_string(path, read_context)? else {
+        return Ok(None);
+    };
+
+    serde_json::from_str(&body)
+        .map(Some)
+        .with_context(|| parse_context(path))
 }
 
 fn resolve_existing_waiter(status: &Utf8Path, path: &Utf8Path) -> Result<()> {
