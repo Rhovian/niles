@@ -559,6 +559,61 @@ esac
 }
 
 #[test]
+fn analyze_validates_agent_specs_and_keeps_tiered_version_gate() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-tiered-analyze-test");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let valid = Command::new(niles)
+        .args(["analyze", "--agent", "codex:gpt-5.5:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("tiered analyze", &valid);
+    let stdout = String::from_utf8_lossy(&valid.stdout);
+    assert!(stdout.contains("version_gate: codex pass 0.142.4"));
+    assert!(stdout.contains("wrote .niles/capabilities/codex:gpt-5.5:xhigh.json"));
+
+    let manifest =
+        fs::read_to_string(workspace.join(".niles/capabilities/codex:gpt-5.5:xhigh.json")).unwrap();
+    assert!(manifest.contains(r#""agent": "codex:gpt-5.5:xhigh""#));
+    assert!(manifest.contains(r#""version_gate""#));
+
+    let invalid = Command::new(niles)
+        .args(["analyze", "--agent", "codex:bogus:wat"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unsupported codex model `bogus`"));
+    assert!(
+        !workspace
+            .join(".niles/capabilities/codex:bogus:wat.json")
+            .exists()
+    );
+}
+
+#[test]
 fn bare_niles_errors_when_stdin_is_not_interactive() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-session-noninteractive-test");

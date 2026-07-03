@@ -67,7 +67,10 @@ pub fn known_agent_ids() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn profile_for(agent: &str) -> Option<AgentProfile> {
-    PROFILES.iter().find(|profile| profile.id == agent).copied()
+    PROFILES
+        .iter()
+        .find(|profile| profile.id.eq_ignore_ascii_case(agent))
+        .copied()
 }
 
 pub fn parse_spec(agent: &str) -> Result<AgentSpec> {
@@ -247,7 +250,7 @@ impl AgentSpec {
             bail!("invalid agent spec `{agent}`; family, model, and effort cannot be empty");
         }
 
-        let family = parts[0].to_owned();
+        let family = canonical_family(parts[0]).unwrap_or_else(|| parts[0].to_owned());
         let model = parts
             .get(1)
             .map(|value| normalize_model(&family, value))
@@ -261,7 +264,10 @@ impl AgentSpec {
             bail!("invalid agent spec `{agent}`; effort requires a model");
         }
         if model.is_some() && profile_for(&family).is_none() {
-            bail!("agent `{family}` does not support model/effort qualifiers");
+            bail!(
+                "unknown agent family `{}`; model/effort qualifiers are only supported for codex and claude",
+                parts[0]
+            );
         }
 
         Ok(Self {
@@ -299,6 +305,10 @@ impl AgentSpec {
             effort: self.effort.clone(),
         })
     }
+}
+
+fn canonical_family(family: &str) -> Option<String> {
+    profile_for(family).map(|profile| profile.id.to_owned())
 }
 
 fn normalize_model(family: &str, model: &str) -> Result<String> {
@@ -344,17 +354,11 @@ fn normalize_effort(family: &str, effort: &str) -> Result<String> {
 }
 
 fn supported_codex_model(model: &str) -> bool {
-    matches!(
-        model,
-        "gpt-5" | "gpt-5.4" | "gpt-5.5" | "gpt-5-codex" | "o3" | "o3-pro" | "o4-mini"
-    )
+    model.starts_with("gpt-") || matches!(model, "o3" | "o3-pro" | "o4-mini")
 }
 
 fn supported_claude_model(model: &str) -> bool {
-    matches!(model, "opus" | "sonnet" | "fable")
-        || model.starts_with("claude-opus-")
-        || model.starts_with("claude-sonnet-")
-        || model.starts_with("claude-fable-")
+    matches!(model, "opus" | "sonnet" | "fable" | "haiku") || model.starts_with("claude-")
 }
 
 #[cfg(test)]
@@ -418,6 +422,18 @@ mod tests {
         assert_eq!(claude.family(), "claude");
         assert_eq!(claude.model(), Some("sonnet"));
         assert_eq!(claude.effort(), Some("medium"));
+
+        let haiku = AgentSpec::parse("Claude:Haiku:MAX").unwrap();
+        assert_eq!(haiku.family(), "claude");
+        assert_eq!(haiku.model(), Some("haiku"));
+        assert_eq!(haiku.effort(), Some("max"));
+
+        let full_claude = AgentSpec::parse("claude:claude-haiku-4-5-20251001:low").unwrap();
+        assert_eq!(full_claude.model(), Some("claude-haiku-4-5-20251001"));
+
+        let codex_full = AgentSpec::parse("CODEX:gpt-5.5-codex:xhigh").unwrap();
+        assert_eq!(codex_full.family(), "codex");
+        assert_eq!(codex_full.model(), Some("gpt-5.5-codex"));
 
         let bare = AgentSpec::parse("custom").unwrap();
         assert_eq!(bare.family(), "custom");

@@ -88,8 +88,10 @@ pub(crate) fn evaluate_agent_probe(
     binary: &str,
     probe: &ProbeResult,
 ) -> Option<VersionGateReport> {
-    let profile = agents::profile_for(agent)?;
-    Some(evaluate_probe(agent, binary, profile, probe))
+    let spec = agents::parse_spec(agent).ok()?;
+    let family = spec.family().to_owned();
+    let profile = agents::profile_for(&family)?;
+    Some(evaluate_probe(&family, binary, profile, probe))
 }
 
 impl VersionGateReport {

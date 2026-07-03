@@ -8,7 +8,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::spec::{CommandConfig, TaskSpec, TaskStep},
+    config::{
+        agents,
+        spec::{CommandConfig, TaskSpec, TaskStep},
+    },
     schema::{self, ArtifactKind},
 };
 
@@ -188,7 +191,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let manager = prompt_value(input, output, "Manager agent", &manifest.manager)?;
+        let manager = prompt_agent_value(input, output, "Manager agent", &manifest.manager)?;
         let manager_changed = manager != manifest.manager;
         manifest.manager = manager;
         if manager_changed {
@@ -248,10 +251,10 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     defaults: &WorkspaceManifest,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: prompt_value(input, output, "Manager agent", &defaults.manager)?,
-        planner: prompt_value(input, output, "Planner agent", &defaults.planner)?,
-        implementer: prompt_value(input, output, "Implementer agent", &defaults.implementer)?,
-        reviewer: prompt_value(input, output, "Reviewer agent", &defaults.reviewer)?,
+        manager: prompt_agent_value(input, output, "Manager agent", &defaults.manager)?,
+        planner: prompt_agent_value(input, output, "Planner agent", &defaults.planner)?,
+        implementer: prompt_agent_value(input, output, "Implementer agent", &defaults.implementer)?,
+        reviewer: prompt_agent_value(input, output, "Reviewer agent", &defaults.reviewer)?,
         validation_command: prompt_value(
             input,
             output,
@@ -285,6 +288,21 @@ fn prompt_yes_no<R: BufRead, W: Write>(
             "y" | "yes" => return Ok(true),
             "n" | "no" => return Ok(false),
             _ => writeln!(output, "Please answer y or n.")?,
+        }
+    }
+}
+
+fn prompt_agent_value<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    label: &str,
+    default: &str,
+) -> Result<String> {
+    loop {
+        let value = prompt_value(input, output, label, default)?;
+        match agents::parse_spec(&value) {
+            Ok(_) => return Ok(value),
+            Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
         }
     }
 }
@@ -442,6 +460,50 @@ validation_command: lint
                 .unwrap()
                 .contains("(updated manager)")
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_agent_specs_before_persisting_manifest_values() {
+        let root = temp_test_path("invalid-agent-prompt");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        let original = WorkspaceManifest {
+            manager: "codex".to_owned(),
+            planner: "claude".to_owned(),
+            implementer: "codex".to_owned(),
+            reviewer: "claude".to_owned(),
+            validation_command: "lint".to_owned(),
+        };
+        save(&root, &original).unwrap();
+
+        let mut input = Cursor::new(
+            b"claude:opus:turbo\nclaude:haiku:low\ny\n\nclaude:nope:low\nclaude:haiku:max\ncodex\nclaude\nlint\n"
+                .to_vec(),
+        );
+        let mut output = Vec::new();
+        let manifest = ensure_interactive_with_io(
+            &root,
+            &WorkspaceManifestDefaults::default(),
+            true,
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.manager, "claude:haiku:low");
+        assert_eq!(manifest.planner, "claude:haiku:max");
+        assert_eq!(manifest.implementer, "codex");
+        assert_eq!(manifest.reviewer, "claude");
+        assert_eq!(manifest.validation_command, "lint");
+        let persisted = load(&root).unwrap().unwrap();
+        assert_eq!(persisted, manifest);
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Invalid agent spec: unsupported claude effort `turbo`"));
+        assert!(output.contains("Invalid agent spec: unsupported claude model `nope`"));
+        assert!(output.contains("Manager agent [codex]: "));
+        assert!(output.contains("Planner agent [claude]: "));
 
         fs::remove_dir_all(root).unwrap();
     }
