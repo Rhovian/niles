@@ -52,7 +52,7 @@ where
 }
 
 pub(crate) fn capture_pane(target: &str, lines: usize) -> Result<String> {
-    let start = format!("-{lines}");
+    let start = capture_start(lines);
     let output = output(["capture-pane", "-p", "-t", target, "-S", &start])
         .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
@@ -64,6 +64,14 @@ pub(crate) fn capture_pane(target: &str, lines: usize) -> Result<String> {
     }
 
     Ok(format_capture(&output.stdout))
+}
+
+fn capture_start(lines: usize) -> String {
+    if lines == 0 {
+        "-".to_owned()
+    } else {
+        format!("-{lines}")
+    }
 }
 
 pub(crate) fn send_line(target: &str, line: &str) -> Result<()> {
@@ -225,6 +233,12 @@ mod tests {
     fn format_capture_trims_tmux_padding_and_restores_single_newline() {
         assert_eq!(format_capture(b"line 1\nline 2\n\n\n"), "line 1\nline 2\n");
         assert_eq!(format_capture(b"\n\n"), "");
+    }
+
+    #[test]
+    fn capture_start_uses_full_history_for_zero_lines() {
+        assert_eq!(capture_start(0), "-");
+        assert_eq!(capture_start(2000), "-2000");
     }
 
     #[test]

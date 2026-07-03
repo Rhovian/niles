@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -17,6 +17,10 @@ use crate::{
 };
 
 const WORKER_BRIEF_TEMPLATE: &str = include_str!("templates/worker_brief.md");
+pub(crate) const DEFAULT_PEEK_LINES: usize = 2000;
+const FINAL_PANE_CAPTURE_LINES: usize = 2000;
+const REPORT_FILE: &str = "report.md";
+const FINAL_PANE_FILE: &str = "final-pane.txt";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WorkerMeta {
@@ -138,6 +142,7 @@ pub fn spawn(
     print_worker_tier(&meta);
     println!("brief: {}", meta.brief);
     println!("peek: niles peek {id}");
+    println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
     println!("close: niles worker-close {id}");
 
@@ -174,6 +179,12 @@ pub fn worker_close(id: String) -> Result<()> {
         .unwrap_or_else(|| wake::status_log_path(&worker_dir));
     append_closed_sentinel(&status_path, &id)?;
 
+    match capture_final_pane(&worker_dir, meta.as_ref(), &window_name) {
+        Ok(Some(path)) => println!("pane: {path}"),
+        Ok(None) => {}
+        Err(err) => println!("pane not captured for worker {id}: {err}"),
+    }
+
     match agent_window::close_window(&window_name) {
         Ok(()) => println!("closed window: {window_name}"),
         Err(err) => println!("window {window_name} not closed: {err}"),
@@ -186,8 +197,30 @@ pub fn worker_close(id: String) -> Result<()> {
         Some(&worker_dir),
     )?;
     remove_file_if_exists(&meta_path(&worker_dir))?;
-    remove_dir_all_if_exists(&worker_dir)?;
     println!("closed: {id}");
+    Ok(())
+}
+
+pub fn report(id: String) -> Result<()> {
+    validate_id(&id)?;
+    let location = resolve_worker(&id)?;
+    let path = report_path(&location.worker_dir);
+    let body = match fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            let final_pane = final_pane_path(&location.worker_dir);
+            if final_pane.exists() {
+                bail!(
+                    "no report found for worker '{id}' at {path}; final pane snapshot is available at {final_pane}"
+                );
+            }
+            bail!(
+                "no report found for worker '{id}' at {path}; workers should write substantial deliverables to report.md"
+            );
+        }
+        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    };
+    print!("{body}");
     Ok(())
 }
 
@@ -336,6 +369,10 @@ fn write_brief(
         .parent()
         .map(wake::status_log_path)
         .unwrap_or_else(|| Utf8PathBuf::from("status.log"));
+    let report_path = path
+        .parent()
+        .map(report_path)
+        .unwrap_or_else(|| Utf8PathBuf::from(REPORT_FILE));
     let wake_examples = wake::worker_contract_examples(&status_path);
     let body = render_template(
         WORKER_BRIEF_TEMPLATE,
@@ -344,6 +381,7 @@ fn write_brief(
             ("{project}", project.as_str()),
             ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
+            ("{report_path}", report_path.as_str()),
             ("{task}", task),
             ("{wake_examples}", &wake_examples),
         ],
@@ -379,6 +417,32 @@ fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
 
 fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
     worker_dir.join("meta.json")
+}
+
+fn report_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
+    worker_dir.join(REPORT_FILE)
+}
+
+fn final_pane_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
+    worker_dir.join(FINAL_PANE_FILE)
+}
+
+fn capture_final_pane(
+    worker_dir: &Utf8Path,
+    meta: Option<&WorkerMeta>,
+    window_name: &str,
+) -> Result<Option<Utf8PathBuf>> {
+    if !worker_dir.exists() {
+        return Ok(None);
+    }
+
+    let text = match meta {
+        Some(meta) => agent_window::capture_target(&meta.window, FINAL_PANE_CAPTURE_LINES),
+        None => agent_window::capture_window(window_name, FINAL_PANE_CAPTURE_LINES),
+    }?;
+    let path = final_pane_path(worker_dir);
+    fs::write(&path, text).with_context(|| format!("failed to write {path}"))?;
+    Ok(Some(path))
 }
 
 fn cleanup_failed_spawn(id: &str, project: &Utf8Path, dir: &Utf8Path) -> Result<()> {

@@ -61,6 +61,7 @@ fn main() -> Result<()> {
             task,
         }) => worker::spawn(id, project, agent, brief, task, allow_cli_mismatch),
         Some(CommandName::WorkerClose { id }) => worker::worker_close(id),
+        Some(CommandName::Report { id }) => worker::report(id),
         Some(CommandName::Peek {
             id,
             run,

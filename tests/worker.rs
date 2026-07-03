@@ -123,6 +123,7 @@ esac
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles-auth-fix"));
     assert!(spawn_stdout.contains("peek: niles peek auth-fix"));
+    assert!(spawn_stdout.contains("report: niles report auth-fix"));
     assert!(spawn_stdout.contains("close: niles worker-close auth-fix"));
 
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
@@ -132,6 +133,10 @@ esac
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains("niles peek auth-fix"));
+    assert!(brief.contains("report_file:"));
+    assert!(brief.contains(".niles/worker/auth-fix/report.md"));
+    assert!(brief.contains("Write substantial deliverable content"));
+    assert!(brief.contains("done: <short result>; report:"));
 
     let launch = fs::read_to_string(workspace.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
@@ -167,6 +172,110 @@ esac
     assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
     assert!(log.contains("send-keys -t niles:niles-auth-fix C-m"));
+}
+
+#[test]
+fn report_prints_worker_report_file() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-report");
+
+    let worker_dir = write_worker_fixture(&workspace, "auth-fix", "working: report ready");
+    fs::write(
+        worker_dir.join("report.md"),
+        "# Findings\n\n- durable content\n",
+    )
+    .unwrap();
+
+    let report = Command::new(niles)
+        .args(["report", "auth-fix"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert_command_success("report", &report);
+    assert_eq!(
+        String::from_utf8_lossy(&report.stdout),
+        "# Findings\n\n- durable content\n"
+    );
+}
+
+#[test]
+fn report_errors_helpfully_when_report_file_is_absent() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-report-missing");
+
+    let worker_dir = write_worker_fixture(&workspace, "auth-fix", "working: no report yet");
+    fs::write(worker_dir.join("final-pane.txt"), "pane tail\n").unwrap();
+
+    let report = Command::new(niles)
+        .args(["report", "auth-fix"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .output()
+        .unwrap();
+    assert!(!report.status.success());
+    assert!(String::from_utf8_lossy(&report.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&report.stderr);
+    assert!(stderr.contains("no report found for worker 'auth-fix'"));
+    assert!(stderr.contains(".niles/worker/auth-fix/report.md"));
+    assert!(stderr.contains("final pane snapshot is available"));
+}
+
+#[test]
+fn peek_defaults_deep_and_zero_lines_captures_full_history() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-peek-deep");
+    let home = niles_home(&workspace);
+    write_worker_fixture(&workspace, "auth-fix", "working: inspect pane");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  capture-pane) printf 'pane output\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let default_peek = Command::new(niles)
+        .args(["peek", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("default peek", &default_peek);
+
+    let full_history_peek = Command::new(niles)
+        .args(["peek", "auth-fix", "--lines", "0"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("full-history peek", &full_history_peek);
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(
+        log.lines()
+            .any(|line| line == "capture-pane -p -t niles:niles-auth-fix -S -2000")
+    );
+    assert!(
+        log.lines()
+            .any(|line| line == "capture-pane -p -t niles:niles-auth-fix -S -")
+    );
 }
 
 #[test]
@@ -432,7 +541,12 @@ esac
 
     assert!(!invoker.join(".niles/worker/auth-fix.json").exists());
     assert!(!project.join(".niles/worker/auth-fix.json").exists());
-    assert!(!worker_dir.exists());
+    assert!(worker_dir.is_dir());
+    assert!(!worker_dir.join("meta.json").exists());
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("final-pane.txt")).unwrap(),
+        "pane output\n"
+    );
     assert_global_index_lacks(&home, "auth-fix");
 }
 
@@ -633,6 +747,7 @@ fn worker_close_tears_down_worker() {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 0 ;;
+  capture-pane) printf 'final pane\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -643,6 +758,8 @@ esac
     fs::set_permissions(&tmux, permissions).unwrap();
 
     write_worker_fixture(&workspace, "auth-fix", "status");
+    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    fs::write(worker_dir.join("report.md"), "durable report\n").unwrap();
 
     let path = format!(
         "{}:{}",
@@ -666,13 +783,24 @@ esac
         String::from_utf8_lossy(&close.stderr)
     );
     let close_stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(close_stdout.contains("pane:"));
     assert!(close_stdout.contains("closed window: niles-auth-fix"));
     assert!(close_stdout.contains("closed: auth-fix"));
 
     let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -2000"));
     assert!(log.contains("kill-window -t niles:niles-auth-fix"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
-    assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    assert!(worker_dir.is_dir());
+    assert!(!worker_dir.join("meta.json").exists());
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("final-pane.txt")).unwrap(),
+        "final pane\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worker_dir.join("report.md")).unwrap(),
+        "durable report\n"
+    );
     assert_global_index_lacks(&home, "auth-fix");
 }
 

@@ -120,6 +120,11 @@ pub enum CommandName {
         /// Worker task id to close.
         id: String,
     },
+    /// Print a worker's durable report file.
+    Report {
+        /// Worker task id.
+        id: String,
+    },
     /// Capture the tail of a worker tmux pane.
     Peek {
         /// Worker task id. Omit when targeting a run step with --run and --index.
@@ -130,8 +135,8 @@ pub enum CommandName {
         /// Step number for a run step window.
         #[arg(short, long)]
         index: Option<usize>,
-        /// Number of lines to capture.
-        #[arg(short, long, default_value_t = 40)]
+        /// Number of lines to capture. Use 0 for full tmux history.
+        #[arg(short, long, default_value_t = crate::worker::DEFAULT_PEEK_LINES)]
         lines: usize,
     },
     /// Send a message to a worker tmux pane.
