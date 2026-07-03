@@ -111,6 +111,40 @@ commands:
 }
 
 #[test]
+fn parseable_legacy_run_state_is_stamped_on_next_state_write() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-legacy-state-stamp");
+
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "Stamp legacy state"
+steps:
+  - command: ok
+commands:
+  ok: printf 'ok\n'
+"#,
+    );
+
+    let output = prepare_run(niles, &workspace, &task);
+    let id = run_id(&output);
+    let state_path = workspace.join(".niles/runs").join(&id).join("state.json");
+    let state_body = fs::read_to_string(&state_path).unwrap();
+    let legacy_state = state_body
+        .lines()
+        .filter(|line| !line.contains("niles_schema"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&state_path, legacy_state).unwrap();
+
+    let exec = exec_step_output(niles, &workspace, 1);
+    assert_command_success("exec-step legacy state", &exec);
+    let rewritten = fs::read_to_string(&state_path).unwrap();
+    assert!(rewritten.contains(r#""niles_schema": 2"#));
+    assert!(rewritten.contains(r#""status": "completed""#));
+}
+
+#[test]
 fn old_run_state_reports_schema_skew_without_raw_serde_error() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-old-run-state");

@@ -13,6 +13,7 @@ const FIELD: &str = "niles_schema";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArtifactKind {
     CapabilityManifest,
+    Directory,
     GlobalIndex,
     ManagerSession,
     RunPlan,
@@ -71,19 +72,16 @@ where
     read_json_body(path, kind, &body).map(Some)
 }
 
-pub(crate) fn read_json_value(path: &Utf8Path, kind: ArtifactKind) -> Result<JsonValue> {
-    let body = fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
-    let value = parse_json_value(path, kind, &body)?;
-    validate_schema(path, kind, schema_from_json(&value))?;
-    Ok(value)
-}
-
 pub(crate) fn read_json_value_as<T>(path: &Utf8Path, kind: ArtifactKind) -> Result<JsonValue>
 where
     T: DeserializeOwned,
 {
-    let value = read_json_value(path, kind)?;
-    serde_json::from_value::<T>(value.clone()).map_err(|_| parse_failure(path, kind))?;
+    let body = fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
+    let value = parse_json_value(path, kind, &body)?;
+    let probe = schema_from_json(&value);
+    reject_newer_schema(path, kind, probe)?;
+    serde_json::from_value::<T>(value.clone())
+        .map_err(|err| deserialize_failure(path, kind, probe, err))?;
     Ok(value)
 }
 
@@ -153,7 +151,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     );
 
     let runs = niles.join("runs");
-    for path in read_dir_paths(&runs)? {
+    for path in read_dir_paths(&mut observations, &runs) {
         if path.is_dir() {
             push_json_if_file(
                 &mut observations,
@@ -165,7 +163,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
                 path.join("plan.json"),
                 ArtifactKind::RunPlan,
             );
-            for step_path in read_dir_paths(&path.join("steps"))? {
+            for step_path in read_dir_paths(&mut observations, &path.join("steps")) {
                 if step_path.extension() == Some("json") {
                     push_json_if_file(&mut observations, step_path, ArtifactKind::StepRecord);
                 }
@@ -176,7 +174,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     }
 
     let workers = niles.join("worker");
-    for path in read_dir_paths(&workers)? {
+    for path in read_dir_paths(&mut observations, &workers) {
         if path.is_dir() {
             push_json_if_file(
                 &mut observations,
@@ -189,7 +187,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     }
 
     let sessions = niles.join("sessions");
-    for path in read_dir_paths(&sessions)? {
+    for path in read_dir_paths(&mut observations, &sessions) {
         if path.is_dir() {
             push_json_if_file(
                 &mut observations,
@@ -200,7 +198,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     }
 
     let capabilities = niles.join("capabilities");
-    for path in read_dir_paths(&capabilities)? {
+    for path in read_dir_paths(&mut observations, &capabilities) {
         if path.extension() == Some("json") {
             push_json_if_file(&mut observations, path, ArtifactKind::CapabilityManifest);
         }
@@ -218,7 +216,8 @@ impl ArtifactKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
             ArtifactKind::CapabilityManifest => "capability manifest",
-            ArtifactKind::GlobalIndex => "global run index",
+            ArtifactKind::Directory => "artifact directory",
+            ArtifactKind::GlobalIndex => "global Niles index",
             ArtifactKind::ManagerSession => "manager session metadata",
             ArtifactKind::RunPlan => "run plan",
             ArtifactKind::RunPointer => "run pointer",
@@ -235,8 +234,9 @@ impl ArtifactKind {
             ArtifactKind::CapabilityManifest => {
                 "rerun `niles analyze` to regenerate it, or use the older binary that wrote it"
             }
+            ArtifactKind::Directory => "fix the directory permissions and rerun `niles doctor`",
             ArtifactKind::GlobalIndex => {
-                "remove the index file to rebuild Niles' global pointers, or use the older binary that wrote it"
+                "use the binary that wrote it, or remove the index only if you accept losing existing cross-workspace run and worker pointers"
             }
             ArtifactKind::ManagerSession => {
                 "remove the session directory and start a fresh manager session, or use the older binary that wrote it"
@@ -260,13 +260,17 @@ impl ArtifactKind {
                 "remove the pointer file and respawn the worker, or use the older binary that wrote it"
             }
             ArtifactKind::WorkspaceManifest => {
-                "rerun `niles` interactively to recreate the manifest, or use the older binary that wrote it"
+                "delete .niles/manifest.yaml and rerun `niles`, or use the older binary that wrote it"
             }
         }
     }
 }
 
 impl SchemaStatus {
+    pub(crate) fn is_problem(&self) -> bool {
+        !matches!(self, SchemaStatus::Current(_))
+    }
+
     pub(crate) fn summary(&self) -> String {
         match self {
             SchemaStatus::Current(schema) => format!("current schema {schema}"),
@@ -284,8 +288,9 @@ where
     T: DeserializeOwned,
 {
     let value = parse_json_value(path, kind, body)?;
-    validate_schema(path, kind, schema_from_json(&value))?;
-    serde_json::from_value(value).map_err(|_| parse_failure(path, kind))
+    let probe = schema_from_json(&value);
+    reject_newer_schema(path, kind, probe)?;
+    serde_json::from_value(value).map_err(|err| deserialize_failure(path, kind, probe, err))
 }
 
 fn read_yaml_body<T>(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<T>
@@ -293,16 +298,19 @@ where
     T: DeserializeOwned,
 {
     let value = parse_yaml_value(path, kind, body)?;
-    validate_schema(path, kind, schema_from_yaml(&value))?;
-    serde_yaml::from_str(body).map_err(|_| parse_failure(path, kind))
+    let probe = schema_from_yaml(&value);
+    reject_newer_schema(path, kind, probe)?;
+    serde_yaml::from_str(body).map_err(|err| deserialize_failure(path, kind, probe, err))
 }
 
 fn parse_json_value(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<JsonValue> {
-    serde_json::from_str(body).map_err(|_| malformed_artifact(path, kind, "JSON"))
+    serde_json::from_str(body)
+        .map_err(|err| anyhow::Error::new(err).context(malformed_artifact(path, kind, "JSON")))
 }
 
 fn parse_yaml_value(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<YamlValue> {
-    serde_yaml::from_str(body).map_err(|_| malformed_artifact(path, kind, "YAML"))
+    serde_yaml::from_str(body)
+        .map_err(|err| anyhow::Error::new(err).context(malformed_artifact(path, kind, "YAML")))
 }
 
 fn stamp_json_value(value: &mut JsonValue) -> Result<()> {
@@ -357,17 +365,9 @@ fn schema_from_yaml_object(object: &YamlMap) -> SchemaProbe {
     }
 }
 
-fn validate_schema(path: &Utf8Path, kind: ArtifactKind, probe: SchemaProbe) -> Result<()> {
+fn reject_newer_schema(path: &Utf8Path, kind: ArtifactKind, probe: SchemaProbe) -> Result<()> {
     match probe {
-        SchemaProbe::Schema(CURRENT_SCHEMA) => Ok(()),
-        SchemaProbe::Schema(schema) if schema < CURRENT_SCHEMA => {
-            bail!(
-                "{} {path} was written by an older niles (schema {schema}, this binary expects {}); {}",
-                kind.label(),
-                CURRENT_SCHEMA,
-                kind.remediation()
-            )
-        }
+        SchemaProbe::Schema(schema) if schema <= CURRENT_SCHEMA => Ok(()),
         SchemaProbe::Schema(schema) => {
             bail!(
                 "{} {path} was written by a newer niles (schema {schema}, this binary expects {}); upgrade this binary, or use the newer binary that wrote it",
@@ -375,9 +375,55 @@ fn validate_schema(path: &Utf8Path, kind: ArtifactKind, probe: SchemaProbe) -> R
                 CURRENT_SCHEMA
             )
         }
+        SchemaProbe::Invalid => Ok(()),
+    }
+}
+
+fn deserialize_failure<E>(
+    path: &Utf8Path,
+    kind: ArtifactKind,
+    probe: SchemaProbe,
+    err: E,
+) -> anyhow::Error
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let message = deserialize_failure_message(path, kind, probe);
+    if matches!(probe, SchemaProbe::Schema(CURRENT_SCHEMA)) {
+        anyhow::Error::new(err).context(message)
+    } else {
+        anyhow::anyhow!(message)
+    }
+}
+
+fn deserialize_failure_message(path: &Utf8Path, kind: ArtifactKind, probe: SchemaProbe) -> String {
+    match probe {
+        SchemaProbe::Schema(schema) if schema < CURRENT_SCHEMA => {
+            format!(
+                "{} {path} was written by an older niles (schema {schema}, this binary expects {}) and could not be read as the current format; {}",
+                kind.label(),
+                CURRENT_SCHEMA,
+                kind.remediation()
+            )
+        }
+        SchemaProbe::Schema(CURRENT_SCHEMA) => {
+            format!(
+                "{} {path} declares schema {}, but does not match this binary's expected format; {}",
+                kind.label(),
+                CURRENT_SCHEMA,
+                kind.remediation()
+            )
+        }
+        SchemaProbe::Schema(schema) => {
+            format!(
+                "{} {path} was written by a newer niles (schema {schema}, this binary expects {}); upgrade this binary, or use the newer binary that wrote it",
+                kind.label(),
+                CURRENT_SCHEMA
+            )
+        }
         SchemaProbe::Invalid => {
-            bail!(
-                "{} {path} has an invalid {FIELD} stamp (this binary expects schema {}); {}",
+            format!(
+                "{} {path} has an invalid {FIELD} stamp and could not be read as the current format (this binary expects schema {}); {}",
                 kind.label(),
                 CURRENT_SCHEMA,
                 kind.remediation()
@@ -386,18 +432,8 @@ fn validate_schema(path: &Utf8Path, kind: ArtifactKind, probe: SchemaProbe) -> R
     }
 }
 
-fn parse_failure(path: &Utf8Path, kind: ArtifactKind) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{} {path} declares schema {}, but this binary could not read it (this binary expects schema {}); {}",
-        kind.label(),
-        CURRENT_SCHEMA,
-        CURRENT_SCHEMA,
-        kind.remediation()
-    )
-}
-
-fn malformed_artifact(path: &Utf8Path, kind: ArtifactKind, format: &str) -> anyhow::Error {
-    anyhow::anyhow!(
+fn malformed_artifact(path: &Utf8Path, kind: ArtifactKind, format: &str) -> String {
+    format!(
         "{} {path} is malformed {format}; schema is unknown and this binary expects schema {}; {}",
         kind.label(),
         CURRENT_SCHEMA,
@@ -425,22 +461,36 @@ fn push_yaml_if_file(
     }
 }
 
-fn read_dir_paths(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
+fn read_dir_paths(observations: &mut Vec<SchemaObservation>, dir: &Utf8Path) -> Vec<Utf8PathBuf> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {dir}")),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Vec::new(),
+        Err(_) => {
+            observations.push(SchemaObservation {
+                kind: ArtifactKind::Directory,
+                path: dir.to_path_buf(),
+                status: SchemaStatus::Unreadable,
+            });
+            return Vec::new();
+        }
     };
 
     let mut paths = Vec::new();
     for entry in entries {
-        let entry = entry.with_context(|| format!("failed to read entry in {dir}"))?;
-        let path = Utf8PathBuf::from_path_buf(entry.path())
-            .map_err(|path| anyhow::anyhow!("path is not UTF-8: {}", path.display()))?;
-        paths.push(path);
+        let Ok(entry) = entry else {
+            observations.push(SchemaObservation {
+                kind: ArtifactKind::Directory,
+                path: dir.to_path_buf(),
+                status: SchemaStatus::Unreadable,
+            });
+            continue;
+        };
+        if let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) {
+            paths.push(path);
+        }
     }
     paths.sort();
-    Ok(paths)
+    paths
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,7 +546,24 @@ mod tests {
     }
 
     #[test]
-    fn legacy_json_errors_before_typed_deserialization() {
+    fn legacy_json_reads_when_current_shape_matches() {
+        let root = temp_test_path("json-legacy-ok");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, r#"{"value":"ok"}"#).unwrap();
+
+        assert_eq!(
+            read_json::<Example>(&path, ArtifactKind::RunState).unwrap(),
+            Example {
+                value: "ok".to_owned()
+            }
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_json_errors_only_after_typed_deserialization_fails() {
         let root = temp_test_path("json-legacy");
         fs::create_dir_all(&root).unwrap();
         let path = root.join("state.json");
@@ -510,6 +577,48 @@ mod tests {
         assert!(err.contains("expects 2"));
         assert!(err.contains("remove the run directory"));
         assert!(!err.contains("missing field"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn current_schema_deserialization_error_keeps_serde_source() {
+        let root = temp_test_path("json-current-corrupt");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, r#"{"niles_schema":2,"id":"bad"}"#).unwrap();
+
+        let err = read_json::<Example>(&path, ArtifactKind::RunState).unwrap_err();
+        let chain = err.chain().map(|err| err.to_string()).collect::<Vec<_>>();
+
+        assert!(chain[0].contains("declares schema 2"));
+        assert!(chain.iter().any(|err| err.contains("missing field")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directories_are_reported_without_aborting_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_test_path("unreadable-dir");
+        let steps = root.join(".niles/runs/run-1/steps");
+        fs::create_dir_all(&steps).unwrap();
+        let mut permissions = fs::metadata(&steps).unwrap().permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&steps, permissions).unwrap();
+
+        let observations = scan_workspace(&root).unwrap();
+
+        let mut permissions = fs::metadata(&steps).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&steps, permissions).unwrap();
+        assert!(observations.iter().any(|observation| {
+            observation.kind == ArtifactKind::Directory
+                && observation.path == steps
+                && observation.status == SchemaStatus::Unreadable
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

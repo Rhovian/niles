@@ -155,7 +155,21 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     output: &mut W,
 ) -> Result<WorkspaceManifest> {
     let path = manifest_path(root);
-    let existing = load(root)?;
+    let mut recreating = false;
+    let existing = match load(root) {
+        Ok(existing) => existing,
+        Err(err) if interactive && path.exists() => {
+            writeln!(output, "Niles workspace manifest could not be read: {path}")?;
+            writeln!(output, "{err}")?;
+            if prompt_yes_no(input, output, "Recreate workspace manifest?", false)? {
+                recreating = true;
+                None
+            } else {
+                return Err(err);
+            }
+        }
+        Err(err) => return Err(err),
+    };
     if !interactive {
         if existing.is_some() {
             bail!(
@@ -195,7 +209,11 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         return Ok(manifest);
     }
 
-    writeln!(output, "Niles workspace manifest not found: {path}")?;
+    if recreating {
+        writeln!(output, "Recreating Niles workspace manifest: {path}")?;
+    } else {
+        writeln!(output, "Niles workspace manifest not found: {path}")?;
+    }
     writeln!(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
@@ -390,6 +408,45 @@ niles_schema: 2
     }
 
     #[test]
+    fn parseable_legacy_manifest_loads_and_stamps_on_next_write() {
+        let root = temp_test_path("legacy-load");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+manager: codex
+planner: claude
+implementer: codex
+reviewer: claude
+validation_command: lint
+"#,
+        )
+        .unwrap();
+
+        let mut input = Cursor::new(b"claude\n\n".to_vec());
+        let mut output = Vec::new();
+        let manifest = ensure_interactive_with_io(
+            &root,
+            &WorkspaceManifestDefaults::default(),
+            true,
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.manager, "claude");
+        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert!(persisted.contains("niles_schema: 2"));
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("(updated manager)")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn can_reconfigure_workspace_manifest_roles_after_manager_pick() {
         let root = temp_test_path("existing-role-update");
         fs::create_dir_all(root.join(".niles")).unwrap();
@@ -440,6 +497,50 @@ niles_schema: 2
         assert!(output.contains("Reviewer agent [review-old]: "));
         assert!(output.contains("Default validation command [lint]: "));
         assert!(output.contains("(updated roles)"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skewed_manifest_can_be_recreated_interactively() {
+        let root = temp_test_path("skewed-recreate");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(manifest_path(&root), "manager: codex\n").unwrap();
+
+        let mut input = Cursor::new(b"y\ncodex\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
+        let mut output = Vec::new();
+        let manifest = ensure_interactive_with_io(
+            &root,
+            &WorkspaceManifestDefaults::default(),
+            true,
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.validation_command, "check");
+        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert!(persisted.contains("niles_schema: 2"));
+        assert!(persisted.contains("validation_command: check"));
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("could not be read"));
+        assert!(output.contains("Recreate workspace manifest? [y/N]: "));
+        assert!(output.contains("Recreating Niles workspace manifest"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skewed_manifest_remediation_names_delete_and_rerun() {
+        let root = temp_test_path("skewed-remediation");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(manifest_path(&root), "manager: codex\n").unwrap();
+
+        let err = load(&root).unwrap_err().to_string();
+
+        assert!(err.contains("workspace manifest"));
+        assert!(err.contains("schema 1"));
+        assert!(err.contains("delete .niles/manifest.yaml and rerun `niles`"));
 
         fs::remove_dir_all(root).unwrap();
     }

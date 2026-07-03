@@ -343,7 +343,7 @@ fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
     Ok(schema::read_optional_json(path, ArtifactKind::GlobalIndex)?.unwrap_or_default())
 }
 
-fn global_index_path() -> Result<Utf8PathBuf> {
+pub(crate) fn global_index_path() -> Result<Utf8PathBuf> {
     if let Some(home) = env::var_os("NILES_HOME") {
         return Ok(utf8_path(PathBuf::from(home), "NILES_HOME")?
             .join(RUNS_DIR)
@@ -590,6 +590,45 @@ mod tests {
             resolver_at(&local_runs_dir).named(run).unwrap(),
             niles_home_target
         );
+    }
+
+    #[test]
+    fn legacy_global_index_reads_and_stamps_on_next_write() {
+        let root = TempDir::new("legacy-global-index-stamp");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let path = global_index_path().unwrap();
+        let legacy_target = create_dir(root.path().join("legacy-target"));
+        let new_target = create_dir(root.path().join("new-target"));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(
+            &path,
+            format!(
+                r#"{{
+  "runs": {{
+    "legacy": {{
+      "id": "legacy",
+      "workspace": "{}",
+      "run_dir": "{}"
+    }}
+  }}
+}}
+"#,
+                root.path(),
+                legacy_target
+            ),
+        )
+        .unwrap();
+
+        let index = read_global_index(&path).unwrap();
+        assert!(index.runs.contains_key("legacy"));
+
+        super::write_global_run_pointer(&run_pointer("new", &new_target)).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains(r#""niles_schema": 2"#));
+        assert!(body.contains(r#""legacy""#));
+        assert!(body.contains(r#""new""#));
     }
 
     #[test]
