@@ -5,14 +5,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
-    capabilities,
-    config::{
-        agents,
-        spec::{
-            TaskSpec, TaskStep, apply_project_config, load_project_config,
-            load_project_config_from, load_task, save_task, summarize_spec,
-        },
-        version,
+    agents,
+    config::spec::{
+        TaskSpec, TaskStep, apply_project_config, load_project_config, load_project_config_from,
+        load_task, save_task, summarize_spec,
     },
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
@@ -33,8 +29,8 @@ pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
     let task = absolute_existing_file(&task, "task")?;
     let spec = with_project_config(load_task(&task)?)?;
-    capabilities::validate_task_agents(&spec)?;
-    version::preflight_task_agents(&spec, allow_cli_mismatch)?;
+    agents::capabilities::validate_task_agents(&spec)?;
+    agents::version::preflight_task_agents(&spec, allow_cli_mismatch)?;
     prepare_run(spec, Some(task))
 }
 
@@ -242,7 +238,7 @@ pub(crate) fn step_add(
             .workspace
             .as_deref()
             .context("run state has no workspace")?;
-        capabilities::validate_task_agent(workspace, &validation_spec.agents, agent)?;
+        agents::capabilities::validate_task_agent(workspace, &validation_spec.agents, agent)?;
     }
     let record = planned_step(index, &new_step)?;
 

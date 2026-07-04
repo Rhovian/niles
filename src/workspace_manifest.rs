@@ -9,7 +9,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    agent_picker,
+    agents::picker,
     config::spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
     schema::{self, ArtifactKind},
 };
@@ -18,14 +18,14 @@ const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
 const WORKER_REVIEW_LOOP_SUMMARY: &str =
     "planner -> worker <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "WorkspaceManifestWire")]
 pub struct WorkspaceManifest {
     pub manager: String,
     pub planner: String,
     pub worker: String,
     pub reviewer: String,
     pub validation_command: String,
-    #[serde(default = "initial_flow")]
     pub flow: Vec<WorkspaceFlowRole>,
 }
 
@@ -43,34 +43,20 @@ struct WorkspaceManifestWire {
     _niles_schema: Option<u64>,
 }
 
-impl<'de> Deserialize<'de> for WorkspaceManifest {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = WorkspaceManifestWire::deserialize(deserializer)?;
-        Ok(Self {
+impl From<WorkspaceManifestWire> for WorkspaceManifest {
+    fn from(wire: WorkspaceManifestWire) -> Self {
+        Self {
             manager: wire.manager,
             planner: wire.planner,
             worker: wire.worker,
             reviewer: wire.reviewer,
             validation_command: wire.validation_command,
             flow: wire.flow,
-        })
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceManifestDefaults {
-    pub manager: String,
-    pub planner: String,
-    pub worker: String,
-    pub reviewer: String,
-    pub validation_command: String,
-    pub flow: Vec<WorkspaceFlowRole>,
-}
-
-impl Default for WorkspaceManifestDefaults {
+impl Default for WorkspaceManifest {
     fn default() -> Self {
         Self {
             manager: "claude".to_owned(),
@@ -79,19 +65,6 @@ impl Default for WorkspaceManifestDefaults {
             reviewer: "claude".to_owned(),
             validation_command: "test".to_owned(),
             flow: initial_flow(),
-        }
-    }
-}
-
-impl WorkspaceManifestDefaults {
-    fn to_manifest(&self) -> WorkspaceManifest {
-        WorkspaceManifest {
-            manager: self.manager.clone(),
-            planner: self.planner.clone(),
-            worker: self.worker.clone(),
-            reviewer: self.reviewer.clone(),
-            validation_command: self.validation_command.clone(),
-            flow: self.flow.clone(),
         }
     }
 }
@@ -200,7 +173,7 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 
 pub fn ensure_interactive(
     root: &Utf8Path,
-    defaults: &WorkspaceManifestDefaults,
+    defaults: &WorkspaceManifest,
 ) -> Result<WorkspaceManifest> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
@@ -276,7 +249,7 @@ pub fn default_command_config(command: &str) -> CommandConfig {
 
 fn ensure_interactive_with_io<R: BufRead, W: Write>(
     root: &Utf8Path,
-    defaults: &WorkspaceManifestDefaults,
+    defaults: &WorkspaceManifest,
     interactive: bool,
     input: &mut R,
     output: &mut W,
@@ -316,12 +289,8 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let manager = agent_picker::prompt_agent_value(
-            root,
-            "Manager agent",
-            &manifest.manager,
-            &agent_configs,
-        )?;
+        let manager =
+            picker::prompt_agent_value(root, "Manager agent", &manifest.manager, &agent_configs)?;
         let manager_changed = manager != manifest.manager;
         manifest.manager = manager;
         if manager_changed {
@@ -329,15 +298,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             writeln!(output, "manifest: {path} (updated manager)")?;
         }
 
-        if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
-            writeln!(
-                output,
-                "Choose persistent agents for this workspace. Press Enter to accept a default."
-            )?;
-            manifest = prompt_manifest_values(root, input, output, &manifest, &agent_configs)?;
-            save(root, &manifest)?;
-            writeln!(output, "manifest: {path} (updated roles)")?;
-        }
+        maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &agent_configs)?;
 
         return Ok(manifest);
     }
@@ -351,22 +312,32 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let defaults = defaults.to_manifest();
-    let mut manifest = prompt_manifest_values(root, input, output, &defaults, &agent_configs)?;
+    let manifest = prompt_manifest_values(root, input, output, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
+    Ok(manifest)
+}
+
+fn maybe_update_manifest_roles<R: BufRead, W: Write>(
+    root: &Utf8Path,
+    input: &mut R,
+    output: &mut W,
+    path: &Utf8Path,
+    manifest: &mut WorkspaceManifest,
+    agent_configs: &BTreeMap<String, AgentConfig>,
+) -> Result<()> {
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        manifest = prompt_manifest_values(root, input, output, &manifest, &agent_configs)?;
-        save(root, &manifest)?;
+        *manifest = prompt_manifest_values(root, input, output, manifest, agent_configs)?;
+        save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
     }
 
-    Ok(manifest)
+    Ok(())
 }
 
 fn prompt_manifest_values<R: BufRead, W: Write>(
@@ -377,25 +348,20 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: agent_picker::prompt_agent_value(
+        manager: picker::prompt_agent_value(
             root,
             "Manager agent",
             &defaults.manager,
             agent_configs,
         )?,
-        planner: agent_picker::prompt_agent_value(
+        planner: picker::prompt_agent_value(
             root,
             "Planner agent",
             &defaults.planner,
             agent_configs,
         )?,
-        worker: agent_picker::prompt_agent_value(
-            root,
-            "Worker agent",
-            &defaults.worker,
-            agent_configs,
-        )?,
-        reviewer: agent_picker::prompt_agent_value(
+        worker: picker::prompt_agent_value(root, "Worker agent", &defaults.worker, agent_configs)?,
+        reviewer: picker::prompt_agent_value(
             root,
             "Reviewer agent",
             &defaults.reviewer,
@@ -511,7 +477,7 @@ niles_schema: 2
         let mut output = Vec::new();
         let err = ensure_interactive_with_io(
             &root,
-            &WorkspaceManifestDefaults::default(),
+            &WorkspaceManifest::default(),
             false,
             &mut input,
             &mut output,
@@ -532,7 +498,7 @@ niles_schema: 2
 
         let err = ensure_interactive_with_io(
             &root,
-            &WorkspaceManifestDefaults::default(),
+            &WorkspaceManifest::default(),
             false,
             &mut input,
             &mut output,
@@ -545,7 +511,7 @@ niles_schema: 2
 
     #[test]
     fn manifest_defaults_carry_flow() {
-        let manifest = WorkspaceManifestDefaults::default().to_manifest();
+        let manifest = WorkspaceManifest::default();
 
         assert_eq!(
             manifest.flow,

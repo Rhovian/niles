@@ -5,11 +5,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
-    agent_window, capabilities,
-    config::{
-        agents,
-        spec::{PromptMode, TaskSpec, TaskStep},
-    },
+    agent_window, agents,
+    config::spec::{PromptMode, TaskSpec, TaskStep},
     context::{agent_prompt, write_agent_context},
     process::{ProcessSpec, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
@@ -102,7 +99,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     };
 
     let workspace = spec_workspace(&spec);
-    capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
+    agents::capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
     let steps_dir = ensure_steps_dir(&run.run_dir)?;
 
     // Brief = handoff context plus a wake contract pointing at this run's log.
@@ -295,7 +292,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
     let workspace = spec_workspace(&spec);
     if let TaskStep::Agent { agent, .. } = step {
-        capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
+        agents::capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
     }
     let steps_dir = ensure_steps_dir(&run.run_dir)?;
 

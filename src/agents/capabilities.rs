@@ -6,12 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    agents::{self, AgentSpec, InvocationDefaults, version},
     analyze::{ProbeResult, run_probe},
-    config::{
-        agents::{self, AgentSpec, InvocationDefaults},
-        spec::{AgentConfig, TaskSpec, TaskStep},
-        version,
-    },
+    config::spec::{AgentConfig, TaskSpec, TaskStep},
     schema::{self, ArtifactKind},
     util::slugify,
 };
@@ -153,7 +150,7 @@ fn validate_model(
         return Ok(());
     };
 
-    let invocation = agents::invocation(spec.original(), config, defaults)?;
+    let invocation = agents::invocation(&spec.canonical(), config, defaults)?;
     let Some((path, manifest)) =
         read_manifest_for_binary(workspace, spec.family(), &invocation.binary)?
     else {

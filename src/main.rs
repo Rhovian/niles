@@ -1,8 +1,7 @@
-mod agent_picker;
 mod agent_window;
+mod agents;
 mod analyze;
 mod build_info;
-mod capabilities;
 mod cli;
 mod config;
 mod context;

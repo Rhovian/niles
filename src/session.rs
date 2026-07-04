@@ -12,15 +12,13 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{
-        agents,
-        spec::{PromptMode, load_project_config_from},
-    },
+    agents,
+    config::spec::{PromptMode, load_project_config_from},
     schema::{self, ArtifactKind},
     store, tmux,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
     wake,
-    workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
+    workspace_manifest::{self, WorkspaceManifest},
 };
 
 const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
@@ -57,7 +55,7 @@ fn launch_prelude(
     let worker_dir = workspace.join(".niles").join("worker");
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 
-    let mut defaults = WorkspaceManifestDefaults::default();
+    let mut defaults = WorkspaceManifest::default();
     if let Some(manager) = manager_override {
         defaults.manager = manager.to_owned();
     }
@@ -346,11 +344,7 @@ fn manager_prompt_io(
 }
 
 fn manager_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec<String> {
-    let startup_prompt = startup_prompt(goal);
-    match agent {
-        "claude" => vec!["--append-system-prompt".to_owned(), brief, startup_prompt],
-        _ => vec![format!("{brief}\n\n{startup_prompt}")],
-    }
+    agents::manager_prompt_args(agent, brief, startup_prompt(goal))
 }
 
 fn manager_stdin_prompt(brief: String, goal: Option<&str>) -> String {
@@ -379,7 +373,7 @@ fn write_manager_session(
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
-        agent: agent.original().to_owned(),
+        agent: agent.canonical(),
         agent_family: agent.tier().map(|tier| tier.family),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
@@ -405,7 +399,7 @@ fn render_manager_brief(
     let flow = workspace_manifest::flow_summary(&manifest.flow);
     MANAGER_BRIEF_TEMPLATE
         .replace("{workspace}", workspace.as_str())
-        .replace("{agent}", agent.original())
+        .replace("{agent}", &agent.canonical())
         .replace("{dir}", dir.as_str())
         .replace("{manifest}", manifest_path.as_str())
         .replace("{flow}", &flow)

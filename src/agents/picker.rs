@@ -4,12 +4,9 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use dialoguer::{Select, console::Term};
 
-use super::catalog::{
-    ModelCatalog, ModelGroup, catalog_source_message, effort_options, insert_model_group,
-    model_catalog,
-};
+use super::catalog::{ModelCatalog, ModelGroup, model_catalog};
 
-use crate::config::{agents, spec::AgentConfig};
+use crate::{agents, config::spec::AgentConfig};
 
 pub(crate) fn prompt_agent_value(
     root: &Utf8Path,
@@ -18,19 +15,9 @@ pub(crate) fn prompt_agent_value(
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
     let term = Term::stderr();
-    prompt_agent_value_on_term(&term, root, label, default, agent_configs)
-}
-
-fn prompt_agent_value_on_term(
-    term: &Term,
-    root: &Utf8Path,
-    label: &str,
-    default: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<String> {
     let choices = agent_choices(default, agent_configs);
-    let index = select_choice(term, label, &choices, default_choice_index(&choices))?;
-    prompt_selected_agent(term, root, &choices[index].value, default, agent_configs)
+    let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
+    prompt_selected_agent(&term, root, &choices[index].value, default, agent_configs)
 }
 
 fn prompt_selected_agent(
@@ -42,7 +29,7 @@ fn prompt_selected_agent(
 ) -> Result<String> {
     let spec = agents::parse_spec(agent)?;
     if agents::profile_for(spec.family()).is_none() || spec.model().is_some() {
-        return canonical_manifest_agent(agent, agent_configs);
+        return agents::canonical_manifest_agent(&spec, agent_configs);
     }
 
     prompt_builtin_agent(term, root, spec.family(), default, agent_configs)
@@ -58,7 +45,7 @@ fn prompt_builtin_agent(
     let default_spec = agents::parse_spec(default).ok();
     let default_spec = default_spec.as_ref().filter(|spec| spec.family() == family);
     let catalog = model_catalog(root, family, agent_configs)?;
-    if let Some(message) = catalog_source_message(family, &catalog) {
+    if let Some(message) = catalog.source_message(family) {
         term.write_line(&message)
             .with_context(|| format!("failed to write {family} catalog source"))?;
     }
@@ -66,8 +53,8 @@ fn prompt_builtin_agent(
     let model = prompt_model(term, family, default_spec, &catalog)?;
 
     let effort = prompt_effort(term, family, &model, default_spec, &catalog)?;
-    let value = agent_value(family, Some(&model), effort.as_deref());
-    canonical_manifest_agent(&value, agent_configs)
+    let spec = agents::AgentSpec::from_parts(family, Some(&model), effort.as_deref())?;
+    agents::canonical_manifest_agent(&spec, agent_configs)
 }
 
 fn prompt_model(
@@ -76,7 +63,7 @@ fn prompt_model(
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
 ) -> Result<String> {
-    let choices = model_choices(family, default_spec, catalog);
+    let choices = model_choices_from_catalog(family, default_spec, catalog);
     if choices.is_empty() {
         bail!("no {family} model options available");
     }
@@ -85,24 +72,13 @@ fn prompt_model(
     choose_model_version(term, family, &choices[index].value, default_spec)
 }
 
-fn model_choices(
+fn model_choices_from_catalog(
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
 ) -> Vec<MenuChoice<ModelGroup>> {
-    model_choices_from_groups(family, default_spec, catalog.groups.clone())
-}
-
-fn model_choices_from_groups(
-    family: &str,
-    default_spec: Option<&agents::AgentSpec>,
-    mut groups: Vec<ModelGroup>,
-) -> Vec<MenuChoice<ModelGroup>> {
-    if let Some(model) = default_spec.and_then(agents::AgentSpec::model) {
-        insert_model_group(&mut groups, family, model);
-    }
-
     let default_model = default_spec.and_then(agents::AgentSpec::model);
+    let groups = catalog.groups_with_default(family, default_model);
     let mut choices = groups
         .iter()
         .cloned()
@@ -161,7 +137,7 @@ fn prompt_effort(
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
 ) -> Result<Option<String>> {
-    let efforts = effort_options(family, model, catalog);
+    let efforts = catalog.effort_options(family, model);
     if efforts.is_empty() {
         return Ok(None);
     }
@@ -204,24 +180,6 @@ fn select_choice<T>(
         .default(default_index)
         .interact_on(term)
         .with_context(|| format!("failed to select {title}"))
-}
-
-fn canonical_manifest_agent(
-    value: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<String> {
-    let spec = agents::parse_spec(value)?;
-    if agents::profile_for(spec.family()).is_some()
-        || agent_configs.contains_key(spec.original())
-        || agent_configs.contains_key(spec.family())
-    {
-        return Ok(spec.canonical());
-    }
-
-    bail!(
-        "unknown agent `{}`; configure it in niles.yaml or choose codex/claude",
-        spec.family()
-    )
 }
 
 fn agent_choices(
@@ -276,19 +234,6 @@ fn push_agent_choice(
     });
 }
 
-fn agent_value(family: &str, model: Option<&str>, effort: Option<&str>) -> String {
-    let mut value = family.to_owned();
-    if let Some(model) = model {
-        value.push(':');
-        value.push_str(model);
-    }
-    if let Some(effort) = effort {
-        value.push(':');
-        value.push_str(effort);
-    }
-    value
-}
-
 fn default_choice_index<T>(choices: &[MenuChoice<T>]) -> usize {
     choices
         .iter()
@@ -307,7 +252,7 @@ struct MenuChoice<T> {
 mod tests {
     use super::*;
 
-    use crate::config::agents;
+    use camino::Utf8Path;
 
     #[test]
     fn agent_choices_do_not_include_free_text_escape_hatch() {
@@ -323,56 +268,42 @@ mod tests {
 
     #[test]
     fn bare_family_defaults_to_first_catalog_model() {
-        let choices = model_choices_from_groups(
+        let catalog = model_catalog(
+            Utf8Path::new("/tmp/niles-picker-bare-family"),
             "codex",
-            None,
-            vec![
-                ModelGroup {
-                    label: "o3".to_owned(),
-                    models: vec!["o3".to_owned()],
-                },
-                ModelGroup {
-                    label: "o3-pro".to_owned(),
-                    models: vec!["o3-pro".to_owned()],
-                },
-            ],
-        );
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let choices = model_choices_from_catalog("codex", None, &catalog);
 
-        assert_eq!(choices[0].label, "o3");
+        assert_eq!(choices[0].label, "gpt-5.5");
         assert!(choices[0].is_default);
-        assert_eq!(choices[0].value.label, "o3");
-        assert_eq!(choices[1].value.label, "o3-pro");
-        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].value.label, "gpt-5.5");
+        assert_eq!(choices[1].value.label, "o3");
     }
 
     #[test]
     fn explicit_model_selection_stores_model_with_default_effort() {
-        assert_eq!(agent_value("codex", Some("o3-pro"), None), "codex:o3-pro");
-        assert_eq!(
-            agent_value("codex", Some("o3-pro"), Some("high")),
-            "codex:o3-pro:high"
-        );
+        let spec = agents::AgentSpec::from_parts("codex", Some("o3-pro"), None).unwrap();
+        assert_eq!(spec.canonical(), "codex:o3-pro");
+        let spec = agents::AgentSpec::from_parts("codex", Some("o3-pro"), Some("high")).unwrap();
+        assert_eq!(spec.canonical(), "codex:o3-pro:high");
     }
 
     #[test]
     fn existing_model_default_still_selects_matching_group() {
         let default = agents::parse_spec("codex:o3-pro:xhigh").unwrap();
-        let choices = model_choices_from_groups(
+        let catalog = model_catalog(
+            Utf8Path::new("/tmp/niles-picker-existing-model"),
             "codex",
-            Some(&default),
-            vec![
-                ModelGroup {
-                    label: "o3".to_owned(),
-                    models: vec!["o3".to_owned()],
-                },
-                ModelGroup {
-                    label: "o3-pro".to_owned(),
-                    models: vec!["o3-pro".to_owned()],
-                },
-            ],
-        );
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let choices = model_choices_from_catalog("codex", Some(&default), &catalog);
 
-        assert_eq!(default_choice_index(&choices), 1);
-        assert_eq!(choices[1].value.label, "o3-pro");
+        assert_eq!(
+            choices[default_choice_index(&choices)].value.label,
+            "o3-pro"
+        );
     }
 }
