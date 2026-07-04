@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fmt, fs,
     io::{self, BufRead, IsTerminal, Write},
 };
 
@@ -23,6 +23,8 @@ pub struct WorkspaceManifest {
     pub implementer: String,
     pub reviewer: String,
     pub validation_command: String,
+    #[serde(default = "initial_flow")]
+    pub flow: Vec<WorkspaceFlowRole>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +34,7 @@ pub struct WorkspaceManifestDefaults {
     pub implementer: String,
     pub reviewer: String,
     pub validation_command: String,
+    pub flow: Vec<WorkspaceFlowRole>,
 }
 
 impl Default for WorkspaceManifestDefaults {
@@ -42,8 +45,78 @@ impl Default for WorkspaceManifestDefaults {
             implementer: "codex".to_owned(),
             reviewer: "claude".to_owned(),
             validation_command: "test".to_owned(),
+            flow: initial_flow(),
         }
     }
+}
+
+impl WorkspaceManifestDefaults {
+    fn to_manifest(&self) -> WorkspaceManifest {
+        WorkspaceManifest {
+            manager: self.manager.clone(),
+            planner: self.planner.clone(),
+            implementer: self.implementer.clone(),
+            reviewer: self.reviewer.clone(),
+            validation_command: self.validation_command.clone(),
+            flow: self.flow.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceFlowRole {
+    Planner,
+    Implementer,
+    Validation,
+    Reviewer,
+}
+
+impl WorkspaceFlowRole {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "planner" => Ok(Self::Planner),
+            "implementer" => Ok(Self::Implementer),
+            "validation" => Ok(Self::Validation),
+            "reviewer" => Ok(Self::Reviewer),
+            _ => bail!("unknown workspace role `{value}`"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Planner => "planner",
+            Self::Implementer => "implementer",
+            Self::Validation => "validation",
+            Self::Reviewer => "reviewer",
+        }
+    }
+}
+
+impl fmt::Display for WorkspaceFlowRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+pub fn initial_flow() -> Vec<WorkspaceFlowRole> {
+    vec![
+        WorkspaceFlowRole::Planner,
+        WorkspaceFlowRole::Implementer,
+        WorkspaceFlowRole::Validation,
+        WorkspaceFlowRole::Reviewer,
+    ]
+}
+
+pub fn flow_summary(flow: &[WorkspaceFlowRole]) -> String {
+    if flow.is_empty() {
+        return "<empty>".to_owned();
+    }
+
+    flow.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
@@ -97,25 +170,26 @@ pub fn resolve_task_roles(mut spec: TaskSpec, manifest: &WorkspaceManifest) -> R
             continue;
         };
 
+        let flow_role = WorkspaceFlowRole::parse(role)?;
         let role = role.clone();
         let task = task.clone();
-        *step = match role.as_str() {
-            "planner" => TaskStep::Agent {
+        *step = match flow_role {
+            WorkspaceFlowRole::Planner => TaskStep::Agent {
                 agent: manifest.planner.clone(),
                 task: task.with_context(|| "planner role step requires task text")?,
                 role: Some(role),
             },
-            "implementer" => TaskStep::Agent {
+            WorkspaceFlowRole::Implementer => TaskStep::Agent {
                 agent: manifest.implementer.clone(),
                 task: task.with_context(|| "implementer role step requires task text")?,
                 role: Some(role),
             },
-            "reviewer" => TaskStep::Agent {
+            WorkspaceFlowRole::Reviewer => TaskStep::Agent {
                 agent: manifest.reviewer.clone(),
                 task: task.with_context(|| "reviewer role step requires task text")?,
                 role: Some(role),
             },
-            "validation" => {
+            WorkspaceFlowRole::Validation => {
                 if task.is_some() {
                     bail!("validation role step must not include task text");
                 }
@@ -126,7 +200,6 @@ pub fn resolve_task_roles(mut spec: TaskSpec, manifest: &WorkspaceManifest) -> R
                     role: Some(role),
                 }
             }
-            _ => bail!("unknown workspace role `{role}` in task step"),
         };
     }
 
@@ -226,13 +299,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let defaults = WorkspaceManifest {
-        manager: defaults.manager.clone(),
-        planner: defaults.planner.clone(),
-        implementer: defaults.implementer.clone(),
-        reviewer: defaults.reviewer.clone(),
-        validation_command: defaults.validation_command.clone(),
-    };
+    let defaults = defaults.to_manifest();
     let mut manifest = prompt_manifest_values(root, input, output, &defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
@@ -288,6 +355,7 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
             "Default validation command",
             &defaults.validation_command,
         )?,
+        flow: defaults.flow.clone(),
     })
 }
 
@@ -424,6 +492,89 @@ niles_schema: 2
     }
 
     #[test]
+    fn manifest_defaults_carry_flow() {
+        let manifest = WorkspaceManifestDefaults::default().to_manifest();
+
+        assert_eq!(
+            flow_summary(&manifest.flow),
+            "planner -> implementer -> validation -> reviewer"
+        );
+    }
+
+    #[test]
+    fn manifest_without_flow_loads_initial_flow() {
+        let root = temp_test_path("manifest-flow");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+manager: codex
+planner: claude
+implementer: codex
+reviewer: claude
+validation_command: lint
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+
+        assert_eq!(
+            flow_summary(&manifest.flow),
+            "planner -> implementer -> validation -> reviewer"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn current_manifest_loads_flow() {
+        let root = temp_test_path("manifest-current-flow");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+manager: codex
+planner: claude
+implementer: codex
+reviewer: claude
+validation_command: lint
+flow:
+  - planner
+  - reviewer
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+
+        assert_eq!(flow_summary(&manifest.flow), "planner -> reviewer");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saving_manifest_writes_flow() {
+        let root = temp_test_path("manifest-save-flow");
+        let manifest = WorkspaceManifest {
+            manager: "claude".to_owned(),
+            planner: "planbot".to_owned(),
+            implementer: "codebot".to_owned(),
+            reviewer: "reviewbot".to_owned(),
+            validation_command: "check".to_owned(),
+            flow: vec![WorkspaceFlowRole::Implementer],
+        };
+
+        save(&root, &manifest).unwrap();
+        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+
+        assert!(body.contains("flow:\n- implementer"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn resolves_role_steps_from_workspace_manifest() {
         let manifest = WorkspaceManifest {
             manager: "claude".to_owned(),
@@ -431,6 +582,7 @@ niles_schema: 2
             implementer: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             validation_command: "check".to_owned(),
+            flow: initial_flow(),
         };
         let spec = TaskSpec {
             goal: "ship".to_owned(),

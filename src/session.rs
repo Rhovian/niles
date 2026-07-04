@@ -46,7 +46,7 @@ pub fn run(manager: Option<String>, goal: Option<String>) -> Result<()> {
     }
 
     let manifest = launch_prelude(manager.as_deref())?;
-    launch_foreground_agent(&manifest.manager, goal.as_deref())
+    launch_foreground_agent(&manifest, goal.as_deref())
 }
 
 fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
@@ -245,12 +245,13 @@ fn prompt_new_session_name<R: BufRead, W: Write>(
     }
 }
 
-fn launch_foreground_agent(agent: &str, goal: Option<&str>) -> Result<()> {
+fn launch_foreground_agent(manifest: &WorkspaceManifest, goal: Option<&str>) -> Result<()> {
+    let agent = &manifest.manager;
     let invocation = foreground_invocation_for_project(Utf8Path::new("."), agent)?;
     let binary = invocation.binary;
     let mut args = invocation.args;
     let family = invocation.spec.family().to_owned();
-    let meta = write_manager_session(&invocation.spec, goal)?;
+    let meta = write_manager_session(&invocation.spec, manifest, goal)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
     let prompt = manager_prompt_io(&family, invocation.prompt, brief, goal);
@@ -356,7 +357,11 @@ fn startup_prompt(_goal: Option<&str>) -> String {
     "Start the Niles manager session.".to_owned()
 }
 
-fn write_manager_session(agent: &agents::AgentSpec, goal: Option<&str>) -> Result<SessionMeta> {
+fn write_manager_session(
+    agent: &agents::AgentSpec,
+    manifest: &WorkspaceManifest,
+    goal: Option<&str>,
+) -> Result<SessionMeta> {
     let workspace = current_dir_utf8()?;
     let now = Utc::now();
     let id = timestamp_id(&now);
@@ -366,16 +371,7 @@ fn write_manager_session(agent: &agents::AgentSpec, goal: Option<&str>) -> Resul
     let goal = goal
         .unwrap_or("No initial goal was provided. Start by asking the user what they want done.");
     let startup_context = startup_context()?;
-    let body = MANAGER_BRIEF_TEMPLATE
-        .replace("{workspace}", workspace.as_str())
-        .replace("{agent}", agent.original())
-        .replace("{dir}", dir.as_str())
-        .replace("{goal}", goal)
-        .replace("{startup_context}", &startup_context)
-        .replace(
-            "{worker_wake_examples}",
-            &wake::manager_worker_contract_examples("<status-file>"),
-        );
+    let body = render_manager_brief(agent, &workspace, &dir, manifest, goal, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -390,6 +386,30 @@ fn write_manager_session(agent: &agents::AgentSpec, goal: Option<&str>) -> Resul
     write_json_pretty(&meta_path, &meta)?;
     fs::write(latest_session_path(), &id).context("failed to write latest session pointer")?;
     Ok(meta)
+}
+
+fn render_manager_brief(
+    agent: &agents::AgentSpec,
+    workspace: &Utf8Path,
+    dir: &Utf8Path,
+    manifest: &WorkspaceManifest,
+    goal: &str,
+    startup_context: &str,
+) -> String {
+    let manifest_path = workspace_manifest::manifest_path(workspace);
+    let flow = workspace_manifest::flow_summary(&manifest.flow);
+    MANAGER_BRIEF_TEMPLATE
+        .replace("{workspace}", workspace.as_str())
+        .replace("{agent}", agent.original())
+        .replace("{dir}", dir.as_str())
+        .replace("{manifest}", manifest_path.as_str())
+        .replace("{flow}", &flow)
+        .replace("{goal}", goal)
+        .replace("{startup_context}", startup_context)
+        .replace(
+            "{worker_wake_examples}",
+            &wake::manager_worker_contract_examples("<status-file>"),
+        )
 }
 
 fn session_meta_path(id: &str) -> Utf8PathBuf {
@@ -729,7 +749,49 @@ agents:
     fn manager_brief_omits_removed_manifest_command() {
         assert!(MANAGER_BRIEF_TEMPLATE.contains("niles spawn <id>"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("niles run"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("manifest: {manifest}"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("flow: {flow}"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("source of truth"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Do not generate a task YAML file"));
         assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
+    }
+
+    #[test]
+    fn manager_brief_render_includes_manifest_flow() {
+        let workspace = temp_test_path("brief-render");
+        let dir = workspace.join(".niles/sessions/test-session");
+        let agent = agents::parse_spec("codex:gpt-5.5:xhigh").unwrap();
+        let manifest = WorkspaceManifest {
+            manager: "codex:gpt-5.5:xhigh".to_owned(),
+            planner: "planbot".to_owned(),
+            implementer: "codebot".to_owned(),
+            reviewer: "reviewbot".to_owned(),
+            validation_command: "check".to_owned(),
+            flow: vec![
+                workspace_manifest::WorkspaceFlowRole::Reviewer,
+                workspace_manifest::WorkspaceFlowRole::Validation,
+            ],
+        };
+
+        let body = render_manager_brief(
+            &agent,
+            &workspace,
+            &dir,
+            &manifest,
+            "Fix it",
+            "latest_run: none",
+        );
+
+        assert!(body.contains(&format!(
+            "manifest: {}",
+            workspace_manifest::manifest_path(&workspace)
+        )));
+        assert!(body.contains("flow: reviewer -> validation"));
+        assert!(body.contains("manager_agent: codex:gpt-5.5:xhigh"));
+        assert!(body.contains("Fix it"));
+        assert!(body.contains("latest_run: none"));
+        assert!(!body.contains("{manifest}"));
+        assert!(!body.contains("{flow}"));
     }
 
     fn temp_test_path(label: &str) -> Utf8PathBuf {

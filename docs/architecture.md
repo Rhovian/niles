@@ -30,9 +30,14 @@ planner: claude
 implementer: codex
 reviewer: claude
 validation_command: test
+flow:
+  - planner
+  - implementer
+  - validation
+  - reviewer
 ```
 
-On every interactive launch, Niles prompts for the foreground `manager` value and can optionally update the other role bindings. Manifest prompts accept built-in agent families and agents configured in project config; unknown bare agent names are rejected. Configured manager agents launch through that same project config. Niles writes a manager brief under `.niles/sessions/<id>/manager.md` before launching the selected agent. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Other manager agents receive the brief in their initial prompt. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
+On every interactive launch, Niles prompts for the foreground `manager` value and can optionally update the other role bindings. Manifest prompts accept built-in agent families and agents configured in project config; unknown bare agent names are rejected. Configured manager agents launch through that same project config. Niles writes a manager brief under `.niles/sessions/<id>/manager.md` before launching the selected agent; the brief points to `.niles/manifest.yaml` and its flow so the foreground manager treats the manifest as the only source of truth for the orchestration path. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Other manager agents receive the brief in their initial prompt. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
 
 The one-off worker path is:
 
@@ -57,7 +62,7 @@ Task labels are stored in worker metadata and group warm workers for cleanup. Th
 
 `niles workers` reads worker metadata and probes the recorded tmux target. Rows with metadata but no tmux window are marked `window-dead` so stale worker directories are visible as cleanup candidates rather than healthy warm panes.
 
-Explicit workflow files remain the durable automation path:
+Explicit workflow files remain available for user-supplied durable automation:
 
 ```sh
 niles run task.yaml
@@ -65,7 +70,7 @@ niles step latest --index 1
 niles exec-step latest 1
 ```
 
-Role-bound workflows use the workspace manifest rather than a generated workflow manifest:
+The manager flow comes only from `.niles/manifest.yaml`. Explicit workflow files remain supported for workflows the user supplies directly. They can use the same manifest role names for compatibility, but they do not define or replace the workspace flow:
 
 ```yaml
 goal: "Fix flaky auth test"
@@ -110,14 +115,14 @@ Niles loads the first config file it finds from:
 - `niles.yaml`
 - `.niles.yaml`
 
-Project config can provide shared workspace, agent, and command defaults. Task specs are merged on top, so local workflow files can override project defaults without repeating every common value.
+Project config can provide shared workspace, agent, and command defaults for explicit workflow files. The workspace flow and role bindings are not task-spec defaults; they live in `.niles/manifest.yaml`.
 
 ## Runtime Boundary
 
 The Rust CLI owns deterministic work:
 
 - loading project config
-- loading task specs
+- loading explicit workflow specs
 - creating workspace-anchored run directories
 - probing local agent binaries
 - running single captured steps and spawning worker panes
@@ -141,7 +146,7 @@ Agent steps resolve to subprocess invocations through agent profiles. Built-in p
 
 Interactive worker windows use worker defaults. For built-in Codex and Claude workers, those defaults bypass agent approval or sandbox prompts: Codex launches with `--dangerously-bypass-approvals-and-sandbox`, and Claude launches with `--dangerously-skip-permissions`. Niles does not enforce an approval-policy gate around worker actions. Captured agent steps use the normal agent profile defaults unless the task or project config overrides them.
 
-Workflow files can override the binary and args for any agent when a project needs an explicit invocation. Command steps execute named commands from the task spec, which keeps shell execution explicit and auditable.
+Workflow files can override the binary and args for any agent when a project needs an explicit invocation. Command steps execute named commands from the explicit workflow spec, which keeps shell execution explicit and auditable.
 
 During each captured step, Niles tees stdout and stderr to the terminal and per-step log files. After each completed step, Niles captures `git diff --no-ext-diff --` from the workspace and stores it beside the step logs. This gives the manager and the user a stable artifact for review handoffs.
 
@@ -166,4 +171,4 @@ fresh manifest data exists.
 
 ## Manager Decisions
 
-There is no router runtime or structured decision validator in the current CLI. The foreground manager agent decides when to call explicit Niles commands; the Rust CLI validates command arguments and task specs, then executes the requested command.
+There is no router runtime or structured decision validator in the current CLI. The foreground manager agent decides when to call explicit Niles commands; the Rust CLI validates command arguments and explicit workflow specs, then executes the requested command.
