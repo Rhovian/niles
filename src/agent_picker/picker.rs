@@ -4,9 +4,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use dialoguer::{Select, console::Term};
 
-mod catalog;
-
-use catalog::{
+use super::catalog::{
     ModelCatalog, ModelGroup, catalog_source_message, effort_options, insert_model_group,
     model_catalog,
 };
