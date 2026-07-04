@@ -304,6 +304,19 @@ impl AgentSpec {
             effort: self.effort.clone(),
         })
     }
+
+    pub fn canonical(&self) -> String {
+        let mut spec = self.family.clone();
+        if let Some(model) = &self.model {
+            spec.push(':');
+            spec.push_str(model);
+        }
+        if let Some(effort) = &self.effort {
+            spec.push(':');
+            spec.push_str(effort);
+        }
+        spec
+    }
 }
 
 fn canonical_family(family: &str) -> Option<String> {
@@ -328,22 +341,8 @@ fn normalize_effort(family: &str, effort: &str) -> Result<String> {
     };
 
     match family {
-        "codex"
-            if matches!(
-                normalized.as_str(),
-                "minimal" | "low" | "medium" | "high" | "xhigh"
-            ) =>
-        {
-            Ok(normalized)
-        }
-        "claude"
-            if matches!(
-                normalized.as_str(),
-                "low" | "medium" | "high" | "xhigh" | "max"
-            ) =>
-        {
-            Ok(normalized)
-        }
+        "codex" if supported_efforts("codex").contains(&normalized.as_str()) => Ok(normalized),
+        "claude" if supported_efforts("claude").contains(&normalized.as_str()) => Ok(normalized),
         "codex" | "claude" => {
             bail!("unsupported {family} effort `{effort}` in agent spec")
         }
@@ -371,6 +370,14 @@ pub(crate) fn default_model_aliases(family: &str) -> &'static [&'static str] {
     match family {
         "codex" => &["o3", "o3-pro", "o4-mini"],
         "claude" => &["opus", "sonnet", "fable", "haiku"],
+        _ => &[],
+    }
+}
+
+pub(crate) fn supported_efforts(family: &str) -> &'static [&'static str] {
+    match family {
+        "codex" => &["minimal", "low", "medium", "high", "xhigh"],
+        "claude" => &["low", "medium", "high", "xhigh", "max"],
         _ => &[],
     }
 }

@@ -9,10 +9,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{
-        agents,
-        spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
-    },
+    agent_picker,
+    config::spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
     schema::{self, ArtifactKind},
 };
 
@@ -193,7 +191,8 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let manager = prompt_agent_value(
+        let manager = agent_picker::prompt_agent_value(
+            root,
             input,
             output,
             "Manager agent",
@@ -212,7 +211,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
                 output,
                 "Choose persistent agents for this workspace. Press Enter to accept a default."
             )?;
-            manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
+            manifest = prompt_manifest_values(root, input, output, &manifest, &agent_configs)?;
             save(root, &manifest)?;
             writeln!(output, "manifest: {path} (updated roles)")?;
         }
@@ -236,7 +235,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         reviewer: defaults.reviewer.clone(),
         validation_command: defaults.validation_command.clone(),
     };
-    let mut manifest = prompt_manifest_values(input, output, &defaults, &agent_configs)?;
+    let mut manifest = prompt_manifest_values(root, input, output, &defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -245,7 +244,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
+        manifest = prompt_manifest_values(root, input, output, &manifest, &agent_configs)?;
         save(root, &manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
     }
@@ -254,34 +253,39 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
 }
 
 fn prompt_manifest_values<R: BufRead, W: Write>(
+    root: &Utf8Path,
     input: &mut R,
     output: &mut W,
     defaults: &WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: prompt_agent_value(
+        manager: agent_picker::prompt_agent_value(
+            root,
             input,
             output,
             "Manager agent",
             &defaults.manager,
             agent_configs,
         )?,
-        planner: prompt_agent_value(
+        planner: agent_picker::prompt_agent_value(
+            root,
             input,
             output,
             "Planner agent",
             &defaults.planner,
             agent_configs,
         )?,
-        implementer: prompt_agent_value(
+        implementer: agent_picker::prompt_agent_value(
+            root,
             input,
             output,
             "Implementer agent",
             &defaults.implementer,
             agent_configs,
         )?,
-        reviewer: prompt_agent_value(
+        reviewer: agent_picker::prompt_agent_value(
+            root,
             input,
             output,
             "Reviewer agent",
@@ -323,40 +327,6 @@ fn prompt_yes_no<R: BufRead, W: Write>(
             _ => writeln!(output, "Please answer y or n.")?,
         }
     }
-}
-
-fn prompt_agent_value<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<String> {
-    loop {
-        let value = prompt_value(input, output, label, default)?;
-        match validate_manifest_agent(&value, agent_configs) {
-            Ok(()) => return Ok(value),
-            Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
-        }
-    }
-}
-
-fn validate_manifest_agent(
-    value: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<()> {
-    let spec = agents::parse_spec(value)?;
-    if agents::profile_for(spec.family()).is_some()
-        || agent_configs.contains_key(spec.original())
-        || agent_configs.contains_key(spec.family())
-    {
-        return Ok(());
-    }
-
-    bail!(
-        "unknown agent `{}`; configure it in niles.yaml or choose codex/claude",
-        spec.family()
-    )
 }
 
 fn prompt_value<R: BufRead, W: Write>(

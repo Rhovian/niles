@@ -1,3 +1,4 @@
+mod agent_picker;
 mod agent_window;
 mod analyze;
 mod build_info;
