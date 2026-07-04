@@ -41,7 +41,7 @@ niles diff
 niles resume
 ```
 
-Bare `niles` is tmux-only. When run outside tmux from an interactive terminal, it starts an attached `niles` tmux session and re-runs the original command inside it; non-TTY launches still fail with guidance. Before launching the foreground manager, Niles creates `.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists. The selected manager defaults to Claude on first setup. Niles writes a manager brief under `.niles/sessions/<id>/`; for Claude, that brief is passed as hidden manager context. Other agents receive the brief in their initial prompt. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
+Bare `niles` is tmux-only. When run outside tmux from an interactive terminal, it starts an attached `niles` tmux session and re-runs the original command inside it; when that session already exists, it prompts to attach it or launch a differently named attached session with the original command. Non-TTY launches still fail with guidance. Before launching the foreground manager, Niles creates `.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists. The selected manager defaults to Claude on first setup. Niles writes a manager brief under `.niles/sessions/<id>/`; for Claude, that brief is passed as hidden manager context. Other agents receive the brief in their initial prompt. `niles --goal ...` seeds that startup context before the agent starts. Niles does not try to be a chat grammar; the foreground agent uses the explicit Niles commands as orchestration tools.
 
 Short aliases are part of the interface:
 

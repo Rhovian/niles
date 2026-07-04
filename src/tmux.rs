@@ -116,6 +116,11 @@ pub(crate) fn launch_foreground_session(
     status_with_terminal(&args)
 }
 
+pub(crate) fn attach_foreground_session(session: &str) -> Result<ExitStatus> {
+    let args = foreground_attach_session_args(session);
+    status_with_terminal(&args)
+}
+
 pub(crate) fn ensure_window_available(session: &str, window_name: &str) -> Result<()> {
     let output = output(["list-windows", "-t", session, "-F", "#{window_name}"])
         .with_context(|| format!("failed to list tmux windows in session {session}"))?;
@@ -253,6 +258,12 @@ fn foreground_new_session_args(session: &str, cwd: &Utf8Path, argv: &[OsString])
     args
 }
 
+fn foreground_attach_session_args(session: &str) -> Vec<OsString> {
+    ["attach-session", "-t", session]
+        .map(OsString::from)
+        .to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn foreground_new_session_args_preserve_argv_boundaries() {
+    fn foreground_new_session_args_preserve_argv_boundaries_for_named_session() {
         let argv = [
             "/opt/homebrew/bin/niles",
             "--goal",
@@ -348,7 +359,7 @@ mod tests {
         .map(OsString::from);
 
         let args = foreground_new_session_args(
-            "niles",
+            "niles-2",
             Utf8Path::new("/tmp/workspace with spaces"),
             &argv,
         );
@@ -358,7 +369,7 @@ mod tests {
             [
                 "new-session",
                 "-s",
-                "niles",
+                "niles-2",
                 "-c",
                 "/tmp/workspace with spaces",
                 "--",
@@ -369,6 +380,14 @@ mod tests {
                 "codex:gpt-5:high",
             ]
             .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn foreground_attach_session_args_target_existing_session() {
+        assert_eq!(
+            foreground_attach_session_args("niles"),
+            ["attach-session", "-t", "niles"].map(OsString::from)
         );
     }
 }
