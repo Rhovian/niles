@@ -6,12 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    agents::{self, AgentSpec, InvocationDefaults, version},
     analyze::{ProbeResult, run_probe},
-    config::{
-        agents::{self, AgentSpec, InvocationDefaults},
-        spec::{AgentConfig, TaskSpec, TaskStep},
-        version,
-    },
+    config::spec::{AgentConfig, TaskSpec, TaskStep},
     schema::{self, ArtifactKind},
     util::slugify,
 };
@@ -41,6 +38,12 @@ pub(crate) struct ModelProbe {
     pub(crate) probed_at: DateTime<Utc>,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FreshAcceptedModels {
+    pub(crate) path: Utf8PathBuf,
+    pub(crate) accepted_models: Vec<ModelProbe>,
 }
 
 pub(crate) fn manifest_path(workspace: &Utf8Path, family: &str) -> Utf8PathBuf {
@@ -110,6 +113,33 @@ pub(crate) fn validate_agent(
     Ok(spec)
 }
 
+pub(crate) fn fresh_accepted_models(
+    workspace: &Utf8Path,
+    family: &str,
+    config: Option<&AgentConfig>,
+    defaults: InvocationDefaults,
+) -> Result<Option<FreshAcceptedModels>> {
+    let invocation = agents::invocation(family, config, defaults)?;
+    let Some((path, manifest)) = read_manifest_for_binary(workspace, family, &invocation.binary)?
+    else {
+        return Ok(None);
+    };
+
+    if !manifest_matches_binary(&manifest, &invocation.binary) {
+        return Ok(None);
+    }
+
+    let current = current_cli_version(family, &invocation.binary)?;
+    if !manifest_is_fresh(&manifest, current.as_deref()) {
+        return Ok(None);
+    }
+
+    Ok(Some(FreshAcceptedModels {
+        path,
+        accepted_models: manifest.accepted_models,
+    }))
+}
+
 fn validate_model(
     workspace: &Utf8Path,
     spec: &AgentSpec,
@@ -120,7 +150,7 @@ fn validate_model(
         return Ok(());
     };
 
-    let invocation = agents::invocation(spec.original(), config, defaults)?;
+    let invocation = agents::invocation(&spec.canonical(), config, defaults)?;
     let Some((path, manifest)) =
         read_manifest_for_binary(workspace, spec.family(), &invocation.binary)?
     else {

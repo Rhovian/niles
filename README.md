@@ -9,7 +9,7 @@ The project goal is to keep orchestration deterministic while letting agents han
 - Rust owns workspace state, execution, persistence, run lookup, and validation.
 - Agent adapters normalize fast-changing CLIs behind a stable internal contract.
 - An analyzer probes installed agent CLIs and records their current capabilities.
-- Workspace manifests bind manager, planner, implementer, reviewer, and validation roles to local agents and commands.
+- Workspace manifests bind manager, planner, worker, reviewer, and validation roles to local agents and commands.
 
 ## CLI
 
@@ -94,16 +94,16 @@ workspace: ../my-app
 steps:
   - role: planner
     task: "Analyze likely causes. Do not edit files."
-  - role: implementer
+  - role: worker
     task: "Implement the fix using the planner output."
   - role: validation
   - role: reviewer
     task: "Review the current diff and validation result."
 ```
 
-Workspace role bindings live in `.niles/manifest.yaml` with `manager`, `planner`, `implementer`, `reviewer`, and `validation_command` keys. Bare `niles` creates that file on first interactive launch, prompts for the foreground manager agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
+Workspace role bindings live in `.niles/manifest.yaml` with `manager`, `planner`, `worker`, `reviewer`, and `validation_command` keys. Bare `niles` creates that file on first interactive launch, prompts for the foreground manager agent on every launch, and can optionally walk through updating the manifest roles. `niles run` resolves `planner`, `worker`, `reviewer`, and `validation` role steps from the workspace manifest. It always prepares run state only; advance work one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
 
-Role workflows label each step with a role: `planner`, `implementer`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the manager drives the run.
+Role workflows label each step with a role: `planner`, `worker`, `validation`, or `reviewer`. `niles status` and `niles show` surface those roles while the manager drives the run.
 
 Run state includes pending, running, completed, and failed steps. Use `niles watch` from another terminal to see the workflow update live while a long agent or validation step is still active.
 
@@ -149,7 +149,7 @@ When `binary` or `args` are omitted for a known agent, Niles resolves them from 
 
 Captured steps stream stdout/stderr live and also write stdout, stderr, git diff, and metadata into the resolved workspace's `.niles/runs/<id>/steps/`. Niles records run pointers so commands can resolve workspace-anchored runs by id or `latest`. Interactive agent steps run in tmux windows; close them with `niles step-close` after reviewing the worker output.
 
-Agent steps also get `.context.md` handoff files. These are the durable bridge between roles: the implementer can read the planner output, and the reviewer can read both validation output and the current diff without relying on terminal scrollback.
+Agent steps also get `.context.md` handoff files. These are the durable bridge between roles: the worker can read the planner output, and the reviewer can read both validation output and the current diff without relying on terminal scrollback.
 
 Inspect a run with:
 

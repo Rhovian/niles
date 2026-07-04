@@ -208,6 +208,8 @@ pub(crate) fn has_session(name: &str) -> bool {
         Command::new("tmux")
             .args(["has-session", "-t", name])
             .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status(),
         Ok(status) if status.success()
     )

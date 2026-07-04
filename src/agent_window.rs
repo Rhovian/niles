@@ -4,10 +4,8 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
-    config::{
-        agents,
-        spec::{PromptMode, load_project_config_from},
-    },
+    agents,
+    config::spec::{PromptMode, load_project_config_from},
     tmux,
     util::slugify,
 };
@@ -84,8 +82,12 @@ fn write_launch_script(
     body.push_str("BRIEF=");
     body.push_str(&shell_quote(brief_path.as_str()));
     body.push('\n');
-    if invocation.binary == "claude" {
-        body.push_str("export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false\n");
+    for (key, value) in &invocation.env {
+        body.push_str("export ");
+        body.push_str(key);
+        body.push('=');
+        body.push_str(&shell_assignment_value(value));
+        body.push('\n');
     }
     body.push_str("exec ");
     body.push_str(&shell_quote(&invocation.binary));
@@ -147,6 +149,17 @@ fn active_window_target(window_name: &str) -> Result<String> {
 
 pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_assignment_value(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
+    {
+        return value.to_owned();
+    }
+
+    shell_quote(value)
 }
 
 #[cfg(test)]

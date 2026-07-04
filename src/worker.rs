@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    agent_window, capabilities,
-    config::{agents, spec::load_project_config_from, version},
+    agent_window, agents,
+    config::spec::load_project_config_from,
     schema::{self, ArtifactKind},
     store::{self, WorkerLocation, read_state, resolve_run_dir},
     util::{
@@ -76,13 +76,13 @@ pub fn spawn(
     let project = absolute_existing_dir(&project, "project")?;
     let config = load_project_config_from(&project)?;
     let agent_config = agents::config_for(&config.agents, &agent)?;
-    let agent_spec = capabilities::validate_agent(
+    let agent_spec = agents::capabilities::validate_agent(
         &project,
         &agent,
         agent_config,
         agents::InvocationDefaults::Worker,
     )?;
-    version::preflight_agent(
+    agents::version::preflight_agent(
         &agent,
         agent_config,
         agents::InvocationDefaults::Worker,

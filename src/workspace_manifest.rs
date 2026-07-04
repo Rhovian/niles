@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fmt, fs,
     io::{self, BufRead, IsTerminal, Write},
 };
 
@@ -9,43 +9,139 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{
-        agents,
-        spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
-    },
+    agents::picker,
+    config::spec::{AgentConfig, CommandConfig, TaskSpec, TaskStep, load_project_config_from},
     schema::{self, ArtifactKind},
 };
 
 const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
+const WORKER_REVIEW_LOOP_SUMMARY: &str =
+    "planner -> worker <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "WorkspaceManifestWire")]
 pub struct WorkspaceManifest {
     pub manager: String,
     pub planner: String,
-    pub implementer: String,
+    pub worker: String,
     pub reviewer: String,
     pub validation_command: String,
+    pub flow: Vec<WorkspaceFlowRole>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceManifestDefaults {
-    pub manager: String,
-    pub planner: String,
-    pub implementer: String,
-    pub reviewer: String,
-    pub validation_command: String,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceManifestWire {
+    manager: String,
+    planner: String,
+    worker: String,
+    reviewer: String,
+    validation_command: String,
+    #[serde(default = "initial_flow")]
+    flow: Vec<WorkspaceFlowRole>,
+    #[serde(default, rename = "niles_schema")]
+    _niles_schema: Option<u64>,
 }
 
-impl Default for WorkspaceManifestDefaults {
+impl From<WorkspaceManifestWire> for WorkspaceManifest {
+    fn from(wire: WorkspaceManifestWire) -> Self {
+        Self {
+            manager: wire.manager,
+            planner: wire.planner,
+            worker: wire.worker,
+            reviewer: wire.reviewer,
+            validation_command: wire.validation_command,
+            flow: wire.flow,
+        }
+    }
+}
+
+impl Default for WorkspaceManifest {
     fn default() -> Self {
         Self {
             manager: "claude".to_owned(),
             planner: "claude".to_owned(),
-            implementer: "codex".to_owned(),
+            worker: "codex".to_owned(),
             reviewer: "claude".to_owned(),
             validation_command: "test".to_owned(),
+            flow: initial_flow(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceFlowRole {
+    Planner,
+    Worker,
+    Validation,
+    Reviewer,
+}
+
+impl WorkspaceFlowRole {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "planner" => Ok(Self::Planner),
+            "worker" => Ok(Self::Worker),
+            "validation" => Ok(Self::Validation),
+            "reviewer" => Ok(Self::Reviewer),
+            _ => bail!("unknown workspace role `{value}`"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Planner => "planner",
+            Self::Worker => "worker",
+            Self::Validation => "validation",
+            Self::Reviewer => "reviewer",
+        }
+    }
+}
+
+impl fmt::Display for WorkspaceFlowRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+pub fn initial_flow() -> Vec<WorkspaceFlowRole> {
+    vec![
+        WorkspaceFlowRole::Planner,
+        WorkspaceFlowRole::Worker,
+        WorkspaceFlowRole::Reviewer,
+    ]
+}
+
+pub fn flow_summary(flow: &[WorkspaceFlowRole]) -> String {
+    if flow.is_empty() {
+        return "<empty>".to_owned();
+    }
+
+    if is_worker_review_loop(flow) {
+        return WORKER_REVIEW_LOOP_SUMMARY.to_owned();
+    }
+
+    flow.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
+
+fn is_worker_review_loop(flow: &[WorkspaceFlowRole]) -> bool {
+    matches!(
+        flow,
+        [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Worker,
+            WorkspaceFlowRole::Reviewer
+        ] | [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Worker,
+            WorkspaceFlowRole::Validation,
+            WorkspaceFlowRole::Reviewer
+        ]
+    )
 }
 
 pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
@@ -77,7 +173,7 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 
 pub fn ensure_interactive(
     root: &Utf8Path,
-    defaults: &WorkspaceManifestDefaults,
+    defaults: &WorkspaceManifest,
 ) -> Result<WorkspaceManifest> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
@@ -99,25 +195,26 @@ pub fn resolve_task_roles(mut spec: TaskSpec, manifest: &WorkspaceManifest) -> R
             continue;
         };
 
+        let flow_role = WorkspaceFlowRole::parse(role)?;
         let role = role.clone();
         let task = task.clone();
-        *step = match role.as_str() {
-            "planner" => TaskStep::Agent {
+        *step = match flow_role {
+            WorkspaceFlowRole::Planner => TaskStep::Agent {
                 agent: manifest.planner.clone(),
                 task: task.with_context(|| "planner role step requires task text")?,
                 role: Some(role),
             },
-            "implementer" => TaskStep::Agent {
-                agent: manifest.implementer.clone(),
-                task: task.with_context(|| "implementer role step requires task text")?,
+            WorkspaceFlowRole::Worker => TaskStep::Agent {
+                agent: manifest.worker.clone(),
+                task: task.with_context(|| "worker role step requires task text")?,
                 role: Some(role),
             },
-            "reviewer" => TaskStep::Agent {
+            WorkspaceFlowRole::Reviewer => TaskStep::Agent {
                 agent: manifest.reviewer.clone(),
                 task: task.with_context(|| "reviewer role step requires task text")?,
                 role: Some(role),
             },
-            "validation" => {
+            WorkspaceFlowRole::Validation => {
                 if task.is_some() {
                     bail!("validation role step must not include task text");
                 }
@@ -128,7 +225,6 @@ pub fn resolve_task_roles(mut spec: TaskSpec, manifest: &WorkspaceManifest) -> R
                     role: Some(role),
                 }
             }
-            _ => bail!("unknown workspace role `{role}` in task step"),
         };
     }
 
@@ -153,7 +249,7 @@ pub fn default_command_config(command: &str) -> CommandConfig {
 
 fn ensure_interactive_with_io<R: BufRead, W: Write>(
     root: &Utf8Path,
-    defaults: &WorkspaceManifestDefaults,
+    defaults: &WorkspaceManifest,
     interactive: bool,
     input: &mut R,
     output: &mut W,
@@ -193,13 +289,8 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
-        let manager = prompt_agent_value(
-            input,
-            output,
-            "Manager agent",
-            &manifest.manager,
-            &agent_configs,
-        )?;
+        let manager =
+            picker::prompt_agent_value(root, "Manager agent", &manifest.manager, &agent_configs)?;
         let manager_changed = manager != manifest.manager;
         manifest.manager = manager;
         if manager_changed {
@@ -207,15 +298,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             writeln!(output, "manifest: {path} (updated manager)")?;
         }
 
-        if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
-            writeln!(
-                output,
-                "Choose persistent agents for this workspace. Press Enter to accept a default."
-            )?;
-            manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
-            save(root, &manifest)?;
-            writeln!(output, "manifest: {path} (updated roles)")?;
-        }
+        maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &agent_configs)?;
 
         return Ok(manifest);
     }
@@ -229,61 +312,57 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let defaults = WorkspaceManifest {
-        manager: defaults.manager.clone(),
-        planner: defaults.planner.clone(),
-        implementer: defaults.implementer.clone(),
-        reviewer: defaults.reviewer.clone(),
-        validation_command: defaults.validation_command.clone(),
-    };
-    let mut manifest = prompt_manifest_values(input, output, &defaults, &agent_configs)?;
+    let manifest = prompt_manifest_values(root, input, output, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
+    Ok(manifest)
+}
+
+fn maybe_update_manifest_roles<R: BufRead, W: Write>(
+    root: &Utf8Path,
+    input: &mut R,
+    output: &mut W,
+    path: &Utf8Path,
+    manifest: &mut WorkspaceManifest,
+    agent_configs: &BTreeMap<String, AgentConfig>,
+) -> Result<()> {
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        manifest = prompt_manifest_values(input, output, &manifest, &agent_configs)?;
-        save(root, &manifest)?;
+        *manifest = prompt_manifest_values(root, input, output, manifest, agent_configs)?;
+        save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
     }
 
-    Ok(manifest)
+    Ok(())
 }
 
 fn prompt_manifest_values<R: BufRead, W: Write>(
+    root: &Utf8Path,
     input: &mut R,
     output: &mut W,
     defaults: &WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: prompt_agent_value(
-            input,
-            output,
+        manager: picker::prompt_agent_value(
+            root,
             "Manager agent",
             &defaults.manager,
             agent_configs,
         )?,
-        planner: prompt_agent_value(
-            input,
-            output,
+        planner: picker::prompt_agent_value(
+            root,
             "Planner agent",
             &defaults.planner,
             agent_configs,
         )?,
-        implementer: prompt_agent_value(
-            input,
-            output,
-            "Implementer agent",
-            &defaults.implementer,
-            agent_configs,
-        )?,
-        reviewer: prompt_agent_value(
-            input,
-            output,
+        worker: picker::prompt_agent_value(root, "Worker agent", &defaults.worker, agent_configs)?,
+        reviewer: picker::prompt_agent_value(
+            root,
             "Reviewer agent",
             &defaults.reviewer,
             agent_configs,
@@ -294,6 +373,7 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
             "Default validation command",
             &defaults.validation_command,
         )?,
+        flow: defaults.flow.clone(),
     })
 }
 
@@ -323,40 +403,6 @@ fn prompt_yes_no<R: BufRead, W: Write>(
             _ => writeln!(output, "Please answer y or n.")?,
         }
     }
-}
-
-fn prompt_agent_value<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<String> {
-    loop {
-        let value = prompt_value(input, output, label, default)?;
-        match validate_manifest_agent(&value, agent_configs) {
-            Ok(()) => return Ok(value),
-            Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
-        }
-    }
-}
-
-fn validate_manifest_agent(
-    value: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<()> {
-    let spec = agents::parse_spec(value)?;
-    if agents::profile_for(spec.family()).is_some()
-        || agent_configs.contains_key(spec.original())
-        || agent_configs.contains_key(spec.family())
-    {
-        return Ok(());
-    }
-
-    bail!(
-        "unknown agent `{}`; configure it in niles.yaml or choose codex/claude",
-        spec.family()
-    )
 }
 
 fn prompt_value<R: BufRead, W: Write>(
@@ -396,271 +442,6 @@ mod tests {
     };
 
     #[test]
-    fn skips_role_changes_by_default() {
-        let root = temp_test_path("existing-no-role-update");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        let original = WorkspaceManifest {
-            manager: "codex".to_owned(),
-            planner: "plan-old".to_owned(),
-            implementer: "impl-old".to_owned(),
-            reviewer: "review-old".to_owned(),
-            validation_command: "lint".to_owned(),
-        };
-        save(&root, &original).unwrap();
-
-        let mut input = Cursor::new(b"\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest, original);
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(!output.contains("(updated manager)"));
-        assert!(!output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn prompts_for_manager_and_persists_manager_change() {
-        let root = temp_test_path("existing-prompt");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: claude
-implementer: codex
-reviewer: claude
-validation_command: lint
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let mut input = Cursor::new(b"claude\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude");
-        assert_eq!(manifest.validation_command, "lint");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted.manager, "claude");
-        assert_eq!(persisted.planner, "claude");
-        assert_eq!(persisted.implementer, "codex");
-        assert_eq!(persisted.reviewer, "claude");
-        assert_eq!(persisted.validation_command, "lint");
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Niles workspace manifest: "));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("(updated manager)"));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(!output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn parseable_legacy_manifest_loads_and_stamps_on_next_write() {
-        let root = temp_test_path("legacy-load");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: claude
-implementer: codex
-reviewer: claude
-validation_command: lint
-"#,
-        )
-        .unwrap();
-
-        let mut input = Cursor::new(b"claude\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude");
-        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(persisted.contains("niles_schema: 2"));
-        assert!(
-            String::from_utf8(output)
-                .unwrap()
-                .contains("(updated manager)")
-        );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn rejects_invalid_or_unknown_agent_specs_before_persisting_manifest_values() {
-        let root = temp_test_path("invalid-agent-prompt");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        let original = WorkspaceManifest {
-            manager: "codex".to_owned(),
-            planner: "claude".to_owned(),
-            implementer: "codex".to_owned(),
-            reviewer: "claude".to_owned(),
-            validation_command: "lint".to_owned(),
-        };
-        save(&root, &original).unwrap();
-
-        let mut input = Cursor::new(
-            b"gemini\nclaude:opus:turbo\nclaude:future:low\ny\n\ngemini\nclaude:new-model:max\ncodex\nclaude\nlint\n"
-                .to_vec(),
-        );
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude:future:low");
-        assert_eq!(manifest.planner, "claude:new-model:max");
-        assert_eq!(manifest.implementer, "codex");
-        assert_eq!(manifest.reviewer, "claude");
-        assert_eq!(manifest.validation_command, "lint");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains(
-            "Invalid agent spec: unknown agent `gemini`; configure it in niles.yaml or choose codex/claude"
-        ));
-        assert!(output.contains("Invalid agent spec: unsupported claude effort `turbo`"));
-        assert!(!output.contains("unsupported claude model"));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Planner agent [claude]: "));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn can_reconfigure_workspace_manifest_roles_after_manager_pick() {
-        let root = temp_test_path("existing-role-update");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            root.join("niles.yaml"),
-            r#"
-agents:
-  planbot:
-    binary: /bin/echo
-  codebot:
-    binary: /bin/echo
-  reviewbot:
-    binary: /bin/echo
-"#,
-        )
-        .unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: plan-old
-implementer: impl-old
-reviewer: review-old
-validation_command: lint
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let mut input =
-            Cursor::new(b"claude\ny\nclaude\nplanbot\ncodebot\nreviewbot\ncheck\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(
-            manifest,
-            WorkspaceManifest {
-                manager: "claude".to_owned(),
-                planner: "planbot".to_owned(),
-                implementer: "codebot".to_owned(),
-                reviewer: "reviewbot".to_owned(),
-                validation_command: "check".to_owned(),
-            }
-        );
-
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Manager agent [claude]: "));
-        assert!(output.contains("Planner agent [plan-old]: "));
-        assert!(output.contains("Implementer agent [impl-old]: "));
-        assert!(output.contains("Reviewer agent [review-old]: "));
-        assert!(output.contains("Default validation command [lint]: "));
-        assert!(output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn skewed_manifest_can_be_recreated_interactively() {
-        let root = temp_test_path("skewed-recreate");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(manifest_path(&root), "manager: codex\n").unwrap();
-
-        let mut input = Cursor::new(b"y\ncodex\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.validation_command, "check");
-        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(persisted.contains("niles_schema: 2"));
-        assert!(persisted.contains("validation_command: check"));
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("could not be read"));
-        assert!(output.contains("Recreate workspace manifest? [y/N]: "));
-        assert!(output.contains("Recreating Niles workspace manifest"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn skewed_manifest_remediation_names_delete_and_rerun() {
         let root = temp_test_path("skewed-remediation");
         fs::create_dir_all(root.join(".niles")).unwrap();
@@ -684,7 +465,7 @@ niles_schema: 2
             r#"
 manager: codex
 planner: claude
-implementer: codex
+worker: codex
 reviewer: claude
 validation_command: lint
 niles_schema: 2
@@ -696,7 +477,7 @@ niles_schema: 2
         let mut output = Vec::new();
         let err = ensure_interactive_with_io(
             &root,
-            &WorkspaceManifestDefaults::default(),
+            &WorkspaceManifest::default(),
             false,
             &mut input,
             &mut output,
@@ -710,79 +491,6 @@ niles_schema: 2
     }
 
     #[test]
-    fn creates_workspace_manifest_from_interactive_answers() {
-        let root = temp_test_path("create");
-        let mut input = Cursor::new(b"codex\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(
-            manifest,
-            WorkspaceManifest {
-                manager: "codex".to_owned(),
-                planner: "claude".to_owned(),
-                implementer: "codex".to_owned(),
-                reviewer: "claude".to_owned(),
-                validation_command: "check".to_owned(),
-            }
-        );
-
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Niles workspace manifest not found"));
-        assert!(output.contains("Manager agent [claude]: "));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn configured_custom_manager_is_accepted_by_manifest_prompt() {
-        let root = temp_test_path("custom-manager-prompt");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("niles.yaml"),
-            r#"
-agents:
-  gemini:
-    binary: /bin/echo
-"#,
-        )
-        .unwrap();
-        let mut input = Cursor::new(b"gemini\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "gemini");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        assert!(
-            !String::from_utf8(output)
-                .unwrap()
-                .contains("Invalid agent spec")
-        );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn missing_manifest_is_error_when_stdin_is_not_interactive() {
         let root = temp_test_path("noninteractive");
         let mut input = Cursor::new(Vec::<u8>::new());
@@ -790,7 +498,7 @@ agents:
 
         let err = ensure_interactive_with_io(
             &root,
-            &WorkspaceManifestDefaults::default(),
+            &WorkspaceManifest::default(),
             false,
             &mut input,
             &mut output,
@@ -802,13 +510,111 @@ agents:
     }
 
     #[test]
+    fn manifest_defaults_carry_flow() {
+        let manifest = WorkspaceManifest::default();
+
+        assert_eq!(
+            manifest.flow,
+            vec![
+                WorkspaceFlowRole::Planner,
+                WorkspaceFlowRole::Worker,
+                WorkspaceFlowRole::Reviewer,
+            ]
+        );
+        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
+    }
+
+    #[test]
+    fn manifest_without_flow_loads_initial_flow() {
+        let root = temp_test_path("manifest-flow");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+manager: codex
+planner: claude
+worker: codex
+reviewer: claude
+validation_command: lint
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+
+        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_worker_validation_reviewer_flow_renders_worker_review_loop() {
+        let flow = [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Worker,
+            WorkspaceFlowRole::Validation,
+            WorkspaceFlowRole::Reviewer,
+        ];
+
+        assert_eq!(flow_summary(&flow), WORKER_REVIEW_LOOP_SUMMARY);
+    }
+
+    #[test]
+    fn current_manifest_loads_flow() {
+        let root = temp_test_path("manifest-current-flow");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+manager: codex
+planner: claude
+worker: codex
+reviewer: claude
+validation_command: lint
+flow:
+  - planner
+  - reviewer
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+
+        assert_eq!(flow_summary(&manifest.flow), "planner -> reviewer");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saving_manifest_writes_flow() {
+        let root = temp_test_path("manifest-save-flow");
+        let manifest = WorkspaceManifest {
+            manager: "claude".to_owned(),
+            planner: "planbot".to_owned(),
+            worker: "codebot".to_owned(),
+            reviewer: "reviewbot".to_owned(),
+            validation_command: "check".to_owned(),
+            flow: vec![WorkspaceFlowRole::Worker],
+        };
+
+        save(&root, &manifest).unwrap();
+        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+
+        assert!(body.contains("flow:\n- worker"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn resolves_role_steps_from_workspace_manifest() {
         let manifest = WorkspaceManifest {
             manager: "claude".to_owned(),
             planner: "planbot".to_owned(),
-            implementer: "codebot".to_owned(),
+            worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             validation_command: "check".to_owned(),
+            flow: initial_flow(),
         };
         let spec = TaskSpec {
             goal: "ship".to_owned(),

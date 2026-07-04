@@ -4,11 +4,9 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    agents::{self, AgentProfile, InvocationDefaults},
     analyze::{ProbeResult, ProbeStatus, run_probe},
-    config::{
-        agents::{self, AgentProfile, InvocationDefaults},
-        spec::{AgentConfig, TaskSpec, TaskStep},
-    },
+    config::spec::{AgentConfig, TaskSpec, TaskStep},
 };
 
 pub(crate) const ALLOW_CLI_MISMATCH_ENV: &str = "NILES_ALLOW_CLI_MISMATCH";
@@ -390,19 +388,11 @@ mod tests {
 
     #[test]
     fn gate_passes_between_minimum_and_tested() {
-        let profile = AgentProfile {
-            id: "test",
-            binary: "test",
-            args: &[],
-            min_version: "1.0.0",
-            tested_version: "1.2.0",
-            prompt: crate::config::spec::PromptMode::Arg,
-        };
-        let probe = successful_probe("test 1.1.0");
-        let report = evaluate_probe("test", "test", profile, &probe);
+        let probe = successful_probe("codex-cli 0.142.4");
+        let report = evaluate_agent_probe("codex", "codex", &probe).unwrap();
 
         assert_eq!(report.status, VersionGateStatus::Pass);
-        assert_eq!(report.detected_version.as_deref(), Some("1.1.0"));
+        assert_eq!(report.detected_version.as_deref(), Some("0.142.4"));
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub fn write_workspace_manifest(
     workspace: &Path,
     manager: &str,
     planner: &str,
-    implementer: &str,
+    worker: &str,
     reviewer: &str,
     validation_command: &str,
 ) {
@@ -108,7 +108,7 @@ pub fn write_workspace_manifest(
     fs::write(
         workspace.join(".niles/manifest.yaml"),
         format!(
-            "manager: {manager}\nplanner: {planner}\nimplementer: {implementer}\nreviewer: {reviewer}\nvalidation_command: {validation_command}\nniles_schema: 2\n"
+            "manager: {manager}\nplanner: {planner}\nworker: {worker}\nreviewer: {reviewer}\nvalidation_command: {validation_command}\nflow:\n- planner\n- worker\n- reviewer\nniles_schema: 2\n"
         ),
     )
     .unwrap();

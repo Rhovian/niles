@@ -11,12 +11,12 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    capabilities::{CapabilityManifest, ModelProbe, manifest_path_for_binary},
-    config::{
-        agents,
-        spec::{AgentConfig, load_project_config},
+    agents::{
+        self,
+        capabilities::{CapabilityManifest, ModelProbe, manifest_path_for_binary},
         version,
     },
+    config::spec::{AgentConfig, load_project_config},
     util::write_json_pretty,
     workspace_manifest,
 };
@@ -71,7 +71,7 @@ fn agents_to_probe(
                 for model in agents::default_model_aliases(&family) {
                     insert_spec(
                         &mut specs,
-                        agents::parse_spec(&format!("{family}:{model}"))?,
+                        agents::AgentSpec::from_parts(&family, Some(model), None)?,
                         configs,
                     )?;
                 }
@@ -91,7 +91,7 @@ fn insert_default_analyze_specs(
         for model in agents::default_model_aliases(family) {
             insert_spec(
                 specs,
-                agents::parse_spec(&format!("{family}:{model}"))?,
+                agents::AgentSpec::from_parts(family, Some(model), None)?,
                 configs,
             )?;
         }
@@ -109,7 +109,7 @@ fn insert_workspace_manifest_specs(
     for agent in [
         manifest.manager,
         manifest.planner,
-        manifest.implementer,
+        manifest.worker,
         manifest.reviewer,
     ] {
         insert_spec(specs, agents::parse_spec(&agent)?, configs)?;
@@ -123,12 +123,10 @@ fn insert_spec(
     configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<()> {
     let key = spec_key(&spec);
-    let config = agents::config_for(configs, spec.original())?.cloned();
-    let invocation = agents::invocation(
-        spec.original(),
-        config.as_ref(),
-        agents::InvocationDefaults::Default,
-    )?;
+    let agent = spec.canonical();
+    let config = agents::config_for(configs, &agent)?.cloned();
+    let invocation =
+        agents::invocation(&agent, config.as_ref(), agents::InvocationDefaults::Default)?;
     let target = ProbeTarget {
         family: spec.family().to_owned(),
         binary: invocation.binary,
@@ -215,7 +213,7 @@ fn probe_model_acceptance(
 
 fn run_model_probe(target: &ProbeSpec, binary: &str) -> Result<ProbeResult> {
     let invocation = agents::invocation(
-        target.spec.original(),
+        &target.spec.canonical(),
         target.config.as_ref(),
         agents::InvocationDefaults::Default,
     )?;

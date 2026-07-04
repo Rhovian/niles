@@ -40,7 +40,7 @@ fn doctor_reports_global_index_and_all_scanned_artifact_classes_nonzero() {
     fs::create_dir_all(home.join("runs")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
-        "manager: claude\nplanner: claude\nimplementer: codex\nreviewer: claude\nvalidation_command: test\n",
+        "manager: claude\nplanner: claude\nworker: codex\nreviewer: claude\nvalidation_command: test\n",
     )
     .unwrap();
     fs::write(workspace.join(".niles/runs/run-1/plan.json"), "{}").unwrap();

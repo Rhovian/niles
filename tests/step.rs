@@ -602,7 +602,7 @@ agents:
 steps:
   - agent: echo
     task: "first"
-    role: implementer
+    role: worker
 commands:
   check:
     run: "true"
@@ -680,7 +680,7 @@ commands:
         .unwrap();
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("status: running"));
-    assert!(status_stdout.contains("1,implementer,agent,echo,completed,0"));
+    assert!(status_stdout.contains("1,worker,agent,echo,completed,0"));
     assert!(status_stdout.contains("2,reviewer,agent,echo,pending,-"));
     assert!(status_stdout.contains("3,validation,command,check,pending,-"));
 
