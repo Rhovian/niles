@@ -368,7 +368,7 @@ pub(crate) fn validate_static_model(spec: &AgentSpec) -> Result<()> {
 
 pub(crate) fn default_model_aliases(family: &str) -> &'static [&'static str] {
     match family {
-        "codex" => &["o3", "o3-pro", "o4-mini"],
+        "codex" => &["gpt-5.5", "o3", "o3-pro", "o4-mini"],
         "claude" => &["opus", "sonnet", "fable", "haiku"],
         _ => &[],
     }
@@ -505,6 +505,11 @@ mod tests {
         assert_eq!(bare.family(), "custom");
         assert_eq!(bare.model(), None);
         assert_eq!(bare.effort(), None);
+    }
+
+    #[test]
+    fn codex_static_aliases_prefer_gpt_5_5() {
+        assert_eq!(default_model_aliases("codex")[0], "gpt-5.5");
     }
 
     #[test]

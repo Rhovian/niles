@@ -237,8 +237,13 @@ impl RunResolver {
         Ok(local_run_dir)
     }
 
+    // Pointers can outlive their run dirs when `.niles/runs` is cleaned
+    // externally; latest means the newest run that still exists.
     fn latest(&self) -> Result<Option<Utf8PathBuf>> {
-        if let Some(run_dir) = self.local_pointer(RunPointerFile::Latest)? {
+        if let Some(run_dir) = self
+            .local_pointer(RunPointerFile::Latest)?
+            .filter(|run_dir| run_dir.is_dir())
+        {
             return Ok(Some(run_dir));
         }
         if let Some(run_dir) = latest_local_run_dir(&self.local_runs_dir)? {
@@ -494,9 +499,10 @@ fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?
         .runs
-        .into_iter()
-        .next_back()
-        .map(|(_, pointer)| pointer.run_dir))
+        .into_values()
+        .rev()
+        .map(|pointer| pointer.run_dir)
+        .find(|run_dir| run_dir.is_dir()))
 }
 
 fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
@@ -745,6 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn latest_resolution_skips_pointers_to_deleted_run_dirs() {
+        let root = TempDir::new("latest-dangling-pointers");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let local_runs_dir = root.path().join("workspace/.niles/runs");
+        fs::create_dir_all(&local_runs_dir).unwrap();
+
+        write_latest_pointer(
+            &local_runs_dir,
+            "deleted-local",
+            &root.path().join("deleted-pointer-target"),
+        );
+        let existing_global = create_dir(root.path().join("global-existing"));
+        write_global_run_pointer("2024-01-01", &existing_global);
+        write_global_run_pointer("2024-02-01", &root.path().join("deleted-global-target"));
+
+        let resolver = resolver_at(&local_runs_dir);
+        assert_eq!(resolver.latest().unwrap(), Some(existing_global));
+
+        fs::remove_file(global_index_path().unwrap()).unwrap();
+        assert_eq!(resolver.latest().unwrap(), None);
+    }
+
+    #[test]
     fn corrupt_pointer_json_returns_parse_error() {
         let root = TempDir::new("corrupt-pointer");
         let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
@@ -924,7 +953,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_local_pointers_return_recorded_path_without_existence_check() {
+    fn stale_local_pointers_resolve_named_but_not_latest() {
         let root = TempDir::new("stale-pointer");
         let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
         let local_runs_dir = root.path().join("workspace/.niles/runs");
@@ -937,7 +966,7 @@ mod tests {
         let resolver = resolver_at(&local_runs_dir);
         assert!(!stale_target.exists());
         assert_eq!(resolver.named("stale").unwrap(), stale_target);
-        assert_eq!(resolver.latest().unwrap(), Some(stale_target));
+        assert_eq!(resolver.latest().unwrap(), None);
     }
 
     fn resolver_at(local_runs_dir: &Utf8Path) -> RunResolver {

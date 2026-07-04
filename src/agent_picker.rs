@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
-use dialoguer::{Input, Select, console::Term};
+use dialoguer::{Select, console::Term};
 
 mod catalog;
 
@@ -32,12 +32,7 @@ fn prompt_agent_value_on_term(
 ) -> Result<String> {
     let choices = agent_choices(default, agent_configs);
     let index = select_choice(term, label, &choices, default_choice_index(&choices))?;
-    match choices[index].value.clone() {
-        AgentChoice::Preset(agent) => {
-            prompt_selected_agent(term, root, &agent, default, agent_configs)
-        }
-        AgentChoice::Other => prompt_custom_agent_spec(term, default, agent_configs),
-    }
+    prompt_selected_agent(term, root, &choices[index].value, default, agent_configs)
 }
 
 fn prompt_selected_agent(
@@ -70,12 +65,7 @@ fn prompt_builtin_agent(
             .with_context(|| format!("failed to write {family} catalog source"))?;
     }
 
-    let selection = prompt_model(term, family, default_spec, &catalog, agent_configs)?;
-    let model = match selection {
-        ModelSelection::Default => return Ok(family.to_owned()),
-        ModelSelection::Model(model) => model,
-        ModelSelection::Custom(value) => return Ok(value),
-    };
+    let model = prompt_model(term, family, default_spec, &catalog)?;
 
     let effort = prompt_effort(term, family, &model, default_spec, &catalog)?;
     let value = agent_value(family, Some(&model), effort.as_deref());
@@ -87,29 +77,21 @@ fn prompt_model(
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<ModelSelection> {
+) -> Result<String> {
     let choices = model_choices(family, default_spec, catalog);
+    if choices.is_empty() {
+        bail!("no {family} model options available");
+    }
     let default_index = default_choice_index(&choices);
     let index = select_choice(term, &format!("{family} model"), &choices, default_index)?;
-
-    match choices[index].value.clone() {
-        ModelChoice::Default => Ok(ModelSelection::Default),
-        ModelChoice::Group(group) => {
-            choose_model_version(term, family, &group, default_spec).map(ModelSelection::Model)
-        }
-        ModelChoice::Other => {
-            prompt_custom_agent_spec(term, &agent_value(family, None, None), agent_configs)
-                .map(ModelSelection::Custom)
-        }
-    }
+    choose_model_version(term, family, &choices[index].value, default_spec)
 }
 
 fn model_choices(
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
-) -> Vec<MenuChoice<ModelChoice>> {
+) -> Vec<MenuChoice<ModelGroup>> {
     model_choices_from_groups(family, default_spec, catalog.groups.clone())
 }
 
@@ -117,31 +99,30 @@ fn model_choices_from_groups(
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
     mut groups: Vec<ModelGroup>,
-) -> Vec<MenuChoice<ModelChoice>> {
+) -> Vec<MenuChoice<ModelGroup>> {
     if let Some(model) = default_spec.and_then(agents::AgentSpec::model) {
         insert_model_group(&mut groups, family, model);
     }
 
-    let mut choices = vec![MenuChoice {
-        label: "default (no model override)".to_owned(),
-        value: ModelChoice::Default,
-        is_default: default_spec.and_then(agents::AgentSpec::model).is_none(),
-    }];
-    choices.extend(groups.iter().cloned().map(|group| {
-        let is_default = default_spec
-            .and_then(agents::AgentSpec::model)
-            .is_some_and(|model| group.models.iter().any(|candidate| candidate == model));
-        MenuChoice {
-            label: group.label.clone(),
-            value: ModelChoice::Group(group),
-            is_default,
+    let default_model = default_spec.and_then(agents::AgentSpec::model);
+    let mut choices = groups
+        .iter()
+        .cloned()
+        .map(|group| {
+            let is_default = default_model
+                .is_some_and(|model| group.models.iter().any(|candidate| candidate == model));
+            MenuChoice {
+                label: group.label.clone(),
+                value: group,
+                is_default,
+            }
+        })
+        .collect::<Vec<_>>();
+    if default_model.is_none() {
+        if let Some(first) = choices.first_mut() {
+            first.is_default = true;
         }
-    }));
-    choices.push(MenuChoice {
-        label: "other...".to_owned(),
-        value: ModelChoice::Other,
-        is_default: false,
-    });
+    }
     choices
 }
 
@@ -227,26 +208,6 @@ fn select_choice<T>(
         .with_context(|| format!("failed to select {title}"))
 }
 
-fn prompt_custom_agent_spec(
-    term: &Term,
-    default: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Result<String> {
-    loop {
-        let value = Input::<String>::new()
-            .with_prompt("Custom agent spec")
-            .default(default.to_owned())
-            .interact_on(term)
-            .with_context(|| "failed to read custom agent spec")?;
-        match canonical_manifest_agent(&value, agent_configs) {
-            Ok(value) => return Ok(value),
-            Err(err) => term
-                .write_line(&format!("Invalid agent spec: {err}"))
-                .with_context(|| "failed to write invalid agent spec message")?,
-        }
-    }
-}
-
 fn canonical_manifest_agent(
     value: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -268,7 +229,7 @@ fn canonical_manifest_agent(
 fn agent_choices(
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Vec<MenuChoice<AgentChoice>> {
+) -> Vec<MenuChoice<String>> {
     let default_spec = agents::parse_spec(default).ok();
     let mut seen = BTreeSet::new();
     let mut choices = Vec::new();
@@ -292,16 +253,11 @@ fn agent_choices(
         );
     }
 
-    choices.push(MenuChoice {
-        label: "other...".to_owned(),
-        value: AgentChoice::Other,
-        is_default: false,
-    });
     choices
 }
 
 fn push_agent_choice(
-    choices: &mut Vec<MenuChoice<AgentChoice>>,
+    choices: &mut Vec<MenuChoice<String>>,
     seen: &mut BTreeSet<String>,
     agent: &str,
     default: &str,
@@ -317,7 +273,7 @@ fn push_agent_choice(
         });
     choices.push(MenuChoice {
         label: agent.to_owned(),
-        value: AgentChoice::Preset(agent.to_owned()),
+        value: agent.to_owned(),
         is_default,
     });
 }
@@ -349,25 +305,6 @@ struct MenuChoice<T> {
     is_default: bool,
 }
 
-#[derive(Clone)]
-enum AgentChoice {
-    Preset(String),
-    Other,
-}
-
-#[derive(Clone)]
-enum ModelChoice {
-    Default,
-    Group(ModelGroup),
-    Other,
-}
-
-enum ModelSelection {
-    Default,
-    Model(String),
-    Custom(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,7 +312,19 @@ mod tests {
     use crate::config::agents;
 
     #[test]
-    fn default_model_choice_is_no_override_before_catalog_models() {
+    fn agent_choices_do_not_include_free_text_escape_hatch() {
+        let choices = agent_choices("codex", &BTreeMap::new());
+        let labels = choices
+            .iter()
+            .map(|choice| choice.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, ["codex", "claude"]);
+        assert_eq!(default_choice_index(&choices), 0);
+    }
+
+    #[test]
+    fn bare_family_defaults_to_first_catalog_model() {
         let choices = model_choices_from_groups(
             "codex",
             None,
@@ -391,11 +340,11 @@ mod tests {
             ],
         );
 
-        assert_eq!(choices[0].label, "default (no model override)");
+        assert_eq!(choices[0].label, "o3");
         assert!(choices[0].is_default);
-        assert!(matches!(&choices[0].value, ModelChoice::Default));
-        assert!(matches!(&choices[1].value, ModelChoice::Group(group) if group.label == "o3"));
-        assert!(matches!(&choices[2].value, ModelChoice::Group(group) if group.label == "o3-pro"));
+        assert_eq!(choices[0].value.label, "o3");
+        assert_eq!(choices[1].value.label, "o3-pro");
+        assert_eq!(choices.len(), 2);
     }
 
     #[test]
@@ -425,7 +374,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(default_choice_index(&choices), 2);
-        assert!(matches!(&choices[2].value, ModelChoice::Group(group) if group.label == "o3-pro"));
+        assert_eq!(default_choice_index(&choices), 1);
+        assert_eq!(choices[1].value.label, "o3-pro");
     }
 }
