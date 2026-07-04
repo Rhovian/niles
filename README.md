@@ -7,6 +7,19 @@ probing, captured step execution, stdout/stderr/diff capture, and resumable run
 state — while agents own the judgment-heavy work: planning, implementation,
 review, handoff wording, and deciding when a task is complete.
 
+## Requirements
+
+- A Rust toolchain with edition 2024 support (1.85+).
+- `tmux` — Niles runs the manager and workers as tmux windows.
+- The agent CLIs you intend to use, on your `PATH` (e.g. `codex`, `claude`).
+
+## Install
+
+```sh
+cargo install --path .   # installs the `niles` binary on your PATH
+cargo build --release    # or a local build at target/release/niles
+```
+
 ## Launch
 
 ```sh
@@ -25,9 +38,8 @@ optionally the other role bindings.
 Niles writes a manager brief under `.niles/sessions/<id>/manager.md` pointing at
 the manifest and its flow. For Claude the brief is passed via
 `--append-system-prompt` (hidden context); other agents receive it in their
-initial prompt.
-Niles owns no chat grammar — the foreground agent drives the conversation and
-invokes explicit Niles commands as orchestration tools.
+initial prompt. Niles owns no chat grammar — the foreground agent drives the
+conversation and invokes explicit Niles commands as orchestration tools.
 
 Short aliases are part of the interface: `niles r` (run), `niles s` (status),
 `niles w` (watch), `niles l` (log), `niles d` (diff), `niles re` (resume).
@@ -190,8 +202,8 @@ Agent CLIs change quickly, so Niles does not assume a fixed flag set. `niles
 analyze` builds a local capability manifest under `.niles/capabilities/` by
 running safe probes (`--version`, `--help`) and probing model acceptance for
 requested specs, built-in aliases, and model-qualified manifest bindings; pass
-`--agent <name>` to probe a single agent.
-Manifests record accepted and rejected models with CLI version and timestamp;
+`--agent <name>` to probe a single agent. Manifests record accepted and rejected
+models with CLI version and timestamp;
 launch validation consults fresh manifests first, fails before spawning for
 known-rejected models, and falls back to static validation otherwise. `niles
 doctor` reports environment readiness.
@@ -209,3 +221,7 @@ recover from failed validation or interrupted agent steps.
 Niles currently supports sequential manager-driven runs, tmux worker windows,
 workspace role manifests, local analyzer support, and persisted
 workspace-anchored run logs.
+
+## License
+
+Dual-licensed under MIT or Apache-2.0, at your option.
