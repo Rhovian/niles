@@ -1,8 +1,8 @@
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
-    io::Write,
+    io::{self, IsTerminal, Write},
     process::{Command, ExitStatus, Stdio},
 };
 
@@ -17,13 +17,14 @@ use crate::{
         spec::{PromptMode, load_project_config_from},
     },
     schema::{self, ArtifactKind},
-    store,
+    store, tmux,
     util::{current_dir_utf8, timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest, WorkspaceManifestDefaults},
 };
 
 const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
+const FOREGROUND_TMUX_SESSION: &str = "niles";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -40,13 +41,15 @@ pub struct SessionMeta {
 }
 
 pub fn run(manager: Option<String>, goal: Option<String>) -> Result<()> {
+    if !ensure_tmux_session(env::var_os("TMUX").as_deref())? {
+        return Ok(());
+    }
+
     let manifest = launch_prelude(manager.as_deref())?;
     launch_foreground_agent(&manifest.manager, goal.as_deref())
 }
 
 fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
-    require_tmux_session(env::var_os("TMUX").as_deref())?;
-
     let worker_dir = Utf8Path::new(".niles").join("worker");
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 
@@ -59,14 +62,84 @@ fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
     workspace_manifest::ensure_interactive(root, &defaults)
 }
 
-fn require_tmux_session(tmux: Option<&OsStr>) -> Result<()> {
+fn ensure_tmux_session(tmux: Option<&OsStr>) -> Result<bool> {
+    match tmux_launch_action(tmux, terminal_mode_from_stdio())? {
+        TmuxLaunchAction::ContinueHere => Ok(true),
+        TmuxLaunchAction::StartSession => {
+            ensure_foreground_session_name_available(tmux::has_session(FOREGROUND_TMUX_SESSION))?;
+            let status = tmux::launch_foreground_session(
+                FOREGROUND_TMUX_SESSION,
+                &current_dir_utf8()?,
+                &current_argv()?,
+            )?;
+            ensure_tmux_launch_succeeded(status)?;
+            Ok(false)
+        }
+    }
+}
+
+fn ensure_foreground_session_name_available(session_exists: bool) -> Result<()> {
+    if session_exists {
+        bail!(
+            "tmux session `{FOREGROUND_TMUX_SESSION}` already exists. Attach it with `tmux attach -t {FOREGROUND_TMUX_SESSION}` and run `niles` inside the session; Niles will not use `tmux new-session -A` because tmux would ignore the launch command for an existing session."
+        );
+    }
+    Ok(())
+}
+
+fn ensure_tmux_launch_succeeded(status: ExitStatus) -> Result<()> {
+    if status.success() {
+        Ok(())
+    } else {
+        bail!("tmux foreground launch exited with {status}")
+    }
+}
+
+fn current_argv() -> Result<Vec<OsString>> {
+    let argv = env::args_os().collect::<Vec<_>>();
+    if argv.is_empty() {
+        bail!("failed to determine original argv for tmux foreground launch");
+    }
+    Ok(argv)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalMode {
+    stdin: bool,
+    stdout: bool,
+}
+
+impl TerminalMode {
+    fn interactive(self) -> bool {
+        self.stdin && self.stdout
+    }
+}
+
+fn terminal_mode_from_stdio() -> TerminalMode {
+    TerminalMode {
+        stdin: io::stdin().is_terminal(),
+        stdout: io::stdout().is_terminal(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TmuxLaunchAction {
+    ContinueHere,
+    StartSession,
+}
+
+fn tmux_launch_action(tmux: Option<&OsStr>, terminal: TerminalMode) -> Result<TmuxLaunchAction> {
     if tmux_session_present(tmux) {
-        return Ok(());
+        return Ok(TmuxLaunchAction::ContinueHere);
     }
 
-    bail!(
-        "Niles must be launched from inside a tmux session. Start one with `tmux new -s niles` or attach with `tmux attach`, then run `niles` again."
-    )
+    if !terminal.interactive() {
+        bail!(
+            "Niles must launch the foreground manager from an attached tmux session. Because stdin and stdout are not both TTYs, Niles will not auto-start tmux; start or attach tmux interactively and run `niles` again."
+        );
+    }
+
+    Ok(TmuxLaunchAction::StartSession)
 }
 
 fn tmux_session_present(tmux: Option<&OsStr>) -> bool {
@@ -311,11 +384,55 @@ mod tests {
     }
 
     #[test]
-    fn require_tmux_session_errors_when_missing() {
-        let err = require_tmux_session(None).unwrap_err();
+    fn tmux_launch_action_continues_inside_tmux_even_without_tty() {
+        let action = tmux_launch_action(
+            Some(OsStr::new("/tmp/tmux-501/default,1,0")),
+            TerminalMode {
+                stdin: false,
+                stdout: false,
+            },
+        )
+        .unwrap();
 
-        assert!(err.to_string().contains("inside a tmux session"));
-        assert!(err.to_string().contains("tmux new -s niles"));
+        assert_eq!(action, TmuxLaunchAction::ContinueHere);
+    }
+
+    #[test]
+    fn tmux_launch_action_starts_session_for_interactive_no_tmux() {
+        let action = tmux_launch_action(
+            None,
+            TerminalMode {
+                stdin: true,
+                stdout: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(action, TmuxLaunchAction::StartSession);
+    }
+
+    #[test]
+    fn tmux_launch_action_errors_for_non_tty_no_tmux() {
+        let err = tmux_launch_action(
+            None,
+            TerminalMode {
+                stdin: true,
+                stdout: false,
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("not both TTYs"));
+        assert!(err.to_string().contains("will not auto-start tmux"));
+    }
+
+    #[test]
+    fn existing_foreground_session_errors_with_attach_guidance() {
+        let err = ensure_foreground_session_name_available(true).unwrap_err();
+
+        assert!(err.to_string().contains("already exists"));
+        assert!(err.to_string().contains("tmux attach -t niles"));
+        assert!(err.to_string().contains("new-session -A"));
     }
 
     #[test]
