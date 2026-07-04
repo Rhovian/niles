@@ -75,24 +75,13 @@ is a cleanup candidate, not a healthy warm pane.
 
 ## Wake Contract
 
-`niles wait` is the single wake-delivery mechanism: it polls the relevant worker
-or run status log and prints the next actionable line. The five actionable wake
-states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`.
-Workers stay warm after `done:` — it is a wake telling the manager to inspect
-and optionally send follow-up, not a terminate request; cleanup happens
-explicitly at integration time.
-
-Unindexed waits (`niles wait --worker <id>`, `niles wait <run>`) consume wake
-lines by advancing a `status.ack` cursor beside the log, so pre-attach lines
-stay deliverable once but are never returned twice; re-running the wait after it
-returns is the send -> wait follow-up primitive. These waits are single-consumer:
-the active waiter is recorded in `status.waiter`, and a concurrent duplicate
-fails loudly instead of stealing the wake.
-
-Indexed waits (`niles wait <run> --index N`) scan the full log for an actionable
-line containing the exact token pair `step N`, so generic wake lines do not
-satisfy them. `closed:` is terminal for worker waits; for indexed run waits it
-must also mention the matching step.
+`niles wait` is the single wake-delivery mechanism: it prints the next
+actionable line from a worker or run status log. The five actionable states are
+`done:`, `failed:`, `blocked:`, `needs-decision:`, and `closed:`. Workers stay
+warm after `done:` — it tells the manager to inspect and optionally send
+follow-up, not to terminate; cleanup happens explicitly at integration time.
+Waits are single-consumer and track what they have already delivered, so each
+actionable line is returned exactly once.
 
 ## Role Workflows
 
