@@ -199,8 +199,8 @@ fn print_step_commands(state: &RunState, step_index: usize) {
     );
 }
 
-/// Append a step to an existing run so the manager can extend it on the fly
-/// (e.g. another code -> review cycle until the reviewer reaches consensus). The
+/// Append a step to an existing run so the manager can extend the
+/// worker <verification> <-> reviewer loop until CONSENSUS or ESCALATE. The
 /// step is added to both the run's task spec and its state, and a terminal run
 /// is reopened to `running`.
 pub(crate) fn step_add(

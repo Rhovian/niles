@@ -752,6 +752,8 @@ agents:
         assert!(MANAGER_BRIEF_TEMPLATE.contains("manifest: {manifest}"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("flow: {flow}"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("source of truth"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("standard worker-verification-reviewer loop"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("CONSENSUS OR ESCALATE"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Do not generate a task YAML file"));
         assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
     }

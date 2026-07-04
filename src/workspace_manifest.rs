@@ -15,6 +15,8 @@ use crate::{
 };
 
 const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
+const WORKER_REVIEW_LOOP_SUMMARY: &str =
+    "planner -> worker (implementer role) <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WorkspaceManifest {
@@ -103,7 +105,6 @@ pub fn initial_flow() -> Vec<WorkspaceFlowRole> {
     vec![
         WorkspaceFlowRole::Planner,
         WorkspaceFlowRole::Implementer,
-        WorkspaceFlowRole::Validation,
         WorkspaceFlowRole::Reviewer,
     ]
 }
@@ -113,10 +114,30 @@ pub fn flow_summary(flow: &[WorkspaceFlowRole]) -> String {
         return "<empty>".to_owned();
     }
 
+    if is_worker_review_loop(flow) {
+        return WORKER_REVIEW_LOOP_SUMMARY.to_owned();
+    }
+
     flow.iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" -> ")
+}
+
+fn is_worker_review_loop(flow: &[WorkspaceFlowRole]) -> bool {
+    matches!(
+        flow,
+        [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Reviewer
+        ] | [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Validation,
+            WorkspaceFlowRole::Reviewer
+        ]
+    )
 }
 
 pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
@@ -339,7 +360,7 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
         )?,
         implementer: agent_picker::prompt_agent_value(
             root,
-            "Implementer agent",
+            "Worker agent (implementer role)",
             &defaults.implementer,
             agent_configs,
         )?,
@@ -496,9 +517,14 @@ niles_schema: 2
         let manifest = WorkspaceManifestDefaults::default().to_manifest();
 
         assert_eq!(
-            flow_summary(&manifest.flow),
-            "planner -> implementer -> validation -> reviewer"
+            manifest.flow,
+            vec![
+                WorkspaceFlowRole::Planner,
+                WorkspaceFlowRole::Implementer,
+                WorkspaceFlowRole::Reviewer,
+            ]
         );
+        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
     }
 
     #[test]
@@ -520,12 +546,21 @@ niles_schema: 2
 
         let manifest = load(&root).unwrap().unwrap();
 
-        assert_eq!(
-            flow_summary(&manifest.flow),
-            "planner -> implementer -> validation -> reviewer"
-        );
+        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_linear_manifest_flow_renders_worker_review_loop() {
+        let flow = [
+            WorkspaceFlowRole::Planner,
+            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Validation,
+            WorkspaceFlowRole::Reviewer,
+        ];
+
+        assert_eq!(flow_summary(&flow), WORKER_REVIEW_LOOP_SUMMARY);
     }
 
     #[test]
