@@ -7,11 +7,10 @@ probing, captured step execution, stdout/stderr/diff capture, and resumable run
 state — while agents own the judgment-heavy work: planning, implementation,
 review, handoff wording, and deciding when a task is complete.
 
-## CLI Fast Path
+## Launch
 
 ```sh
 niles
-niles --goal "Fix the flaky auth test and open a PR"
 ```
 
 Bare `niles` launches the foreground manager agent and is tmux-only. When run
@@ -26,14 +25,12 @@ optionally the other role bindings.
 Niles writes a manager brief under `.niles/sessions/<id>/manager.md` pointing at
 the manifest and its flow. For Claude the brief is passed via
 `--append-system-prompt` (hidden context); other agents receive it in their
-initial prompt. `--goal` seeds that startup context before the agent starts.
+initial prompt.
 Niles owns no chat grammar — the foreground agent drives the conversation and
 invokes explicit Niles commands as orchestration tools.
 
-Short aliases are part of the interface: `niles a` (ask), `niles r` (run),
-`niles s` (status), `niles w` (watch), `niles l` (log), `niles d` (diff),
-`niles re` (resume). The one-off worker path is `niles ask "fix the failing
-test"` (optionally `-a <agent>`).
+Short aliases are part of the interface: `niles r` (run), `niles s` (status),
+`niles w` (watch), `niles l` (log), `niles d` (diff), `niles re` (resume).
 
 ## Worker Lifecycle
 

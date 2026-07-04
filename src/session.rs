@@ -38,14 +38,14 @@ pub struct SessionMeta {
     pub brief: Utf8PathBuf,
 }
 
-pub fn run(manager: Option<String>, goal: Option<String>) -> Result<()> {
+pub fn run(manager: Option<String>) -> Result<()> {
     let workspace = current_dir_utf8()?;
     if !ensure_tmux_session(env::var_os("TMUX").as_deref(), &workspace)? {
         return Ok(());
     }
 
     let manifest = launch_prelude(&workspace, manager.as_deref())?;
-    launch_foreground_agent(&workspace, &manifest, goal.as_deref())
+    launch_foreground_agent(&workspace, &manifest)
 }
 
 fn launch_prelude(
@@ -241,20 +241,16 @@ fn prompt_new_session_name<R: BufRead, W: Write>(
     }
 }
 
-fn launch_foreground_agent(
-    workspace: &Utf8Path,
-    manifest: &WorkspaceManifest,
-    goal: Option<&str>,
-) -> Result<()> {
+fn launch_foreground_agent(workspace: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
     let agent = &manifest.manager;
     let invocation = foreground_invocation_for_project(workspace, agent)?;
     let binary = invocation.binary;
     let mut args = invocation.args;
     let family = invocation.spec.family().to_owned();
-    let meta = write_manager_session(workspace, &invocation.spec, manifest, goal)?;
+    let meta = write_manager_session(workspace, &invocation.spec, manifest)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    let prompt = manager_prompt_io(&family, invocation.prompt, brief, goal);
+    let prompt = manager_prompt_io(&family, invocation.prompt, brief);
     args.extend(prompt.args);
 
     let status = run_foreground_process(workspace, &binary, &args, prompt.stdin.as_deref())?;
@@ -325,33 +321,28 @@ struct ForegroundPrompt {
     stdin: Option<String>,
 }
 
-fn manager_prompt_io(
-    agent: &str,
-    prompt: PromptMode,
-    brief: String,
-    goal: Option<&str>,
-) -> ForegroundPrompt {
+fn manager_prompt_io(agent: &str, prompt: PromptMode, brief: String) -> ForegroundPrompt {
     match prompt {
         PromptMode::Arg => ForegroundPrompt {
-            args: manager_prompt_args(agent, brief, goal),
+            args: manager_prompt_args(agent, brief),
             stdin: None,
         },
         PromptMode::Stdin => ForegroundPrompt {
             args: Vec::new(),
-            stdin: Some(manager_stdin_prompt(brief, goal)),
+            stdin: Some(manager_stdin_prompt(brief)),
         },
     }
 }
 
-fn manager_prompt_args(agent: &str, brief: String, goal: Option<&str>) -> Vec<String> {
-    agents::manager_prompt_args(agent, brief, startup_prompt(goal))
+fn manager_prompt_args(agent: &str, brief: String) -> Vec<String> {
+    agents::manager_prompt_args(agent, brief, startup_prompt())
 }
 
-fn manager_stdin_prompt(brief: String, goal: Option<&str>) -> String {
-    format!("{brief}\n\n{}", startup_prompt(goal))
+fn manager_stdin_prompt(brief: String) -> String {
+    format!("{brief}\n\n{}", startup_prompt())
 }
 
-fn startup_prompt(_goal: Option<&str>) -> String {
+fn startup_prompt() -> String {
     "Start the Niles manager session.".to_owned()
 }
 
@@ -359,17 +350,14 @@ fn write_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
     manifest: &WorkspaceManifest,
-    goal: Option<&str>,
 ) -> Result<SessionMeta> {
     let now = Utc::now();
     let id = timestamp_id(&now);
     let dir = workspace.join(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("manager.md");
-    let goal = goal
-        .unwrap_or("No initial goal was provided. Start by asking the user what they want done.");
     let startup_context = startup_context(workspace)?;
-    let body = render_manager_brief(agent, workspace, &dir, manifest, goal, &startup_context);
+    let body = render_manager_brief(agent, workspace, &dir, manifest, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -392,7 +380,6 @@ fn render_manager_brief(
     workspace: &Utf8Path,
     dir: &Utf8Path,
     manifest: &WorkspaceManifest,
-    goal: &str,
     startup_context: &str,
 ) -> String {
     let manifest_path = workspace_manifest::manifest_path(workspace);
@@ -403,7 +390,6 @@ fn render_manager_brief(
         .replace("{dir}", dir.as_str())
         .replace("{manifest}", manifest_path.as_str())
         .replace("{flow}", &flow)
-        .replace("{goal}", goal)
         .replace("{startup_context}", startup_context)
         .replace(
             "{worker_wake_examples}",
@@ -671,7 +657,6 @@ agents:
             invocation.spec.family(),
             invocation.prompt,
             "brief body".to_owned(),
-            Some("ship it"),
         );
         let mut args = invocation.args;
         args.extend(prompt.args);
@@ -757,7 +742,7 @@ agents:
 
     #[test]
     fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
-        let args = manager_prompt_args("claude", "brief body".to_owned(), Some("ship it"));
+        let args = manager_prompt_args("claude", "brief body".to_owned());
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--append-system-prompt");
@@ -767,12 +752,7 @@ agents:
 
     #[test]
     fn manager_prompt_io_preserves_claude_arg_mode_system_prompt() {
-        let prompt = manager_prompt_io(
-            "claude",
-            PromptMode::Arg,
-            "brief body".to_owned(),
-            Some("ship it"),
-        );
+        let prompt = manager_prompt_io("claude", PromptMode::Arg, "brief body".to_owned());
 
         assert_eq!(prompt.stdin, None);
         assert_eq!(prompt.args.len(), 3);
@@ -811,14 +791,7 @@ agents:
             ],
         };
 
-        let body = render_manager_brief(
-            &agent,
-            &workspace,
-            &dir,
-            &manifest,
-            "Fix it",
-            "latest_run: none",
-        );
+        let body = render_manager_brief(&agent, &workspace, &dir, &manifest, "latest_run: none");
 
         assert!(body.contains(&format!(
             "manifest: {}",
@@ -826,7 +799,6 @@ agents:
         )));
         assert!(body.contains("flow: reviewer -> validation"));
         assert!(body.contains("manager_agent: codex:gpt-5.5:xhigh"));
-        assert!(body.contains("Fix it"));
         assert!(body.contains("latest_run: none"));
         assert!(!body.contains("{manifest}"));
         assert!(!body.contains("{flow}"));

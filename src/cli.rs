@@ -11,25 +11,12 @@ pub struct Cli {
     /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
     pub manager: Option<String>,
-    /// Initial goal to include in the foreground manager brief.
-    #[arg(long)]
-    pub goal: Option<String>,
     #[command(subcommand)]
     pub command: Option<CommandName>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
-    /// Start a one-off agent task without writing YAML.
-    #[command(alias = "a")]
-    Ask {
-        /// Agent id to hand the task to.
-        #[arg(short, long, default_value = "codex")]
-        agent: String,
-        /// Prompt to send to the agent.
-        #[arg(required = true, action = ArgAction::Append, trailing_var_arg = true)]
-        prompt: Vec<String>,
-    },
     /// Probe configured agent CLIs and write local capability manifests.
     #[command(alias = "scan")]
     Analyze {

@@ -3,7 +3,7 @@ mod lifecycle;
 mod report;
 
 pub(crate) use exec::{exec_step, step, step_close};
-pub(crate) use lifecycle::{ask, resume, run, step_add};
+pub(crate) use lifecycle::{resume, run, step_add};
 pub(crate) use report::{diff, log, show, status, watch};
 
 use anyhow::Result;
