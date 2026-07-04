@@ -41,16 +41,20 @@ pub struct SessionMeta {
 }
 
 pub fn run(manager: Option<String>, goal: Option<String>) -> Result<()> {
-    if !ensure_tmux_session(env::var_os("TMUX").as_deref())? {
+    let workspace = current_dir_utf8()?;
+    if !ensure_tmux_session(env::var_os("TMUX").as_deref(), &workspace)? {
         return Ok(());
     }
 
-    let manifest = launch_prelude(manager.as_deref())?;
-    launch_foreground_agent(&manifest, goal.as_deref())
+    let manifest = launch_prelude(&workspace, manager.as_deref())?;
+    launch_foreground_agent(&workspace, &manifest, goal.as_deref())
 }
 
-fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
-    let worker_dir = Utf8Path::new(".niles").join("worker");
+fn launch_prelude(
+    workspace: &Utf8Path,
+    manager_override: Option<&str>,
+) -> Result<WorkspaceManifest> {
+    let worker_dir = workspace.join(".niles").join("worker");
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 
     let mut defaults = WorkspaceManifestDefaults::default();
@@ -58,11 +62,10 @@ fn launch_prelude(manager_override: Option<&str>) -> Result<WorkspaceManifest> {
         defaults.manager = manager.to_owned();
     }
 
-    let root = Utf8Path::new(".");
-    workspace_manifest::ensure_interactive(root, &defaults)
+    workspace_manifest::ensure_interactive(workspace, &defaults)
 }
 
-fn ensure_tmux_session(tmux: Option<&OsStr>) -> Result<bool> {
+fn ensure_tmux_session(tmux: Option<&OsStr>, workspace: &Utf8Path) -> Result<bool> {
     let terminal = terminal_mode_from_stdio();
     let foreground_session_exists = if tmux_session_present(tmux) || !terminal.interactive() {
         false
@@ -73,8 +76,7 @@ fn ensure_tmux_session(tmux: Option<&OsStr>) -> Result<bool> {
     match tmux_launch_action(tmux, terminal, foreground_session_exists)? {
         TmuxLaunchAction::ContinueHere => Ok(true),
         TmuxLaunchAction::StartSession { session } => {
-            let status =
-                tmux::launch_foreground_session(&session, &current_dir_utf8()?, &current_argv()?)?;
+            let status = tmux::launch_foreground_session(&session, workspace, &current_argv()?)?;
             ensure_tmux_launch_succeeded(status)?;
             Ok(false)
         }
@@ -89,11 +91,7 @@ fn ensure_tmux_session(tmux: Option<&OsStr>) -> Result<bool> {
                     tmux::attach_foreground_session(FOREGROUND_TMUX_SESSION)?
                 }
                 ExistingSessionAction::StartNamedSession(session) => {
-                    tmux::launch_foreground_session(
-                        &session,
-                        &current_dir_utf8()?,
-                        &current_argv()?,
-                    )?
+                    tmux::launch_foreground_session(&session, workspace, &current_argv()?)?
                 }
             };
             ensure_tmux_launch_succeeded(status)?;
@@ -245,19 +243,23 @@ fn prompt_new_session_name<R: BufRead, W: Write>(
     }
 }
 
-fn launch_foreground_agent(manifest: &WorkspaceManifest, goal: Option<&str>) -> Result<()> {
+fn launch_foreground_agent(
+    workspace: &Utf8Path,
+    manifest: &WorkspaceManifest,
+    goal: Option<&str>,
+) -> Result<()> {
     let agent = &manifest.manager;
-    let invocation = foreground_invocation_for_project(Utf8Path::new("."), agent)?;
+    let invocation = foreground_invocation_for_project(workspace, agent)?;
     let binary = invocation.binary;
     let mut args = invocation.args;
     let family = invocation.spec.family().to_owned();
-    let meta = write_manager_session(&invocation.spec, manifest, goal)?;
+    let meta = write_manager_session(workspace, &invocation.spec, manifest, goal)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
     let prompt = manager_prompt_io(&family, invocation.prompt, brief, goal);
     args.extend(prompt.args);
 
-    let status = run_foreground_process(&binary, &args, prompt.stdin.as_deref())?;
+    let status = run_foreground_process(workspace, &binary, &args, prompt.stdin.as_deref())?;
 
     if status.success() {
         Ok(())
@@ -273,12 +275,14 @@ fn launch_foreground_agent(manifest: &WorkspaceManifest, goal: Option<&str>) -> 
 }
 
 fn run_foreground_process(
+    workspace: &Utf8Path,
     binary: &str,
     args: &[String],
     stdin: Option<&str>,
 ) -> Result<ExitStatus> {
     let mut command = Command::new(binary);
     command
+        .current_dir(workspace)
         .args(args)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -358,20 +362,20 @@ fn startup_prompt(_goal: Option<&str>) -> String {
 }
 
 fn write_manager_session(
+    workspace: &Utf8Path,
     agent: &agents::AgentSpec,
     manifest: &WorkspaceManifest,
     goal: Option<&str>,
 ) -> Result<SessionMeta> {
-    let workspace = current_dir_utf8()?;
     let now = Utc::now();
     let id = timestamp_id(&now);
-    let dir = Utf8Path::new(".niles").join("sessions").join(&id);
+    let dir = workspace.join(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("manager.md");
     let goal = goal
         .unwrap_or("No initial goal was provided. Start by asking the user what they want done.");
-    let startup_context = startup_context()?;
-    let body = render_manager_brief(agent, &workspace, &dir, manifest, goal, &startup_context);
+    let startup_context = startup_context(workspace)?;
+    let body = render_manager_brief(agent, workspace, &dir, manifest, goal, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -379,12 +383,13 @@ fn write_manager_session(
         agent_family: agent.tier().map(|tier| tier.family),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
-        workspace,
+        workspace: workspace.to_path_buf(),
         brief: path,
     };
-    let meta_path = session_meta_path(&id);
+    let meta_path = session_meta_path(workspace, &id);
     write_json_pretty(&meta_path, &meta)?;
-    fs::write(latest_session_path(), &id).context("failed to write latest session pointer")?;
+    fs::write(latest_session_path(workspace), &id)
+        .context("failed to write latest session pointer")?;
     Ok(meta)
 }
 
@@ -412,24 +417,25 @@ fn render_manager_brief(
         )
 }
 
-fn session_meta_path(id: &str) -> Utf8PathBuf {
-    Utf8Path::new(".niles")
+fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
+    workspace
+        .join(".niles")
         .join("sessions")
         .join(id)
         .join("session.json")
 }
 
-fn latest_session_path() -> Utf8PathBuf {
-    Utf8Path::new(".niles").join("sessions").join("latest")
+fn latest_session_path(workspace: &Utf8Path) -> Utf8PathBuf {
+    workspace.join(".niles").join("sessions").join("latest")
 }
 
-fn startup_context() -> Result<String> {
-    let lines = [latest_run_context()?, worker_context()?];
+fn startup_context(workspace: &Utf8Path) -> Result<String> {
+    let lines = [latest_run_context(workspace)?, worker_context(workspace)?];
     Ok(lines.join("\n"))
 }
 
-fn latest_run_context() -> Result<String> {
-    let Some(run_dir) = store::resolve_latest_run_dir()? else {
+fn latest_run_context(workspace: &Utf8Path) -> Result<String> {
+    let Some(run_dir) = store::resolve_latest_run_dir_from(workspace)? else {
         return Ok("latest_run: none".to_owned());
     };
 
@@ -451,8 +457,8 @@ fn latest_run_context() -> Result<String> {
     Ok(format!("latest_run: id={id} status={status} goal={goal:?}"))
 }
 
-fn worker_context() -> Result<String> {
-    let worker_dir = Utf8Path::new(".niles").join("worker");
+fn worker_context(workspace: &Utf8Path) -> Result<String> {
+    let worker_dir = workspace.join(".niles").join("worker");
     let entries = match fs::read_dir(&worker_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -694,27 +700,63 @@ agents:
         let script = root.join("manager");
         let args_log = root.join("args.log");
         let stdin_log = root.join("stdin.log");
-        fs::write(
+        write_executable_script(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\n",
                 args_log, stdin_log
             ),
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+        );
 
         let args = ["--mode", "manager"].map(str::to_owned);
         let prompt = "brief body\n\nStart the Niles manager session.";
-        let status = run_foreground_process(script.as_str(), &args, Some(prompt)).unwrap();
+        let status = run_foreground_process(&root, script.as_str(), &args, Some(prompt)).unwrap();
 
         assert!(status.success());
         let args_body = fs::read_to_string(args_log).unwrap();
         assert_eq!(args_body, "--mode\nmanager\n");
         assert!(!args_body.contains("brief body"));
         assert_eq!(fs::read_to_string(stdin_log).unwrap(), prompt);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_foreground_process_uses_explicit_workspace_cwd() {
+        let root = temp_test_path("foreground-explicit-cwd");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let script = root.join("manager");
+        let pwd_log = root.join("pwd.log");
+        write_executable_script(
+            &script,
+            &format!("#!/bin/sh\npwd > {}\n", shell_quote(&pwd_log)),
+        );
+
+        let args = Vec::new();
+        let status = run_foreground_process(&workspace, script.as_str(), &args, None).unwrap();
+
+        assert!(status.success());
+        let expected = Utf8PathBuf::from_path_buf(fs::canonicalize(&workspace).unwrap()).unwrap();
+        assert_eq!(
+            fs::read_to_string(pwd_log).unwrap().trim_end(),
+            expected.as_str()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_foreground_process_returns_nonzero_child_status() {
+        let root = temp_test_path("foreground-nonzero-status");
+        fs::create_dir_all(&root).unwrap();
+        let script = root.join("manager");
+        write_executable_script(&script, "#!/bin/sh\nexit 42\n");
+
+        let args = Vec::new();
+        let status = run_foreground_process(&root, script.as_str(), &args, None).unwrap();
+
+        assert_eq!(status.code(), Some(42));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -806,5 +848,16 @@ agents:
             std::process::id()
         )))
         .unwrap()
+    }
+
+    fn write_executable_script(path: &Utf8Path, body: &str) {
+        fs::write(path, body).unwrap();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn shell_quote(path: &Utf8Path) -> String {
+        format!("'{}'", path.as_str().replace('\'', "'\\''"))
     }
 }

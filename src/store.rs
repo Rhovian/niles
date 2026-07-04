@@ -154,8 +154,11 @@ pub fn resolve_run_dir(run: &str) -> Result<Utf8PathBuf> {
     resolver.named(run)
 }
 
-pub fn resolve_latest_run_dir() -> Result<Option<Utf8PathBuf>> {
-    RunResolver::from_current()?.latest()
+pub(crate) fn resolve_latest_run_dir_from(workspace: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
+    RunResolver {
+        local_runs_dir: workspace_runs_dir(workspace)?,
+    }
+    .latest()
 }
 
 fn current_runs_dir() -> Result<Utf8PathBuf> {
