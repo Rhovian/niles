@@ -689,3 +689,122 @@ commands:
     assert!(task_body.contains("role: reviewer"));
     assert!(task_body.contains("role: validation"));
 }
+
+#[test]
+fn step_add_command_does_not_load_project_config() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-step-add-command-raw-task");
+
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "step-add command raw task"
+steps:
+  - command: check
+commands:
+  check: "true"
+"#,
+    );
+    let home = niles_home(&workspace);
+
+    let run = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("run command-only task", &run);
+
+    fs::write(workspace.join("niles.yaml"), "agents: [").unwrap();
+
+    let add_check = Command::new(niles)
+        .args(["step-add", "latest", "--command", "check"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("step-add command with invalid project config", &add_check);
+    assert!(String::from_utf8_lossy(&add_check.stdout).contains("added: step 2 command check"));
+
+    let task_body = fs::read_to_string(&task).unwrap();
+    assert!(task_body.contains("- command: check"));
+}
+
+#[test]
+fn step_add_validates_agent_with_project_config() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-step-add-project-config");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let codex = bin.join("configured-codex");
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'configured codex help\n'; exit 0 ;;
+esac
+printf 'configured codex ok\n'
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            r#"
+agents:
+  codex:
+    binary: "{}"
+"#,
+            codex.display()
+        ),
+    )
+    .unwrap();
+
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "step-add project config"
+steps:
+  - command: check
+commands:
+  check: "true"
+"#,
+    );
+    let home = niles_home(&workspace);
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:omega:xhigh"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_command_success("analyze configured codex", &analyze);
+
+    let run = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("run command-only task", &run);
+
+    let add_review = Command::new(niles)
+        .args([
+            "step-add",
+            "latest",
+            "--agent",
+            "codex:omega:xhigh",
+            "review it",
+        ])
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("step-add configured codex", &add_review);
+    assert!(
+        String::from_utf8_lossy(&add_review.stdout)
+            .contains("added: step 2 agent codex:omega:xhigh")
+    );
+}

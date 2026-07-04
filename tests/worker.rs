@@ -11,6 +11,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn capability_manifest_containing(workspace: &Path, needle: &str) -> String {
+    let dir = workspace.join(".niles/capabilities");
+    for entry in fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let body = fs::read_to_string(&path).unwrap();
+        if body.contains(needle) {
+            return body;
+        }
+    }
+    panic!(
+        "no capability manifest under {} contained {needle}",
+        dir.display()
+    );
+}
+
 #[test]
 fn spawn_enforces_known_agent_cli_min_version() {
     let niles = env!("CARGO_BIN_EXE_niles");
@@ -453,6 +471,761 @@ fn spawn_rejects_invalid_model_effort_specs() {
     assert!(!spawn.status.success());
     assert!(String::from_utf8_lossy(&spawn.stderr).contains("unsupported claude effort `turbo`"));
     assert!(!workspace.join(".niles/worker/bad-worker").exists());
+}
+
+#[test]
+fn spawn_falls_back_to_static_model_validation_without_manifest() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-static-model-fallback-test");
+
+    let spawn = Command::new(niles)
+        .args(["spawn", "bad-worker", "--agent", "codex:omega:xhigh", "Fix"])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    assert!(String::from_utf8_lossy(&spawn.stderr).contains("unsupported codex model `omega`"));
+    assert!(!workspace.join(".niles/worker/bad-worker").exists());
+}
+
+#[test]
+fn spawn_uses_fresh_capability_manifest_for_accepted_and_rejected_models() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-capability-model-test");
+    let home = niles_home(&workspace);
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$model" in
+  omega) printf 'accepted %s\n' "$model"; exit 0 ;;
+  gpt-bad) printf 'unknown model %s\n' "$model" >&2; exit 8 ;;
+  *) printf 'accepted %s\n' "$model"; exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let accepted_analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:omega:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("accepted model analyze", &accepted_analyze);
+
+    let accepted_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "accepted-worker",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("accepted model spawn", &accepted_spawn);
+    let stdout = String::from_utf8_lossy(&accepted_spawn.stdout);
+    assert!(stdout.contains("model: omega"));
+    let launch =
+        fs::read_to_string(workspace.join(".niles/worker/accepted-worker/launch.sh")).unwrap();
+    assert!(launch.contains("'--model' 'omega'"));
+
+    let rejected_analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:gpt-bad:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("rejected model analyze", &rejected_analyze);
+
+    let rejected_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "rejected-worker",
+            "--project",
+            ".",
+            "--agent",
+            "codex:gpt-bad:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!rejected_spawn.status.success());
+    let stderr = String::from_utf8_lossy(&rejected_spawn.stderr);
+    assert!(stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
+    assert!(!workspace.join(".niles/worker/rejected-worker").exists());
+}
+
+#[test]
+fn analyze_uses_project_configured_agent_binary_for_model_probes() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-configured-analyze-test");
+    let home = niles_home(&workspace);
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+printf 'default codex should not be probed\n' >&2
+exit 12
+"#,
+    );
+    let custom_codex = bin.join("codex-custom");
+    write_executable(
+        &custom_codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'custom codex help\n'; exit 0 ;;
+esac
+printf 'custom accepted\n'
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            "agents:\n  codex:\n    binary: {}\n",
+            custom_codex.display()
+        ),
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:omega:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("configured binary analyze", &analyze);
+
+    let manifest = capability_manifest_containing(
+        &workspace,
+        &format!(r#""binary": "{}""#, custom_codex.display()),
+    );
+    assert!(manifest.contains(&format!(r#""binary": "{}""#, custom_codex.display())));
+    assert!(manifest.contains(r#""model": "omega""#));
+    assert!(manifest.contains(r#""effort": "xhigh""#));
+
+    let accepted_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "configured-worker",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("configured binary accepted spawn", &accepted_spawn);
+
+    let unprobed_effort_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "configured-low-worker",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:low",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!unprobed_effort_spawn.status.success());
+    let stderr = String::from_utf8_lossy(&unprobed_effort_spawn.stderr);
+    assert!(stderr.contains("unsupported codex model `omega`"));
+    assert!(
+        !workspace
+            .join(".niles/worker/configured-low-worker")
+            .exists()
+    );
+}
+
+#[test]
+fn analyze_sends_probe_prompt_to_configured_stdin_agents() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-stdin-analyze-test");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let stdin_codex = bin.join("codex-stdin");
+    write_executable(
+        &stdin_codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'stdin codex help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+prompt=$(cat)
+if [ -z "$prompt" ]; then
+  printf 'missing stdin prompt for %s\n' "$model" >&2
+  exit 5
+fi
+printf 'accepted %s with stdin\n' "$model"
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            "agents:\n  codex:\n    binary: {}\n    prompt: stdin\n",
+            stdin_codex.display()
+        ),
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:omega:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("stdin configured analyze", &analyze);
+    assert!(
+        String::from_utf8_lossy(&analyze.stdout)
+            .contains("model_probe: codex:omega:xhigh accepted")
+    );
+
+    let manifest = capability_manifest_containing(
+        &workspace,
+        &format!(r#""binary": "{}""#, stdin_codex.display()),
+    );
+    assert!(manifest.contains(r#""accepted_models""#));
+    assert!(manifest.contains(r#""model": "omega""#));
+    assert!(!manifest.contains("missing stdin prompt"));
+}
+
+#[test]
+fn default_analyze_writes_manifest_for_exact_configured_role_binary() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-default-analyze-mixed-binary-test");
+    let home = niles_home(&workspace);
+    write_workspace_manifest(
+        &workspace,
+        "claude",
+        "codex:omega:xhigh",
+        "codex",
+        "claude",
+        "test",
+    );
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --help) printf 'claude help\n'; exit 0 ;;
+esac
+printf 'claude ok\n'
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'default codex help\n'; exit 0 ;;
+esac
+printf 'default codex accepted\n'
+"#,
+    );
+    let custom_codex = bin.join("codex-custom");
+    write_executable(
+        &custom_codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'custom codex help\n'; exit 0 ;;
+esac
+printf 'custom codex accepted\n'
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            "agents:\n  \"codex:omega:xhigh\":\n    binary: {}\n",
+            custom_codex.display()
+        ),
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .arg("analyze")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("default analyze mixed binaries", &analyze);
+    assert!(workspace.join(".niles/capabilities/codex.json").is_file());
+    let custom_manifest = capability_manifest_containing(
+        &workspace,
+        &format!(r#""binary": "{}""#, custom_codex.display()),
+    );
+    assert!(custom_manifest.contains(r#""model": "omega""#));
+    assert!(custom_manifest.contains(r#""effort": "xhigh""#));
+
+    let spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "configured-role-worker",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("configured role binary spawn", &spawn);
+}
+
+#[test]
+fn binary_specific_capability_manifest_paths_resist_slug_collisions() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-binary-slug-collision-test");
+    let home = niles_home(&workspace);
+    write_workspace_manifest(
+        &workspace,
+        "claude",
+        "codex:omega:xhigh",
+        "codex:theta:xhigh",
+        "claude",
+        "test",
+    );
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(bin.join("a")).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --help) printf 'claude help\n'; exit 0 ;;
+esac
+printf 'claude ok\n'
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'default codex help\n'; exit 0 ;;
+esac
+printf 'default codex accepted\n'
+"#,
+    );
+
+    let slash_binary = bin.join("a/b");
+    write_executable(
+        &slash_binary,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'slash codex help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$model" in
+  omega) printf 'slash accepted omega\n'; exit 0 ;;
+  *) printf 'slash rejected %s\n' "$model" >&2; exit 7 ;;
+esac
+"#,
+    );
+    let dash_binary = bin.join("a-b");
+    write_executable(
+        &dash_binary,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'dash codex help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$model" in
+  theta) printf 'dash accepted theta\n'; exit 0 ;;
+  *) printf 'dash rejected %s\n' "$model" >&2; exit 8 ;;
+esac
+"#,
+    );
+    fs::write(
+        workspace.join("niles.yaml"),
+        format!(
+            "agents:\n  \"codex:omega:xhigh\":\n    binary: {}\n  \"codex:theta:xhigh\":\n    binary: {}\n",
+            slash_binary.display(),
+            dash_binary.display()
+        ),
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .arg("analyze")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("default analyze slug-colliding binaries", &analyze);
+
+    let slash_manifest = capability_manifest_containing(
+        &workspace,
+        &format!(r#""binary": "{}""#, slash_binary.display()),
+    );
+    assert!(slash_manifest.contains(r#""model": "omega""#));
+    assert!(!slash_manifest.contains(r#""model": "theta""#));
+    let dash_manifest = capability_manifest_containing(
+        &workspace,
+        &format!(r#""binary": "{}""#, dash_binary.display()),
+    );
+    assert!(dash_manifest.contains(r#""model": "theta""#));
+    assert!(!dash_manifest.contains(r#""model": "omega""#));
+
+    for (id, agent) in [
+        ("slug-omega", "codex:omega:xhigh"),
+        ("slug-theta", "codex:theta:xhigh"),
+    ] {
+        let spawn = Command::new(niles)
+            .args(["spawn", id, "--project", ".", "--agent", agent, "Fix"])
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert_command_success(&format!("spawn {agent}"), &spawn);
+    }
+}
+
+#[test]
+fn capability_model_probe_matching_includes_effort() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-effort-probe-test");
+    let home = niles_home(&workspace);
+    write_workspace_manifest(
+        &workspace,
+        "claude",
+        "codex:omega:xhigh",
+        "codex:omega:low",
+        "claude",
+        "test",
+    );
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --help) printf 'claude help\n'; exit 0 ;;
+esac
+printf 'claude ok\n'
+"#,
+    );
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+model=""
+effort=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    --config)
+      case "$2" in
+        *model_reasoning_effort=\"xhigh\"*) effort="xhigh" ;;
+        *model_reasoning_effort=\"low\"*) effort="low" ;;
+      esac
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+case "$model:$effort" in
+  omega:xhigh) printf 'accepted omega xhigh\n'; exit 0 ;;
+  omega:low) printf 'rejected omega low\n' >&2; exit 6 ;;
+  *) printf 'accepted %s %s\n' "$model" "$effort"; exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .arg("analyze")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("effort-specific analyze", &analyze);
+
+    let stdout = String::from_utf8_lossy(&analyze.stdout);
+    assert!(stdout.contains("model_probe: codex:omega:xhigh accepted"));
+    assert!(stdout.contains("model_probe: codex:omega:low not accepted"));
+
+    let accepted_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "omega-xhigh",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert_command_success("accepted effort spawn", &accepted_spawn);
+
+    let rejected_spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "omega-low",
+            "--project",
+            ".",
+            "--agent",
+            "codex:omega:low",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!rejected_spawn.status.success());
+    let stderr = String::from_utf8_lossy(&rejected_spawn.stderr);
+    assert!(stderr.contains("model `omega` was rejected by codex CLI 0.142.4"));
+    assert!(!workspace.join(".niles/worker/omega-low").exists());
+}
+
+#[test]
+fn spawn_warns_and_falls_back_when_capability_manifest_is_stale() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-stale-capability-test");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let codex = bin.join("codex");
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+printf 'accepted\n'
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:omega:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("stale manifest seed analyze", &analyze);
+
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.200.0\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+printf 'accepted\n'
+"#,
+    );
+
+    let spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "stale-worker",
+            "--agent",
+            "codex:omega:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("warning: capability manifest"));
+    assert!(stderr.contains("current CLI is 0.200.0"));
+    assert!(stderr.contains("unsupported codex model `omega`"));
+    assert!(!workspace.join(".niles/worker/stale-worker").exists());
 }
 
 #[test]

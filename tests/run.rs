@@ -591,12 +591,14 @@ esac
     assert_command_success("tiered analyze", &valid);
     let stdout = String::from_utf8_lossy(&valid.stdout);
     assert!(stdout.contains("version_gate: codex pass 0.142.4"));
-    assert!(stdout.contains("wrote .niles/capabilities/codex:gpt-5.5:xhigh.json"));
+    assert!(stdout.contains("model_probe: codex:gpt-5.5:xhigh accepted"));
+    assert!(stdout.contains("wrote .niles/capabilities/codex.json"));
 
-    let manifest =
-        fs::read_to_string(workspace.join(".niles/capabilities/codex:gpt-5.5:xhigh.json")).unwrap();
-    assert!(manifest.contains(r#""agent": "codex:gpt-5.5:xhigh""#));
+    let manifest = fs::read_to_string(workspace.join(".niles/capabilities/codex.json")).unwrap();
+    assert!(manifest.contains(r#""agent": "codex""#));
     assert!(manifest.contains(r#""version_gate""#));
+    assert!(manifest.contains(r#""accepted_models""#));
+    assert!(manifest.contains(r#""model": "gpt-5.5""#));
 
     let invalid = Command::new(niles)
         .args(["analyze", "--agent", "codex:bogus:wat"])
@@ -605,12 +607,210 @@ esac
         .output()
         .unwrap();
     assert!(!invalid.status.success());
-    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unsupported codex model `bogus`"));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unsupported codex effort `wat`"));
     assert!(
         !workspace
             .join(".niles/capabilities/codex:bogus:wat.json")
             .exists()
     );
+}
+
+#[test]
+fn analyze_records_rejected_requested_models() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-rejected-model-analyze-test");
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --help) printf 'claude help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$model" in
+  claude-opus-99) printf 'unknown model %s\n' "$model" >&2; exit 7 ;;
+  *) printf 'ok\n'; exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "claude:claude-opus-99:max"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("rejected model analyze", &analyze);
+
+    let stdout = String::from_utf8_lossy(&analyze.stdout);
+    assert!(stdout.contains("model_probe: claude:claude-opus-99:max not accepted"));
+    assert!(stdout.contains("wrote .niles/capabilities/claude.json"));
+
+    let manifest = fs::read_to_string(workspace.join(".niles/capabilities/claude.json")).unwrap();
+    assert!(manifest.contains(r#""rejected_models""#));
+    assert!(manifest.contains(r#""model": "claude-opus-99""#));
+    assert!(manifest.contains(r#""cli_version": "2.1.197""#));
+    assert!(manifest.contains(r#""stderr": "unknown model claude-opus-99""#));
+}
+
+#[test]
+fn analyze_default_probes_model_qualified_workspace_manifest_roles() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-role-model-analyze-test");
+    write_workspace_manifest(
+        &workspace,
+        "claude",
+        "claude",
+        "codex:omega:xhigh",
+        "claude",
+        "test",
+    );
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+printf 'codex ok\n'
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --help) printf 'claude help\n'; exit 0 ;;
+esac
+printf 'claude ok\n'
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let analyze = Command::new(niles)
+        .arg("analyze")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("default analyze role model", &analyze);
+
+    let stdout = String::from_utf8_lossy(&analyze.stdout);
+    assert!(stdout.contains("model_probe: codex:omega:xhigh accepted"));
+
+    let manifest = fs::read_to_string(workspace.join(".niles/capabilities/codex.json")).unwrap();
+    assert!(manifest.contains(r#""accepted_models""#));
+    assert!(manifest.contains(r#""model": "omega""#));
+}
+
+#[test]
+fn run_and_step_fail_for_models_rejected_by_fresh_capability_manifest() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-rejected-model-run-test");
+    let task = write_task(
+        &workspace,
+        r#"
+goal: "Exercise rejected model validation"
+steps:
+  - agent: codex:gpt-bad:xhigh
+    task: "This must not launch."
+"#,
+    );
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("codex"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --help) printf 'codex help\n'; exit 0 ;;
+esac
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$model" in
+  gpt-bad) printf 'unknown model %s\n' "$model" >&2; exit 9 ;;
+  *) printf 'ok\n'; exit 0 ;;
+esac
+"#,
+    );
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let home = niles_home(&workspace);
+
+    let prepared = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert_command_success("run before rejected manifest", &prepared);
+
+    let analyze = Command::new(niles)
+        .args(["analyze", "--agent", "codex:gpt-bad:xhigh"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_command_success("analyze rejected model", &analyze);
+
+    let run = Command::new(niles)
+        .arg("run")
+        .arg(&task)
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    let run_stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(run_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
+    assert!(run_stderr.contains("rerun `niles analyze`"));
+
+    let step = Command::new(niles)
+        .args(["step", "latest", "--index", "1"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!step.status.success());
+    let step_stderr = String::from_utf8_lossy(&step.stderr);
+    assert!(step_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
 }
 
 #[test]

@@ -32,7 +32,7 @@ reviewer: claude
 validation_command: test
 ```
 
-On every interactive launch, Niles prompts for the foreground `manager` value and can optionally update the other role bindings. Niles writes a manager brief under `.niles/sessions/<id>/manager.md` before launching the selected agent. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Other manager agents receive the brief in their initial prompt. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
+On every interactive launch, Niles prompts for the foreground `manager` value and can optionally update the other role bindings. Manifest prompts accept built-in agent families and agents configured in project config; unknown bare agent names are rejected. Configured manager agents launch through that same project config. Niles writes a manager brief under `.niles/sessions/<id>/manager.md` before launching the selected agent. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Other manager agents receive the brief in their initial prompt. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
 
 The one-off worker path is:
 
@@ -154,7 +154,15 @@ The analyzer creates a local capability manifest by running safe probes such as:
 - `<binary> --version`
 - `<binary> --help`
 
-Remote/model probes should be opt-in because they may require authentication, network access, or paid tokens.
+`niles analyze` also probes model acceptance for requested model-qualified
+agent specs, built-in model aliases, and model-qualified agents bound in the
+workspace manifest when present. Capability manifests live under
+`.niles/capabilities/`; default binaries keep `<family>.json`, and configured
+non-default binaries use a family-and-binary-specific filename. Manifests record
+accepted and rejected models with the detected CLI version and probe timestamp.
+Launch validation consults fresh capability manifests first, fails before
+spawning for known rejected models, and falls back to static validation when no
+fresh manifest data exists.
 
 ## Manager Decisions
 

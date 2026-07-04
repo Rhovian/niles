@@ -5,6 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
+    capabilities,
     config::{
         agents,
         spec::{
@@ -32,6 +33,7 @@ pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
     let task = absolute_existing_file(&task, "task")?;
     let spec = with_project_config(load_task(&task)?)?;
+    capabilities::validate_task_agents(&spec)?;
     version::preflight_task_agents(&spec, allow_cli_mismatch)?;
     prepare_run(spec, Some(task))
 }
@@ -232,10 +234,18 @@ pub(crate) fn step_add(
         (None, None) => bail!("step-add requires --agent <id> or --command <name>"),
     };
 
+    let mut spec = load_task(&task_file)?;
     let index = state.steps.len() + 1;
+    if let TaskStep::Agent { agent, .. } = &new_step {
+        let validation_spec = load_spec_for_run(&state)?;
+        let workspace = state
+            .workspace
+            .as_deref()
+            .context("run state has no workspace")?;
+        capabilities::validate_task_agent(workspace, &validation_spec.agents, agent)?;
+    }
     let record = planned_step(index, &new_step)?;
 
-    let mut spec = load_task(&task_file)?;
     spec.steps.push(new_step.clone());
     save_task(&task_file, &spec)?;
 

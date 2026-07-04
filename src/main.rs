@@ -1,6 +1,7 @@
 mod agent_window;
 mod analyze;
 mod build_info;
+mod capabilities;
 mod cli;
 mod config;
 mod context;

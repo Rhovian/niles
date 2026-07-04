@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    agent_window,
+    agent_window, capabilities,
     config::{agents, spec::load_project_config_from, version},
     schema::{self, ArtifactKind},
     store::{self, WorkerLocation, read_state, resolve_run_dir},
@@ -73,10 +73,15 @@ pub fn spawn(
         bail!("spawn requires either --brief or task text");
     }
 
-    let agent_spec = agents::parse_spec(&agent)?;
     let project = absolute_existing_dir(&project, "project")?;
     let config = load_project_config_from(&project)?;
     let agent_config = agents::config_for(&config.agents, &agent)?;
+    let agent_spec = capabilities::validate_agent(
+        &project,
+        &agent,
+        agent_config,
+        agents::InvocationDefaults::Worker,
+    )?;
     version::preflight_agent(
         &agent,
         agent_config,
