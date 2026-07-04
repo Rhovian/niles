@@ -234,17 +234,18 @@ pub(crate) fn step_add(
         (None, None) => bail!("step-add requires --agent <id> or --command <name>"),
     };
 
+    let mut spec = load_task(&task_file)?;
     let index = state.steps.len() + 1;
     if let TaskStep::Agent { agent, .. } = &new_step {
+        let validation_spec = load_spec_for_run(&state)?;
         let workspace = state
             .workspace
             .as_deref()
             .context("run state has no workspace")?;
-        capabilities::validate_agent(workspace, agent, None, agents::InvocationDefaults::Default)?;
+        capabilities::validate_task_agent(workspace, &validation_spec.agents, agent)?;
     }
     let record = planned_step(index, &new_step)?;
 
-    let mut spec = load_task(&task_file)?;
     spec.steps.push(new_step.clone());
     save_task(&task_file, &spec)?;
 

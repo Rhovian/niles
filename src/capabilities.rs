@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
@@ -81,12 +83,20 @@ pub(crate) fn validate_task_agents(spec: &TaskSpec) -> Result<()> {
 
     for step in &spec.steps {
         if let TaskStep::Agent { agent, .. } = step {
-            let config = agents::config_for(&spec.agents, agent)?;
-            validate_agent(workspace, agent, config, InvocationDefaults::Default)?;
+            validate_task_agent(workspace, &spec.agents, agent)?;
         }
     }
 
     Ok(())
+}
+
+pub(crate) fn validate_task_agent(
+    workspace: &Utf8Path,
+    configs: &BTreeMap<String, AgentConfig>,
+    agent: &str,
+) -> Result<AgentSpec> {
+    let config = agents::config_for(configs, agent)?;
+    validate_agent(workspace, agent, config, InvocationDefaults::Default)
 }
 
 pub(crate) fn validate_agent(

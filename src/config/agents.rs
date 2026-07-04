@@ -17,6 +17,7 @@ pub struct AgentProfile {
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationDefaults {
     Default,
+    Foreground,
     Worker,
 }
 
@@ -147,29 +148,7 @@ pub fn invocation(
 }
 
 pub fn foreground_invocation(agent: &str, config: Option<&AgentConfig>) -> Result<AgentInvocation> {
-    let spec = AgentSpec::parse(agent)?;
-    let default_invocation = AgentInvocation {
-        binary: default_binary(spec.family()),
-        args: Vec::new(),
-        prompt: worker_prompt(spec.family()),
-        spec: spec.clone(),
-    };
-
-    let mut invocation = match config {
-        Some(config) => AgentInvocation {
-            binary: config.binary.clone().unwrap_or(default_invocation.binary),
-            args: if config.args.is_empty() {
-                default_invocation.args
-            } else {
-                config.args.clone()
-            },
-            prompt: config.prompt,
-            spec,
-        },
-        None => default_invocation,
-    };
-    invocation.args.extend(mapped_tier_args(&invocation.spec)?);
-    Ok(invocation)
+    invocation(agent, config, InvocationDefaults::Foreground)
 }
 
 fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentInvocation {
@@ -178,6 +157,12 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
             binary: default_binary(spec.family()),
             args: default_args(spec.family()),
             prompt: default_prompt(spec.family()),
+            spec: spec.clone(),
+        },
+        InvocationDefaults::Foreground => AgentInvocation {
+            binary: default_binary(spec.family()),
+            args: Vec::new(),
+            prompt: worker_prompt(spec.family()),
             spec: spec.clone(),
         },
         InvocationDefaults::Worker => AgentInvocation {

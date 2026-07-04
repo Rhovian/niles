@@ -102,13 +102,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     };
 
     let workspace = spec_workspace(&spec);
-    let agent_config = agents::config_for(&spec.agents, agent)?;
-    capabilities::validate_agent(
-        workspace,
-        agent,
-        agent_config,
-        agents::InvocationDefaults::Default,
-    )?;
+    capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
     let steps_dir = ensure_steps_dir(&run.run_dir)?;
 
     // Brief = handoff context plus a wake contract pointing at this run's log.
@@ -301,13 +295,7 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
 
     let workspace = spec_workspace(&spec);
     if let TaskStep::Agent { agent, .. } = step {
-        let agent_config = agents::config_for(&spec.agents, agent)?;
-        capabilities::validate_agent(
-            workspace,
-            agent,
-            agent_config,
-            agents::InvocationDefaults::Default,
-        )?;
+        capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
     }
     let steps_dir = ensure_steps_dir(&run.run_dir)?;
 

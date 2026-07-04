@@ -23,9 +23,9 @@ use crate::{
 
 const MODEL_PROBE_PROMPT: &str = "Reply with OK only.";
 
-pub fn analyze(agent: Option<String>) -> Result<()> {
+pub fn analyze(requested_agent: Option<String>) -> Result<()> {
     let config = load_project_config()?;
-    let agents = agents_to_probe(agent, &config.agents)?;
+    let agents = agents_to_probe(requested_agent, &config.agents)?;
 
     let dir = Utf8Path::new(".niles").join("capabilities");
     fs::create_dir_all(&dir).context("failed to create capability directory")?;
@@ -57,13 +57,13 @@ struct ProbeSpec {
 }
 
 fn agents_to_probe(
-    agent: Option<String>,
+    requested_agent: Option<String>,
     configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<BTreeMap<ProbeTarget, Vec<ProbeSpec>>> {
     let mut specs = BTreeMap::new();
-    match agent {
-        Some(agent) => {
-            let spec = agents::parse_spec(&agent)?;
+    match requested_agent {
+        Some(requested_agent) => {
+            let spec = agents::parse_spec(&requested_agent)?;
             let family = spec.family().to_owned();
             let probes_aliases = spec.model().is_none();
             insert_spec(&mut specs, spec, configs)?;
@@ -77,21 +77,26 @@ fn agents_to_probe(
                 }
             }
         }
-        None => {
-            for family in agents::known_agent_ids() {
-                insert_spec(&mut specs, agents::parse_spec(family)?, configs)?;
-                for model in agents::default_model_aliases(family) {
-                    insert_spec(
-                        &mut specs,
-                        agents::parse_spec(&format!("{family}:{model}"))?,
-                        configs,
-                    )?;
-                }
-            }
-            insert_workspace_manifest_specs(&mut specs, configs)?;
-        }
+        None => insert_default_analyze_specs(&mut specs, configs)?,
     }
     Ok(specs)
+}
+
+fn insert_default_analyze_specs(
+    specs: &mut BTreeMap<ProbeTarget, Vec<ProbeSpec>>,
+    configs: &BTreeMap<String, AgentConfig>,
+) -> Result<()> {
+    for family in agents::known_agent_ids() {
+        insert_spec(specs, agents::parse_spec(family)?, configs)?;
+        for model in agents::default_model_aliases(family) {
+            insert_spec(
+                specs,
+                agents::parse_spec(&format!("{family}:{model}"))?,
+                configs,
+            )?;
+        }
+    }
+    insert_workspace_manifest_specs(specs, configs)
 }
 
 fn insert_workspace_manifest_specs(
@@ -220,9 +225,11 @@ fn run_model_probe(target: &ProbeSpec, binary: &str) -> Result<ProbeResult> {
             args.push(MODEL_PROBE_PROMPT.to_owned());
             Ok(run_probe_args(binary, &args))
         }
-        crate::config::spec::PromptMode::Stdin => {
-            Ok(run_probe_args_with_stdin(binary, &args, MODEL_PROBE_PROMPT))
-        }
+        crate::config::spec::PromptMode::Stdin => Ok(output_to_probe_result(run_probe_with_stdin(
+            binary,
+            &args,
+            MODEL_PROBE_PROMPT,
+        ))),
     }
 }
 
@@ -254,17 +261,13 @@ pub(crate) fn run_probe(binary: &str, arg: &str) -> ProbeResult {
     run_probe_args(binary, &[arg.to_owned()])
 }
 
-pub(crate) fn run_probe_args(binary: &str, args: &[String]) -> ProbeResult {
+fn run_probe_args(binary: &str, args: &[String]) -> ProbeResult {
     output_to_probe_result(
         Command::new(binary)
             .args(args)
             .stdin(Stdio::null())
             .output(),
     )
-}
-
-fn run_probe_args_with_stdin(binary: &str, args: &[String], stdin: &str) -> ProbeResult {
-    output_to_probe_result(run_probe_with_stdin(binary, args, stdin))
 }
 
 fn run_probe_with_stdin(binary: &str, args: &[String], stdin: &str) -> std::io::Result<Output> {
