@@ -416,7 +416,7 @@ agents:
         r#"
 manager: "claude:opus:max"
 planner: "claude:sonnet:med"
-implementer: "claude:sonnet:med"
+worker: "claude:sonnet:med"
 reviewer: "claude:opus:max"
 validation_command: "test"
 "#,
@@ -428,14 +428,14 @@ validation_command: "test"
         r#"
 goal: "Resolve tiered manifest role"
 steps:
-  - role: implementer
+  - role: worker
     task: "implement with sonnet"
 "#,
     );
 
     let prepare = prepare_run(niles, &workspace, &task);
     let prepare_stdout = String::from_utf8_lossy(&prepare.stdout);
-    assert!(prepare_stdout.contains("1 implementer agent claude:sonnet:med"));
+    assert!(prepare_stdout.contains("1 worker agent claude:sonnet:med"));
 
     let step = exec_step_output(niles, &workspace, 1);
     assert_command_success("tiered manifest exec-step", &step);
@@ -864,7 +864,7 @@ steps:
     role: planner
     task: "planner says inspect auth flow"
   - agent: inspector
-    role: implementer
+    role: worker
     task: "implement from planner output"
   - command: validate
     role: validation
@@ -885,20 +885,20 @@ commands:
         .join("\n");
     assert!(run_stdout.contains(".niles/runs/"));
 
-    let implementer_log = Command::new(niles)
+    let worker_log = Command::new(niles)
         .arg("log")
         .arg("--step")
         .arg("2")
         .current_dir(&workspace)
         .output()
         .unwrap();
-    assert!(implementer_log.status.success());
-    let implementer_stdout = String::from_utf8_lossy(&implementer_log.stdout);
-    assert!(implementer_stdout.contains("Niles handoff context: "));
-    assert!(implementer_stdout.contains("# Niles Step Context"));
-    assert!(implementer_stdout.contains("role: implementer"));
-    assert!(implementer_stdout.contains("## Prior Agent Output"));
-    assert!(implementer_stdout.contains("planner says inspect auth flow"));
+    assert!(worker_log.status.success());
+    let worker_stdout = String::from_utf8_lossy(&worker_log.stdout);
+    assert!(worker_stdout.contains("Niles handoff context: "));
+    assert!(worker_stdout.contains("# Niles Step Context"));
+    assert!(worker_stdout.contains("role: worker"));
+    assert!(worker_stdout.contains("## Prior Agent Output"));
+    assert!(worker_stdout.contains("planner says inspect auth flow"));
 
     let reviewer_log = Command::new(niles)
         .arg("log")

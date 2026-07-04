@@ -109,7 +109,7 @@ fn insert_workspace_manifest_specs(
     for agent in [
         manifest.manager,
         manifest.planner,
-        manifest.implementer,
+        manifest.worker,
         manifest.reviewer,
     ] {
         insert_spec(specs, agents::parse_spec(&agent)?, configs)?;

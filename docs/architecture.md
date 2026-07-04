@@ -27,16 +27,16 @@ The workspace manifest stores persistent role bindings:
 ```yaml
 manager: claude
 planner: claude
-implementer: codex
+worker: codex
 reviewer: claude
 validation_command: test
 flow:
   - planner
-  - implementer
+  - worker
   - reviewer
 ```
 
-The `flow` list stores manifest role tokens, not a one-shot task plan. The manager-facing flow rendered from the default manifest is `planner -> worker (implementer role) <verification> <-> reviewer -> CONSENSUS OR ESCALATE`: `implementer` is the persisted role binding for the worker agent, and `validation_command` supplies verification between worker and reviewer passes.
+The `flow` list stores manifest role tokens, not a one-shot task plan. The manager-facing flow rendered from the default manifest is `planner -> worker <verification> <-> reviewer -> CONSENSUS OR ESCALATE`: `worker` is the persisted role binding for the worker agent, and `validation_command` supplies verification between worker and reviewer passes.
 
 On every interactive launch, Niles prompts for the foreground `manager` value and can optionally update the other role bindings. Manifest prompts accept built-in agent families and agents configured in project config; unknown bare agent names are rejected. Configured manager agents launch through that same project config. Niles writes a manager brief under `.niles/sessions/<id>/manager.md` before launching the selected agent; the brief points to `.niles/manifest.yaml` and its flow so the foreground manager treats the manifest as the only source of truth for the orchestration path. For Claude, that brief is passed with `--append-system-prompt`, so the raw brief is not injected as a visible user message. Other manager agents receive the brief in their initial prompt. `--goal` seeds the startup context before the foreground agent starts. Niles does not own a natural-language command grammar. The foreground agent owns the conversation; Niles provides orchestration commands that agent can invoke.
 
@@ -71,7 +71,7 @@ niles step latest --index 1
 niles exec-step latest 1
 ```
 
-The manager flow comes only from `.niles/manifest.yaml`. It is a worker-verification-reviewer loop that ends in reviewer consensus or escalation; it is not a fixed planner -> implementer -> validation -> reviewer sequence. Explicit workflow files remain supported for workflows the user supplies directly. They can use the same manifest role names for compatibility, but they do not define or replace the workspace flow:
+The manager flow comes only from `.niles/manifest.yaml`. It is a worker-verification-reviewer loop that ends in reviewer consensus or escalation; it is not a fixed planner -> worker -> validation -> reviewer sequence. Explicit workflow files remain supported for workflows the user supplies directly. They can use manifest role names, but they do not define or replace the workspace flow:
 
 ```yaml
 goal: "Fix flaky auth test"
@@ -80,16 +80,16 @@ workspace: ../my-app
 steps:
   - role: planner
     task: "Analyze likely causes. Do not edit files."
-  - role: implementer
+  - role: worker
     task: "Implement the fix."
   - role: validation
   - role: reviewer
     task: "Review the current diff and validation result."
 ```
 
-`niles run` resolves `planner`, `implementer`, `reviewer`, and `validation` role steps from `.niles/manifest.yaml`. The manager advances prepared runs one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
+`niles run` resolves `planner`, `worker`, `reviewer`, and `validation` role steps from `.niles/manifest.yaml`. The manager advances prepared runs one step at a time with `niles step` for interactive agent windows or `niles exec-step` for captured command/agent steps.
 
-Resolved roles are persisted in run state and shown by inspection commands so tmux or TUI views can group work by planner, worker/implementer, reviewer, and verification/validation surfaces without changing execution semantics.
+Resolved roles are persisted in run state and shown by inspection commands so tmux or TUI views can group work by planner, worker, reviewer, and verification/validation surfaces without changing execution semantics.
 
 Run directories live under the resolved workspace's `.niles/runs/<id>/`. Niles also writes pointer files under the launch directory, the workspace, and the global run index so selectors such as `latest` can resolve workspace-anchored runs. Run state is initialized with every planned step as pending. Niles marks the active step running before launching its tmux window or captured subprocess, then updates that same record to completed or failed. This gives tmux views a reliable state source instead of inferring progress from panes or logs.
 
@@ -99,7 +99,7 @@ Run directories live under the resolved workspace's `.niles/runs/<id>/`. Niles a
 
 Before launching an agent step, Niles writes a per-step markdown context artifact. The context file includes the goal, current role/task, prior step summary, prior agent stdout/stderr, validation stdout/stderr, and the latest captured diff. Niles records that path on the step state before the process starts and appends the absolute path to the agent prompt.
 
-This keeps handoffs explicit without expanding the task YAML format. A tmux session can show each role in its own pane, while the durable context artifact remains the contract between planner, worker/implementer, reviewer, and verification/validation steps.
+This keeps handoffs explicit without expanding the task YAML format. A tmux session can show each role in its own pane, while the durable context artifact remains the contract between planner, worker, reviewer, and verification/validation steps.
 
 ## Wake Contract
 

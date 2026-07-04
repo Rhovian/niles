@@ -766,7 +766,7 @@ agents:
         let manifest = WorkspaceManifest {
             manager: "codex:gpt-5.5:xhigh".to_owned(),
             planner: "planbot".to_owned(),
-            implementer: "codebot".to_owned(),
+            worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             validation_command: "check".to_owned(),
             flow: vec![

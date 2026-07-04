@@ -16,24 +16,55 @@ use crate::{
 
 const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
 const WORKER_REVIEW_LOOP_SUMMARY: &str =
-    "planner -> worker (implementer role) <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
+    "planner -> worker <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceManifest {
     pub manager: String,
     pub planner: String,
-    pub implementer: String,
+    pub worker: String,
     pub reviewer: String,
     pub validation_command: String,
     #[serde(default = "initial_flow")]
     pub flow: Vec<WorkspaceFlowRole>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceManifestWire {
+    manager: String,
+    planner: String,
+    worker: String,
+    reviewer: String,
+    validation_command: String,
+    #[serde(default = "initial_flow")]
+    flow: Vec<WorkspaceFlowRole>,
+    #[serde(default, rename = "niles_schema")]
+    _niles_schema: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for WorkspaceManifest {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = WorkspaceManifestWire::deserialize(deserializer)?;
+        Ok(Self {
+            manager: wire.manager,
+            planner: wire.planner,
+            worker: wire.worker,
+            reviewer: wire.reviewer,
+            validation_command: wire.validation_command,
+            flow: wire.flow,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceManifestDefaults {
     pub manager: String,
     pub planner: String,
-    pub implementer: String,
+    pub worker: String,
     pub reviewer: String,
     pub validation_command: String,
     pub flow: Vec<WorkspaceFlowRole>,
@@ -44,7 +75,7 @@ impl Default for WorkspaceManifestDefaults {
         Self {
             manager: "claude".to_owned(),
             planner: "claude".to_owned(),
-            implementer: "codex".to_owned(),
+            worker: "codex".to_owned(),
             reviewer: "claude".to_owned(),
             validation_command: "test".to_owned(),
             flow: initial_flow(),
@@ -57,7 +88,7 @@ impl WorkspaceManifestDefaults {
         WorkspaceManifest {
             manager: self.manager.clone(),
             planner: self.planner.clone(),
-            implementer: self.implementer.clone(),
+            worker: self.worker.clone(),
             reviewer: self.reviewer.clone(),
             validation_command: self.validation_command.clone(),
             flow: self.flow.clone(),
@@ -69,7 +100,7 @@ impl WorkspaceManifestDefaults {
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceFlowRole {
     Planner,
-    Implementer,
+    Worker,
     Validation,
     Reviewer,
 }
@@ -78,7 +109,7 @@ impl WorkspaceFlowRole {
     fn parse(value: &str) -> Result<Self> {
         match value {
             "planner" => Ok(Self::Planner),
-            "implementer" => Ok(Self::Implementer),
+            "worker" => Ok(Self::Worker),
             "validation" => Ok(Self::Validation),
             "reviewer" => Ok(Self::Reviewer),
             _ => bail!("unknown workspace role `{value}`"),
@@ -88,7 +119,7 @@ impl WorkspaceFlowRole {
     fn as_str(self) -> &'static str {
         match self {
             Self::Planner => "planner",
-            Self::Implementer => "implementer",
+            Self::Worker => "worker",
             Self::Validation => "validation",
             Self::Reviewer => "reviewer",
         }
@@ -104,7 +135,7 @@ impl fmt::Display for WorkspaceFlowRole {
 pub fn initial_flow() -> Vec<WorkspaceFlowRole> {
     vec![
         WorkspaceFlowRole::Planner,
-        WorkspaceFlowRole::Implementer,
+        WorkspaceFlowRole::Worker,
         WorkspaceFlowRole::Reviewer,
     ]
 }
@@ -129,11 +160,11 @@ fn is_worker_review_loop(flow: &[WorkspaceFlowRole]) -> bool {
         flow,
         [
             WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Worker,
             WorkspaceFlowRole::Reviewer
         ] | [
             WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Worker,
             WorkspaceFlowRole::Validation,
             WorkspaceFlowRole::Reviewer
         ]
@@ -200,9 +231,9 @@ pub fn resolve_task_roles(mut spec: TaskSpec, manifest: &WorkspaceManifest) -> R
                 task: task.with_context(|| "planner role step requires task text")?,
                 role: Some(role),
             },
-            WorkspaceFlowRole::Implementer => TaskStep::Agent {
-                agent: manifest.implementer.clone(),
-                task: task.with_context(|| "implementer role step requires task text")?,
+            WorkspaceFlowRole::Worker => TaskStep::Agent {
+                agent: manifest.worker.clone(),
+                task: task.with_context(|| "worker role step requires task text")?,
                 role: Some(role),
             },
             WorkspaceFlowRole::Reviewer => TaskStep::Agent {
@@ -358,10 +389,10 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
             &defaults.planner,
             agent_configs,
         )?,
-        implementer: agent_picker::prompt_agent_value(
+        worker: agent_picker::prompt_agent_value(
             root,
-            "Worker agent (implementer role)",
-            &defaults.implementer,
+            "Worker agent",
+            &defaults.worker,
             agent_configs,
         )?,
         reviewer: agent_picker::prompt_agent_value(
@@ -468,7 +499,7 @@ mod tests {
             r#"
 manager: codex
 planner: claude
-implementer: codex
+worker: codex
 reviewer: claude
 validation_command: lint
 niles_schema: 2
@@ -520,7 +551,7 @@ niles_schema: 2
             manifest.flow,
             vec![
                 WorkspaceFlowRole::Planner,
-                WorkspaceFlowRole::Implementer,
+                WorkspaceFlowRole::Worker,
                 WorkspaceFlowRole::Reviewer,
             ]
         );
@@ -536,7 +567,7 @@ niles_schema: 2
             r#"
 manager: codex
 planner: claude
-implementer: codex
+worker: codex
 reviewer: claude
 validation_command: lint
 niles_schema: 2
@@ -552,10 +583,10 @@ niles_schema: 2
     }
 
     #[test]
-    fn legacy_linear_manifest_flow_renders_worker_review_loop() {
+    fn manifest_worker_validation_reviewer_flow_renders_worker_review_loop() {
         let flow = [
             WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Implementer,
+            WorkspaceFlowRole::Worker,
             WorkspaceFlowRole::Validation,
             WorkspaceFlowRole::Reviewer,
         ];
@@ -572,7 +603,7 @@ niles_schema: 2
             r#"
 manager: codex
 planner: claude
-implementer: codex
+worker: codex
 reviewer: claude
 validation_command: lint
 flow:
@@ -596,16 +627,16 @@ niles_schema: 2
         let manifest = WorkspaceManifest {
             manager: "claude".to_owned(),
             planner: "planbot".to_owned(),
-            implementer: "codebot".to_owned(),
+            worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             validation_command: "check".to_owned(),
-            flow: vec![WorkspaceFlowRole::Implementer],
+            flow: vec![WorkspaceFlowRole::Worker],
         };
 
         save(&root, &manifest).unwrap();
         let body = fs::read_to_string(manifest_path(&root)).unwrap();
 
-        assert!(body.contains("flow:\n- implementer"));
+        assert!(body.contains("flow:\n- worker"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -614,7 +645,7 @@ niles_schema: 2
         let manifest = WorkspaceManifest {
             manager: "claude".to_owned(),
             planner: "planbot".to_owned(),
-            implementer: "codebot".to_owned(),
+            worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             validation_command: "check".to_owned(),
             flow: initial_flow(),
