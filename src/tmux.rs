@@ -1,6 +1,7 @@
 use std::{
     env,
-    process::{Command, Output, Stdio},
+    ffi::OsString,
+    process::{Command, ExitStatus, Output, Stdio},
     thread,
     time::Duration,
 };
@@ -51,6 +52,16 @@ where
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
 }
 
+fn status_with_terminal(args: &[OsString]) -> Result<ExitStatus> {
+    Command::new("tmux")
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to run tmux {}", display_os_args(args)))
+}
+
 pub(crate) fn capture_pane(target: &str, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let output = output(["capture-pane", "-p", "-t", target, "-S", &start])
@@ -94,6 +105,20 @@ pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
         run(["new-session", "-d", "-s", name])?;
         Ok(name.to_owned())
     }
+}
+
+pub(crate) fn launch_foreground_session(
+    session: &str,
+    cwd: &Utf8Path,
+    argv: &[OsString],
+) -> Result<ExitStatus> {
+    let args = foreground_new_session_args(session, cwd, argv);
+    status_with_terminal(&args)
+}
+
+pub(crate) fn attach_foreground_session(session: &str) -> Result<ExitStatus> {
+    let args = foreground_attach_session_args(session);
+    status_with_terminal(&args)
 }
 
 pub(crate) fn ensure_window_available(session: &str, window_name: &str) -> Result<()> {
@@ -178,7 +203,7 @@ fn current_session_name() -> Result<Option<String>> {
     Ok(session_name_from_stdout(&output.stdout))
 }
 
-fn has_session(name: &str) -> bool {
+pub(crate) fn has_session(name: &str) -> bool {
     matches!(
         Command::new("tmux")
             .args(["has-session", "-t", name])
@@ -186,6 +211,13 @@ fn has_session(name: &str) -> bool {
             .status(),
         Ok(status) if status.success()
     )
+}
+
+fn display_os_args(args: &[OsString]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn format_capture(stdout: &[u8]) -> String {
@@ -216,6 +248,20 @@ fn send_line_literal_args<'a>(target: &'a str, line: &'a str) -> [&'a str; 5] {
 
 fn send_line_submit_args(target: &str) -> [&str; 4] {
     ["send-keys", "-t", target, SEND_LINE_SUBMIT_KEY]
+}
+
+fn foreground_new_session_args(session: &str, cwd: &Utf8Path, argv: &[OsString]) -> Vec<OsString> {
+    let mut args = ["new-session", "-s", session, "-c", cwd.as_str(), "--"]
+        .map(OsString::from)
+        .to_vec();
+    args.extend(argv.iter().cloned());
+    args
+}
+
+fn foreground_attach_session_args(session: &str) -> Vec<OsString> {
+    ["attach-session", "-t", session]
+        .map(OsString::from)
+        .to_vec()
 }
 
 #[cfg(test)]
@@ -298,6 +344,50 @@ mod tests {
                 "/tmp/workspace",
                 "sh launch.sh"
             ]
+        );
+    }
+
+    #[test]
+    fn foreground_new_session_args_preserve_argv_boundaries_for_named_session() {
+        let argv = [
+            "/opt/homebrew/bin/niles",
+            "--goal",
+            "fix quoted path /tmp/with spaces",
+            "--manager",
+            "codex:gpt-5:high",
+        ]
+        .map(OsString::from);
+
+        let args = foreground_new_session_args(
+            "niles-2",
+            Utf8Path::new("/tmp/workspace with spaces"),
+            &argv,
+        );
+
+        assert_eq!(
+            args,
+            [
+                "new-session",
+                "-s",
+                "niles-2",
+                "-c",
+                "/tmp/workspace with spaces",
+                "--",
+                "/opt/homebrew/bin/niles",
+                "--goal",
+                "fix quoted path /tmp/with spaces",
+                "--manager",
+                "codex:gpt-5:high",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn foreground_attach_session_args_target_existing_session() {
+        assert_eq!(
+            foreground_attach_session_args("niles"),
+            ["attach-session", "-t", "niles"].map(OsString::from)
         );
     }
 }

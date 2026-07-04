@@ -20,7 +20,7 @@ niles
 niles --goal "Fix the flaky auth test and open a PR"
 ```
 
-Bare `niles` is tmux-only. It checks that `$TMUX` is set before doing launch work and exits with instructions to start or attach tmux when run outside a session. Its launch prelude creates `.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists before the foreground manager starts.
+Bare `niles` is tmux-only. If `$TMUX` is unset and stdin/stdout are TTYs, it starts an attached `niles` tmux session and re-runs the original argv inside it; when that session already exists, it prompts to attach it or launch a differently named attached session with the original argv. Non-TTY launches fail with instructions to start or attach tmux interactively. Its launch prelude creates `.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists before the foreground manager starts.
 
 The workspace manifest stores persistent role bindings:
 
