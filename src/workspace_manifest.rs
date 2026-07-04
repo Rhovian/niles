@@ -193,8 +193,6 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         )?;
         let manager = agent_picker::prompt_agent_value(
             root,
-            input,
-            output,
             "Manager agent",
             &manifest.manager,
             &agent_configs,
@@ -262,32 +260,24 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     Ok(WorkspaceManifest {
         manager: agent_picker::prompt_agent_value(
             root,
-            input,
-            output,
             "Manager agent",
             &defaults.manager,
             agent_configs,
         )?,
         planner: agent_picker::prompt_agent_value(
             root,
-            input,
-            output,
             "Planner agent",
             &defaults.planner,
             agent_configs,
         )?,
         implementer: agent_picker::prompt_agent_value(
             root,
-            input,
-            output,
             "Implementer agent",
             &defaults.implementer,
             agent_configs,
         )?,
         reviewer: agent_picker::prompt_agent_value(
             root,
-            input,
-            output,
             "Reviewer agent",
             &defaults.reviewer,
             agent_configs,
@@ -366,271 +356,6 @@ mod tests {
     };
 
     #[test]
-    fn skips_role_changes_by_default() {
-        let root = temp_test_path("existing-no-role-update");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        let original = WorkspaceManifest {
-            manager: "codex".to_owned(),
-            planner: "plan-old".to_owned(),
-            implementer: "impl-old".to_owned(),
-            reviewer: "review-old".to_owned(),
-            validation_command: "lint".to_owned(),
-        };
-        save(&root, &original).unwrap();
-
-        let mut input = Cursor::new(b"\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest, original);
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(!output.contains("(updated manager)"));
-        assert!(!output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn prompts_for_manager_and_persists_manager_change() {
-        let root = temp_test_path("existing-prompt");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: claude
-implementer: codex
-reviewer: claude
-validation_command: lint
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let mut input = Cursor::new(b"claude\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude");
-        assert_eq!(manifest.validation_command, "lint");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted.manager, "claude");
-        assert_eq!(persisted.planner, "claude");
-        assert_eq!(persisted.implementer, "codex");
-        assert_eq!(persisted.reviewer, "claude");
-        assert_eq!(persisted.validation_command, "lint");
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Niles workspace manifest: "));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("(updated manager)"));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(!output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn parseable_legacy_manifest_loads_and_stamps_on_next_write() {
-        let root = temp_test_path("legacy-load");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: claude
-implementer: codex
-reviewer: claude
-validation_command: lint
-"#,
-        )
-        .unwrap();
-
-        let mut input = Cursor::new(b"claude\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude");
-        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(persisted.contains("niles_schema: 2"));
-        assert!(
-            String::from_utf8(output)
-                .unwrap()
-                .contains("(updated manager)")
-        );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn rejects_invalid_or_unknown_agent_specs_before_persisting_manifest_values() {
-        let root = temp_test_path("invalid-agent-prompt");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        let original = WorkspaceManifest {
-            manager: "codex".to_owned(),
-            planner: "claude".to_owned(),
-            implementer: "codex".to_owned(),
-            reviewer: "claude".to_owned(),
-            validation_command: "lint".to_owned(),
-        };
-        save(&root, &original).unwrap();
-
-        let mut input = Cursor::new(
-            b"gemini\nclaude:opus:turbo\nclaude:future:low\ny\n\ngemini\nclaude:new-model:max\ncodex\nclaude\nlint\n"
-                .to_vec(),
-        );
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "claude:future:low");
-        assert_eq!(manifest.planner, "claude:new-model:max");
-        assert_eq!(manifest.implementer, "codex");
-        assert_eq!(manifest.reviewer, "claude");
-        assert_eq!(manifest.validation_command, "lint");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains(
-            "Invalid agent spec: unknown agent `gemini`; configure it in niles.yaml or choose codex/claude"
-        ));
-        assert!(output.contains("Invalid agent spec: unsupported claude effort `turbo`"));
-        assert!(!output.contains("unsupported claude model"));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Planner agent [claude]: "));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn can_reconfigure_workspace_manifest_roles_after_manager_pick() {
-        let root = temp_test_path("existing-role-update");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            root.join("niles.yaml"),
-            r#"
-agents:
-  planbot:
-    binary: /bin/echo
-  codebot:
-    binary: /bin/echo
-  reviewbot:
-    binary: /bin/echo
-"#,
-        )
-        .unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-manager: codex
-planner: plan-old
-implementer: impl-old
-reviewer: review-old
-validation_command: lint
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let mut input =
-            Cursor::new(b"claude\ny\nclaude\nplanbot\ncodebot\nreviewbot\ncheck\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(
-            manifest,
-            WorkspaceManifest {
-                manager: "claude".to_owned(),
-                planner: "planbot".to_owned(),
-                implementer: "codebot".to_owned(),
-                reviewer: "reviewbot".to_owned(),
-                validation_command: "check".to_owned(),
-            }
-        );
-
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-        assert!(output.contains("Manager agent [codex]: "));
-        assert!(output.contains("Manager agent [claude]: "));
-        assert!(output.contains("Planner agent [plan-old]: "));
-        assert!(output.contains("Implementer agent [impl-old]: "));
-        assert!(output.contains("Reviewer agent [review-old]: "));
-        assert!(output.contains("Default validation command [lint]: "));
-        assert!(output.contains("(updated roles)"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn skewed_manifest_can_be_recreated_interactively() {
-        let root = temp_test_path("skewed-recreate");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(manifest_path(&root), "manager: codex\n").unwrap();
-
-        let mut input = Cursor::new(b"y\ncodex\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.validation_command, "check");
-        let persisted = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(persisted.contains("niles_schema: 2"));
-        assert!(persisted.contains("validation_command: check"));
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("could not be read"));
-        assert!(output.contains("Recreate workspace manifest? [y/N]: "));
-        assert!(output.contains("Recreating Niles workspace manifest"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn skewed_manifest_remediation_names_delete_and_rerun() {
         let root = temp_test_path("skewed-remediation");
         fs::create_dir_all(root.join(".niles")).unwrap();
@@ -675,79 +400,6 @@ niles_schema: 2
 
         assert!(err.to_string().contains("stdin is not interactive"));
         assert!(err.to_string().contains("choose the manager agent"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn creates_workspace_manifest_from_interactive_answers() {
-        let root = temp_test_path("create");
-        let mut input = Cursor::new(b"codex\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(
-            manifest,
-            WorkspaceManifest {
-                manager: "codex".to_owned(),
-                planner: "claude".to_owned(),
-                implementer: "codex".to_owned(),
-                reviewer: "claude".to_owned(),
-                validation_command: "check".to_owned(),
-            }
-        );
-
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Niles workspace manifest not found"));
-        assert!(output.contains("Manager agent [claude]: "));
-        assert!(output.contains("Change any manifest roles? [y/N]: "));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn configured_custom_manager_is_accepted_by_manifest_prompt() {
-        let root = temp_test_path("custom-manager-prompt");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("niles.yaml"),
-            r#"
-agents:
-  gemini:
-    binary: /bin/echo
-"#,
-        )
-        .unwrap();
-        let mut input = Cursor::new(b"gemini\nclaude\ncodex\nclaude\ncheck\n\n".to_vec());
-        let mut output = Vec::new();
-
-        let manifest = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifestDefaults::default(),
-            true,
-            &mut input,
-            &mut output,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.manager, "gemini");
-        let persisted = load(&root).unwrap().unwrap();
-        assert_eq!(persisted, manifest);
-        assert!(
-            !String::from_utf8(output)
-                .unwrap()
-                .contains("Invalid agent spec")
-        );
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -1,62 +1,48 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::{BufRead, Write},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
+use dialoguer::{Input, Select, console::Term};
 
 mod catalog;
 
 use catalog::{
-    ModelCatalog, ModelGroup, effort_options, insert_model_group, model_catalog,
-    write_catalog_source,
+    ModelCatalog, ModelGroup, catalog_source_message, effort_options, insert_model_group,
+    model_catalog,
 };
 
 use crate::config::{agents, spec::AgentConfig};
 
-pub(crate) fn prompt_agent_value<R: BufRead, W: Write>(
+pub(crate) fn prompt_agent_value(
     root: &Utf8Path,
-    input: &mut R,
-    output: &mut W,
     label: &str,
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
-    loop {
-        let choices = agent_choices(default, agent_configs);
-        write_menu(output, label, &choices)?;
-        let line = read_prompt_line(input, output, &format!("Select {label} [{default}]: "))?;
+    let term = Term::stderr();
+    prompt_agent_value_on_term(&term, root, label, default, agent_configs)
+}
 
-        if line.is_empty() {
-            return canonical_manifest_agent(default, agent_configs);
+fn prompt_agent_value_on_term(
+    term: &Term,
+    root: &Utf8Path,
+    label: &str,
+    default: &str,
+    agent_configs: &BTreeMap<String, AgentConfig>,
+) -> Result<String> {
+    let choices = agent_choices(default, agent_configs);
+    let index = select_choice(term, label, &choices, default_choice_index(&choices))?;
+    match choices[index].value.clone() {
+        AgentChoice::Preset(agent) => {
+            prompt_selected_agent(term, root, &agent, default, agent_configs)
         }
-
-        match line.parse::<usize>() {
-            Ok(number) if (1..=choices.len()).contains(&number) => {
-                let choice = choices[number - 1].value.clone();
-                return match choice {
-                    AgentChoice::Preset(agent) => {
-                        prompt_selected_agent(root, input, output, &agent, default, agent_configs)
-                    }
-                    AgentChoice::Other => {
-                        prompt_custom_agent_spec(input, output, default, agent_configs)
-                    }
-                };
-            }
-            Ok(_) => writeln!(output, "Please choose 1-{}.", choices.len())?,
-            Err(_) => match canonical_manifest_agent(&line, agent_configs) {
-                Ok(value) => return Ok(value),
-                Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
-            },
-        }
+        AgentChoice::Other => prompt_custom_agent_spec(term, default, agent_configs),
     }
 }
 
-fn prompt_selected_agent<R: BufRead, W: Write>(
+fn prompt_selected_agent(
+    term: &Term,
     root: &Utf8Path,
-    input: &mut R,
-    output: &mut W,
     agent: &str,
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -66,13 +52,12 @@ fn prompt_selected_agent<R: BufRead, W: Write>(
         return canonical_manifest_agent(agent, agent_configs);
     }
 
-    prompt_builtin_agent(root, input, output, spec.family(), default, agent_configs)
+    prompt_builtin_agent(term, root, spec.family(), default, agent_configs)
 }
 
-fn prompt_builtin_agent<R: BufRead, W: Write>(
+fn prompt_builtin_agent(
+    term: &Term,
     root: &Utf8Path,
-    input: &mut R,
-    output: &mut W,
     family: &str,
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -80,29 +65,59 @@ fn prompt_builtin_agent<R: BufRead, W: Write>(
     let default_spec = agents::parse_spec(default).ok();
     let default_spec = default_spec.as_ref().filter(|spec| spec.family() == family);
     let catalog = model_catalog(root, family, agent_configs)?;
-    write_catalog_source(output, family, &catalog)?;
+    if let Some(message) = catalog_source_message(family, &catalog) {
+        term.write_line(&message)
+            .with_context(|| format!("failed to write {family} catalog source"))?;
+    }
 
-    let selection = prompt_model(input, output, family, default_spec, &catalog, agent_configs)?;
+    let selection = prompt_model(term, family, default_spec, &catalog, agent_configs)?;
     let model = match selection {
         ModelSelection::Default => return Ok(family.to_owned()),
         ModelSelection::Model(model) => model,
         ModelSelection::Custom(value) => return Ok(value),
     };
 
-    let effort = prompt_effort(input, output, family, &model, default_spec, &catalog)?;
+    let effort = prompt_effort(term, family, &model, default_spec, &catalog)?;
     let value = agent_value(family, Some(&model), effort.as_deref());
     canonical_manifest_agent(&value, agent_configs)
 }
 
-fn prompt_model<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
+fn prompt_model(
+    term: &Term,
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
     catalog: &ModelCatalog,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<ModelSelection> {
-    let mut groups = catalog.groups.clone();
+    let choices = model_choices(family, default_spec, catalog);
+    let default_index = default_choice_index(&choices);
+    let index = select_choice(term, &format!("{family} model"), &choices, default_index)?;
+
+    match choices[index].value.clone() {
+        ModelChoice::Default => Ok(ModelSelection::Default),
+        ModelChoice::Group(group) => {
+            choose_model_version(term, family, &group, default_spec).map(ModelSelection::Model)
+        }
+        ModelChoice::Other => {
+            prompt_custom_agent_spec(term, &agent_value(family, None, None), agent_configs)
+                .map(ModelSelection::Custom)
+        }
+    }
+}
+
+fn model_choices(
+    family: &str,
+    default_spec: Option<&agents::AgentSpec>,
+    catalog: &ModelCatalog,
+) -> Vec<MenuChoice<ModelChoice>> {
+    model_choices_from_groups(family, default_spec, catalog.groups.clone())
+}
+
+fn model_choices_from_groups(
+    family: &str,
+    default_spec: Option<&agents::AgentSpec>,
+    mut groups: Vec<ModelGroup>,
+) -> Vec<MenuChoice<ModelChoice>> {
     if let Some(model) = default_spec.and_then(agents::AgentSpec::model) {
         insert_model_group(&mut groups, family, model);
     }
@@ -127,39 +142,11 @@ fn prompt_model<R: BufRead, W: Write>(
         value: ModelChoice::Other,
         is_default: false,
     });
-
-    let default_index = choices
-        .iter()
-        .position(|choice| choice.is_default)
-        .unwrap_or(0);
-    let index = prompt_numbered_choice(
-        input,
-        output,
-        &format!("{family} model"),
-        &format!("Select {family} model [{}]: ", default_index + 1),
-        &choices,
-        default_index,
-    )?;
-
-    match choices[index].value.clone() {
-        ModelChoice::Default => Ok(ModelSelection::Default),
-        ModelChoice::Group(group) => {
-            choose_model_version(input, output, family, &group, default_spec)
-                .map(ModelSelection::Model)
-        }
-        ModelChoice::Other => prompt_custom_agent_spec(
-            input,
-            output,
-            &agent_value(family, None, None),
-            agent_configs,
-        )
-        .map(ModelSelection::Custom),
-    }
+    choices
 }
 
-fn choose_model_version<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
+fn choose_model_version(
+    term: &Term,
     family: &str,
     group: &ModelGroup,
     default_spec: Option<&agents::AgentSpec>,
@@ -178,28 +165,18 @@ fn choose_model_version<R: BufRead, W: Write>(
             is_default: default_model == Some(model.as_str()),
         })
         .collect::<Vec<_>>();
-    let default_index = choices
-        .iter()
-        .position(|choice| choice.is_default)
-        .unwrap_or(0);
-    let index = prompt_numbered_choice(
-        input,
-        output,
+    let default_index = default_choice_index(&choices);
+    let index = select_choice(
+        term,
         &format!("{family} {} version", group.label),
-        &format!(
-            "Select {family} {} version [{}]: ",
-            group.label,
-            default_index + 1
-        ),
         &choices,
         default_index,
     )?;
     Ok(choices[index].value.clone())
 }
 
-fn prompt_effort<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
+fn prompt_effort(
+    term: &Term,
     family: &str,
     model: &str,
     default_spec: Option<&agents::AgentSpec>,
@@ -227,92 +204,47 @@ fn prompt_effort<R: BufRead, W: Write>(
         }
     }));
 
-    let default_index = choices
-        .iter()
-        .position(|choice| choice.is_default)
-        .unwrap_or(0);
-    let index = prompt_numbered_choice(
-        input,
-        output,
-        &format!("{family} effort"),
-        &format!("Select {family} effort [{}]: ", default_index + 1),
-        &choices,
-        default_index,
-    )?;
+    let default_index = default_choice_index(&choices);
+    let index = select_choice(term, &format!("{family} effort"), &choices, default_index)?;
     Ok(choices[index].value.clone())
 }
 
-fn prompt_numbered_choice<R: BufRead, W: Write, T>(
-    input: &mut R,
-    output: &mut W,
+fn select_choice<T>(
+    term: &Term,
     title: &str,
-    prompt: &str,
     choices: &[MenuChoice<T>],
     default_index: usize,
 ) -> Result<usize> {
-    write_menu(output, title, choices)?;
-    loop {
-        let line = read_prompt_line(input, output, prompt)?;
-        if line.is_empty() {
-            return Ok(default_index);
-        }
-
-        match line.parse::<usize>() {
-            Ok(number) if (1..=choices.len()).contains(&number) => return Ok(number - 1),
-            Ok(_) | Err(_) => writeln!(output, "Please choose 1-{}.", choices.len())?,
-        }
-    }
+    let labels = choices
+        .iter()
+        .map(|choice| choice.label.as_str())
+        .collect::<Vec<_>>();
+    Select::new()
+        .with_prompt(title)
+        .items(&labels)
+        .default(default_index)
+        .interact_on(term)
+        .with_context(|| format!("failed to select {title}"))
 }
 
-fn prompt_custom_agent_spec<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
+fn prompt_custom_agent_spec(
+    term: &Term,
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
     loop {
-        let value = prompt_value(input, output, "Custom agent spec", default)?;
+        let value = Input::<String>::new()
+            .with_prompt("Custom agent spec")
+            .default(default.to_owned())
+            .interact_on(term)
+            .with_context(|| "failed to read custom agent spec")?;
         match canonical_manifest_agent(&value, agent_configs) {
             Ok(value) => return Ok(value),
-            Err(err) => writeln!(output, "Invalid agent spec: {err}")?,
+            Err(err) => term
+                .write_line(&format!("Invalid agent spec: {err}"))
+                .with_context(|| "failed to write invalid agent spec message")?,
         }
     }
-}
-
-fn prompt_value<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: &str,
-) -> Result<String> {
-    loop {
-        let value = read_prompt_line(input, output, &format!("{label} [{default}]: "))?;
-        let value = if value.is_empty() { default } else { &value };
-        if !value.trim().is_empty() {
-            return Ok(value.to_owned());
-        }
-
-        writeln!(output, "{label} cannot be empty")?;
-    }
-}
-
-fn read_prompt_line<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    prompt: &str,
-) -> Result<String> {
-    write!(output, "{prompt}")?;
-    output.flush()?;
-
-    let mut line = String::new();
-    let bytes = input
-        .read_line(&mut line)
-        .with_context(|| format!("failed to read {prompt}"))?;
-    if bytes == 0 {
-        bail!("stdin closed before workspace manifest was configured");
-    }
-
-    Ok(line.trim().to_owned())
 }
 
 fn canonical_manifest_agent(
@@ -403,13 +335,11 @@ fn agent_value(family: &str, model: Option<&str>, effort: Option<&str>) -> Strin
     value
 }
 
-fn write_menu<W: Write, T>(output: &mut W, title: &str, choices: &[MenuChoice<T>]) -> Result<()> {
-    writeln!(output, "{title}:")?;
-    for (index, choice) in choices.iter().enumerate() {
-        let marker = if choice.is_default { " (default)" } else { "" };
-        writeln!(output, "  {}) {}{marker}", index + 1, choice.label)?;
-    }
-    Ok(())
+fn default_choice_index<T>(choices: &[MenuChoice<T>]) -> usize {
+    choices
+        .iter()
+        .position(|choice| choice.is_default)
+        .unwrap_or(0)
 }
 
 #[derive(Clone)]
@@ -439,4 +369,63 @@ enum ModelSelection {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    use crate::config::agents;
+
+    #[test]
+    fn default_model_choice_is_no_override_before_catalog_models() {
+        let choices = model_choices_from_groups(
+            "codex",
+            None,
+            vec![
+                ModelGroup {
+                    label: "o3".to_owned(),
+                    models: vec!["o3".to_owned()],
+                },
+                ModelGroup {
+                    label: "o3-pro".to_owned(),
+                    models: vec!["o3-pro".to_owned()],
+                },
+            ],
+        );
+
+        assert_eq!(choices[0].label, "default (no model override)");
+        assert!(choices[0].is_default);
+        assert!(matches!(&choices[0].value, ModelChoice::Default));
+        assert!(matches!(&choices[1].value, ModelChoice::Group(group) if group.label == "o3"));
+        assert!(matches!(&choices[2].value, ModelChoice::Group(group) if group.label == "o3-pro"));
+    }
+
+    #[test]
+    fn explicit_model_selection_stores_model_with_default_effort() {
+        assert_eq!(agent_value("codex", Some("o3-pro"), None), "codex:o3-pro");
+        assert_eq!(
+            agent_value("codex", Some("o3-pro"), Some("high")),
+            "codex:o3-pro:high"
+        );
+    }
+
+    #[test]
+    fn existing_model_default_still_selects_matching_group() {
+        let default = agents::parse_spec("codex:o3-pro:xhigh").unwrap();
+        let choices = model_choices_from_groups(
+            "codex",
+            Some(&default),
+            vec![
+                ModelGroup {
+                    label: "o3".to_owned(),
+                    models: vec!["o3".to_owned()],
+                },
+                ModelGroup {
+                    label: "o3-pro".to_owned(),
+                    models: vec!["o3-pro".to_owned()],
+                },
+            ],
+        );
+
+        assert_eq!(default_choice_index(&choices), 2);
+        assert!(matches!(&choices[2].value, ModelChoice::Group(group) if group.label == "o3-pro"));
+    }
+}

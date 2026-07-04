@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Write,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -37,22 +34,16 @@ pub(super) fn model_catalog(
     })
 }
 
-pub(super) fn write_catalog_source<W: Write>(
-    output: &mut W,
-    family: &str,
-    catalog: &ModelCatalog,
-) -> Result<()> {
+pub(super) fn catalog_source_message(family: &str, catalog: &ModelCatalog) -> Option<String> {
     match &catalog.source {
         ModelCatalogSource::Fresh(path) => {
-            writeln!(output, "{family} model options: probed from {path}")?
+            Some(format!("{family} model options: probed from {path}"))
         }
-        ModelCatalogSource::Static if !catalog.groups.is_empty() => writeln!(
-            output,
+        ModelCatalogSource::Static if !catalog.groups.is_empty() => Some(format!(
             "{family} model options: static catalog; run `niles analyze --agent {family}` for probed options."
-        )?,
-        ModelCatalogSource::Static => {}
+        )),
+        ModelCatalogSource::Static => None,
     }
-    Ok(())
 }
 
 pub(super) fn insert_model_group(groups: &mut Vec<ModelGroup>, family: &str, model: &str) {
@@ -148,6 +139,13 @@ fn fresh_effort_options(family: &str, model: &str, probes: &[ModelProbe]) -> Vec
         .filter(|probe| probe.model == model)
         .filter_map(|probe| probe.effort.clone())
         .collect::<BTreeSet<_>>();
+    if accepted.is_empty() {
+        return agents::supported_efforts(family)
+            .iter()
+            .map(|effort| (*effort).to_owned())
+            .collect();
+    }
+
     let mut efforts = Vec::new();
     for effort in agents::supported_efforts(family) {
         if accepted.remove(*effort) {
@@ -173,4 +171,46 @@ pub(super) struct ModelCatalog {
 enum ModelCatalogSource {
     Fresh(Utf8PathBuf),
     Static,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::Utc;
+
+    #[test]
+    fn fresh_catalog_without_effort_probes_uses_family_efforts() {
+        let efforts = fresh_effort_options("codex", "o3", &[model_probe("o3", None)]);
+
+        assert_eq!(
+            efforts,
+            ["minimal", "low", "medium", "high", "xhigh"].map(str::to_owned)
+        );
+    }
+
+    #[test]
+    fn fresh_catalog_with_effort_probes_filters_to_accepted_efforts() {
+        let efforts = fresh_effort_options(
+            "codex",
+            "o3",
+            &[
+                model_probe("o3", Some("high")),
+                model_probe("o3", Some("low")),
+            ],
+        );
+
+        assert_eq!(efforts, ["low", "high"].map(str::to_owned));
+    }
+
+    fn model_probe(model: &str, effort: Option<&str>) -> ModelProbe {
+        ModelProbe {
+            model: model.to_owned(),
+            effort: effort.map(str::to_owned),
+            cli_version: Some("0.142.4".to_owned()),
+            probed_at: Utc::now(),
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
 }
