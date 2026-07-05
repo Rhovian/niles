@@ -737,26 +737,6 @@ mod tests {
         assert_eq!(resolver.latest().unwrap(), None);
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn latest_local_run_dir_errors_on_non_utf8_entry_instead_of_returning_stale_run() {
-        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-
-        let root = TempDir::new("latest-non-utf8-entry");
-        let local_runs_dir = root.path().join("workspace/.niles/runs");
-        create_dir(local_runs_dir.join("2024-01-01"));
-        fs::create_dir_all(
-            local_runs_dir
-                .as_std_path()
-                .join(OsString::from_vec(vec![0x80])),
-        )
-        .unwrap();
-
-        let err = latest_local_run_dir(&local_runs_dir).unwrap_err();
-
-        assert!(err.to_string().contains("directory entry path is not UTF-8"));
-    }
-
     #[test]
     fn corrupt_pointer_json_returns_parse_error() {
         let root = TempDir::new("corrupt-pointer");

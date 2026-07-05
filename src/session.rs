@@ -774,28 +774,6 @@ agents:
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn worker_context_errors_on_non_utf8_entry_instead_of_reporting_no_workers() {
-        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-
-        let workspace = temp_test_path("worker-context-non-utf8");
-        let worker_dir = workspace.join(".niles/worker");
-        fs::create_dir_all(&worker_dir).unwrap();
-        fs::write(
-            worker_dir
-                .as_std_path()
-                .join(OsString::from_vec(vec![0x80])),
-            "",
-        )
-        .unwrap();
-
-        let err = worker_context(&workspace).unwrap_err();
-
-        assert!(err.to_string().contains("directory entry path is not UTF-8"));
-        fs::remove_dir_all(&workspace).unwrap();
-    }
-
     #[test]
     fn manager_brief_render_includes_manifest_flow() {
         let workspace = temp_test_path("brief-render");

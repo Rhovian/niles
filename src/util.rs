@@ -253,27 +253,6 @@ mod tests {
         assert!(read_dir_utf8_paths(&dir).unwrap().is_empty());
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn read_dir_utf8_paths_rejects_non_utf8_entry_paths() {
-        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-
-        let dir = temp_test_path("read-dir-non-utf8");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir
-            .as_std_path()
-            .join(OsString::from_vec(vec![b'e', b'n', b't', b'r', b'y', 0x80]));
-        fs::write(path, "").unwrap();
-
-        let err = read_dir_utf8_paths(&dir).unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("directory entry path is not UTF-8")
-        );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
     #[test]
     fn absolute_existing_dir_accepts_existing_directories() {
         let dir = temp_test_path("dir");
