@@ -155,14 +155,20 @@ pub enum CommandName {
     },
     /// Wait for the next actionable status-log wake and print it.
     Wait {
-        /// Run id. Use --worker instead for a worker.
-        #[arg(required_unless_present = "worker", conflicts_with = "worker")]
+        /// Run id. Use --worker/--task for workers.
+        #[arg(
+            required_unless_present_any = ["worker", "task"],
+            conflicts_with_all = ["worker", "task"]
+        )]
         run: Option<String>,
-        /// Worker id to wait on.
-        #[arg(long, conflicts_with = "run")]
-        worker: Option<String>,
-        /// Step number to wait for.
-        #[arg(short, long)]
+        /// Worker id to wait on; repeatable to wait on a fleet.
+        #[arg(long, action = ArgAction::Append, conflicts_with = "task")]
+        worker: Vec<String>,
+        /// Wait on every live worker carrying this task label.
+        #[arg(long)]
+        task: Option<String>,
+        /// Step number to wait for. Run waits only.
+        #[arg(short, long, conflicts_with_all = ["worker", "task"])]
         index: Option<usize>,
         /// Poll interval in seconds.
         #[arg(long, default_value_t = 2.0)]

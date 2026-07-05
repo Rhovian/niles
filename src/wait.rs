@@ -29,52 +29,54 @@ const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 pub fn wait(
     run: Option<String>,
-    worker: Option<String>,
+    worker: Vec<String>,
+    task: Option<String>,
     index: Option<usize>,
     interval: f64,
     timeout: Option<f64>,
 ) -> Result<()> {
-    if let Some(0) = index {
-        bail!("step index must be >= 1");
-    }
-
-    let target = match (run, worker) {
-        (Some(run), None) => {
-            let run_dir = store::resolve_run_dir(&run)?;
-            WaitTarget::Run {
-                status: status_log_path(&run_dir),
-                run_dir,
-            }
-        }
-        (None, Some(id)) => {
-            let status = worker::status_log_path(&id)?;
-            let dir = worker_status_dir(&status)?;
-            WaitTarget::Worker { id, status, dir }
-        }
-        (Some(_), Some(_)) => bail!("use either a run id or --worker <id>, not both"),
-        (None, None) => bail!("wait requires a run id or --worker <id>"),
-    };
+    let targets = WaitTargets::resolve(run, worker, task, index)?;
+    let prefix_worker_id = targets.prefix_worker_id();
+    let timeout_subject = targets.timeout_subject();
 
     let interval = positive_seconds_duration(interval, "wait interval")?;
-    let timeout = timeout
+    let timeout = match timeout
         .map(|seconds| non_negative_seconds_duration(seconds, "wait timeout"))
         .transpose()?
-        .unwrap_or(DEFAULT_WAIT_TIMEOUT);
+    {
+        Some(timeout) => timeout,
+        None => DEFAULT_WAIT_TIMEOUT,
+    };
 
-    match wait_for_wake(&target, index, interval, timeout)? {
+    let wake = wait_for_targets(targets, interval, timeout)?;
+    let worker_id = wake.worker_id;
+    match wake.result {
         WaitResult::Line(line) => {
-            println!("{line}");
+            println!(
+                "{}",
+                format_wake_line(worker_id.as_deref(), line, prefix_worker_id)
+            );
             Ok(())
         }
         WaitResult::WorkerClosed { id, line } => {
-            println!("{line}");
+            println!(
+                "{}",
+                format_wake_line(worker_id.as_deref(), line, prefix_worker_id)
+            );
             bail!("worker '{id}' closed")
         }
-        WaitResult::Timeout => bail!(
-            "timeout: no actionable wake line appeared in {}",
-            target.status()
-        ),
+        WaitResult::Timeout => {
+            bail!("timeout: no actionable wake line appeared in {timeout_subject}")
+        }
     }
+}
+
+enum WaitTargets {
+    Run {
+        target: WaitTarget,
+        index: Option<usize>,
+    },
+    Workers(Vec<WaitTarget>),
 }
 
 enum WaitTarget {
@@ -93,6 +95,82 @@ enum WaitResult {
     Line(String),
     WorkerClosed { id: String, line: String },
     Timeout,
+}
+
+struct WaitEntry {
+    target: WaitTarget,
+    scanner: WakeScanner,
+    guard: Option<WaiterGuard>,
+}
+
+struct FiredWake {
+    worker_id: Option<String>,
+    result: WaitResult,
+}
+
+impl WaitTargets {
+    fn resolve(
+        run: Option<String>,
+        worker_ids: Vec<String>,
+        task: Option<String>,
+        index: Option<usize>,
+    ) -> Result<Self> {
+        if let Some(0) = index {
+            bail!("step index must be >= 1");
+        }
+
+        let has_workers = !worker_ids.is_empty();
+        match (run, has_workers, task) {
+            (Some(run), false, None) => {
+                let run_dir = store::resolve_run_dir(&run)?;
+                Ok(Self::Run {
+                    target: WaitTarget::Run {
+                        status: status_log_path(&run_dir),
+                        run_dir,
+                    },
+                    index,
+                })
+            }
+            (None, true, None) => {
+                reject_index_for_worker_targets(index)?;
+                Ok(Self::Workers(resolve_worker_targets(dedup_worker_ids(
+                    worker_ids,
+                ))?))
+            }
+            (None, false, Some(label)) => {
+                reject_index_for_worker_targets(index)?;
+                worker::validate_task_label(&label)?;
+                let selection = worker::select_worker_ids_by_task(&label)?;
+                Ok(Self::Workers(resolve_task_selection(
+                    &label,
+                    selection,
+                    resolve_worker_target,
+                )?))
+            }
+            (Some(_), true, None) => bail!("use either a run id or --worker <id>, not both"),
+            (Some(_), false, Some(_)) => bail!("use either a run id or --task <label>, not both"),
+            (Some(_), true, Some(_)) => bail!("use exactly one of a run id, --worker, or --task"),
+            (None, true, Some(_)) => bail!("use either --worker <id> or --task <label>, not both"),
+            (None, false, None) => {
+                bail!("wait requires a run id, --worker <id>, or --task <label>")
+            }
+        }
+    }
+
+    fn prefix_worker_id(&self) -> bool {
+        match self {
+            Self::Run { .. } => false,
+            Self::Workers(targets) => targets.len() > 1,
+        }
+    }
+
+    fn timeout_subject(&self) -> String {
+        match self {
+            Self::Run { target, .. } => target.status().to_string(),
+            Self::Workers(targets) if targets.len() == 1 => targets[0].status().to_string(),
+            Self::Workers(_) => "requested workers".to_owned(),
+        }
+    }
 }
 
 impl WaitTarget {
@@ -142,76 +220,244 @@ impl WaitTarget {
                 id: id.clone(),
                 line,
             },
-            _ => WaitResult::Line(line),
+            WaitTarget::Worker { .. } => WaitResult::Line(line),
+            WaitTarget::Run { .. } => WaitResult::Line(line),
+        }
+    }
+
+    fn worker_id(&self) -> Option<&str> {
+        match self {
+            WaitTarget::Run { .. } => None,
+            WaitTarget::Worker { id, .. } => Some(id),
         }
     }
 }
 
+fn reject_index_for_worker_targets(index: Option<usize>) -> Result<()> {
+    if index.is_some() {
+        bail!("--index is only valid with a run target");
+    }
+    Ok(())
+}
+
+fn format_wake_line(worker_id: Option<&str>, line: String, prefix_worker_id: bool) -> String {
+    if prefix_worker_id && let Some(id) = worker_id {
+        return format!("{id}: {line}");
+    }
+    line
+}
+
+fn dedup_worker_ids(worker_ids: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for id in worker_ids {
+        if !deduped.iter().any(|existing| existing == &id) {
+            deduped.push(id);
+        }
+    }
+    deduped
+}
+
+fn resolve_worker_targets(worker_ids: Vec<String>) -> Result<Vec<WaitTarget>> {
+    resolve_worker_targets_with(worker_ids, resolve_worker_target)
+}
+
+fn resolve_worker_targets_with(
+    worker_ids: Vec<String>,
+    mut resolve: impl FnMut(String) -> Result<WaitTarget>,
+) -> Result<Vec<WaitTarget>> {
+    let mut targets = Vec::with_capacity(worker_ids.len());
+    for id in worker_ids {
+        targets.push(resolve(id)?);
+    }
+    if targets.is_empty() {
+        bail!("wait requires at least one worker target");
+    }
+    Ok(targets)
+}
+
+fn resolve_task_selection(
+    label: &str,
+    selection: worker::WorkerCloseSelection,
+    resolve: impl FnMut(String) -> Result<WaitTarget>,
+) -> Result<Vec<WaitTarget>> {
+    if !selection.failures.is_empty() {
+        let failures = selection
+            .failures
+            .into_iter()
+            .map(|(id, err)| format!("{id}: {err}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("failed to select workers with task label {label}: {failures}");
+    }
+    if selection.ids.is_empty() {
+        bail!("no live workers with task label {label}");
+    }
+    resolve_worker_targets_with(selection.ids, resolve)
+}
+
+fn resolve_worker_target(id: String) -> Result<WaitTarget> {
+    let status = worker::status_log_path(&id)?;
+    let dir = worker_status_dir(&status)?;
+    Ok(WaitTarget::Worker { id, status, dir })
+}
+
+fn wait_for_targets(
+    targets: WaitTargets,
+    interval: Duration,
+    timeout: Duration,
+) -> Result<FiredWake> {
+    match targets {
+        WaitTargets::Run { target, index } => {
+            let worker_id = target.worker_id().map(str::to_owned);
+            Ok(FiredWake {
+                worker_id,
+                result: wait_for_wake(target, index, interval, timeout)?,
+            })
+        }
+        WaitTargets::Workers(mut targets) if targets.len() == 1 => {
+            let target = targets.remove(0);
+            let worker_id = target.worker_id().map(str::to_owned);
+            Ok(FiredWake {
+                worker_id,
+                result: wait_for_wake(target, None, interval, timeout)?,
+            })
+        }
+        WaitTargets::Workers(targets) => wait_for_first_wake(
+            targets
+                .into_iter()
+                .map(|target| (target, None))
+                .collect::<Vec<_>>(),
+            interval,
+            timeout,
+        ),
+    }
+}
+
 fn wait_for_wake(
-    target: &WaitTarget,
+    target: WaitTarget,
     index: Option<usize>,
     interval: Duration,
     timeout: Duration,
 ) -> Result<WaitResult> {
-    if let Some(result) = target.closed_if_missing() {
-        return Ok(result);
+    Ok(wait_for_first_wake(vec![(target, index)], interval, timeout)?.result)
+}
+
+fn wait_for_first_wake(
+    targets: Vec<(WaitTarget, Option<usize>)>,
+    interval: Duration,
+    timeout: Duration,
+) -> Result<FiredWake> {
+    // Missing worker dirs report WorkerClosed before waiter registration can fail on status.waiter.
+    for (target, _) in &targets {
+        if let Some(result) = target.closed_if_missing() {
+            return Ok(FiredWake {
+                worker_id: target.worker_id().map(str::to_owned),
+                result,
+            });
+        }
     }
 
-    let waiter = if index.is_none() {
-        Some(WaiterGuard::register(target.status())?)
-    } else {
-        None
-    };
-    let initial_lines = read_lines(target.status())?;
-    let mut scanner = WakeScanner::new(
-        target,
-        index,
-        initial_lines.len(),
-        waiter.as_ref().map(|guard| guard.registration.clone()),
-    )?;
+    let mut entries = prepare_wait_entries(targets)?;
     let deadline = Instant::now() + timeout;
 
     loop {
-        if let Some(result) = target.closed_if_missing() {
-            return Ok(result);
-        }
-        if let Some(waiter) = &waiter
-            && let Err(err) = waiter.verify()
-        {
-            if let Some(result) = target.closed_if_missing() {
-                return Ok(result);
-            }
-            return Err(err);
-        }
-
-        let lines = read_lines(target.status())?;
-        if let Some(result) = scanner.select(&lines)? {
-            return Ok(result);
-        }
-
-        if let Some(result) = target.closed_if_missing() {
-            return Ok(result);
+        if let Some(wake) = poll_wait_entries(&mut entries)? {
+            return Ok(wake);
         }
 
         let now = Instant::now();
         if now >= deadline {
-            return Ok(WaitResult::Timeout);
+            return Ok(FiredWake {
+                worker_id: None,
+                result: WaitResult::Timeout,
+            });
         }
 
         thread::sleep(interval.min(deadline - now));
     }
 }
 
-struct WakeScanner<'a> {
-    target: &'a WaitTarget,
+fn prepare_wait_entries(targets: Vec<(WaitTarget, Option<usize>)>) -> Result<Vec<WaitEntry>> {
+    let mut guards = Vec::with_capacity(targets.len());
+    for (target, index) in &targets {
+        let guard = if index.is_none() {
+            Some(WaiterGuard::register(target.status()).with_context(|| {
+                format!(
+                    "failed to attach waiter guard for requested target {}",
+                    target.status()
+                )
+            })?)
+        } else {
+            None
+        };
+        guards.push(guard);
+    }
+
+    let mut entries = Vec::with_capacity(targets.len());
+    for ((target, index), guard) in targets.into_iter().zip(guards) {
+        let initial_lines = read_lines(target.status())?;
+        let scanner = WakeScanner::new(
+            &target,
+            index,
+            initial_lines.len(),
+            guard.as_ref().map(|guard| guard.registration.clone()),
+        )?;
+        entries.push(WaitEntry {
+            target,
+            scanner,
+            guard,
+        });
+    }
+    Ok(entries)
+}
+
+fn poll_wait_entries(entries: &mut [WaitEntry]) -> Result<Option<FiredWake>> {
+    for entry in entries.iter_mut() {
+        if let Some(result) = entry.target.closed_if_missing() {
+            return Ok(Some(FiredWake {
+                worker_id: entry.target.worker_id().map(str::to_owned),
+                result,
+            }));
+        }
+        if let Some(waiter) = &entry.guard
+            && let Err(err) = waiter.verify()
+        {
+            if let Some(result) = entry.target.closed_if_missing() {
+                return Ok(Some(FiredWake {
+                    worker_id: entry.target.worker_id().map(str::to_owned),
+                    result,
+                }));
+            }
+            return Err(err);
+        }
+
+        let lines = read_lines(entry.target.status())?;
+        if let Some(result) = entry.scanner.select(&entry.target, &lines)? {
+            return Ok(Some(FiredWake {
+                worker_id: entry.target.worker_id().map(str::to_owned),
+                result,
+            }));
+        }
+
+        if let Some(result) = entry.target.closed_if_missing() {
+            return Ok(Some(FiredWake {
+                worker_id: entry.target.worker_id().map(str::to_owned),
+                result,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+struct WakeScanner {
     index: Option<usize>,
     cursor: usize,
     waiter: Option<WaiterRegistration>,
 }
 
-impl<'a> WakeScanner<'a> {
+impl WakeScanner {
     fn new(
-        target: &'a WaitTarget,
+        target: &WaitTarget,
         index: Option<usize>,
         initial_line_count: usize,
         waiter: Option<WaiterRegistration>,
@@ -228,29 +474,27 @@ impl<'a> WakeScanner<'a> {
         };
 
         Ok(Self {
-            target,
             index,
             cursor,
             waiter,
         })
     }
 
-    fn select(&mut self, lines: &[String]) -> Result<Option<WaitResult>> {
+    fn select(&mut self, target: &WaitTarget, lines: &[String]) -> Result<Option<WaitResult>> {
         let start = self.direct_scan_start(lines.len());
         if let Some((offset, line)) =
-            select_wake_with_offset(&lines[start..], self.index, self.target.closed_wake_match())
+            select_wake_with_offset(&lines[start..], self.index, target.closed_wake_match())
         {
             if self.index.is_none() {
-                self.acknowledge(start + offset + 1, &line)?;
+                self.acknowledge(target.status(), start + offset + 1, &line)?;
             }
-            return Ok(Some(self.target.result_for_line(line)));
+            return Ok(Some(target.result_for_line(line)));
         }
 
         if let Some(index) = self.index
-            && let Some(line) =
-                select_state_attributed_wake(self.target, lines, self.cursor, index)?
+            && let Some(line) = select_state_attributed_wake(target, lines, self.cursor, index)?
         {
-            return Ok(Some(self.target.result_for_line(line)));
+            return Ok(Some(target.result_for_line(line)));
         }
 
         self.cursor = lines.len();
@@ -265,11 +509,11 @@ impl<'a> WakeScanner<'a> {
         }
     }
 
-    fn acknowledge(&mut self, cursor: usize, line: &str) -> Result<()> {
+    fn acknowledge(&mut self, status: &Utf8Path, cursor: usize, line: &str) -> Result<()> {
         if let Some(waiter) = &self.waiter {
-            log_ack_consumption(self.target.status(), cursor, line, waiter)?;
+            log_ack_consumption(status, cursor, line, waiter)?;
         }
-        write_ack_cursor(self.target.status(), cursor)?;
+        write_ack_cursor(status, cursor)?;
         self.cursor = cursor;
         Ok(())
     }
@@ -708,6 +952,10 @@ fn non_negative_seconds_duration(seconds: f64, label: &str) -> Result<Duration> 
 mod tests {
     use super::*;
     use crate::state::{RunStatus, StepKind, StepRecord};
+    use std::{
+        env,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn selects_indexed_wake_before_earlier_generic_wake() {
@@ -810,6 +1058,222 @@ mod tests {
     }
 
     #[test]
+    fn tie_break_returns_first_in_target_order() {
+        let root = TestTempDir::new("tie-break");
+        let first = test_worker_target(root.path(), "second", "done: second worker\n");
+        let second = test_worker_target(root.path(), "first", "done: first worker\n");
+        let wake = wait_for_first_wake(
+            vec![(first, None), (second, None)],
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(wake.worker_id.as_deref(), Some("second"));
+        assert_wait_line(wake.result, "done: second worker");
+    }
+
+    #[test]
+    fn only_firing_targets_cursor_advances() {
+        let root = TestTempDir::new("cursor-isolation");
+        let first = test_worker_target(root.path(), "first", "done: first\n");
+        let second = test_worker_target(root.path(), "second", "done: second\n");
+        let mut entries = prepare_wait_entries(vec![(first, None), (second, None)]).unwrap();
+
+        let wake = poll_wait_entries(&mut entries).unwrap().unwrap();
+
+        assert_eq!(wake.worker_id.as_deref(), Some("first"));
+        assert_eq!(entries[0].scanner.cursor, 1);
+        assert_eq!(entries[1].scanner.cursor, 0);
+    }
+
+    #[test]
+    fn single_element_set_matches_single_wait() {
+        let root = TestTempDir::new("single-element");
+        let target = test_worker_target(root.path(), "only", "done: single\n");
+        let status = target.status().to_path_buf();
+        let wake = wait_for_targets(
+            WaitTargets::Workers(vec![target]),
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        let WaitResult::Line(line) = wake.result else {
+            panic!("expected line result");
+        };
+        assert_eq!(
+            format_wake_line(wake.worker_id.as_deref(), line, false),
+            "done: single"
+        );
+        assert_eq!(fs::read_to_string(ack_path(&status)).unwrap(), "1\n");
+        assert!(!waiter_path(&status).exists());
+    }
+
+    #[test]
+    fn acquire_all_release_all_on_conflict() {
+        let root = TestTempDir::new("guard-conflict");
+        let first = test_worker_target(root.path(), "first", "working: first\n");
+        let first_waiter = waiter_path(first.status());
+        let second = test_worker_target(root.path(), "second", "working: second\n");
+        let second_waiter = waiter_path(second.status());
+        write_waiter_registration(second.status(), std::process::id(), "live-token");
+        let third = test_worker_target(root.path(), "third", "working: third\n");
+        let third_waiter = waiter_path(third.status());
+
+        let err = wait_for_first_wake(
+            vec![(first, None), (second, None), (third, None)],
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("another unindexed wait is already attached"));
+        assert!(!first_waiter.exists());
+        assert!(second_waiter.exists());
+        assert!(!third_waiter.exists());
+    }
+
+    #[test]
+    fn release_all_on_fire() {
+        let root = TestTempDir::new("release-on-fire");
+        let first = test_worker_target(root.path(), "first", "done: fire\n");
+        let first_waiter = waiter_path(first.status());
+        let second = test_worker_target(root.path(), "second", "working: waiting\n");
+        let second_waiter = waiter_path(second.status());
+
+        let wake = wait_for_first_wake(
+            vec![(first, None), (second, None)],
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(wake.worker_id.as_deref(), Some("first"));
+        assert!(!first_waiter.exists());
+        assert!(!second_waiter.exists());
+    }
+
+    #[test]
+    fn ack_only_the_firing_worker() {
+        let root = TestTempDir::new("ack-isolation");
+        let first = test_worker_target(root.path(), "first", "working: first\n");
+        let first_ack = ack_path(first.status());
+        let first_ack_log = ack_log_path(first.status());
+        let second = test_worker_target(root.path(), "second", "done: second\n");
+        let second_ack = ack_path(second.status());
+        let second_ack_log = ack_log_path(second.status());
+        let third = test_worker_target(root.path(), "third", "done: third\n");
+        let third_ack = ack_path(third.status());
+        let third_ack_log = ack_log_path(third.status());
+
+        let wake = wait_for_first_wake(
+            vec![(first, None), (second, None), (third, None)],
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(wake.worker_id.as_deref(), Some("second"));
+        assert!(!first_ack.exists());
+        assert!(!first_ack_log.exists());
+        assert_eq!(fs::read_to_string(second_ack).unwrap(), "1\n");
+        assert!(
+            fs::read_to_string(second_ack_log)
+                .unwrap()
+                .contains("done: second")
+        );
+        assert!(!third_ack.exists());
+        assert!(!third_ack_log.exists());
+    }
+
+    #[test]
+    fn stale_guard_reclaimed_per_target() {
+        let root = TestTempDir::new("stale-guard");
+        let first = test_worker_target(root.path(), "first", "working: first\n");
+        write_waiter_registration(first.status(), i32::MAX as u32, "stale-token");
+        let first_waiter = waiter_path(first.status());
+        let first_ack_log = ack_log_path(first.status());
+        let second = test_worker_target(root.path(), "second", "done: second\n");
+
+        let wake = wait_for_first_wake(
+            vec![(first, None), (second, None)],
+            Duration::from_millis(1),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(wake.worker_id.as_deref(), Some("second"));
+        assert!(!first_waiter.exists());
+        let ack_log = fs::read_to_string(first_ack_log).unwrap();
+        assert!(ack_log.contains(r#""event":"stale-waiter-reclaimed""#));
+        assert!(ack_log.contains(r#""token":"stale-token""#));
+    }
+
+    #[test]
+    fn task_resolution_selects_labelled_live_workers() {
+        let root = TestTempDir::new("task-resolution");
+        let selection = worker::WorkerCloseSelection {
+            ids: vec!["alpha".to_owned(), "beta".to_owned()],
+            failures: Vec::new(),
+        };
+        let targets = resolve_task_selection("issue-48", selection, |id| {
+            Ok(test_worker_target(root.path(), &id, "working: selected\n"))
+        })
+        .unwrap();
+        let ids = targets
+            .iter()
+            .map(|target| target.worker_id().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["alpha", "beta"]);
+
+        let empty = worker::WorkerCloseSelection {
+            ids: Vec::new(),
+            failures: Vec::new(),
+        };
+        let err = resolve_task_selection("missing", empty, |id| {
+            Ok(test_worker_target(root.path(), &id, "working: selected\n"))
+        })
+        .err()
+        .unwrap();
+        assert!(format!("{err:#}").contains("no live workers with task label missing"));
+    }
+
+    #[test]
+    fn worker_targets_reject_index_at_boundary() {
+        let err = WaitTargets::resolve(None, vec!["known".to_owned()], None, Some(1))
+            .err()
+            .unwrap();
+        assert!(format!("{err:#}").contains("--index is only valid with a run target"));
+
+        let err = WaitTargets::resolve(None, Vec::new(), Some("issue-48".to_owned()), Some(1))
+            .err()
+            .unwrap();
+        assert!(format!("{err:#}").contains("--index is only valid with a run target"));
+    }
+
+    #[test]
+    fn unknown_worker_id_aborts_batch_resolution() {
+        let root = TestTempDir::new("unknown-before-guard");
+        let known = test_worker_target(root.path(), "known", "working: known\n");
+        let mut known = Some(known);
+
+        let err =
+            resolve_worker_targets_with(vec!["known".to_owned(), "missing".to_owned()], |id| {
+                match id.as_str() {
+                    "known" => Ok(known.take().unwrap()),
+                    "missing" => bail!("unknown worker id 'missing'"),
+                    other => bail!("unexpected worker id '{other}'"),
+                }
+            })
+            .err()
+            .unwrap();
+
+        assert!(format!("{err:#}").contains("unknown worker id 'missing'"));
+    }
+
+    #[test]
     fn state_attribution_uses_unique_running_step() {
         let started = "2026-07-02T00:00:00Z".parse().unwrap();
         let state = test_state(vec![
@@ -892,6 +1356,69 @@ mod tests {
             diff: None,
             context: None,
             window: None,
+        }
+    }
+
+    fn assert_wait_line(result: WaitResult, expected: &str) {
+        let WaitResult::Line(line) = result else {
+            panic!("expected line result");
+        };
+        assert_eq!(line, expected);
+    }
+
+    fn test_worker_target(root: &Utf8Path, id: &str, status_body: &str) -> WaitTarget {
+        let dir = root.join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let status = dir.join("status.log");
+        fs::write(&status, status_body).unwrap();
+        WaitTarget::Worker {
+            id: id.to_owned(),
+            status,
+            dir,
+        }
+    }
+
+    fn write_waiter_registration(status: &Utf8Path, pid: u32, token: &str) {
+        fs::write(
+            waiter_path(status),
+            format!(
+                r#"{{
+  "pid": {pid},
+  "started_at": "2000-01-01T00:00:00Z",
+  "token": "{token}"
+}}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    struct TestTempDir {
+        path: Utf8PathBuf,
+    }
+
+    impl TestTempDir {
+        fn new(name: &str) -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path =
+                env::temp_dir().join(format!("niles-wait-{name}-{}-{nanos}", std::process::id()));
+            fs::create_dir_all(&path).unwrap();
+            Self {
+                path: Utf8PathBuf::from_path_buf(path).unwrap(),
+            }
+        }
+
+        fn path(&self) -> &Utf8Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestTempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
         }
     }
 }

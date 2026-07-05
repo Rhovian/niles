@@ -90,10 +90,11 @@ fn main() -> Result<()> {
         Some(CommandName::Wait {
             run,
             worker,
+            task,
             index,
             interval,
             timeout,
-        }) => wait::wait(run, worker, index, interval, timeout),
+        }) => wait::wait(run, worker, task, index, interval, timeout),
         Some(CommandName::Resume { run }) => runner::resume(RunSelector::new(run)),
         Some(CommandName::Status { run, json }) => runner::status(RunSelector::new(run), json),
         Some(CommandName::Watch {
