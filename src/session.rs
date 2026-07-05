@@ -420,21 +420,11 @@ fn latest_run_context(workspace: &Utf8Path) -> Result<String> {
     };
 
     let state_path = run_dir.join("state.json");
-    let value =
-        schema::read_json_value_as::<crate::state::RunState>(&state_path, ArtifactKind::RunState)?;
-    let id = value
-        .get("id")
-        .and_then(|value| value.as_str())
-        .unwrap_or("unknown");
-    let status = value
-        .get("status")
-        .and_then(|value| value.as_str())
-        .unwrap_or("unknown");
-    let goal = value
-        .get("goal")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    Ok(format!("latest_run: id={id} status={status} goal={goal:?}"))
+    let state = schema::read_json::<crate::state::RunState>(&state_path, ArtifactKind::RunState)?;
+    Ok(format!(
+        "latest_run: id={} status={} goal={:?}",
+        state.id, state.status, state.goal
+    ))
 }
 
 fn worker_context(workspace: &Utf8Path) -> Result<String> {
@@ -802,6 +792,59 @@ agents:
         assert!(body.contains("latest_run: none"));
         assert!(!body.contains("{manifest}"));
         assert!(!body.contains("{flow}"));
+    }
+
+    #[test]
+    fn latest_run_context_reads_typed_state_fields() {
+        let root = temp_test_path("latest-run-context-valid");
+        let run_dir = root.join(".niles/runs/run-1");
+        fs::create_dir_all(&run_dir).unwrap();
+        let now = Utc::now();
+        let state = crate::state::RunState {
+            id: "run-1".to_owned(),
+            goal: "Ship typed context".to_owned(),
+            workspace: Some(root.clone()),
+            config_root: None,
+            task_file: None,
+            created_at: now,
+            updated_at: now,
+            status: crate::state::RunStatus::Running,
+            steps: Vec::new(),
+        };
+        schema::write_json(&run_dir.join("state.json"), &state).unwrap();
+
+        let context = latest_run_context(&root).unwrap();
+
+        assert_eq!(
+            context,
+            r#"latest_run: id=run-1 status=running goal="Ship typed context""#
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn latest_run_context_errors_when_state_missing_required_field() {
+        let root = temp_test_path("latest-run-context-invalid");
+        let run_dir = root.join(".niles/runs/run-1");
+        fs::create_dir_all(&run_dir).unwrap();
+        let now = Utc::now().to_rfc3339();
+        let state = serde_json::json!({
+            "id": "run-1",
+            "created_at": now,
+            "updated_at": now,
+            "status": "running",
+            "steps": []
+        });
+        schema::write_json(&run_dir.join("state.json"), &state).unwrap();
+
+        let err = latest_run_context(&root).unwrap_err();
+        let message = format!("{err:#}");
+
+        assert!(message.contains("missing field `goal`"));
+        assert!(!message.contains("unknown"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn temp_test_path(label: &str) -> Utf8PathBuf {
