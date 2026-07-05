@@ -776,7 +776,7 @@ agents:
 
     #[test]
     fn cost_discipline_guidance() {
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("## Cost Discipline"));
+        assert_eq!(MANAGER_BRIEF_TEMPLATE.matches("## Cost Discipline").count(), 1);
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Tier reviewers by surface risk"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Scope re-reviews to the fix delta"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
