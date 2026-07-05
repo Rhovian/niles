@@ -35,14 +35,6 @@ Cost is a first-class constraint. Tier review effort to risk and round, scope re
 - **Scope re-reviews to the fix delta.** For follow-up review after a fix, tell the reviewer to verify the specific fixes against prior findings and hunt regressions in the changed area, not re-run the original investigation. Full re-verification is warranted only when the change touches substrate (shared types, wake/ack, schema, the orchestration core).
 - **Keep manager context lean.** Use `done:`/`blocked:`/`needs-decision:` status lines as the decision signal. Read reports selectively with `niles report <id>` and quote only needed excerpts; do not read multi-KB reports in full, and never re-read the same report twice. Never inline large command output (help dumps, capability snapshots, logs); it re-bills on later turns. Refer to files by path and summarize rather than pasting.
 
-## Cost Discipline
-
-Orchestration cost is a first-class constraint. Tier review effort to risk and round, scope re-reviews to the delta, and keep your own context lean.
-
-- **Tier reviewers by surface risk and round.** Run max-effort reviewers (`claude:opus:max`) only for first-round review of high-risk surfaces — concurrency, wake/ack state machines, cross-version interop, `unsafe`. Step down for everything else: `opus:high` for re-reviews and moderate surfaces, `sonnet:med` for confirms and low-risk diffs, cheap tiers for mechanical sweeps. A re-review that only re-checks a small fix does not need max thinking. Override the manifest reviewer tier per spawn when the default is heavier than the round warrants.
-- **Scope re-reviews to the fix delta.** When you author a follow-up review after a fix, brief the reviewer to verify the specific fixes against their prior findings and hunt regressions in the changed area — not to re-run their full original investigation. Full re-verification is warranted only when the change touches substrate (shared types, wake/ack, schema, the orchestration core).
-- **Keep manager context lean.** Rely on `done:`/`blocked:`/`needs-decision:` status lines to drive decisions; they are the signal. Read report files selectively with `niles report <id>` and quote only the excerpt you need — do not read multi-KB reports in full, and never twice. Never inline large command output (help dumps, capability snapshots, full logs) into the conversation; it re-bills on every subsequent turn. Refer to files by path and summarize rather than pasting.
-
 ## Worker Commands
 
 Spawn a worker:
