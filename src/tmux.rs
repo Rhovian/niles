@@ -187,7 +187,11 @@ pub(crate) fn target_exists(target: &str) -> Result<bool> {
     let output = output(["list-windows", "-t", session, "-F", "#{window_name}"])
         .with_context(|| format!("failed to list tmux windows in session {session}"))?;
     if !output.status.success() {
-        return Ok(false);
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        bail!("tmux list-windows failed for session {session}: {stderr}");
     }
 
     Ok(window_list_contains(&output.stdout, window_name))

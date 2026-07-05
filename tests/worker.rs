@@ -1596,6 +1596,33 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
 }
 
 #[test]
+fn workers_reports_unknown_when_tmux_window_query_fails() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-workers-list-unknown");
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture(&workspace, "auth-fix", "working: checking window\n");
+
+    let output = Command::new(niles)
+        .arg("workers")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_LIST_WINDOWS_FAIL", "1")
+        .output()
+        .unwrap();
+
+    assert_command_success("workers", &output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("window-unknown:tmux list-windows failed for session niles"));
+    assert!(stdout.contains("server unreachable retry later"));
+    assert!(!stdout.lines().any(|line| line.starts_with("retry later")));
+    assert!(!stdout.contains("window-dead"));
+}
+
+#[test]
 fn worker_close_by_task_closes_matching_workers_only() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-close-task");
@@ -2419,6 +2446,10 @@ printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 0 ;;
   list-windows)
+    if [ "${TMUX_LIST_WINDOWS_FAIL:-}" = 1 ]; then
+      printf 'server unreachable\nretry later\n' >&2
+      exit 1
+    fi
     if [ -n "${TMUX_WINDOWS:-}" ]; then
       printf '%s\n' "$TMUX_WINDOWS"
     fi
