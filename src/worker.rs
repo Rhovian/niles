@@ -927,6 +927,11 @@ mod tests {
     }
 
     #[test]
+    fn worker_brief_mentions_modularity_standard() {
+        assert!(WORKER_BRIEF_TEMPLATE.contains("split it by responsibility"));
+    }
+
+    #[test]
     fn closed_sentinel_starts_on_its_own_line() {
         let dir = std::env::temp_dir().join(format!(
             "niles-worker-sentinel-{}",

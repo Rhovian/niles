@@ -21,6 +21,8 @@ Stay warm after `done:`. In Niles, `done:` means the manager should wake and dec
 
 When your task is a follow-up review after a fix, verify the named fixes against your prior findings and hunt regressions in the changed area — do not re-run your full original investigation unless the task says the change touched substrate.
 
+Honor the project's stated code standards (`AGENTS.md`/`CLAUDE.md`), including its file-size and modularity limits — the default heuristic is source files under ~500 lines, one module = one job. If your change pushes a file over the limit, split it by responsibility as part of the same change rather than growing an already-oversized file. When reviewing, flag any file the change-set leaves over the limit.
+
 ## Wake Contract
 
 Append actionable status lines to the status file so Niles can wake the foreground manager:
