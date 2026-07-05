@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
+    process::{exit_code_label, role_prefix},
     schema::{self, ArtifactKind},
     state::{RunState, RunStatus, StepRecord, StepStatus},
     store::{read_state, selected_step, state_path},
@@ -84,10 +85,7 @@ pub(crate) fn show(selector: RunSelector) -> Result<()> {
         println!(
             "  {}. {}{} {} {}{}{}{}",
             step.index,
-            step.role
-                .as_deref()
-                .map(|role| format!("{role} "))
-                .unwrap_or_default(),
+            role_prefix(step.role.as_deref()),
             step.kind,
             step.label,
             step.status,
@@ -325,19 +323,11 @@ pub(in crate::runner) fn print_failure_summary(step: &StepRecord) {
     eprintln!(
         "  step: {} {}{} {}",
         step.index,
-        step.role
-            .as_deref()
-            .map(|role| format!("{role} "))
-            .unwrap_or_default(),
+        role_prefix(step.role.as_deref()),
         step.kind,
         step.label
     );
-    eprintln!(
-        "  exit: {}",
-        step.exit_code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "signal".to_owned())
-    );
+    eprintln!("  exit: {}", exit_code_label(step.exit_code));
     if let Some(stderr) = &step.stderr {
         eprintln!("  stderr: {stderr}");
     }

@@ -16,6 +16,8 @@ use crate::{
 
 type ReaderHandle = thread::JoinHandle<Result<()>>;
 
+const SIGNAL_EXIT_LABEL: &str = "signal";
+
 pub struct ProcessSpec<'a> {
     pub step_number: usize,
     pub role: Option<String>,
@@ -27,6 +29,18 @@ pub struct ProcessSpec<'a> {
     pub workspace: &'a Utf8Path,
     pub steps_dir: &'a Utf8Path,
     pub context_path: Option<camino::Utf8PathBuf>,
+}
+
+pub(crate) fn exit_code_label(code: Option<i32>) -> String {
+    code.map(|code| code.to_string())
+        .unwrap_or_else(|| SIGNAL_EXIT_LABEL.to_owned())
+}
+
+pub(crate) fn role_prefix(role: Option<&str>) -> String {
+    match role {
+        Some(role) => format!("{role} "),
+        None => String::new(),
+    }
 }
 
 pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {

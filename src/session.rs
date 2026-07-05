@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agents,
     config::spec::{PromptMode, load_project_config_from},
+    process::exit_code_label,
     schema::{self, ArtifactKind},
     store, tmux,
     util::{current_dir_utf8, read_dir_utf8_paths, timestamp_id, write_json_pretty},
@@ -23,7 +24,6 @@ use crate::{
 
 const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
 const FOREGROUND_TMUX_SESSION: &str = "niles";
-const SIGNAL_EXIT_LABEL: &str = "signal";
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,10 +262,7 @@ fn launch_foreground_agent(workspace: &Utf8Path, manifest: &WorkspaceManifest) -
     } else {
         bail!(
             "foreground agent `{agent}` exited with {}",
-            status
-                .code()
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| SIGNAL_EXIT_LABEL.to_owned())
+            exit_code_label(status.code())
         )
     }
 }

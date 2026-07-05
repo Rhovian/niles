@@ -8,7 +8,7 @@ use crate::{
     agent_window, agents,
     config::spec::{PromptMode, TaskSpec, TaskStep},
     context::{agent_prompt, write_agent_context},
-    process::{ProcessSpec, run_process},
+    process::{ProcessSpec, exit_code_label, role_prefix, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{absolute_path, append_line, render_template, slugify},
@@ -22,8 +22,6 @@ use super::{RunSelector, lifecycle::load_spec_for_run, report};
 const PANE_CAPTURE_LINES: usize = 2000;
 const STEP_WAKE_CONTRACT_TEMPLATE: &str = include_str!("../templates/step_wake_contract.md");
 const IMPLICIT_TASK_WORKSPACE: &str = ".";
-const NO_ROLE_PREFIX: &str = "";
-const SIGNAL_EXIT_LABEL: &str = "signal";
 
 struct LoadedRun {
     run_dir: Utf8PathBuf,
@@ -322,15 +320,9 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
         .iter()
         .find(|step| step.index == index)
         .with_context(|| format!("run state is missing step {index}"))?;
-    let exit = record
-        .exit_code
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| SIGNAL_EXIT_LABEL.to_owned());
+    let exit = exit_code_label(record.exit_code);
     let label = record.label.clone();
-    let role_label = match record.role.as_deref() {
-        Some(role) => format!("{role} "),
-        None => NO_ROLE_PREFIX.to_owned(),
-    };
+    let role_label = role_prefix(record.role.as_deref());
 
     if failed {
         append_run_status(
