@@ -451,11 +451,7 @@ impl std::fmt::Display for WorkerWindowState {
 }
 
 fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
-    worker_window_state_from_query(agent_window::target_exists(&meta.window))
-}
-
-fn worker_window_state_from_query(query: Result<bool>) -> WorkerWindowState {
-    match query {
+    match agent_window::target_exists(&meta.window) {
         Ok(true) => WorkerWindowState::Live,
         Ok(false) => WorkerWindowState::Dead,
         Err(err) => WorkerWindowState::Unknown(err),

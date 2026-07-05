@@ -1617,7 +1617,8 @@ fn workers_reports_unknown_when_tmux_window_query_fails() {
     assert_command_success("workers", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("window-unknown:tmux list-windows failed for session niles"));
-    assert!(stdout.contains("server unreachable"));
+    assert!(stdout.contains("server unreachable retry later"));
+    assert!(!stdout.lines().any(|line| line.starts_with("retry later")));
     assert!(!stdout.contains("window-dead"));
 }
 
@@ -2419,7 +2420,7 @@ case "$1" in
   has-session) exit 0 ;;
   list-windows)
     if [ "${TMUX_LIST_WINDOWS_FAIL:-}" = 1 ]; then
-      printf 'server unreachable\n' >&2
+      printf 'server unreachable\nretry later\n' >&2
       exit 1
     fi
     if [ -n "${TMUX_WINDOWS:-}" ]; then
