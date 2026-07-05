@@ -236,9 +236,9 @@ fn close_all_workers() -> Result<()> {
     close_worker_group("--all".to_owned(), ids, Vec::new())
 }
 
-struct WorkerCloseSelection {
-    ids: Vec<String>,
-    failures: Vec<(String, String)>,
+pub(crate) struct WorkerCloseSelection {
+    pub(crate) ids: Vec<String>,
+    pub(crate) failures: Vec<(String, String)>,
 }
 
 fn close_worker_group(
@@ -279,7 +279,7 @@ fn close_worker_group(
     }
 }
 
-fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
+pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
     let mut failures = Vec::new();
     for entry in store::resolve_workspace_worker_locations()? {
@@ -900,7 +900,7 @@ fn validate_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_task_label(label: &str) -> Result<()> {
+pub(crate) fn validate_task_label(label: &str) -> Result<()> {
     if label.is_empty() {
         bail!("task label cannot be empty");
     }
