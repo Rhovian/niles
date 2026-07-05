@@ -258,16 +258,12 @@ fn append_wake_contract(brief: &Utf8Path, run_dir: &Utf8Path, step_number: usize
 }
 
 fn task_step(spec: &TaskSpec, step_number: usize) -> Result<&TaskStep> {
-    let position = step_position(step_number)?;
+    let position = step_number
+        .checked_sub(1)
+        .context("step index must be >= 1")?;
     spec.steps
         .get(position)
         .with_context(|| format!("step {step_number} is out of range for this task"))
-}
-
-fn step_position(step_number: usize) -> Result<usize> {
-    step_number
-        .checked_sub(1)
-        .context("step index must be >= 1")
 }
 
 fn spec_workspace(spec: &TaskSpec) -> &Utf8Path {
@@ -391,25 +387,6 @@ fn append_run_status(run_dir: &Utf8Path, line: &str) -> Result<()> {
     )
 }
 
-fn record_step_error(
-    state: &mut RunState,
-    state_path: &Utf8Path,
-    run_dir: &Utf8Path,
-    index: usize,
-    phase: &str,
-    err: &Error,
-) -> Result<()> {
-    mark_step_failed(state, state_path, index)?;
-    append_run_status(
-        run_dir,
-        &wake::step_line(
-            WakeKind::Failed,
-            index,
-            &format!("{phase} error: {}", status_detail(err)),
-        ),
-    )
-}
-
 fn record_step_error_or_context(
     err: Error,
     state: &mut RunState,
@@ -418,7 +395,17 @@ fn record_step_error_or_context(
     index: usize,
     phase: &str,
 ) -> Error {
-    match record_step_error(state, state_path, run_dir, index, phase, &err) {
+    let record_result = mark_step_failed(state, state_path, index).and_then(|()| {
+        append_run_status(
+            run_dir,
+            &wake::step_line(
+                WakeKind::Failed,
+                index,
+                &format!("{phase} error: {}", status_detail(&err)),
+            ),
+        )
+    });
+    match record_result {
         Ok(()) => err,
         Err(record_err) => err.context(format!(
             "additionally failed to record {phase} failure for step {index}: {record_err}"

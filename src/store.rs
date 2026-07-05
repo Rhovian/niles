@@ -104,13 +104,11 @@ pub(crate) fn unregister_worker_location(
 
 pub(crate) fn register_worker_archive(
     worker: &str,
-    workspace: &Utf8Path,
     archive_dir: &Utf8Path,
     archived_at: DateTime<Utc>,
 ) -> Result<WorkerArchivePointer> {
     let pointer = WorkerArchivePointer {
         id: worker.to_owned(),
-        workspace: workspace.to_path_buf(),
         archive_dir: archive_dir.to_path_buf(),
         archived_at,
     };
@@ -279,10 +277,10 @@ impl WorkerResolver {
 
         let local_worker_dir = self.local_workers_dir.join(worker);
         if local_worker_dir.exists() {
-            return Ok(Some(WorkerLocation::local(worker, local_worker_dir)));
+            return Ok(Some(WorkerLocation::local(local_worker_dir)));
         }
 
-        Ok(resolve_global_worker(worker)?.map(WorkerLocation::from_pointer))
+        Ok(read_global_worker_pointer(worker)?.map(WorkerLocation::from_pointer))
     }
 
     fn all(&self) -> Result<Vec<WorkerListEntry>> {
@@ -313,7 +311,7 @@ impl WorkerResolver {
                 let id = path.file_name()?.to_owned();
                 (id != "archive").then(|| WorkerListEntry {
                     id: id.clone(),
-                    location: WorkerLocation::local(&id, path),
+                    location: WorkerLocation::local(path),
                 })
             })
             .collect::<Vec<_>>();
@@ -346,7 +344,7 @@ impl WorkerResolver {
             }
             by_id
                 .entry(id.to_owned())
-                .or_insert_with(|| WorkerLocation::local(id, path.to_path_buf()));
+                .or_insert_with(|| WorkerLocation::local(path.to_path_buf()));
         }
 
         Ok(())
@@ -446,10 +444,6 @@ fn resolve_global_run(run: &str) -> Result<Option<Utf8PathBuf>> {
         .map(|pointer| pointer.run_dir.clone()))
 }
 
-fn resolve_global_worker(worker: &str) -> Result<Option<WorkerPointer>> {
-    read_global_worker_pointer(worker)
-}
-
 fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPointer>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?.workers.get(worker).cloned())
@@ -526,7 +520,6 @@ pub(crate) struct WorkerPointer {
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct WorkerArchivePointer {
     pub(crate) id: String,
-    pub(crate) workspace: Utf8PathBuf,
     pub(crate) archive_dir: Utf8PathBuf,
     pub(crate) archived_at: DateTime<Utc>,
 }
@@ -553,7 +546,7 @@ impl WorkerLocation {
         }
     }
 
-    fn local(_worker: &str, worker_dir: Utf8PathBuf) -> Self {
+    fn local(worker_dir: Utf8PathBuf) -> Self {
         let workspace = worker_dir
             .parent()
             .and_then(Utf8Path::parent)
@@ -619,7 +612,6 @@ fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
         };
         archives.push(WorkerArchivePointer {
             id: worker.to_owned(),
-            workspace: workspace_from_worker_archive_dir(&path),
             archive_dir: path,
             archived_at,
         });
@@ -635,16 +627,6 @@ fn worker_archive_timestamp(worker: &str, archive_name: &str) -> Option<DateTime
     let timestamp = archive_name.strip_prefix(&format!("{worker}-"))?;
     let timestamp = NaiveDateTime::parse_from_str(timestamp, "%Y%m%dT%H%M%S%fZ").ok()?;
     Some(DateTime::from_naive_utc_and_offset(timestamp, Utc))
-}
-
-fn workspace_from_worker_archive_dir(archive_dir: &Utf8Path) -> Utf8PathBuf {
-    archive_dir
-        .parent()
-        .and_then(Utf8Path::parent)
-        .and_then(Utf8Path::parent)
-        .and_then(Utf8Path::parent)
-        .unwrap_or(Utf8Path::new("."))
-        .to_path_buf()
 }
 
 #[cfg(test)]

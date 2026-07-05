@@ -3,8 +3,8 @@ use std::{fs, io::ErrorKind};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Map as JsonMap, Value as JsonValue};
-use serde_yaml::{Mapping as YamlMap, Value as YamlValue};
+use serde_json::Value as JsonValue;
+use serde_yaml::Value as YamlValue;
 
 use crate::util::read_dir_utf8_paths;
 
@@ -338,10 +338,6 @@ fn schema_from_json(value: &JsonValue) -> SchemaProbe {
     let Some(object) = value.as_object() else {
         return SchemaProbe::Invalid;
     };
-    schema_from_json_object(object)
-}
-
-fn schema_from_json_object(object: &JsonMap<String, JsonValue>) -> SchemaProbe {
     match object.get(FIELD) {
         None => SchemaProbe::Schema(LEGACY_SCHEMA),
         Some(value) => value
@@ -354,10 +350,6 @@ fn schema_from_yaml(value: &YamlValue) -> SchemaProbe {
     let YamlValue::Mapping(object) = value else {
         return SchemaProbe::Invalid;
     };
-    schema_from_yaml_object(object)
-}
-
-fn schema_from_yaml_object(object: &YamlMap) -> SchemaProbe {
     let key = YamlValue::String(FIELD.to_owned());
     match object.get(&key) {
         None => SchemaProbe::Schema(LEGACY_SCHEMA),
