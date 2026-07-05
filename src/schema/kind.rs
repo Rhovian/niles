@@ -1,0 +1,68 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ArtifactKind {
+    CapabilityManifest,
+    Directory,
+    GlobalIndex,
+    ManagerSession,
+    RunPlan,
+    RunPointer,
+    RunState,
+    StepRecord,
+    WorkerMetadata,
+    WorkerPointer,
+    WorkspaceManifest,
+}
+
+impl ArtifactKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            ArtifactKind::CapabilityManifest => "capability manifest",
+            ArtifactKind::Directory => "artifact directory",
+            ArtifactKind::GlobalIndex => "global Niles index",
+            ArtifactKind::ManagerSession => "manager session metadata",
+            ArtifactKind::RunPlan => "run plan",
+            ArtifactKind::RunPointer => "run pointer",
+            ArtifactKind::RunState => "run state",
+            ArtifactKind::StepRecord => "step record",
+            ArtifactKind::WorkerMetadata => "worker metadata",
+            ArtifactKind::WorkerPointer => "worker pointer",
+            ArtifactKind::WorkspaceManifest => "workspace manifest",
+        }
+    }
+
+    pub(in crate::schema) fn remediation(self) -> &'static str {
+        match self {
+            ArtifactKind::CapabilityManifest => {
+                "rerun `niles analyze` to regenerate it, or use the older binary that wrote it"
+            }
+            ArtifactKind::Directory => "fix the directory permissions and rerun `niles doctor`",
+            ArtifactKind::GlobalIndex => {
+                "use the binary that wrote it, or remove the index only if you accept losing existing cross-workspace run and worker pointers"
+            }
+            ArtifactKind::ManagerSession => {
+                "remove the session directory and start a fresh manager session, or use the older binary that wrote it"
+            }
+            ArtifactKind::RunPlan => {
+                "remove the run directory and start a new run, or use the older binary that wrote it"
+            }
+            ArtifactKind::RunPointer => {
+                "remove the pointer file so Niles can fall back to a local run directory, or use the older binary that wrote it"
+            }
+            ArtifactKind::RunState => {
+                "remove the run directory and start a new run, or use the older binary to inspect or resume it"
+            }
+            ArtifactKind::StepRecord => {
+                "remove the run directory and start a new run, or use the older binary that wrote it"
+            }
+            ArtifactKind::WorkerMetadata => {
+                "remove the worker dir and respawn, or use the older binary to close it"
+            }
+            ArtifactKind::WorkerPointer => {
+                "remove the pointer file and respawn the worker, or use the older binary that wrote it"
+            }
+            ArtifactKind::WorkspaceManifest => {
+                "delete .niles/manifest.yaml and rerun `niles`, or use the older binary that wrote it"
+            }
+        }
+    }
+}
