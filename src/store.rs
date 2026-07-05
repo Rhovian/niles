@@ -260,13 +260,16 @@ impl RunResolver {
 }
 
 struct WorkerResolver {
+    local_workspace: Utf8PathBuf,
     local_workers_dir: Utf8PathBuf,
 }
 
 impl WorkerResolver {
     fn from_current() -> Result<Self> {
+        let local_workspace = current_dir_utf8()?;
         Ok(Self {
-            local_workers_dir: current_workers_dir()?,
+            local_workers_dir: local_workspace.join(NILES_DIR).join(WORKERS_DIR),
+            local_workspace,
         })
     }
 
@@ -277,7 +280,10 @@ impl WorkerResolver {
 
         let local_worker_dir = self.local_workers_dir.join(worker);
         if local_worker_dir.exists() {
-            return Ok(Some(WorkerLocation::local(local_worker_dir)));
+            return Ok(Some(WorkerLocation::local(
+                self.local_workspace.clone(),
+                local_worker_dir,
+            )));
         }
 
         Ok(read_global_worker_pointer(worker)?.map(WorkerLocation::from_pointer))
@@ -311,7 +317,7 @@ impl WorkerResolver {
                 let id = path.file_name()?.to_owned();
                 (id != "archive").then(|| WorkerListEntry {
                     id: id.clone(),
-                    location: WorkerLocation::local(path),
+                    location: WorkerLocation::local(self.local_workspace.clone(), path),
                 })
             })
             .collect::<Vec<_>>();
@@ -342,9 +348,9 @@ impl WorkerResolver {
             if id == "archive" {
                 continue;
             }
-            by_id
-                .entry(id.to_owned())
-                .or_insert_with(|| WorkerLocation::local(path.to_path_buf()));
+            by_id.entry(id.to_owned()).or_insert_with(|| {
+                WorkerLocation::local(self.local_workspace.clone(), path.to_path_buf())
+            });
         }
 
         Ok(())
@@ -449,6 +455,10 @@ fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPointer>> {
     Ok(read_global_index(&path)?.workers.get(worker).cloned())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "missing global archive entries mean this worker has no global archives; local archive discovery still runs"
+)]
 fn global_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?
@@ -468,6 +478,10 @@ fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
         .find(|run_dir| run_dir.is_dir()))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the global index is optional until the first registered run or worker creates it"
+)]
 fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
     Ok(schema::read_optional_json(path, ArtifactKind::GlobalIndex)?.unwrap_or_default())
 }
@@ -546,13 +560,7 @@ impl WorkerLocation {
         }
     }
 
-    fn local(worker_dir: Utf8PathBuf) -> Self {
-        let workspace = worker_dir
-            .parent()
-            .and_then(Utf8Path::parent)
-            .and_then(Utf8Path::parent)
-            .unwrap_or(Utf8Path::new("."))
-            .to_path_buf();
+    fn local(workspace: Utf8PathBuf, worker_dir: Utf8PathBuf) -> Self {
         Self {
             workspace,
             worker_dir,
@@ -922,8 +930,15 @@ mod tests {
     }
 
     fn worker_resolver_at(local_workers_dir: &Utf8Path) -> WorkerResolver {
+        let local_workspace = local_workers_dir
+            .parent()
+            .and_then(Utf8Path::parent)
+            .and_then(Utf8Path::parent)
+            .unwrap()
+            .to_path_buf();
         WorkerResolver {
             local_workers_dir: local_workers_dir.to_path_buf(),
+            local_workspace,
         }
     }
 

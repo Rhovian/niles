@@ -23,6 +23,8 @@ use crate::{
 
 const MANAGER_BRIEF_TEMPLATE: &str = include_str!("templates/manager_brief.md");
 const FOREGROUND_TMUX_SESSION: &str = "niles";
+const SIGNAL_EXIT_LABEL: &str = "signal";
+const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -263,7 +265,7 @@ fn launch_foreground_agent(workspace: &Utf8Path, manifest: &WorkspaceManifest) -
             status
                 .code()
                 .map(|code| code.to_string())
-                .unwrap_or_else(|| "signal".to_owned())
+                .unwrap_or_else(|| SIGNAL_EXIT_LABEL.to_owned())
         )
     }
 }
@@ -335,15 +337,11 @@ fn manager_prompt_io(agent: &str, prompt: PromptMode, brief: String) -> Foregrou
 }
 
 fn manager_prompt_args(agent: &str, brief: String) -> Vec<String> {
-    agents::manager_prompt_args(agent, brief, startup_prompt())
+    agents::manager_prompt_args(agent, brief, STARTUP_PROMPT.to_owned())
 }
 
 fn manager_stdin_prompt(brief: String) -> String {
-    format!("{brief}\n\n{}", startup_prompt())
-}
-
-fn startup_prompt() -> String {
-    "Start the Niles manager session.".to_owned()
+    format!("{brief}\n\n{STARTUP_PROMPT}")
 }
 
 fn write_manager_session(

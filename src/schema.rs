@@ -82,8 +82,7 @@ where
     let value = parse_json_value(path, kind, &body)?;
     let probe = schema_from_json(&value);
     reject_newer_schema(path, kind, probe)?;
-    serde_json::from_value::<T>(value.clone())
-        .map_err(|err| deserialize_failure(path, kind, probe, err))?;
+    T::deserialize(&value).map_err(|err| deserialize_failure(path, kind, probe, err))?;
     Ok(value)
 }
 
