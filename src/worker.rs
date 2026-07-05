@@ -1,4 +1,4 @@
-use std::{fs, io::ErrorKind, time::SystemTime};
+use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Error, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -94,7 +94,7 @@ pub fn spawn(
 
     let dir = store::workspace_worker_dir(&project, &id)?;
     if dir.exists() {
-        archive_worker_dir(&id, &project, &dir, Utc::now())?;
+        archive_worker_dir(&id, &dir, Utc::now())?;
     }
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
@@ -348,7 +348,7 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
         .err()
         .map(|err| err.to_string());
 
-    let archive_dir = archive_worker_dir(id, &meta.project, &worker_dir, Utc::now())?;
+    let archive_dir = archive_worker_dir(id, &worker_dir, Utc::now())?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
     store::unregister_worker_location(
         id,
@@ -388,7 +388,7 @@ pub fn workers() -> Result<()> {
         println!(
             "  {},{},{},{},{},{}",
             worker.id,
-            display_agent(&worker.meta),
+            worker.meta.agent.as_str(),
             task,
             age,
             window,
@@ -428,10 +428,6 @@ fn close_all_worker_ids() -> Result<Vec<String>> {
     ids.sort();
     ids.dedup();
     Ok(ids)
-}
-
-fn display_agent(meta: &WorkerMeta) -> &str {
-    &meta.agent
 }
 
 enum WorkerWindowState {
@@ -481,11 +477,7 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
-        .map(system_time_to_utc)
-}
-
-fn system_time_to_utc(time: SystemTime) -> DateTime<Utc> {
-    DateTime::<Utc>::from(time)
+        .map(DateTime::<Utc>::from)
 }
 
 fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
@@ -635,7 +627,7 @@ fn resolve_send_target(
 }
 
 fn worker_target(id: String) -> Result<PaneTarget> {
-    let meta = read_meta(&id)?.meta;
+    let meta = read_meta(&id)?;
     Ok(PaneTarget::Worker {
         id,
         target: meta.window,
@@ -721,17 +713,13 @@ fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
     write_json_pretty(&path, meta)
 }
 
-struct LoadedWorker {
-    meta: WorkerMeta,
-}
-
-fn read_meta(id: &str) -> Result<LoadedWorker> {
+fn read_meta(id: &str) -> Result<WorkerMeta> {
     validate_id(id)?;
     let location = resolve_worker(id)?;
     let path = meta_path(&location.worker_dir);
     let meta = read_meta_if_exists(&location.worker_dir)?
         .with_context(|| format!("worker metadata missing for '{id}' at {path}"))?;
-    Ok(LoadedWorker { meta })
+    Ok(meta)
 }
 
 fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
@@ -774,7 +762,6 @@ fn capture_final_pane(
 
 fn archive_worker_dir(
     id: &str,
-    workspace: &Utf8Path,
     worker_dir: &Utf8Path,
     archived_at: DateTime<Utc>,
 ) -> Result<Utf8PathBuf> {
@@ -786,7 +773,7 @@ fn archive_worker_dir(
         .with_context(|| format!("failed to create {archive_root}"))?;
     let archive_dir = archive_root.join(format!("{id}-{}", timestamp_id(&archived_at)));
     move_dir(worker_dir, &archive_dir)?;
-    store::register_worker_archive(id, workspace, &archive_dir, archived_at)?;
+    store::register_worker_archive(id, &archive_dir, archived_at)?;
     Ok(archive_dir)
 }
 
