@@ -775,6 +775,14 @@ agents:
     }
 
     #[test]
+    fn cost_discipline_guidance() {
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("## Cost Discipline"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Tier reviewers by surface risk"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Scope re-reviews to the fix delta"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
+    }
+
+    #[test]
     fn manager_brief_render_includes_manifest_flow() {
         let workspace = temp_test_path("brief-render");
         let dir = workspace.join(".niles/sessions/test-session");
