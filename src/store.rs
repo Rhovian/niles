@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     schema::{self, ArtifactKind},
     state::{RunState, StepRecord},
-    util::{absolute_path, current_dir_utf8, remove_file_if_exists, utf8_path, write_json_pretty},
+    util::{
+        absolute_path, current_dir_utf8, read_dir_utf8_paths, remove_file_if_exists, utf8_path,
+        write_json_pretty,
+    },
 };
 
 const NILES_DIR: &str = ".niles";
@@ -303,8 +306,7 @@ impl WorkerResolver {
     }
 
     fn local_directories(&self) -> Result<Vec<WorkerListEntry>> {
-        let mut workers = self
-            .local_paths()?
+        let mut workers = read_dir_utf8_paths(&self.local_workers_dir)?
             .into_iter()
             .filter(|path| path.is_dir())
             .filter_map(|path| {
@@ -324,7 +326,7 @@ impl WorkerResolver {
     }
 
     fn collect_local(&self, by_id: &mut BTreeMap<String, WorkerLocation>) -> Result<()> {
-        let paths = self.local_paths()?;
+        let paths = read_dir_utf8_paths(&self.local_workers_dir)?;
 
         for path in paths.iter().filter(|path| path.extension() == Some("json")) {
             if let Some(pointer) = read_worker_pointer(path)? {
@@ -348,29 +350,6 @@ impl WorkerResolver {
         }
 
         Ok(())
-    }
-
-    fn local_paths(&self) -> Result<Vec<Utf8PathBuf>> {
-        let entries = match fs::read_dir(&self.local_workers_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("failed to read {}", self.local_workers_dir));
-            }
-        };
-
-        let mut paths = entries
-            .map(|entry| {
-                let entry = entry.with_context(|| {
-                    format!("failed to read entry in {}", self.local_workers_dir)
-                })?;
-                Utf8PathBuf::from_path_buf(entry.path())
-                    .map_err(|path| anyhow::anyhow!("worker path is not UTF-8: {}", path.display()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        paths.sort();
-        Ok(paths)
     }
 }
 
@@ -398,21 +377,11 @@ fn write_run_pointer(
 }
 
 fn latest_local_run_dir(runs_dir: &Utf8Path) -> Result<Option<Utf8PathBuf>> {
-    let entries = match fs::read_dir(runs_dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {runs_dir}")),
-    };
-
-    let mut runs = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let path = Utf8PathBuf::from_path_buf(entry.path()).ok()?;
-            path.is_dir().then_some(path)
-        })
+    let mut runs = read_dir_utf8_paths(runs_dir)?
+        .into_iter()
+        .filter(|path| path.is_dir())
         .collect::<Vec<_>>();
 
-    runs.sort();
     Ok(runs.pop())
 }
 
@@ -637,17 +606,8 @@ struct GlobalIndex {
 
 fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
     let archive_root = worker_archive_root(&current_workers_dir()?);
-    let entries = match fs::read_dir(&archive_root) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {archive_root}")),
-    };
-
     let mut archives = Vec::new();
-    for entry in entries.filter_map(|entry| entry.ok()) {
-        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
-            continue;
-        };
+    for path in read_dir_utf8_paths(&archive_root)? {
         if !path.is_dir() {
             continue;
         }
@@ -667,6 +627,10 @@ fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
     Ok(archives)
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "timestamp parse failure can be a prefix-sibling worker archive, so archive discovery must skip it"
+)]
 fn worker_archive_timestamp(worker: &str, archive_name: &str) -> Option<DateTime<Utc>> {
     let timestamp = archive_name.strip_prefix(&format!("{worker}-"))?;
     let timestamp = NaiveDateTime::parse_from_str(timestamp, "%Y%m%dT%H%M%S%fZ").ok()?;

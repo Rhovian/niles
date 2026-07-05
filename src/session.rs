@@ -16,7 +16,7 @@ use crate::{
     config::spec::{PromptMode, load_project_config_from},
     schema::{self, ArtifactKind},
     store, tmux,
-    util::{current_dir_utf8, timestamp_id, write_json_pretty},
+    util::{current_dir_utf8, read_dir_utf8_paths, timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest},
 };
@@ -439,16 +439,8 @@ fn latest_run_context(workspace: &Utf8Path) -> Result<String> {
 
 fn worker_context(workspace: &Utf8Path) -> Result<String> {
     let worker_dir = workspace.join(".niles").join("worker");
-    let entries = match fs::read_dir(&worker_dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok("worker: none".to_owned());
-        }
-        Err(err) => return Err(err).with_context(|| format!("failed to read {worker_dir}")),
-    };
-    let mut ids = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
+    let mut ids = read_dir_utf8_paths(&worker_dir)?
+        .into_iter()
         .filter(|path| path.extension() == Some("json"))
         .filter_map(|path| {
             path.file_stem()
