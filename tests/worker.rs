@@ -2043,6 +2043,33 @@ fn report_falls_back_to_most_recent_archive_from_unrelated_cwd() {
 }
 
 #[test]
+fn report_skips_prefix_sibling_worker_archive() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-prefix-archive");
+    let home = niles_home(&workspace);
+    let archive_root = workspace.join(".niles/worker/archive");
+    let worker_archive = archive_root.join("a-20260705T120000000000Z");
+    let sibling_archive = archive_root.join("a-fs-20260705T130000000000Z");
+    fs::create_dir_all(&worker_archive).unwrap();
+    fs::create_dir_all(&sibling_archive).unwrap();
+    fs::write(worker_archive.join("report.md"), "short worker report\n").unwrap();
+    fs::write(sibling_archive.join("report.md"), "sibling worker report\n").unwrap();
+
+    let report = Command::new(niles)
+        .args(["report", "a"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", &home)
+        .output()
+        .unwrap();
+
+    assert_command_success("prefix sibling archived report", &report);
+    assert_eq!(
+        String::from_utf8_lossy(&report.stdout),
+        "short worker report\n"
+    );
+}
+
+#[test]
 fn worker_close_on_archived_worker_errors_and_mentions_archive() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-double-close");

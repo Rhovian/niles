@@ -6,6 +6,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::{Mapping as YamlMap, Value as YamlValue};
 
+use crate::util::read_dir_utf8_paths;
+
 pub(crate) const CURRENT_SCHEMA: u64 = 2;
 const LEGACY_SCHEMA: u64 = 1;
 const FIELD: &str = "niles_schema";
@@ -462,35 +464,17 @@ fn push_yaml_if_file(
 }
 
 fn read_dir_paths(observations: &mut Vec<SchemaObservation>, dir: &Utf8Path) -> Vec<Utf8PathBuf> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Vec::new(),
+    match read_dir_utf8_paths(dir) {
+        Ok(paths) => paths,
         Err(_) => {
             observations.push(SchemaObservation {
                 kind: ArtifactKind::Directory,
                 path: dir.to_path_buf(),
                 status: SchemaStatus::Unreadable,
             });
-            return Vec::new();
-        }
-    };
-
-    let mut paths = Vec::new();
-    for entry in entries {
-        let Ok(entry) = entry else {
-            observations.push(SchemaObservation {
-                kind: ArtifactKind::Directory,
-                path: dir.to_path_buf(),
-                status: SchemaStatus::Unreadable,
-            });
-            continue;
-        };
-        if let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) {
-            paths.push(path);
+            Vec::new()
         }
     }
-    paths.sort();
-    paths
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

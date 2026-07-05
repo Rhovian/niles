@@ -51,6 +51,23 @@ pub fn current_dir_utf8() -> Result<Utf8PathBuf> {
     )
 }
 
+pub(crate) fn read_dir_utf8_paths(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {dir}")),
+    };
+
+    let mut paths = entries
+        .map(|entry| {
+            let entry = entry.with_context(|| format!("failed to read entry in {dir}"))?;
+            utf8_path(entry.path(), "directory entry path")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    paths.sort();
+    Ok(paths)
+}
+
 pub fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -214,6 +231,47 @@ mod tests {
         let path = Utf8Path::new("/tmp/niles-absolute-path-test");
 
         assert_eq!(absolute_path_from(base, path), path);
+    }
+
+    #[test]
+    fn read_dir_utf8_paths_sorts_entries() {
+        let dir = temp_test_path("read-dir-sorted");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b"), "").unwrap();
+        fs::write(dir.join("a"), "").unwrap();
+
+        let paths = read_dir_utf8_paths(&dir).unwrap();
+
+        assert_eq!(paths, vec![dir.join("a"), dir.join("b")]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn read_dir_utf8_paths_treats_missing_directory_as_empty() {
+        let dir = temp_test_path("read-dir-missing");
+
+        assert!(read_dir_utf8_paths(&dir).unwrap().is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_dir_utf8_paths_rejects_non_utf8_entry_paths() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let dir = temp_test_path("read-dir-non-utf8");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir
+            .as_std_path()
+            .join(OsString::from_vec(vec![b'e', b'n', b't', b'r', b'y', 0x80]));
+        fs::write(path, "").unwrap();
+
+        let err = read_dir_utf8_paths(&dir).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("directory entry path is not UTF-8")
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

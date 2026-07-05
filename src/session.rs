@@ -16,7 +16,7 @@ use crate::{
     config::spec::{PromptMode, load_project_config_from},
     schema::{self, ArtifactKind},
     store, tmux,
-    util::{current_dir_utf8, timestamp_id, write_json_pretty},
+    util::{current_dir_utf8, read_dir_utf8_paths, timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest},
 };
@@ -439,16 +439,8 @@ fn latest_run_context(workspace: &Utf8Path) -> Result<String> {
 
 fn worker_context(workspace: &Utf8Path) -> Result<String> {
     let worker_dir = workspace.join(".niles").join("worker");
-    let entries = match fs::read_dir(&worker_dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok("worker: none".to_owned());
-        }
-        Err(err) => return Err(err).with_context(|| format!("failed to read {worker_dir}")),
-    };
-    let mut ids = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
+    let mut ids = read_dir_utf8_paths(&worker_dir)?
+        .into_iter()
         .filter(|path| path.extension() == Some("json"))
         .filter_map(|path| {
             path.file_stem()
@@ -780,6 +772,28 @@ agents:
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Tier reviewers by surface risk"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Scope re-reviews to the fix delta"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn worker_context_errors_on_non_utf8_entry_instead_of_reporting_no_workers() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let workspace = temp_test_path("worker-context-non-utf8");
+        let worker_dir = workspace.join(".niles/worker");
+        fs::create_dir_all(&worker_dir).unwrap();
+        fs::write(
+            worker_dir
+                .as_std_path()
+                .join(OsString::from_vec(vec![0x80])),
+            "",
+        )
+        .unwrap();
+
+        let err = worker_context(&workspace).unwrap_err();
+
+        assert!(err.to_string().contains("directory entry path is not UTF-8"));
+        fs::remove_dir_all(&workspace).unwrap();
     }
 
     #[test]
