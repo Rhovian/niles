@@ -22,6 +22,8 @@ pub(crate) const DEFAULT_PEEK_LINES: usize = 2000;
 const FINAL_PANE_CAPTURE_LINES: usize = 2000;
 const REPORT_FILE: &str = "report.md";
 const FINAL_PANE_FILE: &str = "final-pane.txt";
+const UNLABELED_TASK_LABEL: &str = "-";
+const EMPTY_STATUS_PLACEHOLDER: &str = "-";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WorkerMeta {
@@ -103,6 +105,7 @@ pub fn spawn(
         None => {
             let path = dir.join("brief.md");
             write_brief(
+                &dir,
                 &path,
                 &id,
                 task_label.as_deref(),
@@ -331,11 +334,7 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     let worker_dir = location.worker_dir.clone();
     let meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
     let window_name = agent_window::worker_window_name_from_target(id, &meta.window);
-    let status_path = meta
-        .status
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| wake::status_log_path(&worker_dir));
+    let status_path = metadata_status_path(&meta, &worker_dir);
     append_closed_sentinel(&status_path, id)?;
 
     let (pane_path, pane_error) = match capture_final_pane(&worker_dir, Some(&meta), &window_name) {
@@ -381,10 +380,17 @@ pub fn workers() -> Result<()> {
 
     let now = Utc::now();
     for worker in workers {
-        let task = worker.meta.task_label.as_deref().unwrap_or("-");
+        let task = match worker.meta.task_label.as_deref() {
+            Some(task) => task,
+            None => UNLABELED_TASK_LABEL,
+        };
         let age = worker_age(&worker, now);
         let window = worker_window_state(&worker.meta);
         let status = last_status_line(&worker)?;
+        let status = match status {
+            Some(status) => status,
+            None => EMPTY_STATUS_PLACEHOLDER.to_owned(),
+        };
         println!(
             "  {},{},{},{},{},{}",
             worker.id,
@@ -392,7 +398,7 @@ pub fn workers() -> Result<()> {
             task,
             age,
             window,
-            status.unwrap_or_else(|| "-".to_owned())
+            status
         );
     }
 
@@ -455,11 +461,14 @@ fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
 }
 
 fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
-    let started_at = worker
+    let started_at = match worker
         .meta
         .created_at
         .or_else(|| path_time(&meta_path(&worker.location.worker_dir)))
-        .unwrap_or(now);
+    {
+        Some(started_at) => started_at,
+        None => now,
+    };
     let seconds = now.signed_duration_since(started_at).num_seconds().max(0);
 
     if seconds < 60 {
@@ -473,6 +482,10 @@ fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "worker age is advisory; unreadable metadata mtime falls back to the current listing time"
+)]
 fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -480,13 +493,16 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
+fn metadata_status_path(meta: &WorkerMeta, worker_dir: &Utf8Path) -> Utf8PathBuf {
+    match &meta.status {
+        Some(status) => status.clone(),
+        // Older worker metadata did not stamp `status`; the canonical log lives beside the worker.
+        None => wake::status_log_path(worker_dir),
+    }
+}
+
 fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
-    let status_path = worker
-        .meta
-        .status
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| wake::status_log_path(&worker.location.worker_dir));
+    let status_path = metadata_status_path(&worker.meta, &worker.location.worker_dir);
     let body = match fs::read_to_string(&status_path) {
         Ok(body) => body,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
@@ -502,24 +518,21 @@ fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
 pub fn report(id: String) -> Result<()> {
     validate_id(&id)?;
     if let Some(location) = resolve_live_worker_if_exists(&id)? {
-        return print_report(&id, &report_path(&location.worker_dir), None);
+        return print_report(&id, &location.worker_dir, None);
     }
 
     let Some(archive) = latest_archive(&id)? else {
         bail!("no report found for worker '{id}': no live worker or archive found");
     };
-    let path = report_path(&archive.archive_dir);
-    print_report(&id, &path, Some(&archive.archive_dir))
+    print_report(&id, &archive.archive_dir, Some(&archive.archive_dir))
 }
 
-fn print_report(id: &str, path: &Utf8Path, archive_dir: Option<&Utf8Path>) -> Result<()> {
+fn print_report(id: &str, dir: &Utf8Path, archive_dir: Option<&Utf8Path>) -> Result<()> {
+    let path = report_path(dir);
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            let final_pane = path
-                .parent()
-                .map(final_pane_path)
-                .unwrap_or_else(|| Utf8PathBuf::from(FINAL_PANE_FILE));
+            let final_pane = final_pane_path(dir);
             if final_pane.exists() {
                 bail!(
                     "no report found for worker '{id}' at {path}; final pane snapshot is available at {final_pane}"
@@ -664,15 +677,14 @@ fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarg
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     validate_id(id)?;
     let location = resolve_worker(id)?;
-    if let Some(meta) = read_meta_if_exists(&location.worker_dir)?
-        && let Some(status) = meta.status
-    {
-        return Ok(status);
+    if let Some(meta) = read_meta_if_exists(&location.worker_dir)? {
+        return Ok(metadata_status_path(&meta, &location.worker_dir));
     }
     Ok(wake::status_log_path(&location.worker_dir))
 }
 
 fn write_brief(
+    dir: &Utf8Path,
     path: &Utf8Path,
     id: &str,
     task_label: Option<&str>,
@@ -680,24 +692,22 @@ fn write_brief(
     agent: &str,
     task: &str,
 ) -> Result<()> {
-    let status_path = path
-        .parent()
-        .map(wake::status_log_path)
-        .unwrap_or_else(|| Utf8PathBuf::from("status.log"));
-    let report_path = path
-        .parent()
-        .map(report_path)
-        .unwrap_or_else(|| Utf8PathBuf::from(REPORT_FILE));
+    let status_path = wake::status_log_path(dir);
+    let report_file = report_path(dir);
     let wake_examples = wake::worker_contract_examples(&status_path);
+    let task_label = match task_label {
+        Some(task_label) => task_label,
+        None => UNLABELED_TASK_LABEL,
+    };
     let body = render_template(
         WORKER_BRIEF_TEMPLATE,
         &[
             ("{id}", id),
-            ("{task_label}", task_label.unwrap_or("-")),
+            ("{task_label}", task_label),
             ("{project}", project.as_str()),
             ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
-            ("{report_path}", report_path.as_str()),
+            ("{report_path}", report_file.as_str()),
             ("{task}", task),
             ("{wake_examples}", &wake_examples),
         ],

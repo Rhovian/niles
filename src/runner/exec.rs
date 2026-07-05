@@ -8,7 +8,7 @@ use crate::{
     agent_window, agents,
     config::spec::{PromptMode, TaskSpec, TaskStep},
     context::{agent_prompt, write_agent_context},
-    process::{ProcessSpec, run_process},
+    process::{ProcessSpec, exit_code_label, role_prefix, run_process},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{absolute_path, append_line, render_template, slugify},
@@ -21,6 +21,7 @@ use super::{RunSelector, lifecycle::load_spec_for_run, report};
 /// enough to hold an agent's session; `context.rs` truncates when embedding.
 const PANE_CAPTURE_LINES: usize = 2000;
 const STEP_WAKE_CONTRACT_TEMPLATE: &str = include_str!("../templates/step_wake_contract.md");
+const IMPLICIT_TASK_WORKSPACE: &str = ".";
 
 struct LoadedRun {
     run_dir: Utf8PathBuf,
@@ -46,23 +47,18 @@ fn load_run(selector: RunSelector) -> Result<LoadedRun> {
 pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let mut run = load_run(selector)?;
 
-    let step_number = match index {
-        Some(index) => index,
+    let record_position = match index {
+        Some(index) => step_record_position(&run.state, index)?,
         None => run
             .state
             .steps
             .iter()
-            .find(|step| matches!(step.status, StepStatus::Pending))
-            .map(|step| step.index)
+            .position(|step| matches!(step.status, StepStatus::Pending))
             .context("run has no pending steps to launch")?,
     };
 
-    let record = run
-        .state
-        .steps
-        .iter()
-        .find(|step| step.index == step_number)
-        .with_context(|| format!("step {step_number} not found"))?;
+    let step_number = run.state.steps[record_position].index;
+    let record = &run.state.steps[record_position];
     if !matches!(record.status, StepStatus::Pending) {
         bail!(
             "step {step_number} is {}; only pending steps can be launched",
@@ -134,15 +130,9 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
 
     // Mark the step running now that the window exists, so a follow-up `step`
     // call won't re-pick this step before it is closed.
-    mark_step_running(&mut run.state, step_number, Some(brief.clone()));
-    if let Some(step) = run
-        .state
-        .steps
-        .iter_mut()
-        .find(|step| step.index == step_number)
-    {
-        step.window = Some(window_name.clone());
-    }
+    let step = &mut run.state.steps[record_position];
+    mark_step_running(step, Some(brief.clone()));
+    step.window = Some(window_name.clone());
     if matches!(run.state.status, RunStatus::Created) {
         run.state.status = RunStatus::Running;
     }
@@ -267,7 +257,10 @@ fn task_step(spec: &TaskSpec, step_number: usize) -> Result<&TaskStep> {
 }
 
 fn spec_workspace(spec: &TaskSpec) -> &Utf8Path {
-    spec.workspace.as_deref().unwrap_or(Utf8Path::new("."))
+    match spec.workspace.as_deref() {
+        Some(workspace) => workspace,
+        None => Utf8Path::new(IMPLICIT_TASK_WORKSPACE),
+    }
 }
 
 fn ensure_steps_dir(run_dir: &Utf8Path) -> Result<Utf8PathBuf> {
@@ -327,16 +320,9 @@ pub(crate) fn exec_step(selector: RunSelector, index: usize) -> Result<()> {
         .iter()
         .find(|step| step.index == index)
         .with_context(|| format!("run state is missing step {index}"))?;
-    let exit = record
-        .exit_code
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "signal".to_owned());
+    let exit = exit_code_label(record.exit_code);
     let label = record.label.clone();
-    let role_label = record
-        .role
-        .as_deref()
-        .map(|role| format!("{role} "))
-        .unwrap_or_default();
+    let role_label = role_prefix(record.role.as_deref());
 
     if failed {
         append_run_status(
@@ -428,6 +414,7 @@ fn mark_step_failed(state: &mut RunState, state_path: &Utf8Path, index: usize) -
 }
 
 fn status_detail(err: &Error) -> String {
+    // Status-log wake signals are one line, so collapse multi-line error detail.
     err.to_string()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -472,7 +459,8 @@ pub(in crate::runner) fn execute_single_step(
         }
     };
 
-    mark_step_running(state, step_number, context.clone());
+    let record_position = step_record_position(state, step_number)?;
+    mark_step_running(&mut state.steps[record_position], context.clone());
     state.updated_at = Utc::now();
     write_state(state_path, state)?;
     if watch {
@@ -526,16 +514,18 @@ pub(in crate::runner) fn execute_single_step(
     Ok(failed)
 }
 
-fn mark_step_running(state: &mut RunState, step_number: usize, context: Option<Utf8PathBuf>) {
-    if let Some(step) = state
+fn step_record_position(state: &RunState, step_number: usize) -> Result<usize> {
+    state
         .steps
-        .iter_mut()
-        .find(|step| step.index == step_number)
-    {
-        step.status = StepStatus::Running;
-        step.started_at = Some(Utc::now());
-        step.context = context;
-    }
+        .iter()
+        .position(|step| step.index == step_number)
+        .with_context(|| format!("step {step_number} not found"))
+}
+
+fn mark_step_running(step: &mut StepRecord, context: Option<Utf8PathBuf>) {
+    step.status = StepStatus::Running;
+    step.started_at = Some(Utc::now());
+    step.context = context;
 }
 
 fn update_step_record(state: &mut RunState, result: StepRecord) {
