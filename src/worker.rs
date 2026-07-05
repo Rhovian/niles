@@ -1,6 +1,6 @@
 use std::{fs, io::ErrorKind, time::SystemTime};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Error, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -391,7 +391,7 @@ pub fn workers() -> Result<()> {
             display_agent(&worker.meta),
             task,
             age,
-            window.as_str(),
+            window,
             status.unwrap_or_else(|| "-".to_owned())
         );
     }
@@ -437,21 +437,28 @@ fn display_agent(meta: &WorkerMeta) -> &str {
 enum WorkerWindowState {
     Live,
     Dead,
+    Unknown(Error),
 }
 
-impl WorkerWindowState {
-    fn as_str(&self) -> &'static str {
+impl std::fmt::Display for WorkerWindowState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Live => "live",
-            Self::Dead => "window-dead",
+            Self::Live => f.write_str("live"),
+            Self::Dead => f.write_str("window-dead"),
+            Self::Unknown(err) => write!(f, "window-unknown:{err:#}"),
         }
     }
 }
 
 fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
-    match agent_window::target_exists(&meta.window) {
+    worker_window_state_from_query(agent_window::target_exists(&meta.window))
+}
+
+fn worker_window_state_from_query(query: Result<bool>) -> WorkerWindowState {
+    match query {
         Ok(true) => WorkerWindowState::Live,
-        Ok(false) | Err(_) => WorkerWindowState::Dead,
+        Ok(false) => WorkerWindowState::Dead,
+        Err(err) => WorkerWindowState::Unknown(err),
     }
 }
 
