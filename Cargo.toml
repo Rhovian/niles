@@ -6,6 +6,12 @@ description = "A Rust CLI orchestration harness for coordinating agent CLIs."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Rhovian/niles"
 
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+wildcard_enum_match_arm = "deny"
+disallowed_methods = "warn"
+
 [dependencies]
 anyhow = "1.0"
 camino = { version = "1.1", features = ["serde1"] }

@@ -1,0 +1,7 @@
+disallowed-methods = [
+    { path = "std::option::Option::unwrap_or", reason = "a default is a decision — hoist it to the parse boundary or a named const; #[expect] with a reason if this site truly owns it" },
+    { path = "std::result::Result::unwrap_or", reason = "a default is a decision — hoist it to the parse boundary or a named const; #[expect] with a reason if this site truly owns it" },
+    { path = "std::option::Option::unwrap_or_default", reason = "silent default — name the value and the decision, or restructure so the gap can't occur" },
+    { path = "std::result::Result::unwrap_or_default", reason = "silent default — name the value and the decision, or restructure so the gap can't occur" },
+    { path = "std::result::Result::ok", reason = "swallows the error — propagate or handle it; #[expect] with a reason if the error is genuinely irrelevant" },
+]
