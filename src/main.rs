@@ -31,8 +31,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => session::run(cli.manager, cli.goal),
-        Some(CommandName::Ask { agent, prompt }) => runner::ask(agent, prompt),
+        None => session::run(cli.manager),
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent),
         Some(CommandName::Doctor) => doctor::doctor(),
         Some(CommandName::Run {

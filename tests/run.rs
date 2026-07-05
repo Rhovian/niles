@@ -820,7 +820,6 @@ fn bare_niles_errors_when_stdin_is_not_interactive() {
     write_workspace_manifest(&workspace, "claude", "claude", "codex", "claude", "test");
 
     let output = Command::new(niles)
-        .args(["--goal", "Fix the startup flow"])
         .current_dir(&workspace)
         .env("TMUX", "/tmp/niles-test-tmux")
         .output()

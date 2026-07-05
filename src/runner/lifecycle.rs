@@ -14,17 +14,12 @@ use crate::{
     store::{read_state, state_path, write_state},
     util::{
         absolute_existing_dir, absolute_existing_file, absolute_path, absolute_path_from,
-        current_dir_utf8, slugify, timestamp_id, write_json_pretty,
+        current_dir_utf8, timestamp_id, write_json_pretty,
     },
-    worker, workspace_manifest,
+    workspace_manifest,
 };
 
 use super::RunSelector;
-
-pub(crate) fn ask(agent: String, prompt: Vec<String>) -> Result<()> {
-    let id = format!("ask-{}-{}", slugify(&agent), timestamp_id(&Utc::now()));
-    worker::spawn(id, None, current_dir_utf8()?, agent, None, prompt, false)
-}
 
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
     let task = absolute_existing_file(&task, "task")?;

@@ -353,8 +353,6 @@ mod tests {
     fn foreground_new_session_args_preserve_argv_boundaries_for_named_session() {
         let argv = [
             "/opt/homebrew/bin/niles",
-            "--goal",
-            "fix quoted path /tmp/with spaces",
             "--manager",
             "codex:gpt-5:high",
         ]
@@ -376,8 +374,6 @@ mod tests {
                 "/tmp/workspace with spaces",
                 "--",
                 "/opt/homebrew/bin/niles",
-                "--goal",
-                "fix quoted path /tmp/with spaces",
                 "--manager",
                 "codex:gpt-5:high",
             ]
