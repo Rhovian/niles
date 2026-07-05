@@ -312,7 +312,9 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let manifest = prompt_manifest_values(root, input, output, defaults, &agent_configs)?;
+    let manager =
+        picker::prompt_agent_value(root, "Manager agent", &defaults.manager, &agent_configs)?;
+    let manifest = prompt_manifest_values(root, input, output, manager, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -332,7 +334,8 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        *manifest = prompt_manifest_values(root, input, output, manifest, agent_configs)?;
+        let manager = manifest.manager.clone();
+        *manifest = prompt_manifest_values(root, input, output, manager, manifest, agent_configs)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
     }
@@ -344,16 +347,12 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
     root: &Utf8Path,
     input: &mut R,
     output: &mut W,
+    manager: String,
     defaults: &WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager: picker::prompt_agent_value(
-            root,
-            "Manager agent",
-            &defaults.manager,
-            agent_configs,
-        )?,
+        manager,
         planner: picker::prompt_agent_value(
             root,
             "Planner agent",

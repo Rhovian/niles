@@ -19,6 +19,8 @@ Write concise status/progress lines to the status file. Write substantial delive
 
 Stay warm after `done:`. In Niles, `done:` means the manager should wake and decide the next follow-up; it is not a request to terminate this worker. Keep the pane open until the manager explicitly cleans up the task with `niles worker-close`.
 
+When your task is a follow-up review after a fix, verify the named fixes against your prior findings and hunt regressions in the changed area — do not re-run your full original investigation unless the task says the change touched substrate.
+
 ## Wake Contract
 
 Append actionable status lines to the status file so Niles can wake the foreground manager:

@@ -922,6 +922,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn worker_brief_mentions_followup_review_scope() {
+        assert!(WORKER_BRIEF_TEMPLATE.contains("follow-up review after a fix"));
+    }
+
+    #[test]
     fn closed_sentinel_starts_on_its_own_line() {
         let dir = std::env::temp_dir().join(format!(
             "niles-worker-sentinel-{}",
