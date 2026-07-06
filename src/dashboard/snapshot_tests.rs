@@ -12,6 +12,7 @@ use super::snapshot::{
     DashboardRole, DashboardRow, DashboardSnapshot, DashboardSources, ManagerLifecycle,
     PaneLiveness, RunStepDashboardMeta, TmuxWindows, assemble_snapshot,
 };
+use super::status::WakeState;
 
 #[test]
 fn assembles_rows_from_tmux_and_metadata_sources() {
@@ -94,12 +95,14 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
     assert_eq!(worker.agent, "codex/gpt-5.5/xhigh");
     assert_eq!(worker.pane.liveness, PaneLiveness::Live);
     assert_eq!(worker.wall, "2m");
+    assert_eq!(worker.wake, WakeState::Pending);
     assert_eq!(worker.last_status, "blocked: needs input");
 
     let step = row(&snapshot, "niles-codex-review-s1-abcdef");
     assert_eq!(step.role, DashboardRole::RunStep);
     assert_eq!(step.agent, "codex/gpt-5.5/high");
     assert_eq!(step.wall, "4m");
+    assert_eq!(step.wake, WakeState::NotApplicable);
     assert_eq!(step.last_status, "done: step 1 complete");
     assert_eq!(
         row(&snapshot, "niles-extra").role,
