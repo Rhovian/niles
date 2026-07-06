@@ -4,17 +4,17 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use camino::Utf8Path;
 
 use crate::{
     agents,
-    config::spec::{PromptMode, load_project_config_from},
+    config::spec::{load_project_config_from, PromptMode},
     process::exit_code_label,
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::{SessionMeta, brief::write_manager_session};
+use super::{brief::write_manager_session, SessionMeta};
 
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 
@@ -24,16 +24,18 @@ pub(super) fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = &manifest.manager;
     let invocation = foreground_invocation_for_project(workspace, agent)?;
-    let binary = invocation.binary;
-    let mut args = invocation.args;
-    let family = invocation.spec.family().to_owned();
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec, manifest)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    let prompt = manager_prompt_io(&family, invocation.prompt, brief)?;
-    args.extend(prompt.args);
+    let command = prepare_manager_command(invocation, brief)?;
 
-    let status = run_foreground_process(workspace, &binary, &args, prompt.stdin.as_deref())?;
+    let status = run_foreground_process(
+        workspace,
+        &command.invocation.binary,
+        &command.invocation.args,
+        &command.invocation.env,
+        command.stdin.as_deref(),
+    )?;
 
     if status.success() {
         Ok(())
@@ -45,16 +47,40 @@ pub(super) fn launch_foreground_agent(
     }
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct ManagerCommand {
+    pub(super) invocation: agents::AgentInvocation,
+    pub(super) stdin: Option<String>,
+}
+
+pub(super) fn prepare_manager_command(
+    mut invocation: agents::AgentInvocation,
+    brief: String,
+) -> Result<ManagerCommand> {
+    let family = invocation.spec.family().to_owned();
+    let prompt = manager_prompt_io(&family, invocation.prompt, brief)?;
+    invocation.args.extend(prompt.args);
+    Ok(ManagerCommand {
+        invocation,
+        stdin: prompt.stdin,
+    })
+}
+
 fn run_foreground_process(
     workspace: &Utf8Path,
     binary: &str,
     args: &[String],
+    env: &[(String, String)],
     stdin: Option<&str>,
 ) -> Result<ExitStatus> {
     let mut command = Command::new(binary);
     command
         .current_dir(workspace)
         .args(args)
+        .envs(
+            env.iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
@@ -83,7 +109,7 @@ fn run_foreground_process(
     }
 }
 
-fn foreground_invocation_for_project(
+pub(super) fn foreground_invocation_for_project(
     root: &Utf8Path,
     agent: &str,
 ) -> Result<agents::AgentInvocation> {
@@ -93,12 +119,16 @@ fn foreground_invocation_for_project(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ForegroundPrompt {
+pub(super) struct ForegroundPrompt {
     args: Vec<String>,
     stdin: Option<String>,
 }
 
-fn manager_prompt_io(agent: &str, prompt: PromptMode, brief: String) -> Result<ForegroundPrompt> {
+pub(super) fn manager_prompt_io(
+    agent: &str,
+    prompt: PromptMode,
+    brief: String,
+) -> Result<ForegroundPrompt> {
     match prompt {
         PromptMode::Arg => Ok(ForegroundPrompt {
             args: manager_prompt_args(agent, brief)?,
@@ -229,7 +259,9 @@ agents:
 
         let args = ["--mode", "manager"].map(str::to_owned);
         let prompt = "brief body\n\nStart the Niles manager session.";
-        let status = run_foreground_process(&root, script.as_str(), &args, Some(prompt)).unwrap();
+        let env = Vec::new();
+        let status =
+            run_foreground_process(&root, script.as_str(), &args, &env, Some(prompt)).unwrap();
 
         assert!(status.success());
         let args_body = fs::read_to_string(args_log).unwrap();
@@ -253,7 +285,9 @@ agents:
         );
 
         let args = Vec::new();
-        let status = run_foreground_process(&workspace, script.as_str(), &args, None).unwrap();
+        let env = Vec::new();
+        let status =
+            run_foreground_process(&workspace, script.as_str(), &args, &env, None).unwrap();
 
         assert!(status.success());
         let expected = Utf8PathBuf::from_path_buf(fs::canonicalize(&workspace).unwrap()).unwrap();
@@ -273,9 +307,40 @@ agents:
         write_executable_script(&script, "#!/bin/sh\nexit 42\n");
 
         let args = Vec::new();
-        let status = run_foreground_process(&root, script.as_str(), &args, None).unwrap();
+        let env = Vec::new();
+        let status = run_foreground_process(&root, script.as_str(), &args, &env, None).unwrap();
 
         assert_eq!(status.code(), Some(42));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_foreground_process_applies_invocation_env() {
+        let root = temp_test_path("foreground-env");
+        fs::create_dir_all(&root).unwrap();
+        let script = root.join("manager");
+        let env_log = root.join("env.log");
+        write_executable_script(
+            &script,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$NILES_FOREGROUND_ENV_TEST\" > {}\n",
+                shell_quote(&env_log)
+            ),
+        );
+
+        let args = Vec::new();
+        let env = vec![(
+            "NILES_FOREGROUND_ENV_TEST".to_owned(),
+            "from-invocation".to_owned(),
+        )];
+        let status = run_foreground_process(&root, script.as_str(), &args, &env, None).unwrap();
+
+        assert!(status.success());
+        assert_eq!(
+            fs::read_to_string(env_log).unwrap().trim_end(),
+            "from-invocation"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

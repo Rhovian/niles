@@ -9,6 +9,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
+mod list_windows;
+
+pub(crate) use list_windows::TmuxWindowSnapshot;
+
 const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
 
@@ -119,6 +123,28 @@ pub(crate) fn launch_foreground_session(
 pub(crate) fn attach_foreground_session(session: &str) -> Result<ExitStatus> {
     let args = foreground_attach_session_args(session);
     status_with_terminal(&args)
+}
+
+pub(crate) fn rename_current_window(name: &str) -> Result<()> {
+    run(["rename-window", name])
+}
+
+pub(crate) fn switch_client(target: &str) -> Result<()> {
+    run(["switch-client", "-t", target])
+}
+
+pub(crate) fn list_windows(session: &str) -> Result<Vec<TmuxWindowSnapshot>> {
+    let output = output(["list-windows", "-t", session, "-F", list_windows::format()])
+        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
+
+    if !output.status.success() {
+        bail!(
+            "tmux list-windows failed for session {session}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    list_windows::parse(&output.stdout)
 }
 
 pub(crate) fn ensure_window_available(session: &str, window_name: &str) -> Result<()> {
