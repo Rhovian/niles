@@ -6,6 +6,7 @@ mod pane;
 mod report;
 mod resolve;
 mod spawn;
+mod telemetry;
 mod validation;
 
 pub use close::worker_close;
@@ -17,4 +18,5 @@ pub use spawn::spawn;
 
 pub(crate) use close::{WorkerCloseSelection, select_worker_ids_by_task};
 pub(crate) use pane::DEFAULT_PEEK_LINES;
+pub(crate) use telemetry::{WorkerDashboardMeta, live_workers_for_dashboard};
 pub(crate) use validation::validate_task_label;

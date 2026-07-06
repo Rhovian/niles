@@ -11,8 +11,31 @@ pub struct Cli {
     /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
     pub manager: Option<String>,
+    /// Launch the legacy foreground manager in this tmux pane.
+    #[arg(short = 'd', long = "detached", action = ArgAction::SetTrue)]
+    pub detached: bool,
     #[command(subcommand)]
     pub command: Option<CommandName>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BareSessionMode {
+    Resident,
+    Foreground,
+}
+
+impl Cli {
+    pub(crate) fn bare_session_mode(&self) -> Option<BareSessionMode> {
+        if self.command.is_some() {
+            return None;
+        }
+
+        if self.detached {
+            Some(BareSessionMode::Foreground)
+        } else {
+            Some(BareSessionMode::Resident)
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -247,4 +270,39 @@ pub enum CommandName {
         #[arg(short, long)]
         step: Option<usize>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_niles_selects_resident_session() {
+        let cli = Cli::try_parse_from(["niles"]).unwrap();
+
+        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Resident));
+    }
+
+    #[test]
+    fn detached_bare_niles_selects_foreground_session() {
+        let cli = Cli::try_parse_from(["niles", "-d"]).unwrap();
+
+        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Foreground));
+    }
+
+    #[test]
+    fn manager_override_combines_with_detached_session() {
+        let cli =
+            Cli::try_parse_from(["niles", "--manager", "claude:opus:max", "--detached"]).unwrap();
+
+        assert_eq!(cli.manager.as_deref(), Some("claude:opus:max"));
+        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Foreground));
+    }
+
+    #[test]
+    fn subcommands_do_not_select_a_bare_session_mode() {
+        let cli = Cli::try_parse_from(["niles", "workers"]).unwrap();
+
+        assert_eq!(cli.bare_session_mode(), None);
+    }
 }

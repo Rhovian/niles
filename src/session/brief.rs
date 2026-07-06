@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
+    schema::{self, ArtifactKind},
     util::{timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest},
@@ -26,8 +27,14 @@ pub struct SessionMeta {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default = "default_created_at")]
+    pub created_at: chrono::DateTime<Utc>,
     pub workspace: Utf8PathBuf,
     pub brief: Utf8PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<Utf8PathBuf>,
 }
 
 pub(super) fn write_manager_session(
@@ -49,14 +56,39 @@ pub(super) fn write_manager_session(
         agent_family: agent.tier().map(|tier| tier.family),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
+        created_at: now,
         workspace: workspace.to_path_buf(),
         brief: path,
+        window: None,
+        launch: None,
     };
-    let meta_path = session_meta_path(workspace, &id);
-    write_json_pretty(&meta_path, &meta)?;
+    write_session_meta(workspace, &meta)?;
     fs::write(latest_session_path(workspace), &id)
         .context("failed to write latest session pointer")?;
     Ok(meta)
+}
+
+pub(crate) fn read_latest_session(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
+    let Some(id) = crate::util::read_optional_to_string(&latest_session_path(workspace), |path| {
+        format!("failed to read latest manager session pointer {path}")
+    })?
+    else {
+        return Ok(None);
+    };
+    let id = id.trim();
+    if id.is_empty() {
+        return Ok(None);
+    }
+
+    schema::read_optional_json(
+        &session_meta_path(workspace, id),
+        ArtifactKind::ManagerSession,
+    )
+}
+
+pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
+    let meta_path = session_meta_path(workspace, &meta.id);
+    write_json_pretty(&meta_path, meta)
 }
 
 fn render_manager_brief(
@@ -91,6 +123,10 @@ fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
 
 fn latest_session_path(workspace: &Utf8Path) -> Utf8PathBuf {
     workspace.join(".niles").join("sessions").join("latest")
+}
+
+fn default_created_at() -> chrono::DateTime<Utc> {
+    Utc::now()
 }
 
 #[cfg(test)]

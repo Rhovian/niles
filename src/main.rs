@@ -5,6 +5,7 @@ mod build_info;
 mod cli;
 mod config;
 mod context;
+mod dashboard;
 mod display;
 mod doctor;
 mod process;
@@ -25,12 +26,19 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::{
-    cli::{Cli, CommandName},
+    cli::{BareSessionMode, Cli, CommandName},
     runner::RunSelector,
 };
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(mode) = cli.bare_session_mode() {
+        return match mode {
+            BareSessionMode::Resident => session::run(cli.manager),
+            BareSessionMode::Foreground => session::launch_foreground(cli.manager),
+        };
+    }
 
     match cli.command {
         None => session::run(cli.manager),
