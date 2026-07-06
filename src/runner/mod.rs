@@ -1,6 +1,7 @@
 mod exec;
 mod lifecycle;
 mod report;
+mod usage_report;
 
 pub(crate) use exec::{exec_step, step, step_close};
 pub(crate) use lifecycle::{resume, run, step_add};

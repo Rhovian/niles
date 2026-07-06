@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use serde_json::json;
+
 fn capability_manifest_containing(workspace: &Path, needle: &str) -> String {
     let dir = workspace.join(".niles/capabilities");
     for entry in fs::read_dir(&dir).unwrap() {
@@ -1596,6 +1598,117 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
 }
 
 #[test]
+fn workers_usage_view_sums_live_worker_usage_by_task() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-workers-usage");
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+    let codex_home = workspace.join("codex-home");
+    let claude_home = workspace.join("claude-home");
+    let pending_workspace = workspace.join("pending-workspace");
+    fs::create_dir_all(&pending_workspace).unwrap();
+
+    write_codex_usage_rollout(
+        &codex_home,
+        &workspace,
+        "session-codex",
+        "2026-07-06T00:00:01Z",
+        (10, 3, 5, 2, 18),
+    );
+    write_claude_usage_transcript(
+        &claude_home,
+        &workspace,
+        "00000000-0000-4000-8000-000000000052",
+        (7, 8, 9, 6),
+    );
+
+    write_usage_worker_fixture(
+        &workspace,
+        "auth-codex",
+        "tokledger",
+        "codex",
+        Some(("codex", None, None)),
+        json!({
+            "strategy": "codex_cwd_time",
+            "cwd": workspace.display().to_string(),
+            "launched_at": "2026-07-06T00:00:00Z",
+            "niles_prompt_count": 1
+        }),
+    );
+    write_usage_worker_fixture(
+        &workspace,
+        "auth-claude",
+        "tokledger",
+        "claude:sonnet:med",
+        Some(("claude", Some("sonnet"), Some("medium"))),
+        json!({
+            "strategy": "claude_session",
+            "session_id": "00000000-0000-4000-8000-000000000052",
+            "cwd": workspace.display().to_string(),
+            "launched_at": "2026-07-06T00:00:00Z",
+            "niles_prompt_count": 1
+        }),
+    );
+    write_usage_worker_fixture(
+        &workspace,
+        "auth-pending",
+        "pending-task",
+        "codex",
+        Some(("codex", None, None)),
+        json!({
+            "strategy": "codex_cwd_time",
+            "cwd": pending_workspace.display().to_string(),
+            "launched_at": "2026-07-06T00:00:00Z",
+            "niles_prompt_count": 1
+        }),
+    );
+
+    let output = Command::new(niles)
+        .args(["workers", "--usage"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", &tmux_log)
+        .env("CODEX_HOME", &codex_home)
+        .env("CLAUDE_CONFIG_DIR", &claude_home)
+        .output()
+        .unwrap();
+
+    assert_command_success("workers --usage", &output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "workers[3]{id,agent,task,age,wall,turns,total,input,cache_create,cache_read,cached,output,reasoning,usage}:"
+    ));
+    assert!(stdout.contains(
+        "task_usage[2]{task,workers,total,input,cache_create,cache_read,cached,output,reasoning,wall}:"
+    ));
+
+    let codex = stdout
+        .lines()
+        .find(|line| line.starts_with("  auth-codex,"))
+        .unwrap();
+    assert!(codex.ends_with(",1,18,10,-,-,3,5,2,available"));
+
+    let claude = stdout
+        .lines()
+        .find(|line| line.starts_with("  auth-claude,"))
+        .unwrap();
+    assert!(claude.ends_with(",1,30,7,8,9,-,6,-,available"));
+
+    let pending = stdout
+        .lines()
+        .find(|line| line.starts_with("  auth-pending,"))
+        .unwrap();
+    assert!(pending.ends_with(",-,-,-,-,-,-,-,-,pending"));
+
+    let rollup = stdout
+        .lines()
+        .find(|line| line.starts_with("  tokledger,"))
+        .unwrap();
+    assert!(rollup.starts_with("  tokledger,2,48,17,8,9,3,11,2,"));
+}
+
+#[test]
 fn workers_reports_unknown_when_tmux_window_query_fails() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-workers-list-unknown");
@@ -2356,6 +2469,179 @@ steps:
 
 fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBuf {
     write_worker_fixture_with_task(workspace, id, status_body, None)
+}
+
+fn write_usage_worker_fixture(
+    workspace: &Path,
+    id: &str,
+    task_label: &str,
+    agent: &str,
+    agent_tier: Option<(&str, Option<&str>, Option<&str>)>,
+    usage_attribution: serde_json::Value,
+) -> PathBuf {
+    let worker_root = workspace.join(".niles/worker");
+    let worker_dir = worker_root.join(id);
+    fs::create_dir_all(&worker_dir).unwrap();
+    let brief = worker_dir.join("brief.md");
+    let launch = worker_dir.join("launch.sh");
+    let status = worker_dir.join("status.log");
+    fs::write(&brief, "brief").unwrap();
+    fs::write(&launch, "launch").unwrap();
+    fs::write(&status, "working: measuring usage\n").unwrap();
+    fs::write(
+        worker_root.join(format!("{id}.json")),
+        serde_json::to_string_pretty(&json!({
+            "niles_schema": 2,
+            "id": id,
+            "workspace": workspace.display().to_string(),
+            "worker_dir": worker_dir.display().to_string(),
+            "local_stores": [worker_root.display().to_string()]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut meta = json!({
+        "niles_schema": 2,
+        "id": id,
+        "agent": agent,
+        "usage_attribution": usage_attribution,
+        "task_label": task_label,
+        "created_at": "2026-07-06T00:00:00Z",
+        "project": workspace.display().to_string(),
+        "window": format!("niles:niles-{id}"),
+        "brief": brief.display().to_string(),
+        "launch": launch.display().to_string(),
+        "status": status.display().to_string()
+    });
+    if let Some((family, model, effort)) = agent_tier {
+        let object = meta.as_object_mut().unwrap();
+        object.insert("agent_family".to_owned(), json!(family));
+        if let Some(model) = model {
+            object.insert("model".to_owned(), json!(model));
+        }
+        if let Some(effort) = effort {
+            object.insert("effort".to_owned(), json!(effort));
+        }
+    }
+    fs::write(
+        worker_dir.join("meta.json"),
+        serde_json::to_string_pretty(&meta).unwrap(),
+    )
+    .unwrap();
+    worker_dir
+}
+
+fn write_codex_usage_rollout(
+    codex_home: &Path,
+    workspace: &Path,
+    session_id: &str,
+    timestamp: &str,
+    tokens: (u64, u64, u64, u64, u64),
+) {
+    let sessions = codex_home.join("sessions/2026/07/06");
+    fs::create_dir_all(&sessions).unwrap();
+    let (input, cached, output, reasoning, total) = tokens;
+    let body = [
+        serde_json::to_string(&json!({
+            "type": "session_meta",
+            "payload": {
+                "session_id": session_id,
+                "cwd": workspace.display().to_string(),
+                "timestamp": timestamp
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message"
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message"
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total
+                    }
+                }
+            }
+        }))
+        .unwrap(),
+    ]
+    .join("\n");
+    fs::write(
+        sessions.join(format!("rollout-{session_id}.jsonl")),
+        format!("{body}\n"),
+    )
+    .unwrap();
+}
+
+fn write_claude_usage_transcript(
+    claude_home: &Path,
+    workspace: &Path,
+    session_id: &str,
+    tokens: (u64, u64, u64, u64),
+) {
+    let project_dir = claude_home
+        .join("projects")
+        .join(claude_project_slug(workspace));
+    fs::create_dir_all(&project_dir).unwrap();
+    let (input, cache_create, cache_read, output) = tokens;
+    let body = [
+        serde_json::to_string(&json!({
+            "type": "user",
+            "sessionId": session_id,
+            "message": {
+                "role": "user"
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "assistant",
+            "sessionId": session_id,
+            "uuid": "line-1",
+            "message": {
+                "id": "msg-1",
+                "role": "assistant",
+                "usage": {
+                    "input_tokens": input,
+                    "cache_creation_input_tokens": cache_create,
+                    "cache_read_input_tokens": cache_read,
+                    "output_tokens": output
+                }
+            }
+        }))
+        .unwrap(),
+    ]
+    .join("\n");
+    fs::write(
+        project_dir.join(format!("{session_id}.jsonl")),
+        format!("{body}\n"),
+    )
+    .unwrap();
+}
+
+fn claude_project_slug(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .chars()
+        .map(|ch| if matches!(ch, '/' | '\\') { '-' } else { ch })
+        .collect()
 }
 
 fn write_worker_fixture_with_task(
