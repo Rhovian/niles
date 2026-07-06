@@ -6,6 +6,7 @@ use std::{
 use camino::Utf8PathBuf;
 use chrono::{Duration, Utc};
 
+use crate::state::{StepKind, StepStatus};
 use crate::{session::SessionMeta, tmux::TmuxWindowSnapshot, worker::WorkerDashboardMeta};
 
 use super::snapshot::{
@@ -13,6 +14,7 @@ use super::snapshot::{
     PaneLiveness, RunStepDashboardMeta, TmuxWindows, assemble_snapshot,
 };
 use super::status::WakeState;
+use super::usage_cell::DashboardUsageCache;
 
 #[test]
 fn assembles_rows_from_tmux_and_metadata_sources() {
@@ -26,6 +28,13 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
     .unwrap();
     fs::write(&step_status, "working: step\ndone: step 1 complete\n").unwrap();
     let now = Utc::now();
+    let worker_dir = root.join("worker");
+    fs::create_dir_all(&worker_dir).unwrap();
+    let worker_metadata = worker_dir.join("meta.json");
+    fs::write(&worker_metadata, "{}").unwrap();
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let mut usage_cache = DashboardUsageCache::default();
 
     let snapshot = assemble_snapshot(
         DashboardSources {
@@ -47,6 +56,7 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
                 agent_family: Some("claude".to_owned()),
                 model: Some("opus".to_owned()),
                 effort: Some("max".to_owned()),
+                usage_attribution: None,
                 created_at: now - Duration::seconds(90),
                 workspace: root.clone(),
                 brief: root.join("manager.md"),
@@ -61,23 +71,36 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
                 effort: Some("xhigh".to_owned()),
                 task_label: Some("homewin".to_owned()),
                 created_at: Some(now - Duration::seconds(125)),
+                usage_attribution: None,
+                worker_dir,
+                metadata: worker_metadata,
                 window: "niles:niles-impl53".to_owned(),
                 status: worker_status,
             }],
             steps: vec![RunStepDashboardMeta {
+                run_dir,
                 run_id: "runabcdef".to_owned(),
                 index: 1,
+                role: Some("reviewer".to_owned()),
+                kind: StepKind::Agent,
                 label: "codex".to_owned(),
                 agent_family: Some("codex".to_owned()),
                 model: Some("gpt-5.5".to_owned()),
                 effort: Some("high".to_owned()),
+                usage_attribution: None,
+                usage: None,
+                step_status: StepStatus::Completed,
                 started_at: Some(now - Duration::seconds(245)),
+                finished_at: Some(now),
                 window: "niles-codex-review-s1-abcdef".to_owned(),
-                status: step_status,
+                status_log: step_status,
             }],
+            progress: None,
             messages: Vec::new(),
         },
         now,
+        &mut usage_cache,
+        true,
     );
 
     assert_eq!(snapshot.rows.len(), 5);
@@ -115,6 +138,7 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
 fn tmux_failure_keeps_metadata_rows_with_unknown_panes() {
     let root = temp_dir("tmux-failure");
     let now = Utc::now();
+    let mut usage_cache = DashboardUsageCache::default();
 
     let snapshot = assemble_snapshot(
         DashboardSources {
@@ -125,6 +149,7 @@ fn tmux_failure_keeps_metadata_rows_with_unknown_panes() {
                 agent_family: None,
                 model: None,
                 effort: None,
+                usage_attribution: None,
                 created_at: now,
                 workspace: root.clone(),
                 brief: root.join("manager.md"),
@@ -133,9 +158,12 @@ fn tmux_failure_keeps_metadata_rows_with_unknown_panes() {
             }),
             workers: Vec::new(),
             steps: Vec::new(),
+            progress: None,
             messages: Vec::new(),
         },
         now,
+        &mut usage_cache,
+        true,
     );
 
     assert_eq!(snapshot.rows.len(), 2);
@@ -148,6 +176,12 @@ fn tmux_failure_keeps_metadata_rows_with_unknown_panes() {
     assert_eq!(snapshot.manager_lifecycle, ManagerLifecycle::Unknown);
     assert_eq!(snapshot.messages, vec!["tmux unavailable".to_owned()]);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn dashboard_usage_code_does_not_call_snapshot_writer() {
+    assert!(!include_str!("usage_cell.rs").contains("usage::snapshot_usage"));
+    assert!(!include_str!("snapshot.rs").contains("usage::snapshot_usage"));
 }
 
 fn row<'a>(snapshot: &'a DashboardSnapshot, window: &str) -> &'a DashboardRow {

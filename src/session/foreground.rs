@@ -4,17 +4,17 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
     agents,
-    config::spec::{load_project_config_from, PromptMode},
+    config::spec::{PromptMode, load_project_config_from},
     process::exit_code_label,
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::{brief::write_manager_session, SessionMeta};
+use super::{SessionMeta, brief::write_manager_session};
 
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 
@@ -23,8 +23,9 @@ pub(super) fn launch_foreground_agent(
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
     let agent = &manifest.manager;
-    let invocation = foreground_invocation_for_project(workspace, agent)?;
+    let mut invocation = foreground_invocation_for_project(workspace, agent)?;
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec, manifest)?;
+    append_manager_session_id_arg(&mut invocation, &meta);
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
     let command = prepare_manager_command(invocation, brief)?;
@@ -64,6 +65,19 @@ pub(super) fn prepare_manager_command(
         invocation,
         stdin: prompt.stdin,
     })
+}
+
+pub(super) fn append_manager_session_id_arg(
+    invocation: &mut agents::AgentInvocation,
+    meta: &SessionMeta,
+) {
+    if let Some(session_id) = meta
+        .usage_attribution
+        .as_ref()
+        .and_then(crate::usage::UsageAttribution::claude_session_id)
+    {
+        agents::append_session_id_arg(invocation, session_id);
+    }
 }
 
 fn run_foreground_process(
@@ -154,6 +168,7 @@ mod tests {
     use super::super::test_support::{shell_quote, temp_test_path, write_executable_script};
     use super::*;
 
+    use crate::usage::UsageAttribution;
     use camino::Utf8PathBuf;
 
     #[test]
@@ -196,6 +211,38 @@ agents:
         assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
         assert_eq!(invocation.spec.family(), "gemini");
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manager_launch_appends_persisted_claude_session_id() {
+        let root = temp_test_path("manager-session-id");
+        fs::create_dir_all(&root).unwrap();
+        let mut invocation = agents::foreground_invocation("claude:opus:max", None).unwrap();
+        let meta = SessionMeta {
+            id: "session".to_owned(),
+            agent: "claude:opus:max".to_owned(),
+            agent_family: Some("claude".to_owned()),
+            model: Some("opus".to_owned()),
+            effort: Some("max".to_owned()),
+            usage_attribution: Some(UsageAttribution::ClaudeSession {
+                session_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                cwd: root.clone(),
+                launched_at: "2026-07-06T00:00:00Z".parse().unwrap(),
+                niles_prompt_count: Some(1),
+            }),
+            created_at: "2026-07-06T00:00:00Z".parse().unwrap(),
+            workspace: root.clone(),
+            brief: root.join("manager.md"),
+            window: None,
+            launch: None,
+        };
+
+        append_manager_session_id_arg(&mut invocation, &meta);
+
+        assert!(invocation.args.ends_with(
+            &["--session-id", "00000000-0000-4000-8000-000000000001"].map(str::to_owned)
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 
