@@ -7,6 +7,7 @@ use crate::{
     agents,
     config::spec::{PromptMode, load_project_config_from},
     tmux,
+    usage::UsageAttribution,
     util::slugify,
 };
 
@@ -63,6 +64,7 @@ pub(crate) fn spawn_agent_window(
     project: &Utf8Path,
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
+    usage_attribution: Option<&UsageAttribution>,
 ) -> Result<String> {
     if !brief_path.is_file() {
         bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
@@ -70,7 +72,10 @@ pub(crate) fn spawn_agent_window(
 
     let config = load_project_config_from(project)?;
     let config = agents::config_for(&config.agents, agent)?;
-    let invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
+    let mut invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
+    if let Some(session_id) = usage_attribution.and_then(UsageAttribution::claude_session_id) {
+        agents::append_session_id_arg(&mut invocation, session_id);
+    }
     write_launch_script(launch_path, &invocation, brief_path)?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     open_window(window_name, cwd, &command)

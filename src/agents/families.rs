@@ -19,6 +19,7 @@ pub struct AgentProfile {
     model_group_label: ModelGroupLabel,
     manager_prompt: ManagerPrompt,
     pub launch_env: &'static [(&'static str, &'static str)],
+    pub session_id_flag: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,6 +72,7 @@ const PROFILES: &[AgentProfile] = &[
         model_group_label: ModelGroupLabel::Alias,
         manager_prompt: ManagerPrompt::CombinedArg,
         launch_env: &[],
+        session_id_flag: None,
     },
     AgentProfile {
         id: "claude",
@@ -91,6 +93,7 @@ const PROFILES: &[AgentProfile] = &[
         model_group_label: ModelGroupLabel::HyphenatedAlias,
         manager_prompt: ManagerPrompt::AppendSystemPrompt,
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+        session_id_flag: Some("--session-id"),
     },
 ];
 

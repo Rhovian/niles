@@ -14,6 +14,7 @@ mod session;
 mod state;
 mod store;
 mod tmux;
+mod usage;
 mod util;
 mod wait;
 mod wake;

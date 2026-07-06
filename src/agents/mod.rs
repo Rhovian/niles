@@ -126,6 +126,17 @@ pub fn foreground_invocation(agent: &str, config: Option<&AgentConfig>) -> Resul
     invocation(agent, config, InvocationDefaults::Foreground)
 }
 
+pub(crate) fn append_session_id_arg(invocation: &mut AgentInvocation, session_id: &str) {
+    let Some(profile) = profile_for(invocation.spec.family()) else {
+        return;
+    };
+    let Some(flag) = profile.session_id_flag else {
+        return;
+    };
+    invocation.args.push(flag.to_owned());
+    invocation.args.push(session_id.to_owned());
+}
+
 fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentInvocation {
     let profile = profile_for(spec.family());
     match defaults {

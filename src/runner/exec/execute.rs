@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
@@ -6,9 +6,11 @@ use crate::{
     agents,
     config::spec::{PromptMode, TaskSpec, TaskStep},
     context::{agent_prompt, write_agent_context},
-    process::{ProcessSpec, run_process},
+    process::{run_process, step_meta_path, ProcessSpec},
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::write_state,
+    usage::{self, UsageAgent, UsageSnapshotInput, UsageSubject},
+    util::write_json_pretty,
 };
 
 use super::super::report;
@@ -61,6 +63,7 @@ pub(in crate::runner) fn execute_single_step(
                 role: role.clone(),
                 agent,
                 task,
+                run_id: &state.id,
                 spec,
                 workspace,
                 steps_dir,
@@ -104,6 +107,7 @@ struct AgentStep<'a> {
     role: Option<String>,
     agent: &'a str,
     task: &'a str,
+    run_id: &'a str,
     spec: &'a TaskSpec,
     workspace: &'a Utf8Path,
     steps_dir: &'a Utf8Path,
@@ -112,7 +116,13 @@ struct AgentStep<'a> {
 
 fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
     let config = agents::config_for(&step.spec.agents, step.agent)?;
-    let config = agents::invocation(step.agent, config, agents::InvocationDefaults::Default)?;
+    let mut config = agents::invocation(step.agent, config, agents::InvocationDefaults::Default)?;
+    let launched_at = Utc::now();
+    let usage_attribution =
+        usage::attribution_for_family(config.spec.family(), step.workspace, launched_at, Some(1));
+    if let Some(session_id) = usage_attribution.claude_session_id() {
+        agents::append_session_id_arg(&mut config, session_id);
+    }
     let mut args = config.args;
     let prompt = agent_prompt(step.task, step.context_path.as_deref())?;
     let stdin = match config.prompt {
@@ -125,7 +135,7 @@ fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
 
     let mut record = run_process(ProcessSpec {
         step_number: step.step_number,
-        role: step.role,
+        role: step.role.clone(),
         kind: StepKind::Agent,
         label: step.agent,
         binary: &config.binary,
@@ -133,9 +143,37 @@ fn run_agent_step(step: AgentStep<'_>) -> Result<StepRecord> {
         stdin: stdin.as_deref(),
         workspace: step.workspace,
         steps_dir: step.steps_dir,
-        context_path: step.context_path,
+        context_path: step.context_path.clone(),
     })?;
     apply_agent_tier(&mut record, &config.spec);
+    record.usage_attribution = Some(usage_attribution.clone());
+    let usage_path = usage::step_usage_path(step.steps_dir, step.step_number, step.agent);
+    let finished_at = match record.finished_at {
+        Some(finished_at) => finished_at,
+        None => Utc::now(),
+    };
+    record.usage = usage::snapshot_usage(UsageSnapshotInput {
+        subject: UsageSubject::RunStep {
+            run_id: step.run_id.to_owned(),
+            index: step.step_number,
+            role: step.role.clone(),
+            label: step.agent.to_owned(),
+        },
+        agent: UsageAgent {
+            spec: step.agent.to_owned(),
+            family: Some(config.spec.family().to_owned()),
+            model: config.spec.model().map(str::to_owned),
+            effort: config.spec.effort().map(str::to_owned),
+        },
+        attribution: Some(usage_attribution),
+        started_at: record.started_at,
+        finished_at,
+        output_path: usage_path,
+    });
+    write_json_pretty(
+        &step_meta_path(step.steps_dir, step.step_number, step.agent),
+        &record,
+    )?;
     Ok(record)
 }
 

@@ -476,6 +476,8 @@ mod tests {
             agent_family: None,
             model: None,
             effort: None,
+            usage_attribution: None,
+            usage: None,
             status,
             started_at,
             finished_at: None,

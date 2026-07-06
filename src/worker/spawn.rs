@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
-    store,
+    store, usage,
     util::{
         absolute_existing_dir, absolute_existing_file, remove_dir_all_if_exists,
         remove_file_if_exists, render_template,
@@ -95,6 +95,9 @@ pub fn spawn(
     store::register_worker_location(&id, &project, &dir)?;
 
     let window_name = agent_window::worker_window_name(&id);
+    let launched_at = Utc::now();
+    let usage_attribution =
+        usage::attribution_for_family(agent_spec.family(), &project, launched_at, Some(1));
     let target = match agent_window::spawn_agent_window(
         &window_name,
         &project,
@@ -102,6 +105,7 @@ pub fn spawn(
         &project,
         &brief_path,
         &launch_path,
+        Some(&usage_attribution),
     ) {
         Ok(target) => target,
         Err(err) => {
@@ -122,8 +126,10 @@ pub fn spawn(
         agent_family: agent_spec.tier().map(|tier| tier.family),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
+        usage_attribution: Some(usage_attribution),
+        usage: None,
         task_label,
-        created_at: Some(Utc::now()),
+        created_at: Some(launched_at),
         project,
         window: target.clone(),
         brief: brief_path,

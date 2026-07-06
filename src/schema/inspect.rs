@@ -71,7 +71,12 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
             );
             for step_path in read_dir_paths(&mut observations, &path.join("steps")) {
                 if step_path.extension() == Some("json") {
-                    push_json_if_file(&mut observations, step_path, ArtifactKind::StepRecord);
+                    let kind = if is_usage_snapshot(&step_path) {
+                        ArtifactKind::UsageSnapshot
+                    } else {
+                        ArtifactKind::StepRecord
+                    };
+                    push_json_if_file(&mut observations, step_path, kind);
                 }
             }
         } else if path.extension() == Some("json") {
@@ -86,6 +91,11 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
                 &mut observations,
                 path.join("meta.json"),
                 ArtifactKind::WorkerMetadata,
+            );
+            push_json_if_file(
+                &mut observations,
+                path.join("usage.json"),
+                ArtifactKind::UsageSnapshot,
             );
         } else if path.extension() == Some("json") {
             push_json_if_file(&mut observations, path, ArtifactKind::WorkerPointer);
@@ -116,6 +126,11 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
             .then_with(|| left.kind.cmp(&right.kind))
     });
     Ok(observations)
+}
+
+fn is_usage_snapshot(path: &Utf8Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.ends_with(".usage.json"))
 }
 
 fn push_json_if_file(
