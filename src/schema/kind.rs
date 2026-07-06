@@ -8,6 +8,7 @@ pub(crate) enum ArtifactKind {
     RunPointer,
     RunState,
     StepRecord,
+    UsageSnapshot,
     WorkerMetadata,
     WorkerPointer,
     WorkspaceManifest,
@@ -24,6 +25,7 @@ impl ArtifactKind {
             ArtifactKind::RunPointer => "run pointer",
             ArtifactKind::RunState => "run state",
             ArtifactKind::StepRecord => "step record",
+            ArtifactKind::UsageSnapshot => "usage snapshot",
             ArtifactKind::WorkerMetadata => "worker metadata",
             ArtifactKind::WorkerPointer => "worker pointer",
             ArtifactKind::WorkspaceManifest => "workspace manifest",
@@ -53,6 +55,9 @@ impl ArtifactKind {
             }
             ArtifactKind::StepRecord => {
                 "remove the run directory and start a new run, or use the older binary that wrote it"
+            }
+            ArtifactKind::UsageSnapshot => {
+                "remove the usage snapshot and recapture usage if the source transcript is still available, or use the older binary that wrote it"
             }
             ArtifactKind::WorkerMetadata => {
                 "remove the worker dir and respawn, or use the older binary to close it"

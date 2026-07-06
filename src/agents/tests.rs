@@ -163,3 +163,28 @@ fn invocation_maps_claude_model_effort_flags() {
         .map(str::to_owned)
     );
 }
+
+#[test]
+fn session_id_arg_is_claude_only() {
+    let mut invocation =
+        invocation("claude:sonnet:high", None, InvocationDefaults::Worker).unwrap();
+
+    append_session_id_arg(&mut invocation, "00000000-0000-4000-8000-000000000001");
+
+    assert!(
+        invocation.args.ends_with(
+            &["--session-id", "00000000-0000-4000-8000-000000000001"].map(str::to_owned)
+        )
+    );
+}
+
+#[test]
+fn codex_invocation_is_unchanged_by_session_id_arg() {
+    let mut invocation =
+        invocation("codex:gpt-5.5:xhigh", None, InvocationDefaults::Worker).unwrap();
+    let before = invocation.args.clone();
+
+    append_session_id_arg(&mut invocation, "00000000-0000-4000-8000-000000000001");
+
+    assert_eq!(invocation.args, before);
+}

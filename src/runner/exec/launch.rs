@@ -12,6 +12,7 @@ use crate::{
     context::write_agent_context,
     state::{RunStatus, StepStatus},
     store::write_state,
+    usage,
     util::{absolute_path, render_template},
     wake,
 };
@@ -79,7 +80,7 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     };
 
     let workspace = spec_workspace(&spec);
-    agents::capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
+    let agent_spec = agents::capabilities::validate_task_agent(workspace, &spec.agents, agent)?;
     let steps_dir = ensure_steps_dir(&run.run_dir)?;
 
     // Brief = handoff context plus a wake contract pointing at this run's log.
@@ -99,9 +100,18 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
         agent_window::step_window_name(&run.state.id, step_number, role.as_deref(), agent);
     let cwd = absolute_path(workspace)?;
     ensure_step_brief_exists(&brief, step_number)?;
-    if let Err(err) =
-        agent_window::spawn_agent_window(&window_name, &cwd, agent, workspace, &brief, &launch_path)
-    {
+    let launched_at = Utc::now();
+    let usage_attribution =
+        usage::attribution_for_family(agent_spec.family(), &cwd, launched_at, Some(1));
+    if let Err(err) = agent_window::spawn_agent_window(
+        &window_name,
+        &cwd,
+        agent,
+        workspace,
+        &brief,
+        &launch_path,
+        Some(&usage_attribution),
+    ) {
         return Err(record_step_error_or_context(
             err,
             &mut run.state,
@@ -117,6 +127,8 @@ pub(crate) fn step(selector: RunSelector, index: Option<usize>) -> Result<()> {
     let step = &mut run.state.steps[record_position];
     mark_step_running(step, Some(brief.clone()));
     step.window = Some(window_name.clone());
+    step.usage_attribution = Some(usage_attribution);
+    step.usage = None;
     if matches!(run.state.status, RunStatus::Created) {
         run.state.status = RunStatus::Running;
     }

@@ -4,6 +4,8 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::usage::UsageAttribution;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RunState {
     pub id: String,
@@ -42,6 +44,10 @@ pub struct StepRecord {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_attribution: Option<UsageAttribution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Utf8PathBuf>,
     pub status: StepStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,

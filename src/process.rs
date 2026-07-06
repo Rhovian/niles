@@ -43,14 +43,21 @@ pub(crate) fn role_prefix(role: Option<&str>) -> String {
     }
 }
 
+pub(crate) fn step_meta_path(
+    steps_dir: &Utf8Path,
+    step_number: usize,
+    label: &str,
+) -> camino::Utf8PathBuf {
+    steps_dir.join(format!("{}.json", step_prefix(step_number, label)))
+}
+
 pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
     let started_at = Utc::now();
-    let slug = slugify(spec.label);
-    let prefix = format!("{:03}-{slug}", spec.step_number);
+    let prefix = step_prefix(spec.step_number, spec.label);
     let stdout_path = spec.steps_dir.join(format!("{prefix}.stdout.txt"));
     let stderr_path = spec.steps_dir.join(format!("{prefix}.stderr.txt"));
     let diff_path = spec.steps_dir.join(format!("{prefix}.diff"));
-    let meta_path = spec.steps_dir.join(format!("{prefix}.json"));
+    let meta_path = step_meta_path(spec.steps_dir, spec.step_number, spec.label);
 
     let mut child = Command::new(spec.binary)
         .args(spec.args)
@@ -106,6 +113,8 @@ pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
         agent_family: None,
         model: None,
         effort: None,
+        usage_attribution: None,
+        usage: None,
         status: if status.success() {
             StepStatus::Completed
         } else {
@@ -124,6 +133,10 @@ pub fn run_process(spec: ProcessSpec<'_>) -> Result<StepRecord> {
     write_json_pretty(&meta_path, &record)?;
 
     Ok(record)
+}
+
+fn step_prefix(step_number: usize, label: &str) -> String {
+    format!("{step_number:03}-{}", slugify(label))
 }
 
 fn capture_git_diff(workspace: &Utf8Path, diff_path: &Utf8Path) -> Result<()> {

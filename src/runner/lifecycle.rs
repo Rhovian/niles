@@ -313,6 +313,8 @@ fn planned_step(index: usize, step: &TaskStep) -> Result<StepRecord> {
         agent_family,
         model,
         effort,
+        usage_attribution: None,
+        usage: None,
         status: StepStatus::Pending,
         started_at: None,
         finished_at: None,
