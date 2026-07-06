@@ -8,6 +8,8 @@ use super::catalog::{ModelCatalog, ModelGroup, model_catalog};
 
 use crate::{agents, config::spec::AgentConfig};
 
+const FIRST_MENU_CHOICE_INDEX: usize = 0;
+
 pub(crate) fn prompt_agent_value(
     root: &Utf8Path,
     label: &str,
@@ -15,16 +17,23 @@ pub(crate) fn prompt_agent_value(
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
     let term = Term::stderr();
-    let choices = agent_choices(default, agent_configs);
+    let default_spec = agents::parse_spec(default)?;
+    let choices = agent_choices(default, &default_spec, agent_configs);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
-    prompt_selected_agent(&term, root, &choices[index].value, default, agent_configs)
+    prompt_selected_agent(
+        &term,
+        root,
+        &choices[index].value,
+        &default_spec,
+        agent_configs,
+    )
 }
 
 fn prompt_selected_agent(
     term: &Term,
     root: &Utf8Path,
     agent: &str,
-    default: &str,
+    default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
     let spec = agents::parse_spec(agent)?;
@@ -32,18 +41,20 @@ fn prompt_selected_agent(
         return agents::canonical_manifest_agent(&spec, agent_configs);
     }
 
-    prompt_builtin_agent(term, root, spec.family(), default, agent_configs)
+    prompt_builtin_agent(term, root, spec.family(), default_spec, agent_configs)
 }
 
 fn prompt_builtin_agent(
     term: &Term,
     root: &Utf8Path,
     family: &str,
-    default: &str,
+    default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<String> {
-    let default_spec = agents::parse_spec(default).ok();
-    let default_spec = default_spec.as_ref().filter(|spec| spec.family() == family);
+    let default_spec = match default_spec.family() == family {
+        true => Some(default_spec),
+        false => None,
+    };
     let catalog = model_catalog(root, family, agent_configs)?;
     if let Some(message) = catalog.source_message(family) {
         term.write_line(&message)
@@ -92,10 +103,10 @@ fn model_choices_from_catalog(
             }
         })
         .collect::<Vec<_>>();
-    if default_model.is_none() {
-        if let Some(first) = choices.first_mut() {
-            first.is_default = true;
-        }
+    if default_model.is_none()
+        && let Some(first) = choices.first_mut()
+    {
+        first.is_default = true;
     }
     choices
 }
@@ -184,29 +195,17 @@ fn select_choice<T>(
 
 fn agent_choices(
     default: &str,
+    default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Vec<MenuChoice<String>> {
-    let default_spec = agents::parse_spec(default).ok();
     let mut seen = BTreeSet::new();
     let mut choices = Vec::new();
 
     for family in agents::known_agent_ids() {
-        push_agent_choice(
-            &mut choices,
-            &mut seen,
-            family,
-            default,
-            default_spec.as_ref(),
-        );
+        push_agent_choice(&mut choices, &mut seen, family, default, default_spec);
     }
     for agent in agent_configs.keys() {
-        push_agent_choice(
-            &mut choices,
-            &mut seen,
-            agent,
-            default,
-            default_spec.as_ref(),
-        );
+        push_agent_choice(&mut choices, &mut seen, agent, default, default_spec);
     }
 
     choices
@@ -217,16 +216,16 @@ fn push_agent_choice(
     seen: &mut BTreeSet<String>,
     agent: &str,
     default: &str,
-    default_spec: Option<&agents::AgentSpec>,
+    default_spec: &agents::AgentSpec,
 ) {
     if !seen.insert(agent.to_owned()) {
         return;
     }
 
     let is_default = agent == default
-        || default_spec.is_some_and(|spec| {
-            spec.model().is_some() && spec.family() == agent && agents::profile_for(agent).is_some()
-        });
+        || (default_spec.model().is_some()
+            && default_spec.family() == agent
+            && agents::profile_for(agent).is_some());
     choices.push(MenuChoice {
         label: agent.to_owned(),
         value: agent.to_owned(),
@@ -235,10 +234,10 @@ fn push_agent_choice(
 }
 
 fn default_choice_index<T>(choices: &[MenuChoice<T>]) -> usize {
-    choices
-        .iter()
-        .position(|choice| choice.is_default)
-        .unwrap_or(0)
+    match choices.iter().position(|choice| choice.is_default) {
+        Some(index) => index,
+        None => FIRST_MENU_CHOICE_INDEX,
+    }
 }
 
 #[derive(Clone)]
@@ -256,7 +255,8 @@ mod tests {
 
     #[test]
     fn agent_choices_do_not_include_free_text_escape_hatch() {
-        let choices = agent_choices("codex", &BTreeMap::new());
+        let default = agents::parse_spec("codex").unwrap();
+        let choices = agent_choices("codex", &default, &BTreeMap::new());
         let labels = choices
             .iter()
             .map(|choice| choice.label.as_str())

@@ -10,7 +10,7 @@ repository = "https://github.com/Rhovian/niles"
 unwrap_used = "deny"
 expect_used = "deny"
 wildcard_enum_match_arm = "deny"
-disallowed_methods = "warn"
+disallowed_methods = "deny"
 
 [dependencies]
 anyhow = "1.0"

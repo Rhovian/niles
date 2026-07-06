@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
+    display::MISSING_DISPLAY_FIELD_PLACEHOLDER,
     state::{RunState, StepKind},
     util::{absolute_path, slugify},
 };
@@ -28,7 +29,7 @@ pub fn write_agent_context(
     body.push_str(&format!("goal: {}\n", state.goal));
     body.push_str(&format!("workspace: {workspace}\n"));
     body.push_str(&format!("step: {step_number}\n"));
-    body.push_str(&format!("role: {}\n", role.unwrap_or("-")));
+    body.push_str(&format!("role: {}\n", display_field(role)));
     body.push_str(&format!("agent: {agent}\n\n"));
 
     body.push_str("## Current Task\n\n");
@@ -77,7 +78,7 @@ fn append_prior_step_summary(body: &mut String, state: &RunState, step_number: u
         body.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} |\n",
             step.index,
-            markdown_cell(step.role.as_deref().unwrap_or("-")),
+            markdown_cell(display_field(step.role.as_deref())),
             step.kind,
             markdown_cell(&step.label),
             step.status,
@@ -100,7 +101,7 @@ fn append_prior_agent_output(body: &mut String, state: &RunState, step_number: u
         body.push_str(&format!(
             "### Step {}: {} agent {}\n\n",
             step.index,
-            step.role.as_deref().unwrap_or("-"),
+            display_field(step.role.as_deref()),
             step.label
         ));
         append_artifact_excerpt(body, "stdout", step.stdout.as_deref(), "text");
@@ -125,7 +126,7 @@ fn append_validation_output(body: &mut String, state: &RunState, step_number: us
         body.push_str(&format!(
             "### Step {}: {} command {}\n\n",
             step.index,
-            step.role.as_deref().unwrap_or("-"),
+            display_field(step.role.as_deref()),
             step.label
         ));
         append_artifact_excerpt(body, "stdout", step.stdout.as_deref(), "text");
@@ -195,4 +196,11 @@ fn append_fenced(body: &mut String, language: &str, value: &str) {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('\n', " ").replace('|', "\\|")
+}
+
+fn display_field(value: Option<&str>) -> &str {
+    match value {
+        Some(value) => value,
+        None => MISSING_DISPLAY_FIELD_PLACEHOLDER,
+    }
 }

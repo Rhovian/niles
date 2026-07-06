@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
+    display::MISSING_DISPLAY_FIELD_PLACEHOLDER,
     process::{exit_code_label, role_prefix},
     schema::{self, ArtifactKind},
     state::{RunState, RunStatus, StepRecord, StepStatus},
@@ -89,13 +90,8 @@ pub(crate) fn show(selector: RunSelector) -> Result<()> {
             step.kind,
             step.label,
             step.status,
-            step.exit_code
-                .map(|code| format!(" ({code})"))
-                .unwrap_or_default(),
-            step.context
-                .as_ref()
-                .map(|path| format!(" context {path}"))
-                .unwrap_or_default(),
+            exit_code_suffix(step.exit_code),
+            context_suffix(step.context.as_deref()),
             agent_tier_suffix(step)
         );
     }
@@ -195,7 +191,7 @@ fn print_steps_table(state: &RunState) {
             println!(
                 "  {},{},{},{},{},{}",
                 step.index,
-                step.role.as_deref().unwrap_or("-"),
+                display_field(step.role.as_deref()),
                 step.kind,
                 step.label,
                 step.status,
@@ -228,9 +224,9 @@ fn print_agent_tiers(state: &RunState) {
         println!(
             "  {},{},{},{}",
             step.index,
-            step.agent_family.as_deref().unwrap_or("-"),
-            step.model.as_deref().unwrap_or("-"),
-            step.effort.as_deref().unwrap_or("-")
+            display_field(step.agent_family.as_deref()),
+            display_field(step.model.as_deref()),
+            display_field(step.effort.as_deref())
         );
     }
 }
@@ -242,10 +238,31 @@ fn agent_tier_suffix(step: &StepRecord) -> String {
 
     format!(
         " agent_family {} model {} effort {}",
-        step.agent_family.as_deref().unwrap_or("-"),
-        step.model.as_deref().unwrap_or("-"),
-        step.effort.as_deref().unwrap_or("-")
+        display_field(step.agent_family.as_deref()),
+        display_field(step.model.as_deref()),
+        display_field(step.effort.as_deref())
     )
+}
+
+fn exit_code_suffix(exit_code: Option<i32>) -> String {
+    match exit_code {
+        Some(code) => format!(" ({code})"),
+        None => String::new(),
+    }
+}
+
+fn context_suffix(context: Option<&Utf8Path>) -> String {
+    match context {
+        Some(path) => format!(" context {path}"),
+        None => String::new(),
+    }
+}
+
+fn display_field(value: Option<&str>) -> &str {
+    match value {
+        Some(value) => value,
+        None => MISSING_DISPLAY_FIELD_PLACEHOLDER,
+    }
 }
 
 pub(crate) fn log(

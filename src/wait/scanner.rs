@@ -260,7 +260,11 @@ fn read_ack_cursor(status: &Utf8Path, line_count: usize) -> Result<usize> {
         return Ok(0);
     };
 
-    Ok(body.trim().parse::<usize>().unwrap_or(0).min(line_count))
+    let cursor = body
+        .trim()
+        .parse::<usize>()
+        .with_context(|| format!("invalid ack cursor in {path}"))?;
+    Ok(cursor.min(line_count))
 }
 
 fn write_ack_cursor(status: &Utf8Path, cursor: usize) -> Result<()> {

@@ -10,6 +10,7 @@ use crate::{
         TaskSpec, TaskStep, apply_project_config, load_project_config, load_project_config_from,
         load_task, save_task, summarize_spec,
     },
+    process::role_prefix,
     state::{RunState, RunStatus, StepKind, StepRecord, StepStatus},
     store::{read_state, state_path, write_state},
     util::{
@@ -19,7 +20,7 @@ use crate::{
     workspace_manifest,
 };
 
-use super::RunSelector;
+use super::{IMPLICIT_TASK_WORKSPACE, RunSelector, spec_workspace};
 
 pub(crate) fn run(task: Utf8PathBuf, allow_cli_mismatch: bool) -> Result<()> {
     let task = absolute_existing_file(&task, "task")?;
@@ -76,7 +77,7 @@ pub(in crate::runner) fn load_spec_for_run(state: &RunState) -> Result<TaskSpec>
         .config_root
         .as_deref()
         .or_else(|| task_file.parent())
-        .unwrap_or(Utf8Path::new("."));
+        .map_or(Utf8Path::new(IMPLICIT_TASK_WORKSPACE), |root| root);
     let config = load_project_config_from(config_root)?;
     let mut spec = apply_project_config(load_task(&task_file)?, config);
     if let Some(workspace) = &state.workspace {
@@ -87,13 +88,12 @@ pub(in crate::runner) fn load_spec_for_run(state: &RunState) -> Result<TaskSpec>
 
 fn with_normalized_workspace(mut spec: TaskSpec, config_root: &Utf8Path) -> Result<TaskSpec> {
     let config_root = absolute_path(config_root)?;
-    let workspace = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
-    let workspace = absolute_path_from(&config_root, workspace);
-    spec.workspace = Some(absolute_existing_dir(&workspace, "workspace")?);
+    let workspace = absolute_path_from(&config_root, spec_workspace(&spec));
+    let resolved_workspace = absolute_existing_dir(&workspace, "workspace")?;
+    spec.workspace = Some(resolved_workspace.clone());
 
     if workspace_manifest::task_uses_role_bindings(&spec) {
-        let root = spec.workspace.as_deref().unwrap_or(Utf8Path::new("."));
-        let manifest = workspace_manifest::load_required(root)?;
+        let manifest = workspace_manifest::load_required(&resolved_workspace)?;
         workspace_manifest::resolve_task_roles(spec, &manifest)
     } else {
         Ok(spec)
@@ -154,10 +154,7 @@ fn prepare_run(spec: TaskSpec, task_file: Option<Utf8PathBuf>) -> Result<()> {
         println!(
             "  {} {}{} {}",
             step.index,
-            step.role
-                .as_deref()
-                .map(|role| format!("{role} "))
-                .unwrap_or_default(),
+            role_prefix(step.role.as_deref()),
             step.kind,
             step.label
         );
@@ -250,11 +247,7 @@ pub(crate) fn step_add(
     let record = &state.steps[index - 1];
     println!(
         "added: step {index} {}{} {}",
-        record
-            .role
-            .as_deref()
-            .map(|role| format!("{role} "))
-            .unwrap_or_default(),
+        role_prefix(record.role.as_deref()),
         record.kind,
         record.label
     );
@@ -274,14 +267,30 @@ fn planned_steps(spec: &TaskSpec) -> Result<Vec<StepRecord>> {
 }
 
 fn planned_step(index: usize, step: &TaskStep) -> Result<StepRecord> {
-    let (role, kind, label, tier) = match step {
+    let (role, kind, label, agent_family, model, effort) = match step {
         TaskStep::Agent { agent, role, .. } => {
             let spec = agents::parse_spec(agent)?;
-            (role.clone(), StepKind::Agent, agent.clone(), spec.tier())
+            let (agent_family, model, effort) = match spec.tier() {
+                Some(tier) => (Some(tier.family), tier.model, tier.effort),
+                None => (None, None, None),
+            };
+            (
+                role.clone(),
+                StepKind::Agent,
+                agent.clone(),
+                agent_family,
+                model,
+                effort,
+            )
         }
-        TaskStep::Command { command, role } => {
-            (role.clone(), StepKind::Command, command.clone(), None)
-        }
+        TaskStep::Command { command, role } => (
+            role.clone(),
+            StepKind::Command,
+            command.clone(),
+            None,
+            None,
+            None,
+        ),
         TaskStep::Role { role, task } => (
             Some(role.clone()),
             if task.is_some() {
@@ -291,12 +300,10 @@ fn planned_step(index: usize, step: &TaskStep) -> Result<StepRecord> {
             },
             role.clone(),
             None,
+            None,
+            None,
         ),
     };
-
-    let (agent_family, model, effort) = tier
-        .map(|tier| (Some(tier.family), tier.model, tier.effort))
-        .unwrap_or((None, None, None));
 
     Ok(StepRecord {
         index,

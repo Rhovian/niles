@@ -235,11 +235,17 @@ fn poll_wait_entries(entries: &mut [WaitEntry]) -> Result<Option<FiredWake>> {
 }
 
 fn read_lines(status: &Utf8Path) -> Result<Vec<String>> {
-    Ok(
-        read_optional_to_string(status, |status| format!("failed to read {status}"))?
-            .map(|body| body.lines().map(str::to_owned).collect())
-            .unwrap_or_default(),
-    )
+    Ok(status_lines_or_empty(read_optional_to_string(
+        status,
+        |status| format!("failed to read {status}"),
+    )?))
+}
+
+fn status_lines_or_empty(body: Option<String>) -> Vec<String> {
+    match body {
+        Some(body) => body.lines().map(str::to_owned).collect(),
+        None => Vec::new(),
+    }
 }
 
 fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {

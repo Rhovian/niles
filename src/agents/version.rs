@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub(crate) const ALLOW_CLI_MISMATCH_ENV: &str = "NILES_ALLOW_CLI_MISMATCH";
+pub(crate) const VERSION_UNAVAILABLE_PLACEHOLDER: &str = "version unavailable";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct SemVer {
@@ -85,11 +86,13 @@ pub(crate) fn evaluate_agent_probe(
     agent: &str,
     binary: &str,
     probe: &ProbeResult,
-) -> Option<VersionGateReport> {
-    let spec = agents::parse_spec(agent).ok()?;
+) -> Result<Option<VersionGateReport>> {
+    let spec = agents::parse_spec(agent)?;
     let family = spec.family().to_owned();
-    let profile = agents::profile_for(&family)?;
-    Some(evaluate_probe(&family, binary, profile, probe))
+    let Some(profile) = agents::profile_for(&family) else {
+        return Ok(None);
+    };
+    Ok(Some(evaluate_probe(&family, binary, profile, probe)))
 }
 
 impl VersionGateReport {
@@ -97,7 +100,7 @@ impl VersionGateReport {
         let version = self
             .detected_version
             .as_deref()
-            .unwrap_or("version unavailable");
+            .map_or(VERSION_UNAVAILABLE_PLACEHOLDER, |version| version);
         format!(
             "version_gate: {} {} {} (min {}, tested {})",
             self.agent,
@@ -220,14 +223,17 @@ fn handle_preflight_report(report: &VersionGateReport, allow_cli_mismatch: bool)
             );
             Ok(())
         }
-        VersionGateStatus::Fail if allow_cli_mismatch || env_allows_cli_mismatch() => {
-            eprintln!(
-                "warning: {} Proceeding because CLI mismatch override is enabled.",
-                actionable_message(report)
-            );
-            Ok(())
+        VersionGateStatus::Fail => {
+            if allow_cli_mismatch || env_allows_cli_mismatch()? {
+                eprintln!(
+                    "warning: {} Proceeding because CLI mismatch override is enabled.",
+                    actionable_message(report)
+                );
+                Ok(())
+            } else {
+                bail!("{}", actionable_message(report))
+            }
         }
-        VersionGateStatus::Fail => bail!("{}", actionable_message(report)),
     }
 }
 
@@ -238,15 +244,17 @@ fn actionable_message(report: &VersionGateReport) -> String {
     )
 }
 
-fn env_allows_cli_mismatch() -> bool {
-    env::var(ALLOW_CLI_MISMATCH_ENV)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+fn env_allows_cli_mismatch() -> Result<bool> {
+    match env::var(ALLOW_CLI_MISMATCH_ENV) {
+        Ok(value) => Ok(matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )),
+        Err(env::VarError::NotPresent) => Ok(false),
+        Err(env::VarError::NotUnicode(_)) => {
+            bail!("{ALLOW_CLI_MISMATCH_ENV} must be valid Unicode")
+        }
+    }
 }
 
 fn parse_profile_version(version: &str, agent: &str, field: &str) -> SemVer {
@@ -328,16 +336,16 @@ impl fmt::Display for SemVer {
 
 fn parse_number(bytes: &[u8], index: &mut usize) -> Option<u64> {
     let start = *index;
+    let mut value = 0_u64;
     while *index < bytes.len() && bytes[*index].is_ascii_digit() {
+        let digit = u64::from(bytes[*index] - b'0');
+        value = value.checked_mul(10)?.checked_add(digit)?;
         *index += 1;
     }
     if *index == start {
         return None;
     }
-    std::str::from_utf8(&bytes[start..*index])
-        .ok()?
-        .parse()
-        .ok()
+    Some(value)
 }
 
 fn expect_byte(bytes: &[u8], index: &mut usize, expected: u8) -> Option<()> {
@@ -380,7 +388,9 @@ mod tests {
     #[test]
     fn gate_fails_below_minimum() {
         let probe = successful_probe("codex-cli 0.1.0");
-        let report = evaluate_agent_probe("codex", "codex", &probe).unwrap();
+        let report = evaluate_agent_probe("codex", "codex", &probe)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(report.status, VersionGateStatus::Fail);
         assert_eq!(report.detected_version.as_deref(), Some("0.1.0"));
@@ -389,7 +399,9 @@ mod tests {
     #[test]
     fn gate_passes_between_minimum_and_tested() {
         let probe = successful_probe("codex-cli 0.142.4");
-        let report = evaluate_agent_probe("codex", "codex", &probe).unwrap();
+        let report = evaluate_agent_probe("codex", "codex", &probe)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(report.status, VersionGateStatus::Pass);
         assert_eq!(report.detected_version.as_deref(), Some("0.142.4"));
@@ -398,7 +410,9 @@ mod tests {
     #[test]
     fn gate_warns_above_tested() {
         let probe = successful_probe("codex-cli 99.0.0");
-        let report = evaluate_agent_probe("codex", "codex", &probe).unwrap();
+        let report = evaluate_agent_probe("codex", "codex", &probe)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(report.status, VersionGateStatus::Warn);
         assert_eq!(report.detected_version.as_deref(), Some("99.0.0"));

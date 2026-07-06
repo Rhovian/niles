@@ -5,6 +5,7 @@ mod build_info;
 mod cli;
 mod config;
 mod context;
+mod display;
 mod doctor;
 mod process;
 mod runner;

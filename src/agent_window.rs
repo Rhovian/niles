@@ -10,6 +10,8 @@ use crate::{
     util::slugify,
 };
 
+const UNROLE_STEP_WINDOW_SEGMENT: &str = "step";
+
 pub(crate) fn worker_window_name(id: &str) -> String {
     format!("niles-{id}")
 }
@@ -35,7 +37,10 @@ pub(crate) fn step_window_name(
     agent: &str,
 ) -> String {
     let shortid = &run_id[run_id.len().saturating_sub(6)..];
-    let role = role.unwrap_or("step");
+    let role = match role {
+        Some(role) => role,
+        None => UNROLE_STEP_WINDOW_SEGMENT,
+    };
     format!(
         "niles-{}-{}-s{step_number}-{}",
         slugify(agent),

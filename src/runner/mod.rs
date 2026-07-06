@@ -7,9 +7,18 @@ pub(crate) use lifecycle::{resume, run, step_add};
 pub(crate) use report::{diff, log, show, status, watch};
 
 use anyhow::Result;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::store::resolve_run_dir;
+use crate::{config::spec::TaskSpec, store::resolve_run_dir};
+
+pub(in crate::runner) const IMPLICIT_TASK_WORKSPACE: &str = ".";
+
+pub(in crate::runner) fn spec_workspace(spec: &TaskSpec) -> &Utf8Path {
+    match spec.workspace.as_deref() {
+        Some(workspace) => workspace,
+        None => Utf8Path::new(IMPLICIT_TASK_WORKSPACE),
+    }
+}
 
 pub struct RunSelector(String);
 

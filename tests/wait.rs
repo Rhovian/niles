@@ -455,7 +455,7 @@ fn wait_worker_cleans_guard_on_timeout() {
 }
 
 #[test]
-fn wait_worker_corrupt_ack_falls_back_to_start() {
+fn wait_worker_corrupt_ack_fails_loudly() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-wait-corrupt-ack");
     let worker_dir = workspace.join(".niles/worker/auth-fix");
@@ -477,14 +477,14 @@ fn wait_worker_corrupt_ack_falls_back_to_start() {
         .output()
         .unwrap();
 
-    assert_command_success("wait --worker corrupt ack", &output);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "done: after corrupt ack\n"
-    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid ack cursor"));
+    assert!(stderr.contains("invalid digit found in string"));
     assert_eq!(
         fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
-        "1\n"
+        "not a number\n"
     );
 }
 

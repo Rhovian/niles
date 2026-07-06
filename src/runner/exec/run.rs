@@ -12,8 +12,6 @@ use crate::{
 
 use super::super::RunSelector;
 
-const IMPLICIT_TASK_WORKSPACE: &str = ".";
-
 pub(in crate::runner::exec) struct LoadedRun {
     pub(in crate::runner::exec) run_dir: Utf8PathBuf,
     pub(in crate::runner::exec) state_path: Utf8PathBuf,
@@ -38,13 +36,6 @@ pub(in crate::runner::exec) fn task_step(spec: &TaskSpec, step_number: usize) ->
     spec.steps
         .get(position)
         .with_context(|| format!("step {step_number} is out of range for this task"))
-}
-
-pub(in crate::runner::exec) fn spec_workspace(spec: &TaskSpec) -> &Utf8Path {
-    match spec.workspace.as_deref() {
-        Some(workspace) => workspace,
-        None => Utf8Path::new(IMPLICIT_TASK_WORKSPACE),
-    }
 }
 
 pub(in crate::runner::exec) fn ensure_steps_dir(run_dir: &Utf8Path) -> Result<Utf8PathBuf> {

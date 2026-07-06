@@ -162,7 +162,7 @@ pub(crate) enum ProbeStatus {
 
 fn probe_agent(family: &str, specs: &[ProbeSpec], binary: &str) -> Result<CapabilityManifest> {
     let version_probe = run_probe(binary, "--version");
-    let version_gate = version::evaluate_agent_probe(family, binary, &version_probe);
+    let version_gate = version::evaluate_agent_probe(family, binary, &version_probe)?;
     let (accepted_models, rejected_models) =
         probe_model_acceptance(specs, binary, version_gate.as_ref())?;
     Ok(CapabilityManifest {
@@ -245,10 +245,10 @@ fn model_probe_line(family: &str, probe: &ModelProbe, status: &str) -> String {
         Some(effort) => format!(":{effort}"),
         None => String::new(),
     };
-    let version = match probe.cli_version.as_deref() {
-        Some(version) => version,
-        None => "version unavailable",
-    };
+    let version = probe
+        .cli_version
+        .as_deref()
+        .map_or(version::VERSION_UNAVAILABLE_PLACEHOLDER, |version| version);
     format!(
         "model_probe: {family}:{}{effort} {status} by {family} CLI {version}",
         probe.model

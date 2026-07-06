@@ -11,6 +11,8 @@ use crate::{
     util::{absolute_path, current_dir_utf8},
 };
 
+const UNKNOWN_SOURCE_METADATA: &str = "unknown";
+
 pub(crate) fn doctor() -> Result<()> {
     let workspace = current_dir_utf8()?;
     println!("binary: {}", build_info::identity());
@@ -66,11 +68,15 @@ fn print_dev_mode(workspace: &Utf8Path) -> Result<()> {
     let dirty = worktree_dirty(workspace);
     println!(
         "source_head: {}",
-        source_hash.as_deref().unwrap_or("unknown")
+        source_hash
+            .as_deref()
+            .map_or(UNKNOWN_SOURCE_METADATA, |value| value)
     );
     println!(
         "source_head_time: {}",
-        source_time.as_deref().unwrap_or("unknown")
+        source_time
+            .as_deref()
+            .map_or(UNKNOWN_SOURCE_METADATA, |value| value)
     );
     println!("binary_head: {}", build_info::GIT_HASH);
     println!("binary_head_time: {}", build_info::BUILD_HEAD_TIMESTAMP);
@@ -130,6 +136,10 @@ fn stale_status(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "doctor staleness is advisory; malformed git/build timestamps make stale status unknown rather than failing doctor"
+)]
 fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
@@ -142,6 +152,10 @@ fn git_output(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "doctor dev-mode git metadata is advisory; git launch failure should be reported as unknown metadata"
+)]
 fn git_output_raw(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .arg("-C")
