@@ -1,4 +1,5 @@
 use super::{
+    progress,
     snapshot::{DashboardRole, DashboardRow, DashboardSnapshot, ManagerLifecycle, PaneSummary},
     status::WakeState,
 };
@@ -10,6 +11,7 @@ enum ColumnId {
     Agent,
     Pane,
     Wall,
+    Usage,
     Wake,
     LastStatus,
 }
@@ -47,6 +49,11 @@ const COLUMNS: &[Column] = &[
         id: ColumnId::Wall,
     },
     Column {
+        title: "usage",
+        width: 18,
+        id: ColumnId::Usage,
+    },
+    Column {
         title: "wake",
         width: 13,
         id: ColumnId::Wake,
@@ -61,6 +68,10 @@ const COLUMNS: &[Column] = &[
 pub(crate) fn render(snapshot: &DashboardSnapshot) -> String {
     let mut output = String::new();
     output.push_str("Niles home\n\n");
+    if let Some(progress) = &snapshot.progress {
+        output.push_str(&progress::progress_line(progress));
+        output.push_str("\n\n");
+    }
     render_header(&mut output);
     render_separator(&mut output);
     for row in &snapshot.rows {
@@ -128,6 +139,7 @@ fn cell(row: &DashboardRow, column: ColumnId) -> String {
         ColumnId::Agent => row.agent.clone(),
         ColumnId::Pane => pane_cell(&row.pane),
         ColumnId::Wall => row.wall.clone(),
+        ColumnId::Usage => row.usage.render(),
         ColumnId::Wake => wake_label(row.wake).to_owned(),
         ColumnId::LastStatus => row.last_status.clone(),
     }
@@ -194,7 +206,10 @@ fn fit_cell(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dashboard::snapshot::{DashboardRole, ManagerLifecycle, PaneLiveness};
+    use crate::dashboard::{
+        snapshot::{DashboardRole, ManagerLifecycle, PaneLiveness},
+        usage_cell::UsageCell,
+    };
 
     #[test]
     fn render_includes_manager_lifecycle_and_fallbacks() {
@@ -210,12 +225,14 @@ mod tests {
                     command: Some("codex".to_owned()),
                 },
                 wall: "1m".to_owned(),
+                usage: UsageCell::unavailable(),
                 wake: WakeState::NotApplicable,
                 last_status: "-".to_owned(),
             }],
             messages: Vec::new(),
             manager_target: Some("niles:niles-manager".to_owned()),
             manager_lifecycle: ManagerLifecycle::Exited,
+            progress: None,
         };
 
         let output = render(&snapshot);
@@ -240,6 +257,7 @@ mod tests {
             messages: Vec::new(),
             manager_target: None,
             manager_lifecycle: ManagerLifecycle::Unknown,
+            progress: None,
         };
 
         let output = render(&snapshot);
@@ -264,6 +282,7 @@ mod tests {
                 command: None,
             },
             wall: "1m".to_owned(),
+            usage: UsageCell::pending(),
             wake,
             last_status: "done: ready".to_owned(),
         }

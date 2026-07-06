@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agents,
     schema::{self, ArtifactKind},
+    usage::{self, UsageAttribution},
     util::{timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest},
@@ -27,6 +28,8 @@ pub struct SessionMeta {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_attribution: Option<UsageAttribution>,
     #[serde(default = "default_created_at")]
     pub created_at: chrono::DateTime<Utc>,
     pub workspace: Utf8PathBuf,
@@ -56,6 +59,12 @@ pub(super) fn write_manager_session(
         agent_family: agent.tier().map(|tier| tier.family),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
+        usage_attribution: Some(usage::attribution_for_family(
+            agent.family(),
+            workspace,
+            now,
+            Some(1),
+        )),
         created_at: now,
         workspace: workspace.to_path_buf(),
         brief: path,
@@ -133,6 +142,7 @@ fn default_created_at() -> chrono::DateTime<Utc> {
 mod tests {
     use super::super::test_support::temp_test_path;
     use super::*;
+    use crate::usage::UsageAttribution;
 
     #[test]
     fn manager_brief_omits_removed_manifest_command() {
@@ -186,5 +196,38 @@ mod tests {
         assert!(body.contains("latest_run: none"));
         assert!(!body.contains("{manifest}"));
         assert!(!body.contains("{flow}"));
+    }
+
+    #[test]
+    fn manager_session_meta_round_trips_usage_attribution() {
+        let workspace = temp_test_path("manager-usage-roundtrip");
+        let session_dir = workspace.join(".niles/sessions/session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let usage_attribution = UsageAttribution::ClaudeSession {
+            session_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+            cwd: workspace.clone(),
+            launched_at: "2026-07-06T00:00:00Z".parse().unwrap(),
+            niles_prompt_count: Some(1),
+        };
+        let meta = SessionMeta {
+            id: "session".to_owned(),
+            agent: "claude:opus:max".to_owned(),
+            agent_family: Some("claude".to_owned()),
+            model: Some("opus".to_owned()),
+            effort: Some("max".to_owned()),
+            usage_attribution: Some(usage_attribution.clone()),
+            created_at: "2026-07-06T00:00:00Z".parse().unwrap(),
+            workspace: workspace.clone(),
+            brief: session_dir.join("manager.md"),
+            window: Some("niles:niles-manager".to_owned()),
+            launch: Some(session_dir.join("launch.sh")),
+        };
+
+        write_session_meta(&workspace, &meta).unwrap();
+        fs::write(latest_session_path(&workspace), "session").unwrap();
+
+        let read = read_latest_session(&workspace).unwrap().unwrap();
+        assert_eq!(read.usage_attribution, Some(usage_attribution));
+        fs::remove_dir_all(workspace).unwrap();
     }
 }

@@ -10,7 +10,7 @@ mod snapshot_tests;
 
 pub(crate) use attribution::{UsageAttribution, attribution_for_family};
 pub(crate) use display::{
-    UsageDisplay, UsageRollup, format_optional, format_rollup_wall, format_wall,
+    UsageDisplay, UsageDisplayStatus, UsageRollup, format_optional, format_rollup_wall, format_wall,
 };
 pub(crate) use path::{step_usage_path, worker_usage_path};
 pub(crate) use snapshot::{

@@ -57,6 +57,9 @@ pub(crate) struct UsageAgent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum UsageSubject {
+    Manager {
+        id: String,
+    },
     Worker {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

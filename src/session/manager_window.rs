@@ -12,7 +12,10 @@ use crate::{
 use super::{
     SessionMeta,
     brief::{read_latest_session, write_manager_session, write_session_meta},
-    foreground::{ManagerCommand, foreground_invocation_for_project, prepare_manager_command},
+    foreground::{
+        ManagerCommand, append_manager_session_id_arg, foreground_invocation_for_project,
+        prepare_manager_command,
+    },
 };
 
 pub(super) const MANAGER_WINDOW_NAME: &str = "niles-manager";
@@ -52,8 +55,9 @@ fn reuse_existing_manager_window(
 }
 
 fn spawn_manager_window(workspace: &Utf8Path, manifest: &WorkspaceManifest) -> Result<SessionMeta> {
-    let invocation = foreground_invocation_for_project(workspace, &manifest.manager)?;
+    let mut invocation = foreground_invocation_for_project(workspace, &manifest.manager)?;
     let mut meta = write_manager_session(workspace, &invocation.spec, manifest)?;
+    append_manager_session_id_arg(&mut invocation, &meta);
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
     let command = prepare_manager_window_command(invocation, brief)?;
