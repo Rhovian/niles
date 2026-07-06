@@ -16,13 +16,10 @@ use crate::{
     wake,
 };
 
-use super::super::{RunSelector, lifecycle::load_spec_for_run};
+use super::super::{RunSelector, lifecycle::load_spec_for_run, spec_workspace};
 use super::{
     error::record_step_error_or_context,
-    run::{
-        ensure_steps_dir, load_run, mark_step_running, spec_workspace, step_record_position,
-        task_step,
-    },
+    run::{ensure_steps_dir, load_run, mark_step_running, step_record_position, task_step},
 };
 
 const STEP_WAKE_CONTRACT_TEMPLATE: &str = include_str!("../../templates/step_wake_contract.md");

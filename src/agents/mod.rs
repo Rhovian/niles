@@ -14,6 +14,12 @@ pub(crate) mod version;
 
 pub use families::AgentProfile;
 
+const CUSTOM_AGENT_DEFAULT_ARGS: &[&str] = &[];
+const CUSTOM_AGENT_LAUNCH_ENV: &[(&str, &str)] = &[];
+const CUSTOM_AGENT_MODEL_ALIASES: &[&str] = &[];
+const CUSTOM_AGENT_PROMPT_MODE: PromptMode = PromptMode::Arg;
+const CUSTOM_AGENT_SUPPORTED_EFFORTS: &[&str] = &[];
+
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationDefaults {
     Default,
@@ -66,21 +72,23 @@ pub fn config_for<'a>(
 
 pub fn default_binary(agent: &str) -> String {
     let family = family_or_self(agent);
-    profile_for(&family)
-        .map(|profile| profile.binary.to_owned())
-        .unwrap_or(family)
+    default_binary_for_family(family.clone(), profile_for(&family))
 }
 
 pub fn default_args(agent: &str) -> Vec<String> {
     let family = family_or_self(agent);
-    profile_for(&family).map(profile_args).unwrap_or_default()
+    match profile_for(&family) {
+        Some(profile) => profile_args(profile),
+        None => args(CUSTOM_AGENT_DEFAULT_ARGS),
+    }
 }
 
 pub fn default_prompt(agent: &str) -> PromptMode {
     let family = family_or_self(agent);
-    profile_for(&family)
-        .map(|profile| profile.prompt)
-        .unwrap_or(PromptMode::Arg)
+    match profile_for(&family) {
+        Some(profile) => profile.prompt,
+        None => CUSTOM_AGENT_PROMPT_MODE,
+    }
 }
 
 pub fn invocation(
@@ -93,7 +101,10 @@ pub fn invocation(
 
     let mut invocation = match config {
         Some(config) => AgentInvocation {
-            binary: config.binary.clone().unwrap_or(default_invocation.binary),
+            binary: configured_or_default_binary(
+                config.binary.as_deref(),
+                default_invocation.binary,
+            ),
             args: if config.args.is_empty() {
                 default_invocation.args
             } else {
@@ -134,7 +145,7 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
         },
         InvocationDefaults::Worker => AgentInvocation {
             binary: default_binary(spec.family()),
-            args: args_for_worker(spec.family(), profile),
+            args: args_for_worker(profile),
             prompt: prompt_for_profile(profile),
             env: launch_env(profile),
             spec: spec.clone(),
@@ -142,16 +153,32 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
     }
 }
 
-fn args_for_worker(agent: &str, profile: Option<AgentProfile>) -> Vec<String> {
-    profile
-        .map(|profile| args(profile.worker_args))
-        .unwrap_or_else(|| default_args(agent))
+fn default_binary_for_family(family: String, profile: Option<AgentProfile>) -> String {
+    match profile {
+        Some(profile) => profile.binary.to_owned(),
+        None => family,
+    }
+}
+
+fn configured_or_default_binary(configured: Option<&str>, default: String) -> String {
+    match configured {
+        Some(binary) => binary.to_owned(),
+        None => default,
+    }
+}
+
+fn args_for_worker(profile: Option<AgentProfile>) -> Vec<String> {
+    match profile {
+        Some(profile) => args(profile.worker_args),
+        None => args(CUSTOM_AGENT_DEFAULT_ARGS),
+    }
 }
 
 fn prompt_for_profile(profile: Option<AgentProfile>) -> PromptMode {
-    profile
-        .map(|profile| profile.worker_prompt)
-        .unwrap_or(PromptMode::Arg)
+    match profile {
+        Some(profile) => profile.worker_prompt,
+        None => CUSTOM_AGENT_PROMPT_MODE,
+    }
 }
 
 fn profile_args(profile: AgentProfile) -> Vec<String> {
@@ -163,15 +190,14 @@ fn args(args: &[&str]) -> Vec<String> {
 }
 
 fn launch_env(profile: Option<AgentProfile>) -> Vec<(String, String)> {
-    profile
-        .map(|profile| {
-            profile
-                .launch_env
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-                .collect()
-        })
-        .unwrap_or_default()
+    let launch_env = match profile {
+        Some(profile) => profile.launch_env,
+        None => CUSTOM_AGENT_LAUNCH_ENV,
+    };
+    launch_env
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
 }
 
 fn family_or_self(agent: &str) -> String {
@@ -306,15 +332,17 @@ pub(crate) fn validate_static_model(spec: &AgentSpec) -> Result<()> {
 }
 
 pub(crate) fn default_model_aliases(family: &str) -> &'static [&'static str] {
-    profile_for(family)
-        .map(|profile| profile.model_aliases)
-        .unwrap_or(&[])
+    match profile_for(family) {
+        Some(profile) => profile.model_aliases,
+        None => CUSTOM_AGENT_MODEL_ALIASES,
+    }
 }
 
 pub(crate) fn supported_efforts(family: &str) -> &'static [&'static str] {
-    profile_for(family)
-        .map(|profile| profile.supported_efforts)
-        .unwrap_or(&[])
+    match profile_for(family) {
+        Some(profile) => profile.supported_efforts,
+        None => CUSTOM_AGENT_SUPPORTED_EFFORTS,
+    }
 }
 
 pub(crate) fn model_group_label(family: &str, model: &str) -> String {
@@ -327,11 +355,14 @@ pub(crate) fn manager_prompt_args(
     agent: &str,
     brief: String,
     startup_prompt: String,
-) -> Vec<String> {
-    let profile = AgentSpec::parse(agent)
-        .ok()
-        .and_then(|spec| profile_for(spec.family()));
-    families::manager_prompt_args(profile, brief, startup_prompt)
+) -> Result<Vec<String>> {
+    let spec = AgentSpec::parse(agent)?;
+    let profile = profile_for(spec.family());
+    Ok(families::manager_prompt_args(
+        profile,
+        brief,
+        startup_prompt,
+    ))
 }
 
 pub(crate) fn canonical_manifest_agent(

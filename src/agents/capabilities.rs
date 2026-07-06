@@ -177,7 +177,7 @@ fn validate_model(
             .cli_version
             .as_deref()
             .or_else(|| manifest_cli_version(&manifest))
-            .map_or("version unavailable", |version| version);
+            .map_or(version::VERSION_UNAVAILABLE_PLACEHOLDER, |version| version);
         bail!(
             "model `{model}` was rejected by {} CLI {version} in {path}; rerun `niles analyze`, or check the model name",
             spec.family()
@@ -200,12 +200,11 @@ fn read_manifest_for_binary(
     }
 
     let legacy_path = manifest_path(workspace, family);
-    if legacy_path != exact_path {
-        if let Some(manifest) =
+    if legacy_path != exact_path
+        && let Some(manifest) =
             schema::read_optional_json(&legacy_path, ArtifactKind::CapabilityManifest)?
-        {
-            return Ok(Some((legacy_path, manifest)));
-        }
+    {
+        return Ok(Some((legacy_path, manifest)));
     }
 
     Ok(None)
@@ -213,7 +212,7 @@ fn read_manifest_for_binary(
 
 fn current_cli_version(family: &str, binary: &str) -> Result<Option<String>> {
     let probe = run_probe(binary, "--version");
-    let report = version::evaluate_agent_probe(family, binary, &probe)
+    let report = version::evaluate_agent_probe(family, binary, &probe)?
         .with_context(|| format!("agent family `{family}` has no version gate"))?;
     Ok(report.detected_version)
 }
@@ -239,9 +238,10 @@ fn warn_stale_manifest(
     manifest: &CapabilityManifest,
     current: Option<&str>,
 ) {
-    let manifest_version =
-        manifest_cli_version(manifest).map_or("version unavailable", |version| version);
-    let current_version = current.map_or("version unavailable", |version| version);
+    let manifest_version = manifest_cli_version(manifest)
+        .map_or(version::VERSION_UNAVAILABLE_PLACEHOLDER, |version| version);
+    let current_version =
+        current.map_or(version::VERSION_UNAVAILABLE_PLACEHOLDER, |version| version);
     eprintln!(
         "warning: capability manifest {path} was probed for {family} CLI {manifest_version}, but the current CLI is {current_version}; rerun `niles analyze` to refresh model acceptance data"
     );

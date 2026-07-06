@@ -131,7 +131,7 @@ pub fn summarize_spec(spec: &TaskSpec) -> serde_json::Value {
         .map(|(id, config)| {
             serde_json::json!({
                 "id": id,
-                "binary": config.binary.as_deref().unwrap_or(id),
+                "binary": summarized_agent_binary(id, config),
             })
         })
         .collect::<Vec<_>>();
@@ -158,4 +158,11 @@ pub fn summarize_spec(spec: &TaskSpec) -> serde_json::Value {
         "steps": steps,
         "commands": spec.commands,
     })
+}
+
+fn summarized_agent_binary<'a>(id: &'a str, config: &'a AgentConfig) -> &'a str {
+    match config.binary.as_deref() {
+        Some(binary) => binary,
+        None => id,
+    }
 }

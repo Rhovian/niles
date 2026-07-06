@@ -30,7 +30,7 @@ pub(super) fn launch_foreground_agent(
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec, manifest)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    let prompt = manager_prompt_io(&family, invocation.prompt, brief);
+    let prompt = manager_prompt_io(&family, invocation.prompt, brief)?;
     args.extend(prompt.args);
 
     let status = run_foreground_process(workspace, &binary, &args, prompt.stdin.as_deref())?;
@@ -98,20 +98,20 @@ struct ForegroundPrompt {
     stdin: Option<String>,
 }
 
-fn manager_prompt_io(agent: &str, prompt: PromptMode, brief: String) -> ForegroundPrompt {
+fn manager_prompt_io(agent: &str, prompt: PromptMode, brief: String) -> Result<ForegroundPrompt> {
     match prompt {
-        PromptMode::Arg => ForegroundPrompt {
-            args: manager_prompt_args(agent, brief),
+        PromptMode::Arg => Ok(ForegroundPrompt {
+            args: manager_prompt_args(agent, brief)?,
             stdin: None,
-        },
-        PromptMode::Stdin => ForegroundPrompt {
+        }),
+        PromptMode::Stdin => Ok(ForegroundPrompt {
             args: Vec::new(),
             stdin: Some(manager_stdin_prompt(brief)),
-        },
+        }),
     }
 }
 
-fn manager_prompt_args(agent: &str, brief: String) -> Vec<String> {
+fn manager_prompt_args(agent: &str, brief: String) -> Result<Vec<String>> {
     agents::manager_prompt_args(agent, brief, STARTUP_PROMPT.to_owned())
 }
 
@@ -196,7 +196,8 @@ agents:
             invocation.spec.family(),
             invocation.prompt,
             "brief body".to_owned(),
-        );
+        )
+        .unwrap();
         let mut args = invocation.args;
         args.extend(prompt.args);
 
@@ -281,7 +282,7 @@ agents:
 
     #[test]
     fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
-        let args = manager_prompt_args("claude", "brief body".to_owned());
+        let args = manager_prompt_args("claude", "brief body".to_owned()).unwrap();
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--append-system-prompt");
@@ -291,7 +292,7 @@ agents:
 
     #[test]
     fn manager_prompt_io_preserves_claude_arg_mode_system_prompt() {
-        let prompt = manager_prompt_io("claude", PromptMode::Arg, "brief body".to_owned());
+        let prompt = manager_prompt_io("claude", PromptMode::Arg, "brief body".to_owned()).unwrap();
 
         assert_eq!(prompt.stdin, None);
         assert_eq!(prompt.args.len(), 3);

@@ -139,6 +139,10 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     left == right
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build git/date metadata is advisory; command launch failure should produce missing metadata, not fail cargo build"
+)]
 fn command_output(command: &mut Command) -> Option<String> {
     let output = command.output().ok()?;
     if !output.status.success() {

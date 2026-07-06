@@ -10,11 +10,11 @@ use crate::{
     wake::{self, WakeKind},
 };
 
-use super::super::{RunSelector, lifecycle::load_spec_for_run, report};
+use super::super::{RunSelector, lifecycle::load_spec_for_run, report, spec_workspace};
 use super::{
     error::record_step_error_or_context,
     execute::execute_single_step,
-    run::{ensure_steps_dir, load_run, spec_workspace, task_step},
+    run::{ensure_steps_dir, load_run, task_step},
     status::append_run_status,
 };
 

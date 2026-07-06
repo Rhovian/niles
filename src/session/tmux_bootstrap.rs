@@ -23,7 +23,7 @@ pub(super) fn ensure_tmux_session(tmux: Option<&OsStr>, workspace: &Utf8Path) ->
     match tmux_launch_action(tmux, terminal, foreground_session_exists)? {
         TmuxLaunchAction::ContinueHere => Ok(true),
         TmuxLaunchAction::StartSession { session } => {
-            let status = tmux::launch_foreground_session(&session, workspace, &current_argv()?)?;
+            let status = tmux::launch_foreground_session(session, workspace, &current_argv()?)?;
             ensure_tmux_launch_succeeded(status)?;
             Ok(false)
         }
