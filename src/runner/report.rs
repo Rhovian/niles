@@ -16,9 +16,9 @@ use crate::{
     store::{read_state, selected_step, state_path},
 };
 
-use super::RunSelector;
+use super::{RunSelector, usage_report};
 
-pub(crate) fn status(selector: RunSelector, json: bool) -> Result<()> {
+pub(crate) fn status(selector: RunSelector, json: bool, usage: bool) -> Result<()> {
     let run_dir = selector.resolve()?;
     let path = state_path(&run_dir);
     if json {
@@ -27,7 +27,7 @@ pub(crate) fn status(selector: RunSelector, json: bool) -> Result<()> {
         println!("{state}");
     } else {
         let state = read_state(&run_dir)?;
-        print_status(&state);
+        print_status(&state, usage.then_some(run_dir.as_path()));
     }
     Ok(())
 }
@@ -52,7 +52,7 @@ pub(crate) fn watch(selector: RunSelector, interval: f64, no_clear: bool) -> Res
             print!("\x1B[2J\x1B[H");
         }
 
-        print_status(&state);
+        print_status(&state, None);
         io::stdout().flush().context("failed to flush stdout")?;
         first = false;
 
@@ -99,7 +99,7 @@ pub(crate) fn show(selector: RunSelector) -> Result<()> {
     Ok(())
 }
 
-fn print_status(state: &RunState) {
+fn print_status(state: &RunState, usage_run_dir: Option<&Utf8Path>) {
     println!("run: {}", state.id);
     println!("status: {}", state.status);
     println!("goal: {}", state.goal);
@@ -107,6 +107,9 @@ fn print_status(state: &RunState) {
 
     if state.steps.is_empty() {
         println!("steps[0]:");
+        if let Some(run_dir) = usage_run_dir {
+            usage_report::print_usage_blocks(state, run_dir);
+        }
         println!("help[2]:");
         println!("  Run `niles show {}`", state.id);
         println!("  Run `niles status {} --json`", state.id);
@@ -115,6 +118,9 @@ fn print_status(state: &RunState) {
 
     print_steps_table(state);
     print_agent_tiers(state);
+    if let Some(run_dir) = usage_run_dir {
+        usage_report::print_usage_blocks(state, run_dir);
+    }
 
     let focus_step = state
         .steps

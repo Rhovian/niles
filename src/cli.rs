@@ -121,7 +121,11 @@ pub enum CommandName {
         all: bool,
     },
     /// List live spawned workers.
-    Workers,
+    Workers {
+        /// Show live token usage and task rollups.
+        #[arg(long)]
+        usage: bool,
+    },
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.
@@ -191,8 +195,11 @@ pub enum CommandName {
         #[arg(default_value = "latest")]
         run: String,
         /// Print raw JSON state.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "usage")]
         json: bool,
+        /// Show per-step token usage and run rollup.
+        #[arg(long)]
+        usage: bool,
     },
     /// Watch a persisted run until it finishes.
     #[command(alias = "w")]

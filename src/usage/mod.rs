@@ -1,13 +1,19 @@
 pub(crate) mod attribution;
 mod claude;
 mod codex;
+mod display;
 mod home;
+mod path;
 mod snapshot;
 #[cfg(test)]
 mod snapshot_tests;
 
-pub(crate) use attribution::{attribution_for_family, UsageAttribution};
+pub(crate) use attribution::{UsageAttribution, attribution_for_family};
+pub(crate) use display::{
+    UsageDisplay, UsageRollup, format_optional, format_rollup_wall, format_wall,
+};
+pub(crate) use path::{step_usage_path, worker_usage_path};
 pub(crate) use snapshot::{
-    snapshot_usage, step_usage_path, worker_usage_path, UsageAgent, UsageSnapshotInput,
-    UsageSubject,
+    UsageAgent, UsageSnapshotInput, UsageSubject, compute_usage_snapshot, read_usage_snapshot,
+    snapshot_usage,
 };

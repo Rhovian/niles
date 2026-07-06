@@ -76,7 +76,7 @@ fn main() -> Result<()> {
             task_label,
             all,
         }) => worker::worker_close(id, task_label, all),
-        Some(CommandName::Workers) => worker::workers(),
+        Some(CommandName::Workers { usage }) => worker::workers(usage),
         Some(CommandName::Report { id }) => worker::report(id),
         Some(CommandName::Peek {
             id,
@@ -98,7 +98,9 @@ fn main() -> Result<()> {
             timeout,
         }) => wait::wait(run, worker, task, index, interval, timeout),
         Some(CommandName::Resume { run }) => runner::resume(RunSelector::new(run)),
-        Some(CommandName::Status { run, json }) => runner::status(RunSelector::new(run), json),
+        Some(CommandName::Status { run, json, usage }) => {
+            runner::status(RunSelector::new(run), json, usage)
+        }
         Some(CommandName::Watch {
             run,
             interval,

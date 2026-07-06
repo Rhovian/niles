@@ -1,8 +1,12 @@
+use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::util::{slugify, write_json_pretty};
+use crate::{
+    schema::{self, ArtifactKind},
+    util::write_json_pretty,
+};
 
 use super::{
     attribution::UsageAttribution,
@@ -11,7 +15,6 @@ use super::{
     home,
 };
 
-const USAGE_FILE: &str = "usage.json";
 const CLAUDE_RESOLVED_BY: &str = "claude_session_id";
 const CODEX_RESOLVED_BY: &str = "nearest_cwd_start";
 
@@ -154,17 +157,9 @@ pub(crate) enum UsageUnavailableReason {
     Unsupported,
 }
 
-pub(crate) fn worker_usage_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
-    worker_dir.join(USAGE_FILE)
-}
-
-pub(crate) fn step_usage_path(steps_dir: &Utf8Path, index: usize, label: &str) -> Utf8PathBuf {
-    steps_dir.join(format!("{index:03}-{}.usage.json", slugify(label)))
-}
-
 pub(crate) fn snapshot_usage(input: UsageSnapshotInput) -> Option<Utf8PathBuf> {
     let path = input.output_path.clone();
-    let snapshot = build_snapshot(&input);
+    let snapshot = build_snapshot(&input, true);
     match write_json_pretty(&path, &snapshot) {
         Ok(()) => Some(path),
         Err(err) => {
@@ -174,13 +169,21 @@ pub(crate) fn snapshot_usage(input: UsageSnapshotInput) -> Option<Utf8PathBuf> {
     }
 }
 
-fn build_snapshot(input: &UsageSnapshotInput) -> UsageSnapshot {
+pub(crate) fn compute_usage_snapshot(input: &UsageSnapshotInput) -> UsageSnapshot {
+    build_snapshot(input, false)
+}
+
+pub(crate) fn read_usage_snapshot(path: &Utf8Path) -> Result<UsageSnapshot> {
+    schema::read_json(path, ArtifactKind::UsageSnapshot)
+}
+
+fn build_snapshot(input: &UsageSnapshotInput, warn_unavailable: bool) -> UsageSnapshot {
     let captured_at = Utc::now();
     let CaptureOutcome {
         attribution,
         turns,
         usage,
-    } = capture_usage(input.attribution.as_ref());
+    } = capture_usage(input.attribution.as_ref(), warn_unavailable);
 
     UsageSnapshot {
         subject: input.subject.clone(),
@@ -201,13 +204,14 @@ struct CaptureOutcome {
     usage: UsageSnapshotUsage,
 }
 
-fn capture_usage(attribution: Option<&UsageAttribution>) -> CaptureOutcome {
+fn capture_usage(attribution: Option<&UsageAttribution>, warn_unavailable: bool) -> CaptureOutcome {
     let Some(attribution) = attribution else {
         return unavailable(
             UsageSnapshotAttribution::Missing,
             None,
             UsageUnavailableReason::Unsupported,
             "no usage attribution was recorded for this artifact".to_owned(),
+            warn_unavailable,
         );
     };
 
@@ -217,12 +221,18 @@ fn capture_usage(attribution: Option<&UsageAttribution>) -> CaptureOutcome {
             cwd,
             launched_at,
             niles_prompt_count,
-        } => capture_claude(session_id, cwd, *launched_at, *niles_prompt_count),
+        } => capture_claude(
+            session_id,
+            cwd,
+            *launched_at,
+            *niles_prompt_count,
+            warn_unavailable,
+        ),
         UsageAttribution::CodexCwdTime {
             cwd,
             launched_at,
             niles_prompt_count,
-        } => capture_codex(cwd, *launched_at, *niles_prompt_count),
+        } => capture_codex(cwd, *launched_at, *niles_prompt_count, warn_unavailable),
         UsageAttribution::Unsupported {
             cwd,
             launched_at,
@@ -236,6 +246,7 @@ fn capture_usage(attribution: Option<&UsageAttribution>) -> CaptureOutcome {
             *niles_prompt_count,
             UsageUnavailableReason::Unsupported,
             "agent family does not expose a supported token ledger".to_owned(),
+            warn_unavailable,
         ),
     }
 }
@@ -245,6 +256,7 @@ fn capture_claude(
     cwd: &Utf8Path,
     launched_at: DateTime<Utc>,
     niles_prompt_count: Option<u64>,
+    warn_unavailable: bool,
 ) -> CaptureOutcome {
     let attribution_without_path = UsageSnapshotAttribution::ClaudeSession {
         session_id: session_id.to_owned(),
@@ -262,6 +274,7 @@ fn capture_claude(
                 niles_prompt_count,
                 UsageUnavailableReason::Missing,
                 format!("{err:#}"),
+                warn_unavailable,
             );
         }
     };
@@ -280,6 +293,7 @@ fn capture_claude(
             niles_prompt_count,
             UsageUnavailableReason::Missing,
             format!("Claude transcript not found at {transcript}"),
+            warn_unavailable,
         );
     }
     match claude::parse_claude_transcript_file(&transcript) {
@@ -289,12 +303,14 @@ fn capture_claude(
             niles_prompt_count,
             UsageUnavailableReason::Missing,
             format!("Claude transcript {transcript} has no assistant usage records"),
+            warn_unavailable,
         ),
         Err(err) => unavailable(
             attribution,
             niles_prompt_count,
             UsageUnavailableReason::ParseError,
             format!("{err:#}"),
+            warn_unavailable,
         ),
     }
 }
@@ -303,6 +319,7 @@ fn capture_codex(
     cwd: &Utf8Path,
     launched_at: DateTime<Utc>,
     niles_prompt_count: Option<u64>,
+    warn_unavailable: bool,
 ) -> CaptureOutcome {
     let attribution_without_path = UsageSnapshotAttribution::CodexCwdTime {
         cwd: cwd.to_path_buf(),
@@ -320,6 +337,7 @@ fn capture_codex(
                 niles_prompt_count,
                 UsageUnavailableReason::Missing,
                 format!("{err:#}"),
+                warn_unavailable,
             );
         }
     };
@@ -331,6 +349,7 @@ fn capture_codex(
                 niles_prompt_count,
                 UsageUnavailableReason::ParseError,
                 format!("{err:#}"),
+                warn_unavailable,
             );
         }
     };
@@ -355,6 +374,7 @@ fn capture_codex(
                             "Codex rollout {} has no token_count events",
                             transcript.path
                         ),
+                        warn_unavailable,
                     ),
                 },
                 Err(err) => unavailable(
@@ -362,6 +382,7 @@ fn capture_codex(
                     niles_prompt_count,
                     UsageUnavailableReason::ParseError,
                     format!("{err:#}"),
+                    warn_unavailable,
                 ),
             }
         }
@@ -370,12 +391,14 @@ fn capture_codex(
             niles_prompt_count,
             UsageUnavailableReason::Missing,
             detail,
+            warn_unavailable,
         ),
         CodexResolveResult::Ambiguous(detail) => unavailable(
             attribution_without_path,
             niles_prompt_count,
             UsageUnavailableReason::AmbiguousCodexCandidates,
             detail,
+            warn_unavailable,
         ),
     }
 }
@@ -427,8 +450,11 @@ fn unavailable(
     niles_prompt_count: Option<u64>,
     reason: UsageUnavailableReason,
     detail: String,
+    warn_unavailable: bool,
 ) -> CaptureOutcome {
-    eprintln!("warning: usage unavailable ({reason:?}): {detail}");
+    if warn_unavailable {
+        eprintln!("warning: usage unavailable ({reason:?}): {detail}");
+    }
     CaptureOutcome {
         attribution,
         turns: turn_counts(niles_prompt_count, None),

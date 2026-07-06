@@ -3,10 +3,13 @@ mod common;
 use common::*;
 use std::{
     fs,
+    path::Path,
     process::{Command, Stdio},
     thread,
     time::Duration,
 };
+
+use serde_json::json;
 
 #[test]
 fn run_executes_steps_and_persists_state() {
@@ -108,6 +111,110 @@ commands:
         .unwrap();
     assert!(alias.status.success());
     assert!(String::from_utf8_lossy(&alias.stdout).contains("niles-test-"));
+}
+
+#[test]
+fn status_usage_prefers_persisted_sidecar_and_live_computes_running_step() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-status-usage");
+    let run_dir = workspace.join(".niles/runs/usage-run");
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).unwrap();
+    let sidecar = steps_dir.join("001-claude.usage.json");
+    let codex_home = workspace.join("codex-home");
+
+    write_status_usage_sidecar(&sidecar);
+    write_status_codex_rollout(
+        &codex_home,
+        &workspace,
+        "session-live",
+        "2026-07-06T00:10:01Z",
+        (10, 3, 5, 2, 18),
+    );
+    fs::write(
+        run_dir.join("state.json"),
+        serde_json::to_string_pretty(&json!({
+            "niles_schema": 2,
+            "id": "usage-run",
+            "goal": "Surface usage",
+            "created_at": "2026-07-06T00:00:00Z",
+            "updated_at": "2026-07-06T00:10:00Z",
+            "status": "running",
+            "steps": [
+                {
+                    "index": 1,
+                    "kind": "agent",
+                    "label": "claude",
+                    "agent_family": "claude",
+                    "model": "sonnet",
+                    "effort": "medium",
+                    "usage_attribution": {
+                        "strategy": "codex_cwd_time",
+                        "cwd": workspace.display().to_string(),
+                        "launched_at": "2026-07-06T00:10:00Z",
+                        "niles_prompt_count": 1
+                    },
+                    "usage": sidecar.display().to_string(),
+                    "status": "completed",
+                    "started_at": "2026-07-06T00:00:00Z",
+                    "finished_at": "2026-07-06T00:01:00Z",
+                    "exit_code": 0
+                },
+                {
+                    "index": 2,
+                    "kind": "agent",
+                    "label": "codex",
+                    "agent_family": "codex",
+                    "usage_attribution": {
+                        "strategy": "codex_cwd_time",
+                        "cwd": workspace.display().to_string(),
+                        "launched_at": "2026-07-06T00:10:00Z",
+                        "niles_prompt_count": 1
+                    },
+                    "status": "running",
+                    "started_at": "2026-07-06T00:10:00Z",
+                    "window": "niles:niles-usage-run-2"
+                },
+                {
+                    "index": 3,
+                    "kind": "agent",
+                    "label": "review",
+                    "status": "pending"
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = Command::new(niles)
+        .args(["status", "usage-run", "--usage"])
+        .current_dir(&workspace)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("CODEX_HOME", &codex_home)
+        .output()
+        .unwrap();
+
+    assert_command_success("status --usage", &status);
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains(
+        "usage[3]{index,status,wall,turns,total,input,cache_create,cache_read,cached,output,reasoning}:"
+    ));
+    assert!(stdout.contains("  1,available,60s,1,100,70,10,5,-,15,-"));
+    let live = stdout
+        .lines()
+        .find(|line| line.starts_with("  2,available,"))
+        .unwrap();
+    assert!(live.ends_with(",1,18,10,-,-,3,5,2"));
+    assert!(stdout.contains("  3,pending,-,-,-,-,-,-,-,-,-"));
+    assert!(stdout.contains(
+        "run_usage{steps,total,input,cache_create,cache_read,cached,output,reasoning,wall}:"
+    ));
+    let rollup = stdout
+        .lines()
+        .find(|line| line.starts_with("  2,118,80,10,5,3,20,2,"))
+        .unwrap();
+    assert!(rollup.ends_with('s'));
 }
 
 #[test]
@@ -1247,4 +1354,108 @@ commands:
     assert!(stdout.contains("2,validation,command,fast,pending,-"));
     assert!(stdout.contains("status: completed"));
     assert!(stdout.contains("2,validation,command,fast,completed,0"));
+}
+
+fn write_status_usage_sidecar(path: &Path) {
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&json!({
+            "niles_schema": 2,
+            "subject": {
+                "kind": "run_step",
+                "run_id": "usage-run",
+                "index": 1,
+                "label": "claude"
+            },
+            "agent": {
+                "spec": "claude",
+                "family": "claude",
+                "model": "sonnet",
+                "effort": "medium"
+            },
+            "captured_at": "2026-07-06T00:01:00Z",
+            "started_at": "2026-07-06T00:00:00Z",
+            "finished_at": "2026-07-06T00:01:00Z",
+            "wall_seconds": 60,
+            "attribution": {
+                "strategy": "missing"
+            },
+            "turns": {
+                "niles_prompt_count": 1,
+                "transcript_user_messages": 1,
+                "transcript_assistant_messages": 1,
+                "usage_messages": 1
+            },
+            "usage": {
+                "status": "available",
+                "family": "claude",
+                "input_tokens": 70,
+                "cache_creation_input_tokens": 10,
+                "cache_read_input_tokens": 5,
+                "output_tokens": 15,
+                "total_tokens": 100
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_status_codex_rollout(
+    codex_home: &Path,
+    workspace: &Path,
+    session_id: &str,
+    timestamp: &str,
+    tokens: (u64, u64, u64, u64, u64),
+) {
+    let sessions = codex_home.join("sessions/2026/07/06");
+    fs::create_dir_all(&sessions).unwrap();
+    let (input, cached, output, reasoning, total) = tokens;
+    let body = [
+        serde_json::to_string(&json!({
+            "type": "session_meta",
+            "payload": {
+                "session_id": session_id,
+                "cwd": workspace.display().to_string(),
+                "timestamp": timestamp
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message"
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message"
+            }
+        }))
+        .unwrap(),
+        serde_json::to_string(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total
+                    }
+                }
+            }
+        }))
+        .unwrap(),
+    ]
+    .join("\n");
+    fs::write(
+        sessions.join(format!("rollout-{session_id}.jsonl")),
+        format!("{body}\n"),
+    )
+    .unwrap();
 }
