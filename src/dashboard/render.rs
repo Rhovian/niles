@@ -1,5 +1,6 @@
-use super::snapshot::{
-    DashboardRole, DashboardRow, DashboardSnapshot, ManagerLifecycle, PaneSummary,
+use super::{
+    snapshot::{DashboardRole, DashboardRow, DashboardSnapshot, ManagerLifecycle, PaneSummary},
+    status::WakeState,
 };
 
 #[derive(Clone, Copy)]
@@ -9,6 +10,7 @@ enum ColumnId {
     Agent,
     Pane,
     Wall,
+    Wake,
     LastStatus,
 }
 
@@ -43,6 +45,11 @@ const COLUMNS: &[Column] = &[
         title: "wall",
         width: 8,
         id: ColumnId::Wall,
+    },
+    Column {
+        title: "wake",
+        width: 13,
+        id: ColumnId::Wake,
     },
     Column {
         title: "last status",
@@ -121,6 +128,7 @@ fn cell(row: &DashboardRow, column: ColumnId) -> String {
         ColumnId::Agent => row.agent.clone(),
         ColumnId::Pane => pane_cell(&row.pane),
         ColumnId::Wall => row.wall.clone(),
+        ColumnId::Wake => wake_label(row.wake).to_owned(),
         ColumnId::LastStatus => row.last_status.clone(),
     }
 }
@@ -132,6 +140,16 @@ fn role_label(role: DashboardRole) -> &'static str {
         DashboardRole::Worker => "worker",
         DashboardRole::RunStep => "run-step",
         DashboardRole::UnknownNilesWindow => "unknown-niles-window",
+    }
+}
+
+fn wake_label(state: WakeState) -> &'static str {
+    match state {
+        WakeState::Pending => "pending",
+        WakeState::Consumed => "consumed",
+        WakeState::NoActionable => "no-actionable",
+        WakeState::AckInvalid => "ack-invalid",
+        WakeState::NotApplicable => "n-a",
     }
 }
 
@@ -192,6 +210,7 @@ mod tests {
                     command: Some("codex".to_owned()),
                 },
                 wall: "1m".to_owned(),
+                wake: WakeState::NotApplicable,
                 last_status: "-".to_owned(),
             }],
             messages: Vec::new(),
@@ -205,5 +224,48 @@ mod tests {
         assert!(output.contains("tmux switch-client -t niles:niles-manager"));
         assert!(output.contains("fallback: niles -d"));
         assert!(output.contains("respawn: close stale niles-manager"));
+    }
+
+    #[test]
+    fn render_includes_wake_column_tokens() {
+        let rows = [
+            wake_row("pending-row", WakeState::Pending),
+            wake_row("consumed-row", WakeState::Consumed),
+            wake_row("no-actionable-row", WakeState::NoActionable),
+            wake_row("ack-invalid-row", WakeState::AckInvalid),
+            wake_row("not-applicable-row", WakeState::NotApplicable),
+        ];
+        let snapshot = DashboardSnapshot {
+            rows: rows.to_vec(),
+            messages: Vec::new(),
+            manager_target: None,
+            manager_lifecycle: ManagerLifecycle::Unknown,
+        };
+
+        let output = render(&snapshot);
+
+        assert!(output.contains("wake"));
+        assert!(output.contains("pending"));
+        assert!(output.contains("consumed"));
+        assert!(output.contains("no-actionable"));
+        assert!(output.contains("ack-invalid"));
+        assert!(output.contains("n-a"));
+    }
+
+    fn wake_row(window: &str, wake: WakeState) -> DashboardRow {
+        DashboardRow {
+            window: window.to_owned(),
+            role: DashboardRole::Worker,
+            subject: "subject".to_owned(),
+            agent: "codex".to_owned(),
+            pane: PaneSummary {
+                liveness: PaneLiveness::Live,
+                pid: None,
+                command: None,
+            },
+            wall: "1m".to_owned(),
+            wake,
+            last_status: "done: ready".to_owned(),
+        }
     }
 }

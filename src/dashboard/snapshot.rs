@@ -11,7 +11,7 @@ use crate::{
     worker::{self, WorkerDashboardMeta},
 };
 
-use super::status;
+use super::status::{self, WakeState};
 
 const HOME_WINDOW_NAME: &str = "niles";
 const MANAGER_WINDOW_NAME: &str = "niles-manager";
@@ -33,6 +33,7 @@ pub(crate) struct DashboardRow {
     pub(crate) agent: String,
     pub(crate) pane: PaneSummary,
     pub(crate) wall: String,
+    pub(crate) wake: WakeState,
     pub(crate) last_status: String,
 }
 
@@ -191,7 +192,7 @@ pub(crate) fn assemble_snapshot(
         insert_manager_row(&mut rows, manager, now);
     }
     for worker in sources.workers {
-        insert_worker_row(&mut rows, worker, now);
+        insert_worker_row(&mut rows, worker, now, &mut sources.messages);
     }
     for step in sources.steps {
         insert_run_step_row(&mut rows, step, now);
@@ -228,6 +229,7 @@ fn insert_home_row(rows: &mut BTreeMap<String, DashboardRow>) {
             agent: EMPTY_CELL.to_owned(),
             pane: PaneSummary::missing(),
             wall: EMPTY_CELL.to_owned(),
+            wake: WakeState::NotApplicable,
             last_status: EMPTY_CELL.to_owned(),
         },
     );
@@ -256,6 +258,7 @@ fn insert_manager_row(
             ),
             pane: PaneSummary::missing(),
             wall: format_wall_since(Some(manager.created_at), now),
+            wake: WakeState::NotApplicable,
             last_status: EMPTY_CELL.to_owned(),
         },
     );
@@ -265,6 +268,7 @@ fn insert_worker_row(
     rows: &mut BTreeMap<String, DashboardRow>,
     worker: WorkerDashboardMeta,
     now: DateTime<Utc>,
+    messages: &mut Vec<String>,
 ) {
     let window = window_name_from_target(&worker.window);
     rows.insert(
@@ -281,6 +285,7 @@ fn insert_worker_row(
             ),
             pane: PaneSummary::missing(),
             wall: format_wall_since(worker.created_at, now),
+            wake: wake_state(&worker.status, &worker.id, messages),
             last_status: last_status_text(&worker.status),
         },
     );
@@ -306,6 +311,7 @@ fn insert_run_step_row(
             ),
             pane: PaneSummary::missing(),
             wall: format_wall_since(step.started_at, now),
+            wake: WakeState::NotApplicable,
             last_status: last_status_text(&step.status),
         },
     );
@@ -329,6 +335,7 @@ fn merge_tmux_windows(rows: &mut BTreeMap<String, DashboardRow>, windows: Vec<Tm
                     agent: EMPTY_CELL.to_owned(),
                     pane,
                     wall: EMPTY_CELL.to_owned(),
+                    wake: WakeState::NotApplicable,
                     last_status: EMPTY_CELL.to_owned(),
                 },
             );
@@ -454,6 +461,16 @@ fn last_status_text(status_path: &Utf8Path) -> String {
         Ok(Some(line)) => line,
         Ok(None) => EMPTY_CELL.to_owned(),
         Err(err) => format!("status-error:{err:#}"),
+    }
+}
+
+fn wake_state(status_path: &Utf8Path, subject: &str, messages: &mut Vec<String>) -> WakeState {
+    match status::read_wake_state(status_path) {
+        Ok(state) => state,
+        Err(err) => {
+            messages.push(format!("wake-state unavailable for {subject}: {err:#}"));
+            WakeState::NotApplicable
+        }
     }
 }
 
