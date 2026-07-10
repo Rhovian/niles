@@ -120,7 +120,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -366,7 +366,7 @@ esac
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -375,7 +375,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -515,7 +515,7 @@ esac
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
 esac
 model=""
@@ -598,7 +598,7 @@ esac
         .unwrap();
     assert!(!rejected_spawn.status.success());
     let stderr = String::from_utf8_lossy(&rejected_spawn.stderr);
-    assert!(stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
+    assert!(stderr.contains("model `gpt-bad` was rejected by codex CLI 0.144.1"));
     assert!(!workspace.join(".niles/worker/rejected-worker").exists());
 }
 
@@ -634,7 +634,7 @@ exit 12
         &custom_codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'custom codex help\n'; exit 0 ;;
 esac
 printf 'custom accepted\n'
@@ -729,7 +729,7 @@ fn analyze_sends_probe_prompt_to_configured_stdin_agents() {
         &stdin_codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'stdin codex help\n'; exit 0 ;;
 esac
 model=""
@@ -815,7 +815,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   --help) printf 'claude help\n'; exit 0 ;;
 esac
 printf 'claude ok\n'
@@ -825,7 +825,7 @@ printf 'claude ok\n'
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'default codex help\n'; exit 0 ;;
 esac
 printf 'default codex accepted\n'
@@ -836,7 +836,7 @@ printf 'default codex accepted\n'
         &custom_codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'custom codex help\n'; exit 0 ;;
 esac
 printf 'custom codex accepted\n'
@@ -924,7 +924,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   --help) printf 'claude help\n'; exit 0 ;;
 esac
 printf 'claude ok\n'
@@ -934,7 +934,7 @@ printf 'claude ok\n'
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'default codex help\n'; exit 0 ;;
 esac
 printf 'default codex accepted\n'
@@ -946,7 +946,7 @@ printf 'default codex accepted\n'
         &slash_binary,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'slash codex help\n'; exit 0 ;;
 esac
 model=""
@@ -967,7 +967,7 @@ esac
         &dash_binary,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'dash codex help\n'; exit 0 ;;
 esac
 model=""
@@ -1069,7 +1069,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   --help) printf 'claude help\n'; exit 0 ;;
 esac
 printf 'claude ok\n'
@@ -1079,7 +1079,7 @@ printf 'claude ok\n'
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
 esac
 model=""
@@ -1161,7 +1161,7 @@ esac
         .unwrap();
     assert!(!rejected_spawn.status.success());
     let stderr = String::from_utf8_lossy(&rejected_spawn.stderr);
-    assert!(stderr.contains("model `omega` was rejected by codex CLI 0.142.4"));
+    assert!(stderr.contains("model `omega` was rejected by codex CLI 0.144.1"));
     assert!(!workspace.join(".niles/worker/omega-low").exists());
 }
 
@@ -1177,7 +1177,7 @@ fn spawn_warns_and_falls_back_when_capability_manifest_is_stale() {
         &codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
 esac
 printf 'accepted\n'
@@ -1261,7 +1261,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -1400,7 +1400,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -2756,7 +2756,7 @@ esac
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,

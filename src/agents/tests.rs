@@ -114,7 +114,7 @@ fn rejects_invalid_agent_specs() {
     assert!(AgentSpec::parse("codex::xhigh").is_err());
     assert!(AgentSpec::parse("custom:model:high").is_err());
     assert!(AgentSpec::parse("claude:opus:turbo").is_err());
-    assert!(AgentSpec::parse("codex:gpt-5.5:max").is_err());
+    assert!(AgentSpec::parse("codex:gpt-5.5:turbo").is_err());
     assert!(AgentSpec::parse("codex:not a model:high").is_err());
 }
 

@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(choices[0].label, "gpt-5.5");
         assert!(choices[0].is_default);
         assert_eq!(choices[0].value.label, "gpt-5.5");
-        assert_eq!(choices[1].value.label, "o3");
+        assert_eq!(choices[1].value.label, "gpt-5.6-sol");
     }
 
     #[test]

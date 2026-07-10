@@ -182,7 +182,7 @@ mod tests {
 
         assert_eq!(
             efforts,
-            ["minimal", "low", "medium", "high", "xhigh"].map(str::to_owned)
+            ["minimal", "low", "medium", "high", "xhigh", "max"].map(str::to_owned)
         );
     }
 
