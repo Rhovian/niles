@@ -428,7 +428,7 @@ fn agent_steps_map_model_effort_specs_into_invocations_and_status() {
         &codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
 esac
 for arg in "$@"; do
   printf '[%s]\n' "$arg"
@@ -498,7 +498,7 @@ fn manifest_role_bindings_accept_model_effort_agent_specs() {
         &claude,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
 esac
 for arg in "$@"; do
   printf '[%s]\n' "$arg"
@@ -676,7 +676,7 @@ fn analyze_validates_agent_specs_and_keeps_tiered_version_gate() {
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -697,7 +697,7 @@ esac
         .unwrap();
     assert_command_success("tiered analyze", &valid);
     let stdout = String::from_utf8_lossy(&valid.stdout);
-    assert!(stdout.contains("version_gate: codex pass 0.142.4"));
+    assert!(stdout.contains("version_gate: codex pass 0.144.1"));
     assert!(stdout.contains("model_probe: codex:gpt-5.5:xhigh accepted"));
     assert!(stdout.contains("wrote .niles/capabilities/codex.json"));
 
@@ -733,7 +733,7 @@ fn analyze_records_rejected_requested_models() {
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   --help) printf 'claude help\n'; exit 0 ;;
 esac
 model=""
@@ -771,7 +771,7 @@ esac
     let manifest = fs::read_to_string(workspace.join(".niles/capabilities/claude.json")).unwrap();
     assert!(manifest.contains(r#""rejected_models""#));
     assert!(manifest.contains(r#""model": "claude-opus-99""#));
-    assert!(manifest.contains(r#""cli_version": "2.1.197""#));
+    assert!(manifest.contains(r#""cli_version": "2.1.206""#));
     assert!(manifest.contains(r#""stderr": "unknown model claude-opus-99""#));
 }
 
@@ -794,7 +794,7 @@ fn analyze_default_probes_model_qualified_workspace_manifest_roles() {
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
 esac
 printf 'codex ok\n'
@@ -804,7 +804,7 @@ printf 'codex ok\n'
         &bin.join("claude"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf '2.1.197 (Claude Code)\n'; exit 0 ;;
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
   --help) printf 'claude help\n'; exit 0 ;;
 esac
 printf 'claude ok\n'
@@ -853,7 +853,7 @@ steps:
         &bin.join("codex"),
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'codex help\n'; exit 0 ;;
 esac
 model=""
@@ -905,7 +905,7 @@ esac
         .unwrap();
     assert!(!run.status.success());
     let run_stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(run_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
+    assert!(run_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.144.1"));
     assert!(run_stderr.contains("rerun `niles analyze`"));
 
     let step = Command::new(niles)
@@ -917,7 +917,7 @@ esac
         .unwrap();
     assert!(!step.status.success());
     let step_stderr = String::from_utf8_lossy(&step.stderr);
-    assert!(step_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.142.4"));
+    assert!(step_stderr.contains("model `gpt-bad` was rejected by codex CLI 0.144.1"));
 }
 
 #[test]

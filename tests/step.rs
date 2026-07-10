@@ -743,7 +743,7 @@ fn step_add_validates_agent_with_project_config() {
         &codex,
         r#"#!/bin/sh
 case "$1" in
-  --version) printf 'codex-cli 0.142.4\n'; exit 0 ;;
+  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
   --help) printf 'configured codex help\n'; exit 0 ;;
 esac
 printf 'configured codex ok\n'

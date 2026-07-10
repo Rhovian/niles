@@ -398,13 +398,13 @@ mod tests {
 
     #[test]
     fn gate_passes_between_minimum_and_tested() {
-        let probe = successful_probe("codex-cli 0.142.4");
+        let probe = successful_probe("codex-cli 0.144.1");
         let report = evaluate_agent_probe("codex", "codex", &probe)
             .unwrap()
             .unwrap();
 
         assert_eq!(report.status, VersionGateStatus::Pass);
-        assert_eq!(report.detected_version.as_deref(), Some("0.142.4"));
+        assert_eq!(report.detected_version.as_deref(), Some("0.144.1"));
     }
 
     #[test]
