@@ -71,19 +71,6 @@ pub(super) fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPo
     Ok(read_global_index(&path)?.workers.get(worker).cloned())
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "missing global archive entries mean this worker has no global archives; local archive discovery still runs"
-)]
-pub(super) fn global_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
-    let path = global_index_path()?;
-    Ok(read_global_index(&path)?
-        .worker_archives
-        .get(worker)
-        .cloned()
-        .unwrap_or_default())
-}
-
 pub(super) fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?

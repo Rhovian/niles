@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -7,10 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::read_dir_utf8_paths;
 
-use super::{
-    global::{global_worker_archives, write_global_worker_archive_pointer},
-    paths::current_workers_dir,
-};
+use super::{global::write_global_worker_archive_pointer, paths::current_workers_dir};
 
 pub(crate) fn register_worker_archive(
     worker: &str,
@@ -27,24 +22,12 @@ pub(crate) fn register_worker_archive(
 }
 
 pub(crate) fn resolve_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
-    let mut archives = BTreeMap::new();
-    for archive in local_worker_archives(worker)? {
-        archives.insert(archive.archive_dir.clone(), archive);
-    }
-    for archive in global_worker_archives(worker)? {
-        archives.insert(archive.archive_dir.clone(), archive);
-    }
-
-    let mut archives = archives.into_values().collect::<Vec<_>>();
-    archives.sort_by(|left, right| {
-        left.archived_at
-            .cmp(&right.archived_at)
-            .then_with(|| left.archive_dir.cmp(&right.archive_dir))
-    });
+    let mut archives = local_worker_archives(worker)?;
+    sort_archives(&mut archives);
     Ok(archives)
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct WorkerArchivePointer {
     pub(crate) id: String,
     pub(crate) archive_dir: Utf8PathBuf,
@@ -75,6 +58,14 @@ fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
         });
     }
     Ok(archives)
+}
+
+fn sort_archives(archives: &mut [WorkerArchivePointer]) {
+    archives.sort_by(|left, right| {
+        left.archived_at
+            .cmp(&right.archived_at)
+            .then_with(|| left.archive_dir.cmp(&right.archive_dir))
+    });
 }
 
 #[expect(

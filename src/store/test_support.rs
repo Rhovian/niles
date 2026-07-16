@@ -89,7 +89,6 @@ pub(super) fn worker_resolver_at(local_workers_dir: &Utf8Path) -> WorkerResolver
     let local_workspace = local_workers_dir
         .parent()
         .and_then(Utf8Path::parent)
-        .and_then(Utf8Path::parent)
         .unwrap()
         .to_path_buf();
     WorkerResolver {

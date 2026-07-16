@@ -3,7 +3,7 @@ use std::{
     fs,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
@@ -121,19 +121,27 @@ impl WorkerResolver {
     }
 
     pub(super) fn named(&self, worker: &str) -> Result<Option<WorkerLocation>> {
+        let mut local_records = Vec::new();
         if let Some(pointer) = self.local_pointer(worker)? {
-            return Ok(Some(WorkerLocation::from_pointer(pointer)));
+            push_distinct_location(&mut local_records, WorkerLocation::from_pointer(pointer));
         }
 
         let local_worker_dir = self.local_workers_dir.join(worker);
-        if local_worker_dir.exists() {
-            return Ok(Some(WorkerLocation::local(
-                self.local_workspace.clone(),
-                local_worker_dir,
-            )));
+        if local_worker_dir.is_dir() {
+            push_distinct_location(
+                &mut local_records,
+                WorkerLocation::local(self.local_workspace.clone(), local_worker_dir),
+            );
         }
 
-        Ok(read_global_worker_pointer(worker)?.map(WorkerLocation::from_pointer))
+        match local_records.len() {
+            0 => Ok(None),
+            1 => Ok(local_records.pop()),
+            _ => bail!(
+                "worker id '{worker}' has multiple local records in {}",
+                self.local_workers_dir
+            ),
+        }
     }
 
     fn all(&self) -> Result<Vec<WorkerListEntry>> {
@@ -204,11 +212,36 @@ impl WorkerResolver {
     }
 }
 
+fn push_distinct_location(locations: &mut Vec<WorkerLocation>, location: WorkerLocation) {
+    if locations
+        .iter()
+        .any(|existing| same_worker_location(existing, &location))
+    {
+        return;
+    }
+    locations.push(location);
+}
+
+fn same_worker_location(left: &WorkerLocation, right: &WorkerLocation) -> bool {
+    if left.workspace == right.workspace && left.worker_dir == right.worker_dir {
+        return true;
+    }
+
+    // The local pointer record and the local-dir record can spell the same worker_dir differently (for example, an unnormalized --project path); canonicalize only to decide if two differing strings are the same worker before we bail on a real id conflict.
+    let Ok(left_worker_dir) = fs::canonicalize(&left.worker_dir) else {
+        return false;
+    };
+    let Ok(right_worker_dir) = fs::canonicalize(&right.worker_dir) else {
+        return false;
+    };
+    left_worker_dir == right_worker_dir
+}
+
 pub(super) fn read_worker_pointer(path: &Utf8Path) -> Result<Option<WorkerPointer>> {
     schema::read_optional_json(path, ArtifactKind::WorkerPointer)
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct WorkerPointer {
     pub(crate) id: String,
     pub(crate) workspace: Utf8PathBuf,
@@ -217,14 +250,14 @@ pub(crate) struct WorkerPointer {
     pub(crate) local_stores: Vec<Utf8PathBuf>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct WorkerLocation {
     pub(crate) workspace: Utf8PathBuf,
     pub(crate) worker_dir: Utf8PathBuf,
     pointer: Option<WorkerPointer>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct WorkerListEntry {
     pub(crate) id: String,
     pub(crate) location: WorkerLocation,
@@ -288,7 +321,7 @@ mod tests {
     };
 
     #[test]
-    fn registered_worker_resolves_from_invoking_project_and_unrelated_stores() {
+    fn registered_worker_resolves_from_invoking_and_project_stores_only() {
         let root = TempDir::new("worker-registration-resolution");
         let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
         let invoker = create_dir(root.path().join("invoker"));
@@ -312,11 +345,16 @@ mod tests {
         assert!(project_workers_dir.join(pointer_file(worker)).is_file());
         assert_worker_resolves_to(&invoker_workers_dir, worker, &worker_dir);
         assert_worker_resolves_to(&project_workers_dir, worker, &worker_dir);
-        assert_worker_resolves_to(&unrelated_workers_dir, worker, &worker_dir);
+        assert!(
+            worker_resolver_at(&unrelated_workers_dir)
+                .named(worker)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
-    fn named_worker_resolution_prefers_local_pointer_then_local_dir_then_global() {
+    fn named_worker_resolution_uses_local_records_only() {
         let root = TempDir::new("worker-resolution-chain");
         let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
         let local_workers_dir = root.path().join("workspace/.niles/worker");
@@ -324,14 +362,11 @@ mod tests {
 
         let worker = "auth-fix";
         let local_pointer_target = create_dir(root.path().join("pointer-target"));
-        let local_worker_dir = create_dir(local_workers_dir.join(worker));
-        let global_target = create_dir(root.path().join("global-target"));
         write_local_worker_pointer(
             &local_workers_dir,
             &worker_pointer(worker, &local_pointer_target),
         )
         .unwrap();
-        write_global_worker_pointer(&worker_pointer(worker, &global_target)).unwrap();
 
         let resolver = worker_resolver_at(&local_workers_dir);
         assert_eq!(
@@ -340,18 +375,37 @@ mod tests {
         );
 
         fs::remove_file(local_workers_dir.join(pointer_file(worker))).unwrap();
+        let local_worker_dir = create_dir(local_workers_dir.join(worker));
         assert_eq!(
             resolver.named(worker).unwrap().unwrap().worker_dir,
             local_worker_dir
         );
 
         fs::remove_dir_all(&local_worker_dir).unwrap();
-        assert_eq!(
-            resolver.named(worker).unwrap().unwrap().worker_dir,
-            global_target
-        );
+        let global_target = create_dir(root.path().join("global-target"));
+        write_global_worker_pointer(&worker_pointer(worker, &global_target)).unwrap();
+        assert!(resolver.named(worker).unwrap().is_none());
 
         fs::remove_file(crate::store::global_index_path().unwrap()).unwrap();
         assert!(resolver.named(worker).unwrap().is_none());
+    }
+
+    #[test]
+    fn named_worker_resolution_rejects_conflicting_local_records() {
+        let root = TempDir::new("worker-resolution-conflict");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let local_workers_dir = root.path().join("workspace/.niles/worker");
+        fs::create_dir_all(&local_workers_dir).unwrap();
+
+        let worker = "auth-fix";
+        let pointer_target = create_dir(root.path().join("pointer-target"));
+        let _local_worker_dir = create_dir(local_workers_dir.join(worker));
+        write_local_worker_pointer(&local_workers_dir, &worker_pointer(worker, &pointer_target))
+            .unwrap();
+
+        let err = worker_resolver_at(&local_workers_dir)
+            .named(worker)
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("multiple local records"));
     }
 }
