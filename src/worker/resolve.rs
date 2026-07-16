@@ -1,10 +1,7 @@
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 
-use crate::{
-    store::{self, WorkerLocation},
-    wake,
-};
+use crate::{store, wake};
 
 use super::{
     meta::{metadata_status_path, read_meta_if_exists},
@@ -13,29 +10,29 @@ use super::{
 
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     validate_id(id)?;
-    let location = resolve_worker(id)?;
-    if let Some(meta) = read_meta_if_exists(&location.worker_dir)? {
-        return Ok(metadata_status_path(&meta, &location.worker_dir));
+    let worker_dir = resolve_worker(id)?;
+    if let Some(meta) = read_meta_if_exists(&worker_dir)? {
+        return Ok(metadata_status_path(&meta, &worker_dir));
     }
-    Ok(wake::status_log_path(&location.worker_dir))
+    Ok(wake::status_log_path(&worker_dir))
 }
 
-pub(super) fn resolve_worker(id: &str) -> Result<WorkerLocation> {
+pub(super) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
     resolve_worker_if_exists(id)?.with_context(|| format!("unknown worker id '{id}'"))
 }
 
-pub(super) fn resolve_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
+pub(super) fn resolve_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
     validate_id(id)?;
     store::resolve_worker_location(id)
 }
 
-pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<WorkerLocation>> {
-    let Some(location) = resolve_worker_if_exists(id)? else {
+pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
+    let Some(worker_dir) = resolve_worker_if_exists(id)? else {
         return Ok(None);
     };
-    Ok(read_meta_if_exists(&location.worker_dir)?
+    Ok(read_meta_if_exists(&worker_dir)?
         .is_some()
-        .then_some(location))
+        .then_some(worker_dir))
 }
 
 pub(super) fn no_live_worker_message(id: &str) -> String {
@@ -49,7 +46,7 @@ pub(super) fn no_live_worker_message(id: &str) -> String {
     }
 }
 
-pub(super) fn latest_archive(id: &str) -> Result<Option<store::WorkerArchivePointer>> {
+pub(super) fn latest_archive(id: &str) -> Result<Option<store::WorkerArchive>> {
     Ok(store::resolve_worker_archives(id)?
         .into_iter()
         .rev()

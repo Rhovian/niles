@@ -51,9 +51,9 @@ pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()>
 
 pub(super) fn read_meta(id: &str) -> Result<WorkerMeta> {
     validate_id(id)?;
-    let location = resolve_worker(id)?;
-    let path = meta_path(&location.worker_dir);
-    let meta = read_meta_if_exists(&location.worker_dir)?
+    let worker_dir = resolve_worker(id)?;
+    let path = meta_path(&worker_dir);
+    let meta = read_meta_if_exists(&worker_dir)?
         .with_context(|| format!("worker metadata missing for '{id}' at {path}"))?;
     Ok(meta)
 }

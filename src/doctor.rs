@@ -1,13 +1,11 @@
-use std::{fs, io::ErrorKind, process::Command};
+use std::{fs, process::Command};
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    build_info,
-    schema::{self, ArtifactKind, SchemaObservation, SchemaStatus},
-    store,
+    build_info, schema,
     util::{absolute_path, current_dir_utf8},
 };
 
@@ -23,9 +21,6 @@ pub(crate) fn doctor() -> Result<()> {
     println!("workspace: {workspace}");
 
     let mut observations = schema::scan_workspace(&workspace)?;
-    if let Some(global_index) = global_index_observation()? {
-        observations.push(global_index);
-    }
     observations.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -175,22 +170,6 @@ fn worktree_dirty(workspace: &Utf8Path) -> Option<bool> {
             .trim()
             .is_empty(),
     )
-}
-
-fn global_index_observation() -> Result<Option<SchemaObservation>> {
-    let path = store::global_index_path()?;
-    match fs::metadata(&path) {
-        Ok(metadata) if metadata.is_file() => {
-            Ok(Some(schema::inspect_json(&path, ArtifactKind::GlobalIndex)))
-        }
-        Ok(_) => Ok(None),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(_) => Ok(Some(SchemaObservation {
-            kind: ArtifactKind::GlobalIndex,
-            path,
-            status: SchemaStatus::Unreadable,
-        })),
-    }
 }
 
 fn display_path(workspace: &Utf8Path, path: &Utf8Path) -> String {

@@ -12,8 +12,8 @@ use super::{
 
 pub fn report(id: String) -> Result<()> {
     validate_id(&id)?;
-    if let Some(location) = resolve_live_worker_if_exists(&id)? {
-        return print_report(&id, &location.worker_dir, None);
+    if let Some(worker_dir) = resolve_live_worker_if_exists(&id)? {
+        return print_report(&id, &worker_dir, None);
     }
 
     let Some(archive) = latest_archive(&id)? else {

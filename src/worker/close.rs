@@ -133,12 +133,12 @@ fn close_worker_group(
 pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
     let mut failures = Vec::new();
-    for entry in store::resolve_workspace_worker_locations()? {
-        let meta_path = meta_path(&entry.location.worker_dir);
+    for entry in store::resolve_worker_locations()? {
+        let meta_path = meta_path(&entry.worker_dir);
         if !meta_path.exists() {
             continue;
         }
-        match read_meta_if_exists(&entry.location.worker_dir) {
+        match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) if meta.task_label.as_deref() == Some(label) => ids.push(entry.id),
             Ok(_) => {}
             Err(err) => failures.push((entry.id, format!("{err:#}"))),
@@ -177,8 +177,7 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
 
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     validate_id(id)?;
-    let location = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
-    let worker_dir = location.worker_dir.clone();
+    let worker_dir = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
     let mut meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
     let status_path = metadata_status_path(&meta, &worker_dir);
     append_closed_sentinel(&status_path, id)?;
@@ -225,12 +224,6 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
 
     let archive_dir = archive_worker_dir(id, &worker_dir, finished_at)?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
-    store::unregister_worker_location(
-        id,
-        Some(&location),
-        Some(meta.project.as_path()),
-        Some(&worker_dir),
-    )?;
     Ok(WorkerCloseOutcome {
         id: id.to_owned(),
         archive_dir,
@@ -346,9 +339,9 @@ impl std::fmt::Display for CloseWindowState {
 }
 
 fn close_all_worker_ids() -> Result<Vec<String>> {
-    let mut ids = store::resolve_workspace_worker_locations()?
+    let mut ids = store::resolve_worker_locations()?
         .into_iter()
-        .filter(|entry| meta_path(&entry.location.worker_dir).exists())
+        .filter(|entry| meta_path(&entry.worker_dir).exists())
         .map(|entry| entry.id)
         .collect::<Vec<_>>();
     ids.sort();

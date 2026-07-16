@@ -59,7 +59,7 @@ pub enum CommandName {
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,
-        /// Project workspace for the worker.
+        /// Current workspace for the worker. Other paths are rejected.
         #[arg(long, default_value = ".")]
         project: Utf8PathBuf,
         /// Agent id to launch.

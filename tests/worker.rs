@@ -3,8 +3,7 @@ mod common;
 use common::*;
 use std::{
     fs,
-    io::Write,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -1338,151 +1337,117 @@ printf 'accepted\n'
 }
 
 #[test]
-fn spawned_worker_resolves_from_invoking_and_project_cwds() {
+fn spawn_rejects_cross_workspace_project_without_state() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-cross-cwd");
     let home = niles_home(&root);
     let invoker = root.join("invoker");
     let project = root.join("project");
-    let unrelated = root.join("unrelated");
+    let foreign_link = root.join("foreign-link");
     fs::create_dir_all(&invoker).unwrap();
     fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&unrelated).unwrap();
+    symlink(&project, &foreign_link).unwrap();
 
-    let bin = root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let tmux_log = root.join("tmux.log");
-    write_executable(
-        &bin.join("tmux"),
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  has-session) exit 1 ;;
-  list-windows)
-    if [ "$2" = "-a" ]; then
-      exit 0
-    fi
-    if [ -n "${TMUX_WINDOWS:-}" ]; then
-      printf '%s\n' "$TMUX_WINDOWS"
-    fi
-    exit 0
-    ;;
-  capture-pane) printf 'pane output\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    );
-    write_executable(
-        &bin.join("claude"),
-        r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    );
+    for (id, project_arg) in [
+        ("absolute-foreign", project.as_os_str()),
+        ("relative-foreign", std::ffi::OsStr::new("../project")),
+        ("symlink-foreign", foreign_link.as_os_str()),
+    ] {
+        let spawn = Command::new(niles)
+            .arg("spawn")
+            .arg(id)
+            .arg("--project")
+            .arg(project_arg)
+            .arg("--agent")
+            .arg("claude")
+            .args(["Fix", "auth"])
+            .current_dir(&invoker)
+            .env("NILES_HOME", &home)
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
 
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+        assert!(!spawn.status.success(), "{id} unexpectedly succeeded");
+        assert!(
+            String::from_utf8_lossy(&spawn.stderr)
+                .contains("spawn --project must be the current workspace; cd there and spawn"),
+            "{id} stderr:\n{}",
+            String::from_utf8_lossy(&spawn.stderr)
+        );
+        assert!(!invoker.join(".niles/worker").join(id).exists());
+        assert!(!project.join(".niles/worker").join(id).exists());
+    }
+    assert!(!home.join("runs/index.json").exists());
+}
+
+#[test]
+fn spawn_accepts_project_symlink_to_current_workspace() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let root = temp_workspace("niles-worker-current-symlink");
+    let home = niles_home(&root);
+    let workspace = root.join("workspace");
+    let current_link = root.join("current-link");
+    fs::create_dir_all(&workspace).unwrap();
+    symlink(&workspace, &current_link).unwrap();
+    let (bin, tmux_log) = write_worker_test_bins(&root);
+    let path = path_with_bin(&bin);
 
     let spawn = Command::new(niles)
         .arg("spawn")
         .arg("auth-fix")
         .arg("--project")
-        .arg(&project)
+        .arg(&current_link)
         .arg("--agent")
         .arg("claude")
-        .args(["Fix", "auth"])
-        .current_dir(&invoker)
+        .arg("Fix")
+        .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env_remove("TMUX")
         .output()
         .unwrap();
-    assert_command_success("cross-cwd spawn", &spawn);
 
-    let worker_dir = project.join(".niles/worker/auth-fix");
-    let status = worker_dir.join("status.log");
-    assert!(worker_dir.join("meta.json").is_file());
-    assert!(invoker.join(".niles/worker/auth-fix.json").is_file());
-    assert!(project.join(".niles/worker/auth-fix.json").is_file());
-    assert!(!invoker.join(".niles/worker/auth-fix").exists());
+    assert_command_success("symlink-to-current spawn", &spawn);
+    assert!(workspace.join(".niles/worker/auth-fix").is_dir());
+    assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
+    assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
+    let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
+    assert!(meta.contains(&workspace.display().to_string()));
+    assert!(!meta.contains(&current_link.display().to_string()));
+}
 
-    for cwd in [&invoker, &project] {
-        let peek = Command::new(niles)
-            .args(["peek", "auth-fix", "--lines", "7"])
-            .current_dir(cwd)
-            .env("PATH", &path)
-            .env("NILES_HOME", &home)
-            .env("TMUX_LOG", &tmux_log)
-            .env_remove("TMUX")
-            .output()
-            .unwrap();
-        assert_command_success("cross-cwd peek", &peek);
-        assert_eq!(String::from_utf8_lossy(&peek.stdout), "pane output\n");
-    }
+#[test]
+fn leftover_worker_json_file_is_inert() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-json-inert");
+    let home = niles_home(&workspace);
+    fs::create_dir_all(workspace.join(".niles/worker")).unwrap();
+    fs::write(
+        workspace.join(".niles/worker/auth-fix.json"),
+        r#"{"id":"auth-fix"}"#,
+    )
+    .unwrap();
 
-    let send = Command::new(niles)
-        .args(["send", "auth-fix", "continue", "please"])
-        .current_dir(&invoker)
-        .env("PATH", &path)
+    let workers = Command::new(niles)
+        .arg("workers")
+        .current_dir(&workspace)
         .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
         .output()
         .unwrap();
-    assert_command_success("cross-cwd send", &send);
+    assert_command_success("workers ignores leftover json", &workers);
+    let stdout = String::from_utf8_lossy(&workers.stdout);
+    assert!(stdout.contains("workers[0]{id,agent,task,age,window,last_status}:"));
+    assert!(!stdout.contains("auth-fix"));
 
-    for (index, cwd) in [&invoker, &project].into_iter().enumerate() {
-        let mut status_file = fs::OpenOptions::new().append(true).open(&status).unwrap();
-        writeln!(status_file, "done: wake {index}").unwrap();
-
-        let wait = Command::new(niles)
-            .args([
-                "wait",
-                "--worker",
-                "auth-fix",
-                "--interval",
-                "0.05",
-                "--timeout",
-                "0",
-            ])
-            .current_dir(cwd)
-            .env("NILES_HOME", &home)
-            .output()
-            .unwrap();
-        assert_command_success("cross-cwd wait", &wait);
-        assert_eq!(
-            String::from_utf8_lossy(&wait.stdout),
-            format!("done: wake {index}\n")
-        );
-    }
-
-    let close = Command::new(niles)
-        .args(["worker-close", "auth-fix"])
-        .current_dir(&invoker)
-        .env("PATH", &path)
+    let peek = Command::new(niles)
+        .args(["peek", "auth-fix"])
+        .current_dir(&workspace)
         .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env("TMUX_WINDOWS", "niles-auth-fix")
-        .env_remove("TMUX")
         .output()
         .unwrap();
-    assert_command_success("cross-cwd worker-close", &close);
-
-    assert!(!invoker.join(".niles/worker/auth-fix.json").exists());
-    assert!(!project.join(".niles/worker/auth-fix.json").exists());
-    assert!(!worker_dir.exists());
-    let archive_dir = latest_archive_dir(&project, "auth-fix");
-    assert_eq!(
-        fs::read_to_string(archive_dir.join("final-pane.txt")).unwrap(),
-        "pane output\n"
-    );
-    assert_global_index_lacks_live_worker(&home, "auth-fix");
+    assert!(!peek.status.success());
+    assert!(String::from_utf8_lossy(&peek.stderr).contains("unknown worker id 'auth-fix'"));
 }
 
 #[test]
@@ -1553,7 +1518,7 @@ esac
     assert!(stderr.contains("create window failed: index 1 in use"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
-    assert_global_index_lacks(&home, "auth-fix");
+    assert_global_index_absent(&home);
 
     let peek = Command::new(niles)
         .args(["peek", "auth-fix"])
@@ -1583,7 +1548,7 @@ esac
         .output()
         .unwrap();
     assert_command_success("respawn", &respawn);
-    assert!(workspace.join(".niles/worker/auth-fix.json").exists());
+    assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(workspace.join(".niles/worker/auth-fix").is_dir());
     assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
 
@@ -1651,7 +1616,7 @@ esac
     assert!(stderr.contains("cleaned up launched worker"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
-    assert_global_index_lacks(&home, "auth-fix");
+    assert_global_index_absent(&home);
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("new-window -d -t niles-niles-worker-meta-write-failed-spawn-"));
@@ -1740,7 +1705,7 @@ esac
         fs::read_to_string(archive_dir.join("report.md")).unwrap(),
         "durable report\n"
     );
-    assert_global_index_lacks_live_worker(&home, "auth-fix");
+    assert_global_index_absent(&home);
 }
 
 #[test]
@@ -2600,81 +2565,6 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
 }
 
 #[test]
-fn respawn_after_invoker_close_does_not_inherit_archived_state() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let root = temp_workspace("niles-worker-respawn-cross-cwd");
-    let home = niles_home(&root);
-    let invoker = root.join("invoker");
-    let project = root.join("project");
-    fs::create_dir_all(&invoker).unwrap();
-    fs::create_dir_all(&project).unwrap();
-    let (bin, tmux_log) = write_worker_test_bins(&root);
-    let path = path_with_bin(&bin);
-
-    let first = Command::new(niles)
-        .arg("spawn")
-        .arg("job1")
-        .arg("--project")
-        .arg(&project)
-        .args(["--agent", "claude", "FIRST"])
-        .current_dir(&invoker)
-        .env("PATH", &path)
-        .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
-        .output()
-        .unwrap();
-    assert_command_success("cross-cwd first spawn", &first);
-
-    let worker_dir = project.join(".niles/worker/job1");
-    fs::write(worker_dir.join("report.md"), "first worker report\n").unwrap();
-    fs::write(
-        worker_dir.join("status.log"),
-        "working: first\ndone: first result\n",
-    )
-    .unwrap();
-
-    let close = Command::new(niles)
-        .args(["worker-close", "job1"])
-        .current_dir(&invoker)
-        .env("PATH", &path)
-        .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env("TMUX_CAPTURE", "first pane")
-        .env_remove("TMUX")
-        .output()
-        .unwrap();
-    assert_command_success("cross-cwd close", &close);
-    assert!(!worker_dir.exists());
-
-    let second = Command::new(niles)
-        .arg("spawn")
-        .arg("job1")
-        .arg("--project")
-        .arg(&project)
-        .args(["--agent", "claude", "SECOND"])
-        .current_dir(&invoker)
-        .env("PATH", &path)
-        .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
-        .output()
-        .unwrap();
-    assert_command_success("cross-cwd respawn", &second);
-    assert_eq!(
-        fs::read_to_string(worker_dir.join("status.log")).unwrap(),
-        ""
-    );
-    assert!(!worker_dir.join("report.md").exists());
-    assert!(!worker_dir.join("final-pane.txt").exists());
-    assert!(
-        fs::read_to_string(worker_dir.join("brief.md"))
-            .unwrap()
-            .contains("SECOND")
-    );
-}
-
-#[test]
 fn report_falls_back_to_most_recent_local_archive() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-report-archive");
@@ -2995,18 +2885,6 @@ fn write_usage_worker_fixture(
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, "working: measuring usage\n").unwrap();
-    fs::write(
-        worker_root.join(format!("{id}.json")),
-        serde_json::to_string_pretty(&json!({
-            "niles_schema": 2,
-            "id": id,
-            "workspace": workspace.display().to_string(),
-            "worker_dir": worker_dir.display().to_string(),
-            "local_stores": [worker_root.display().to_string()]
-        }))
-        .unwrap(),
-    )
-    .unwrap();
 
     let mut meta = json!({
         "niles_schema": 2,
@@ -3182,23 +3060,6 @@ fn write_worker_fixture_with_task_and_window(
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, status_body).unwrap();
-    fs::write(
-        worker_root.join(format!("{id}.json")),
-        format!(
-            r#"{{
-  "niles_schema": 2,
-  "id": "{id}",
-  "workspace": "{}",
-  "worker_dir": "{}",
-  "local_stores": ["{}"]
-}}
-"#,
-            workspace.display(),
-            worker_dir.display(),
-            worker_root.display()
-        ),
-    )
-    .unwrap();
     let task_label_field = task_label
         .map(|label| format!(",\n  \"task_label\": \"{label}\""))
         .unwrap_or_default();
@@ -3357,26 +3218,7 @@ fn assert_archived_with_closed_sentinel(workspace: &Path, id: &str) {
     );
 }
 
-fn assert_global_index_lacks(home: &Path, id: &str) {
+fn assert_global_index_absent(home: &Path) {
     let path = home.join("runs/index.json");
-    if path.exists() {
-        let index = fs::read_to_string(&path).unwrap();
-        assert!(!index.contains(id), "global index retained {id}:\n{index}");
-    }
-}
-
-fn assert_global_index_lacks_live_worker(home: &Path, id: &str) {
-    let path = home.join("runs/index.json");
-    if !path.exists() {
-        return;
-    }
-    let index: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(
-        index
-            .get("workers")
-            .and_then(|workers| workers.get(id))
-            .is_none(),
-        "global index retained live worker {id}:\n{index:#}"
-    );
+    assert!(!path.exists(), "global index should not exist: {path:?}");
 }

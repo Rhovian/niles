@@ -172,7 +172,9 @@ mod tests {
 
     #[test]
     fn manager_brief_describes_workspace_scoped_workers() {
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Worker by-id commands"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Worker commands"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("`workers`, `peek`, `report`"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Workers always belong to the current workspace"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("scoped to this workspace's worker records"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("most recent local archive"));
     }

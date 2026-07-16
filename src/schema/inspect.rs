@@ -69,8 +69,6 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
                 path.join("usage.json"),
                 ArtifactKind::UsageSnapshot,
             );
-        } else if path.extension() == Some("json") {
-            push_json_if_file(&mut observations, path, ArtifactKind::WorkerPointer);
         }
     }
 
@@ -121,7 +119,7 @@ fn push_yaml_if_file(
     kind: ArtifactKind,
 ) {
     if path.is_file() {
-        observations.push(super::inspect_yaml(&path, kind));
+        observations.push(inspect_yaml(&path, kind));
     }
 }
 

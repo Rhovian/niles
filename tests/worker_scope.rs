@@ -24,7 +24,26 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     fs::write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
     let status = worker_dir.join("status.log");
 
+    fs::create_dir_all(home.join("runs")).unwrap();
     fs::write(home.join("runs/index.json"), "{ invalid global index").unwrap();
+
+    let foreign_workers = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
+        .arg("workers")
+        .output()
+        .unwrap();
+    assert_command_success("foreign workers", &foreign_workers);
+    let foreign_workers_stdout = String::from_utf8_lossy(&foreign_workers.stdout);
+    assert!(foreign_workers_stdout.contains("workers[0]{id,agent,task,age,window,last_status}:"));
+    assert!(!foreign_workers_stdout.contains("shared"));
+
+    let owner_workers = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
+        .arg("workers")
+        .output()
+        .unwrap();
+    assert_command_success("owner workers", &owner_workers);
+    let owner_workers_stdout = String::from_utf8_lossy(&owner_workers.stdout);
+    assert!(owner_workers_stdout.contains("workers[1]{id,agent,task,age,window,last_status}:"));
+    assert!(owner_workers_stdout.contains("\n  shared,"));
     let tmux_before = fs::read_to_string(&tmux_log).unwrap();
 
     let peek = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)

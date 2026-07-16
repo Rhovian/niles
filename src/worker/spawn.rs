@@ -11,7 +11,8 @@ use crate::{
     tmux::{self, WindowTarget},
     usage,
     util::{
-        absolute_existing_dir, absolute_existing_file, remove_dir_all_if_exists, render_template,
+        absolute_existing_dir, absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists,
+        render_template,
     },
     wake,
 };
@@ -43,7 +44,10 @@ pub fn spawn(
         bail!("spawn requires either --brief or task text");
     }
 
-    let project = absolute_existing_dir(&project, "project")?;
+    let current_workspace = current_dir_utf8()?;
+    let requested_project = absolute_existing_dir(&project, "project")?;
+    require_current_workspace_project(&current_workspace, &requested_project)?;
+    let project = current_workspace;
     let config = load_project_config_from(&project)?;
     let agent_config = agents::config_for(&config.agents, &agent)?;
     let agent_spec = agents::capabilities::validate_agent(
@@ -93,8 +97,6 @@ pub fn spawn(
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 
-    store::register_worker_location(&id, &project, &dir)?;
-
     let window_name = agent_window::worker_window_name(&id);
     let launched_at = Utc::now();
     let usage_attribution =
@@ -112,7 +114,7 @@ pub fn spawn(
     ) {
         Ok(target) => target,
         Err(err) => {
-            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir, None) {
+            if let Err(cleanup_err) = cleanup_failed_spawn(&dir, None) {
                 return Err(err).context(format!(
                     "failed to launch worker {id}; additionally failed to clean up partial worker at {dir}: {cleanup_err}"
                 ));
@@ -139,9 +141,10 @@ pub fn spawn(
         launch: launch_path,
         status: Some(status_path),
     };
-    if let Err(err) = tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))
+    if let Err(err) =
+        tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))
     {
-        if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir, Some(&target)) {
+        if let Err(cleanup_err) = cleanup_failed_spawn(&dir, Some(&target)) {
             return Err(err).context(format!(
                 "failed to finish launching worker {id}; additionally failed to clean up launched worker at {target}: {cleanup_err}"
             ));
@@ -168,6 +171,20 @@ pub fn spawn(
     }
     println!("workers: niles workers");
 
+    Ok(())
+}
+
+fn require_current_workspace_project(
+    current_workspace: &Utf8Path,
+    requested_project: &Utf8Path,
+) -> Result<()> {
+    let current = fs::canonicalize(current_workspace)
+        .with_context(|| format!("failed to canonicalize current workspace {current_workspace}"))?;
+    let requested = fs::canonicalize(requested_project)
+        .with_context(|| format!("failed to canonicalize project {requested_project}"))?;
+    if current != requested {
+        bail!("spawn --project must be the current workspace; cd there and spawn");
+    }
     Ok(())
 }
 
@@ -241,23 +258,17 @@ fn write_brief(
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
 
-fn cleanup_failed_spawn(
-    id: &str,
-    project: &Utf8Path,
-    dir: &Utf8Path,
-    target: Option<&WindowTarget>,
-) -> Result<()> {
+fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result<()> {
     let mut failures = Vec::new();
     if let Some(target) = target
         && let Err(err) = agent_window::close_target(target)
     {
         failures.push(format!("failed to kill tmux window {target}: {err:#}"));
     }
-    if let Err(err) = store::unregister_worker_location(id, None, Some(project), Some(dir)) {
-        failures.push(format!("failed to unregister worker location: {err:#}"));
-    }
     if let Err(err) = remove_dir_all_if_exists(dir) {
-        failures.push(format!("failed to remove partial worker dir {dir}: {err:#}"));
+        failures.push(format!(
+            "failed to remove partial worker dir {dir}: {err:#}"
+        ));
     }
 
     if failures.is_empty() {
