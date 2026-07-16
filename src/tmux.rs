@@ -10,8 +10,10 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 mod list_windows;
+mod target;
 
 pub(crate) use list_windows::TmuxWindowSnapshot;
+pub(crate) use target::{SessionName, TargetState, WindowTarget, target_state};
 
 const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
@@ -66,9 +68,10 @@ fn status_with_terminal(args: &[OsString]) -> Result<ExitStatus> {
         .with_context(|| format!("failed to run tmux {}", display_os_args(args)))
 }
 
-pub(crate) fn capture_pane(target: &str, lines: usize) -> Result<String> {
+pub(crate) fn capture_pane(target: &WindowTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
-    let output = output(["capture-pane", "-p", "-t", target, "-S", &start])
+    let target = target.render();
+    let output = output(["capture-pane", "-p", "-t", &target, "-S", &start])
         .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
     if !output.status.success() {
@@ -89,11 +92,12 @@ fn capture_start(lines: usize) -> String {
     }
 }
 
-pub(crate) fn send_line(target: &str, line: &str) -> Result<()> {
-    run(send_line_literal_args(target, line))?;
+pub(crate) fn send_line(target: &WindowTarget, line: &str) -> Result<()> {
+    let target = target.render();
+    run(send_line_literal_args(&target, line))?;
     // Give the worker TUI a render tick before sending the submit keystroke.
     thread::sleep(SEND_LINE_SUBMIT_DELAY);
-    run(send_line_submit_args(target))
+    run(send_line_submit_args(&target))
 }
 
 pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
@@ -112,7 +116,7 @@ pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
 }
 
 pub(crate) fn launch_foreground_session(
-    session: &str,
+    session: &SessionName,
     cwd: &Utf8Path,
     argv: &[OsString],
 ) -> Result<ExitStatus> {
@@ -120,7 +124,7 @@ pub(crate) fn launch_foreground_session(
     status_with_terminal(&args)
 }
 
-pub(crate) fn attach_foreground_session(session: &str) -> Result<ExitStatus> {
+pub(crate) fn attach_foreground_session(session: &SessionName) -> Result<ExitStatus> {
     let args = foreground_attach_session_args(session);
     status_with_terminal(&args)
 }
@@ -129,13 +133,20 @@ pub(crate) fn rename_current_window(name: &str) -> Result<()> {
     run(["rename-window", name])
 }
 
-pub(crate) fn switch_client(target: &str) -> Result<()> {
-    run(["switch-client", "-t", target])
+pub(crate) fn switch_client(target: &WindowTarget) -> Result<()> {
+    let target = target.render();
+    run(["switch-client", "-t", &target])
 }
 
-pub(crate) fn list_windows(session: &str) -> Result<Vec<TmuxWindowSnapshot>> {
-    let output = output(["list-windows", "-t", session, "-F", list_windows::format()])
-        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
+pub(crate) fn list_windows(session: &SessionName) -> Result<Vec<TmuxWindowSnapshot>> {
+    let output = output([
+        "list-windows",
+        "-t",
+        session.as_str(),
+        "-F",
+        list_windows::LIST_WINDOWS_FORMAT,
+    ])
+    .with_context(|| format!("failed to list tmux windows in session {session}"))?;
 
     if !output.status.success() {
         bail!(
@@ -144,12 +155,18 @@ pub(crate) fn list_windows(session: &str) -> Result<Vec<TmuxWindowSnapshot>> {
         );
     }
 
-    list_windows::parse(&output.stdout)
+    list_windows::parse(session, &output.stdout)
 }
 
-pub(crate) fn ensure_window_available(session: &str, window_name: &str) -> Result<()> {
-    let output = output(["list-windows", "-t", session, "-F", "#{window_name}"])
-        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
+pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) -> Result<()> {
+    let output = output([
+        "list-windows",
+        "-t",
+        session.as_str(),
+        "-F",
+        "#{window_name}",
+    ])
+    .with_context(|| format!("failed to list tmux windows in session {session}"))?;
 
     if !output.status.success() {
         bail!(
@@ -166,7 +183,7 @@ pub(crate) fn ensure_window_available(session: &str, window_name: &str) -> Resul
 }
 
 pub(crate) fn new_window(
-    session: &str,
+    session: &SessionName,
     window_name: &str,
     cwd: &Utf8Path,
     command: &str,
@@ -175,7 +192,7 @@ pub(crate) fn new_window(
     run(new_window_args(&session_target, window_name, cwd, command))
 }
 
-fn new_window_session_target(session: &str) -> String {
+fn new_window_session_target(session: &SessionName) -> String {
     format!("{session}:")
 }
 
@@ -198,29 +215,51 @@ fn new_window_args<'a>(
     ]
 }
 
-pub(crate) fn kill_window(session: &str, window_name: &str) -> Result<()> {
-    run(["kill-window", "-t", &format!("{session}:{window_name}")])
+pub(crate) fn kill_window(target: &WindowTarget) -> Result<()> {
+    let target = target.render();
+    run(["kill-window", "-t", &target])
 }
 
 pub(crate) fn target_exists(target: &str) -> Result<bool> {
-    let Some((session, window_name)) = target.rsplit_once(':') else {
-        return Ok(false);
-    };
-    if session.is_empty() || window_name.is_empty() {
-        return Ok(false);
-    }
+    let target = WindowTarget::parse(target)?;
 
-    let output = output(["list-windows", "-t", session, "-F", "#{window_name}"])
-        .with_context(|| format!("failed to list tmux windows in session {session}"))?;
+    let output = output([
+        "list-windows",
+        "-t",
+        target.session().as_str(),
+        "-F",
+        "#{window_name}",
+    ])
+    .with_context(|| {
+        format!(
+            "failed to list tmux windows in session {}",
+            target.session()
+        )
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        bail!("tmux list-windows failed for session {session}: {stderr}");
+        bail!(
+            "tmux list-windows failed for session {}: {stderr}",
+            target.session()
+        );
     }
 
-    Ok(window_list_contains(&output.stdout, window_name))
+    Ok(window_list_contains(&output.stdout, target.window()))
+}
+
+pub(crate) fn ensure_session_exists(session: &SessionName) -> Result<()> {
+    if has_session(session.as_str()) {
+        return Ok(());
+    }
+    run(["new-session", "-d", "-s", session.as_str()])
+}
+
+pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str) -> Result<()> {
+    let target = target.render();
+    run(["set-option", "-w", "-t", &target, option, value])
 }
 
 fn current_session_name() -> Result<Option<String>> {
@@ -282,16 +321,27 @@ fn send_line_submit_args(target: &str) -> [&str; 4] {
     ["send-keys", "-t", target, SEND_LINE_SUBMIT_KEY]
 }
 
-fn foreground_new_session_args(session: &str, cwd: &Utf8Path, argv: &[OsString]) -> Vec<OsString> {
-    let mut args = ["new-session", "-s", session, "-c", cwd.as_str(), "--"]
-        .map(OsString::from)
-        .to_vec();
+fn foreground_new_session_args(
+    session: &SessionName,
+    cwd: &Utf8Path,
+    argv: &[OsString],
+) -> Vec<OsString> {
+    let mut args = [
+        "new-session",
+        "-s",
+        session.as_str(),
+        "-c",
+        cwd.as_str(),
+        "--",
+    ]
+    .map(OsString::from)
+    .to_vec();
     args.extend(argv.iter().cloned());
     args
 }
 
-fn foreground_attach_session_args(session: &str) -> Vec<OsString> {
-    ["attach-session", "-t", session]
+fn foreground_attach_session_args(session: &SessionName) -> Vec<OsString> {
+    ["attach-session", "-t", session.as_str()]
         .map(OsString::from)
         .to_vec()
 }
@@ -355,7 +405,8 @@ mod tests {
 
     #[test]
     fn new_window_args_target_session_with_trailing_colon() {
-        let session_target = new_window_session_target("niles");
+        let session = SessionName::new("niles").unwrap();
+        let session_target = new_window_session_target(&session);
         let args = new_window_args(
             &session_target,
             "niles-auth-fix",
@@ -381,15 +432,11 @@ mod tests {
 
     #[test]
     fn foreground_new_session_args_preserve_argv_boundaries_for_named_session() {
-        let argv = [
-            "/opt/homebrew/bin/niles",
-            "--manager",
-            "codex:gpt-5:high",
-        ]
-        .map(OsString::from);
+        let argv = ["/opt/homebrew/bin/niles", "--manager", "codex:gpt-5:high"].map(OsString::from);
 
+        let session = SessionName::new("niles-2").unwrap();
         let args = foreground_new_session_args(
-            "niles-2",
+            &session,
             Utf8Path::new("/tmp/workspace with spaces"),
             &argv,
         );
@@ -413,8 +460,9 @@ mod tests {
 
     #[test]
     fn foreground_attach_session_args_target_existing_session() {
+        let session = SessionName::new("niles").unwrap();
         assert_eq!(
-            foreground_attach_session_args("niles"),
+            foreground_attach_session_args(&session),
             ["attach-session", "-t", "niles"].map(OsString::from)
         );
     }

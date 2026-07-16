@@ -6,10 +6,9 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     agent_window, store,
+    tmux::WindowTarget,
     util::{remove_dir_all_if_exists, timestamp_id},
 };
-
-use super::meta::WorkerMeta;
 
 const FINAL_PANE_CAPTURE_LINES: usize = 2000;
 const FINAL_PANE_FILE: &str = "final-pane.txt";
@@ -19,17 +18,13 @@ pub(super) fn final_pane_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
 
 pub(super) fn capture_final_pane(
     worker_dir: &Utf8Path,
-    meta: Option<&WorkerMeta>,
-    window_name: &str,
+    target: &WindowTarget,
 ) -> Result<Option<Utf8PathBuf>> {
     if !worker_dir.exists() {
         return Ok(None);
     }
 
-    let text = match meta {
-        Some(meta) => agent_window::capture_target(&meta.window, FINAL_PANE_CAPTURE_LINES),
-        None => agent_window::capture_window(window_name, FINAL_PANE_CAPTURE_LINES),
-    }?;
+    let text = agent_window::capture_target(target, FINAL_PANE_CAPTURE_LINES)?;
     if text.is_empty() {
         return Ok(None);
     }

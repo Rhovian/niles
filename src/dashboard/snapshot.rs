@@ -5,7 +5,7 @@ use crate::{
     session::{self, SessionMeta},
     state::{StepKind, StepStatus},
     store, tmux,
-    tmux::TmuxWindowSnapshot,
+    tmux::{SessionName, TmuxWindowSnapshot, WindowTarget},
     usage::UsageAttribution,
     wake,
     worker::{self, WorkerDashboardMeta},
@@ -69,6 +69,7 @@ pub(crate) struct PaneSummary {
     pub(crate) liveness: PaneLiveness,
     pub(crate) pid: Option<u32>,
     pub(crate) command: Option<String>,
+    pub(crate) state: Option<String>,
 }
 
 #[derive(Debug)]
@@ -113,6 +114,7 @@ impl PaneSummary {
             liveness: PaneLiveness::Missing,
             pid: None,
             command: None,
+            state: None,
         }
     }
 
@@ -121,6 +123,16 @@ impl PaneSummary {
             liveness: PaneLiveness::Unknown,
             pid: None,
             command: None,
+            state: None,
+        }
+    }
+
+    pub(super) fn from_state(state: impl ToString) -> Self {
+        Self {
+            liveness: PaneLiveness::Missing,
+            pid: None,
+            command: None,
+            state: Some(state.to_string()),
         }
     }
 
@@ -134,6 +146,7 @@ impl PaneSummary {
             liveness,
             pid: window.pane_pid,
             command: window.pane_current_command.clone(),
+            state: None,
         }
     }
 }
@@ -145,21 +158,6 @@ pub(crate) fn collect(
     recompute_usage: bool,
 ) -> DashboardSnapshot {
     let mut messages = Vec::new();
-    let tmux = match tmux::current_or_named_session("niles") {
-        Ok(session) => match tmux::list_windows(&session) {
-            Ok(windows) => TmuxWindows::Available(windows),
-            Err(err) => {
-                let message = format!("tmux list failure: {err:#}");
-                messages.push(message.clone());
-                TmuxWindows::Unavailable(message)
-            }
-        },
-        Err(err) => {
-            let message = format!("tmux session failure: {err:#}");
-            messages.push(message.clone());
-            TmuxWindows::Unavailable(message)
-        }
-    };
     let manager = match session::read_latest_manager_session(workspace) {
         Ok(manager) => manager,
         Err(err) => {
@@ -181,6 +179,7 @@ pub(crate) fn collect(
             RunDashboard::default()
         }
     };
+    let tmux = collect_tmux_windows(&manager, &workers, &mut messages);
 
     assemble_snapshot(
         DashboardSources {
@@ -195,6 +194,49 @@ pub(crate) fn collect(
         usage_cache,
         recompute_usage,
     )
+}
+
+fn collect_tmux_windows(
+    manager: &Option<SessionMeta>,
+    workers: &[WorkerDashboardMeta],
+    messages: &mut Vec<String>,
+) -> TmuxWindows {
+    let mut sessions = std::collections::BTreeSet::<SessionName>::new();
+    if let Some(manager) = manager
+        && let Some(window) = manager.window.as_deref()
+    {
+        push_recorded_session(&mut sessions, window, "manager", messages);
+    }
+    for worker in workers {
+        push_recorded_session(&mut sessions, &worker.window, &worker.id, messages);
+    }
+
+    let mut windows = Vec::new();
+    for session in sessions {
+        match tmux::list_windows(&session) {
+            Ok(mut listed) => windows.append(&mut listed),
+            Err(err) => {
+                messages.push(format!("tmux list failure for session {session}: {err:#}"));
+            }
+        }
+    }
+    TmuxWindows::Available(windows)
+}
+
+fn push_recorded_session(
+    sessions: &mut std::collections::BTreeSet<SessionName>,
+    target: &str,
+    subject: &str,
+    messages: &mut Vec<String>,
+) {
+    match WindowTarget::parse(target) {
+        Ok(target) => {
+            sessions.insert(target.session().clone());
+        }
+        Err(err) => {
+            messages.push(format!("tmux target unavailable for {subject}: {err:#}"));
+        }
+    }
 }
 
 pub(crate) fn assemble_snapshot(

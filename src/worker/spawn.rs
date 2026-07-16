@@ -7,10 +7,11 @@ use chrono::Utc;
 use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
-    store, usage,
+    session, store,
+    tmux::{self, WindowTarget},
+    usage,
     util::{
-        absolute_existing_dir, absolute_existing_file, remove_dir_all_if_exists,
-        remove_file_if_exists, render_template,
+        absolute_existing_dir, absolute_existing_file, remove_dir_all_if_exists, render_template,
     },
     wake,
 };
@@ -18,7 +19,7 @@ use crate::{
 use super::{
     archive::archive_worker_dir,
     list::UNLABELED_TASK_LABEL,
-    meta::{WorkerMeta, meta_path, report_path, write_meta},
+    meta::{WorkerMeta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
     validation::{validate_id, validate_task_label},
 };
@@ -98,18 +99,20 @@ pub fn spawn(
     let launched_at = Utc::now();
     let usage_attribution =
         usage::attribution_for_family(agent_spec.family(), &project, launched_at, Some(1));
-    let target = match agent_window::spawn_agent_window(
+    let session = session::resolve_workspace_tmux_session(&project)?;
+    tmux::ensure_session_exists(&session)?;
+    let target = match spawn_worker_window(
+        &session,
         &window_name,
         &project,
         &agent,
-        &project,
         &brief_path,
         &launch_path,
-        Some(&usage_attribution),
+        &usage_attribution,
     ) {
         Ok(target) => target,
         Err(err) => {
-            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir) {
+            if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir, None) {
                 return Err(err).context(format!(
                     "failed to launch worker {id}; additionally failed to clean up partial worker at {dir}: {cleanup_err}"
                 ));
@@ -130,13 +133,23 @@ pub fn spawn(
         usage: None,
         task_label,
         created_at: Some(launched_at),
-        project,
-        window: target.clone(),
+        project: project.clone(),
+        window: target.render(),
         brief: brief_path,
         launch: launch_path,
         status: Some(status_path),
     };
-    write_meta(&dir, &meta)?;
+    if let Err(err) = tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))
+    {
+        if let Err(cleanup_err) = cleanup_failed_spawn(&id, &project, &dir, Some(&target)) {
+            return Err(err).context(format!(
+                "failed to finish launching worker {id}; additionally failed to clean up launched worker at {target}: {cleanup_err}"
+            ));
+        }
+        return Err(err).context(format!(
+            "failed to finish launching worker {id}; cleaned up launched worker at {target}"
+        ));
+    }
 
     println!("spawned: {id}");
     println!("window: {window_name}");
@@ -156,6 +169,32 @@ pub fn spawn(
     println!("workers: niles workers");
 
     Ok(())
+}
+
+fn spawn_worker_window(
+    session: &tmux::SessionName,
+    window_name: &str,
+    project: &Utf8Path,
+    agent: &str,
+    brief_path: &Utf8Path,
+    launch_path: &Utf8Path,
+    usage_attribution: &usage::UsageAttribution,
+) -> Result<WindowTarget> {
+    agent_window::spawn_agent_window_in_session(
+        session,
+        window_name,
+        project,
+        agent,
+        project,
+        brief_path,
+        launch_path,
+        Some(usage_attribution),
+    )
+}
+
+fn tag_worker_window(target: &WindowTarget, project: &Utf8Path, id: &str) -> Result<()> {
+    tmux::set_window_option(target, "@niles-project", project.as_str())?;
+    tmux::set_window_option(target, "@niles-worker-id", id)
 }
 
 fn print_worker_tier(meta: &WorkerMeta) {
@@ -202,10 +241,30 @@ fn write_brief(
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
 
-fn cleanup_failed_spawn(id: &str, project: &Utf8Path, dir: &Utf8Path) -> Result<()> {
-    store::unregister_worker_location(id, None, Some(project), Some(dir))?;
-    remove_file_if_exists(&meta_path(dir))?;
-    remove_dir_all_if_exists(dir)
+fn cleanup_failed_spawn(
+    id: &str,
+    project: &Utf8Path,
+    dir: &Utf8Path,
+    target: Option<&WindowTarget>,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    if let Some(target) = target
+        && let Err(err) = agent_window::close_target(target)
+    {
+        failures.push(format!("failed to kill tmux window {target}: {err:#}"));
+    }
+    if let Err(err) = store::unregister_worker_location(id, None, Some(project), Some(dir)) {
+        failures.push(format!("failed to unregister worker location: {err:#}"));
+    }
+    if let Err(err) = remove_dir_all_if_exists(dir) {
+        failures.push(format!("failed to remove partial worker dir {dir}: {err:#}"));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("{}", failures.join("; "))
+    }
 }
 
 #[cfg(test)]

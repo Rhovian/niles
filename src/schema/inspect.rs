@@ -103,6 +103,11 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     }
 
     let sessions = niles.join("sessions");
+    push_json_if_file(
+        &mut observations,
+        sessions.join("tmux-session.json"),
+        ArtifactKind::WorkspaceTmuxSession,
+    );
     for path in read_dir_paths(&mut observations, &sessions) {
         if path.is_dir() {
             push_json_if_file(

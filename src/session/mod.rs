@@ -5,6 +5,7 @@ mod startup;
 #[cfg(test)]
 mod test_support;
 mod tmux_bootstrap;
+mod workspace_session;
 
 use std::{env, fs};
 
@@ -23,6 +24,7 @@ use tmux_bootstrap::ensure_tmux_session;
 
 pub use brief::SessionMeta;
 pub(crate) use brief::read_latest_session as read_latest_manager_session;
+pub(crate) use workspace_session::resolve_workspace_tmux_session;
 
 pub fn run(manager: Option<String>) -> Result<()> {
     let workspace = current_dir_utf8()?;
@@ -37,7 +39,7 @@ pub fn run(manager: Option<String>) -> Result<()> {
         .window
         .as_deref()
         .context("manager session metadata missing tmux window after launch")?;
-    tmux::switch_client(target)?;
+    tmux::switch_client(&tmux::WindowTarget::parse(target)?)?;
     dashboard::run(&workspace)
 }
 

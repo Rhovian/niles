@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, fs, io::ErrorKind};
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agent_window,
     store::{self, WorkerLocation},
+    tmux::{self, TargetState, WindowTarget},
     usage::{self, UsageAgent, UsageDisplay, UsageRollup, UsageSnapshotInput, UsageSubject},
 };
 
@@ -139,27 +139,12 @@ fn live_workers() -> Result<Vec<LiveWorker>> {
     Ok(workers)
 }
 
-enum WorkerWindowState {
-    Live,
-    Dead,
-    Unknown(Error),
-}
-
-impl std::fmt::Display for WorkerWindowState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Live => f.write_str("live"),
-            Self::Dead => f.write_str("window-dead"),
-            Self::Unknown(err) => write!(f, "window-unknown:{err:#}"),
-        }
-    }
-}
-
-fn worker_window_state(meta: &WorkerMeta) -> WorkerWindowState {
-    match agent_window::target_exists(&meta.window) {
-        Ok(true) => WorkerWindowState::Live,
-        Ok(false) => WorkerWindowState::Dead,
-        Err(err) => WorkerWindowState::Unknown(err),
+fn worker_window_state(meta: &WorkerMeta) -> TargetState {
+    match WindowTarget::parse(&meta.window) {
+        Ok(target) => tmux::target_state(&target, &meta.project, &meta.id),
+        Err(err) => TargetState::Unknown {
+            error: format!("{err:#}"),
+        },
     }
 }
 

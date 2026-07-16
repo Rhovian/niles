@@ -58,9 +58,13 @@ niles worker-close --task auth
 ```
 
 Spawn writes a brief and launch script under `.niles/worker/<id>/`, records tmux
-metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window (in your
-current session if inside tmux, otherwise a detached `niles` session). The
-normal lifecycle is `spawn -> (wait <-> send)* -> cleanup`.
+metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window in the
+workspace-pinned tmux session. The pin is resolved from
+`.niles/sessions/tmux-session.json`, the latest manager window session, or a
+deterministic detached workspace session. If the operator renames the pinned
+tmux session, `ensure_session_exists` creates a fresh empty session with the
+bound name and later workers land there. The normal lifecycle is
+`spawn -> (wait <-> send)* -> cleanup`.
 
 `--task <label>` records a task label so a task or wave can be cleaned up as a
 group. Labels use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`,

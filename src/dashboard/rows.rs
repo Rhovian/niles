@@ -2,7 +2,11 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use chrono::{DateTime, Utc};
 
-use crate::{session::SessionMeta, tmux::TmuxWindowSnapshot, worker::WorkerDashboardMeta};
+use crate::{
+    session::SessionMeta,
+    tmux::{TmuxWindowSnapshot, WindowTarget},
+    worker::WorkerDashboardMeta,
+};
 
 use super::{
     snapshot::{
@@ -30,7 +34,7 @@ pub(super) fn assemble(
     recompute_usage: bool,
 ) -> RowAssembly {
     let mut rows = BTreeMap::new();
-    insert_home_row(&mut rows);
+    insert_home_row(&mut rows, home_row_key(sources.manager.as_ref()));
     let manager_target = sources
         .manager
         .as_ref()
@@ -74,9 +78,9 @@ pub(super) fn assemble(
     }
 }
 
-fn insert_home_row(rows: &mut BTreeMap<String, DashboardRow>) {
+fn insert_home_row(rows: &mut BTreeMap<String, DashboardRow>, key: String) {
     rows.insert(
-        HOME_WINDOW_NAME.to_owned(),
+        key,
         DashboardRow {
             window: HOME_WINDOW_NAME.to_owned(),
             role: DashboardRole::Home,
@@ -91,6 +95,19 @@ fn insert_home_row(rows: &mut BTreeMap<String, DashboardRow>) {
     );
 }
 
+fn home_row_key(manager: Option<&SessionMeta>) -> String {
+    let Some(manager) = manager else {
+        return HOME_WINDOW_NAME.to_owned();
+    };
+    let Some(target) = manager.window.as_deref() else {
+        return HOME_WINDOW_NAME.to_owned();
+    };
+    let Ok(target) = WindowTarget::parse(target) else {
+        return HOME_WINDOW_NAME.to_owned();
+    };
+    format!("{}:{HOME_WINDOW_NAME}", target.session())
+}
+
 fn insert_manager_row(
     rows: &mut BTreeMap<String, DashboardRow>,
     manager: SessionMeta,
@@ -99,12 +116,13 @@ fn insert_manager_row(
     recompute_usage: bool,
 ) {
     let usage = usage_cache.manager_usage(&manager, now, recompute_usage);
-    let window = match manager.window.as_deref() {
-        Some(target) => window_name_from_target(target),
-        None => MANAGER_WINDOW_NAME.to_owned(),
-    };
+    let (key, window) = target_key_and_window(
+        manager.window.as_deref(),
+        MANAGER_WINDOW_NAME,
+        MANAGER_WINDOW_NAME,
+    );
     rows.insert(
-        window.clone(),
+        key,
         DashboardRow {
             window,
             role: DashboardRole::Manager,
@@ -135,7 +153,7 @@ fn insert_worker_row(
     let usage = usage_cache.worker_usage(&worker, now, recompute_usage);
     let window = window_name_from_target(&worker.window);
     rows.insert(
-        window.clone(),
+        target_key(&worker.window, &window),
         DashboardRow {
             window,
             role: DashboardRole::Worker,
@@ -146,7 +164,7 @@ fn insert_worker_row(
                 worker.model.as_deref(),
                 worker.effort.as_deref(),
             ),
-            pane: PaneSummary::missing(),
+            pane: PaneSummary::from_state(&worker.target_state),
             wall: format_wall_since(worker.created_at, now),
             usage,
             wake: wake_state(&worker.status, &worker.id, messages),
@@ -165,7 +183,7 @@ fn insert_run_step_row(
     let usage = usage_cache.run_step_usage(&step, now, recompute_usage);
     let window = window_name_from_target(&step.window);
     rows.insert(
-        window.clone(),
+        step.window.clone(),
         DashboardRow {
             window,
             role: DashboardRole::RunStep,
@@ -191,13 +209,20 @@ fn merge_tmux_windows(rows: &mut BTreeMap<String, DashboardRow>, windows: Vec<Tm
             continue;
         }
         let pane = PaneSummary::from_tmux(&window);
-        if let Some(row) = rows.get_mut(&window.name) {
+        let target = match window.target() {
+            Ok(target) => target,
+            Err(_) => continue,
+        };
+        let key = target.render();
+        if let Some(row) = rows.get_mut(&key) {
+            row.pane = pane;
+        } else if let Some(row) = rows.get_mut(&window.name) {
             row.pane = pane;
         } else {
             rows.insert(
-                window.name.clone(),
+                key,
                 DashboardRow {
-                    window: window.name,
+                    window: target.render(),
                     role: DashboardRole::UnknownNilesWindow,
                     subject: EMPTY_CELL.to_owned(),
                     agent: EMPTY_CELL.to_owned(),
@@ -320,10 +345,28 @@ fn wake_state(
 }
 
 fn window_name_from_target(target: &str) -> String {
-    match target.rsplit_once(':') {
-        Some((_, window)) if !window.is_empty() => window.to_owned(),
-        Some((_, _)) => target.to_owned(),
-        None => target.to_owned(),
+    WindowTarget::parse(target)
+        .map_or_else(|_| target.to_owned(), |target| target.window().to_owned())
+}
+
+fn target_key_and_window(
+    target: Option<&str>,
+    fallback_key: &str,
+    fallback_window: &str,
+) -> (String, String) {
+    match target {
+        Some(target) => (
+            target_key(target, fallback_key),
+            window_name_from_target(target),
+        ),
+        None => (fallback_key.to_owned(), fallback_window.to_owned()),
+    }
+}
+
+fn target_key(target: &str, fallback: &str) -> String {
+    match WindowTarget::parse(target) {
+        Ok(target) => target.render(),
+        Err(_) => fallback.to_owned(),
     }
 }
 

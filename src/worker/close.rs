@@ -4,6 +4,7 @@ use chrono::Utc;
 
 use crate::{
     agent_window, store,
+    tmux::{self, TargetState, WindowTarget},
     usage::{self, UsageAgent, UsageSnapshotInput, UsageSubject},
     util::append_line,
     wake::{self, WakeKind},
@@ -21,8 +22,36 @@ struct WorkerCloseOutcome {
     archive_dir: Utf8PathBuf,
     pane_path: Option<Utf8PathBuf>,
     pane_error: Option<String>,
-    window_name: String,
+    window_state: CloseWindowState,
     window_error: Option<String>,
+}
+
+enum CloseWindowState {
+    Closed {
+        target: WindowTarget,
+    },
+    Recovered {
+        recorded: WindowTarget,
+        actual: WindowTarget,
+    },
+    WindowDead,
+    OrphanGone,
+    OrphanLegacyCandidate {
+        candidate: WindowTarget,
+    },
+    Unknown {
+        error: String,
+    },
+}
+
+enum WorkerTargetState {
+    Parsed {
+        recorded: WindowTarget,
+        state: TargetState,
+    },
+    Unknown {
+        error: String,
+    },
 }
 
 /// Tear down spawned workers. The tmux window may already be gone, so window
@@ -128,11 +157,7 @@ fn print_single_close_outcome(outcome: &WorkerCloseOutcome) {
     if let Some(err) = &outcome.pane_error {
         println!("pane not captured for worker {}: {err}", outcome.id);
     }
-    if let Some(err) = &outcome.window_error {
-        println!("window {} not closed: {err}", outcome.window_name);
-    } else {
-        println!("closed window: {}", outcome.window_name);
-    }
+    print_window_close_detail(outcome);
     println!("archive: {}", outcome.archive_dir);
     println!("closed: {}", outcome.id);
 }
@@ -145,6 +170,9 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
     if let Some(err) = &outcome.window_error {
         println!("  {},window-not-closed,{err}", outcome.id);
     }
+    if !matches!(outcome.window_state, CloseWindowState::Closed { .. }) {
+        println!("  {},window-state,{}", outcome.id, outcome.window_state);
+    }
 }
 
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
@@ -152,18 +180,24 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     let location = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
     let worker_dir = location.worker_dir.clone();
     let mut meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
-    let window_name = agent_window::worker_window_name_from_target(id, &meta.window);
     let status_path = metadata_status_path(&meta, &worker_dir);
     append_closed_sentinel(&status_path, id)?;
 
-    let (pane_path, pane_error) = match capture_final_pane(&worker_dir, Some(&meta), &window_name) {
-        Ok(path) => (path, None),
-        Err(err) => (None, Some(err.to_string())),
+    let target_state = worker_target_state(&meta);
+    let (capture_target, close_target, window_state) = close_plan(target_state);
+
+    let (pane_path, pane_error) = match capture_target.as_ref() {
+        Some(target) => match capture_final_pane(&worker_dir, target) {
+            Ok(path) => (path, None),
+            Err(err) => (None, Some(err.to_string())),
+        },
+        None => (None, None),
     };
     let captured_pane = pane_path.is_some();
 
-    let window_error = agent_window::close_window(&window_name)
-        .err()
+    let window_error = close_target
+        .as_ref()
+        .and_then(|target| agent_window::close_target(target).err())
         .map(|err| err.to_string());
 
     let finished_at = Utc::now();
@@ -202,9 +236,113 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
         archive_dir,
         pane_path,
         pane_error,
-        window_name,
+        window_state,
         window_error,
     })
+}
+
+fn worker_target_state(meta: &super::meta::WorkerMeta) -> WorkerTargetState {
+    match WindowTarget::parse(&meta.window) {
+        Ok(recorded) => WorkerTargetState::Parsed {
+            state: tmux::target_state(&recorded, &meta.project, &meta.id),
+            recorded,
+        },
+        Err(err) => WorkerTargetState::Unknown {
+            error: format!(
+                "worker {} metadata has invalid tmux window target: {err:#}",
+                meta.id
+            ),
+        },
+    }
+}
+
+fn close_plan(
+    target_state: WorkerTargetState,
+) -> (Option<WindowTarget>, Option<WindowTarget>, CloseWindowState) {
+    match target_state {
+        WorkerTargetState::Parsed { recorded, state } => match state {
+            TargetState::Live => (
+                Some(recorded.clone()),
+                Some(recorded.clone()),
+                CloseWindowState::Closed { target: recorded },
+            ),
+            TargetState::WindowDead => (None, None, CloseWindowState::WindowDead),
+            TargetState::OrphanRecovered { actual } => (
+                Some(actual.clone()),
+                Some(actual.clone()),
+                CloseWindowState::Recovered { recorded, actual },
+            ),
+            TargetState::OrphanGone => (None, None, CloseWindowState::OrphanGone),
+            TargetState::OrphanLegacyCandidate { candidate } => (
+                None,
+                None,
+                CloseWindowState::OrphanLegacyCandidate { candidate },
+            ),
+            TargetState::Unknown { error } => (None, None, CloseWindowState::Unknown { error }),
+        },
+        WorkerTargetState::Unknown { error } => (None, None, CloseWindowState::Unknown { error }),
+    }
+}
+
+fn print_window_close_detail(outcome: &WorkerCloseOutcome) {
+    if let Some(err) = &outcome.window_error {
+        println!(
+            "window {} not closed: {err}",
+            outcome.window_state.close_target()
+        );
+        return;
+    }
+
+    match &outcome.window_state {
+        CloseWindowState::Closed { target } => {
+            println!("closed window: {}", target.window());
+        }
+        CloseWindowState::Recovered { recorded, actual } => {
+            println!("closed window: {actual}");
+            println!("window state: orphan-recovered:{recorded}->{actual}");
+        }
+        CloseWindowState::WindowDead => {
+            println!("window state: window-dead");
+        }
+        CloseWindowState::OrphanGone => {
+            println!("window state: orphan-gone");
+        }
+        CloseWindowState::OrphanLegacyCandidate { candidate } => {
+            println!("window state: orphan-legacy-candidate:{candidate}");
+            println!("manual_close: tmux kill-window -t {candidate}");
+        }
+        CloseWindowState::Unknown { error } => {
+            println!("window state: unknown:{error}");
+        }
+    }
+}
+
+impl CloseWindowState {
+    fn close_target(&self) -> String {
+        match self {
+            Self::Closed { target } => target.render(),
+            Self::Recovered { actual, .. } => actual.render(),
+            Self::WindowDead => "window-dead".to_owned(),
+            Self::OrphanGone => "orphan-gone".to_owned(),
+            Self::OrphanLegacyCandidate { candidate } => candidate.render(),
+            Self::Unknown { error } => format!("unknown:{error}"),
+        }
+    }
+}
+
+impl std::fmt::Display for CloseWindowState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed { target } => write!(f, "closed:{target}"),
+            Self::Recovered { actual, .. } => write!(f, "orphan-recovered:{actual}"),
+            Self::WindowDead => f.write_str("window-dead"),
+            Self::OrphanGone => f.write_str("orphan-gone"),
+            Self::OrphanLegacyCandidate { candidate } => {
+                write!(f, "orphan-legacy-candidate:{candidate}")
+            }
+            Self::Unknown { error } => write!(f, "unknown:{error}"),
+        }
+    }
 }
 
 fn close_all_worker_ids() -> Result<Vec<String>> {
