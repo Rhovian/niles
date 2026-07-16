@@ -1338,7 +1338,7 @@ printf 'accepted\n'
 }
 
 #[test]
-fn spawned_worker_resolves_from_invoking_project_and_unrelated_cwds() {
+fn spawned_worker_resolves_from_invoking_and_project_cwds() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-cross-cwd");
     let home = niles_home(&root);
@@ -1412,7 +1412,7 @@ esac
     assert!(project.join(".niles/worker/auth-fix.json").is_file());
     assert!(!invoker.join(".niles/worker/auth-fix").exists());
 
-    for cwd in [&invoker, &project, &unrelated] {
+    for cwd in [&invoker, &project] {
         let peek = Command::new(niles)
             .args(["peek", "auth-fix", "--lines", "7"])
             .current_dir(cwd)
@@ -1428,7 +1428,7 @@ esac
 
     let send = Command::new(niles)
         .args(["send", "auth-fix", "continue", "please"])
-        .current_dir(&unrelated)
+        .current_dir(&invoker)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
@@ -1437,7 +1437,7 @@ esac
         .unwrap();
     assert_command_success("cross-cwd send", &send);
 
-    for (index, cwd) in [&invoker, &project, &unrelated].into_iter().enumerate() {
+    for (index, cwd) in [&invoker, &project].into_iter().enumerate() {
         let mut status_file = fs::OpenOptions::new().append(true).open(&status).unwrap();
         writeln!(status_file, "done: wake {index}").unwrap();
 
@@ -1464,7 +1464,7 @@ esac
 
     let close = Command::new(niles)
         .args(["worker-close", "auth-fix"])
-        .current_dir(&unrelated)
+        .current_dir(&invoker)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
@@ -1837,7 +1837,10 @@ fn worker_close_ignores_same_id_tag_from_other_workspace() {
         "old:niles-auth-fix",
     );
 
-    let tagged = format!("other:niles-auth-fix\t{}\tauth-fix", other_workspace.display());
+    let tagged = format!(
+        "other:niles-auth-fix\t{}\tauth-fix",
+        other_workspace.display()
+    );
     let close = Command::new(niles)
         .args(["worker-close", "auth-fix"])
         .current_dir(&workspace)
@@ -2019,8 +2022,9 @@ fn worker_close_reaps_unparseable_meta_window_as_unknown() {
     assert_command_success("invalid-window worker-close", &close);
     let stdout = String::from_utf8_lossy(&close.stdout);
     assert!(
-        stdout
-            .contains("window state: unknown:worker auth-fix metadata has invalid tmux window target")
+        stdout.contains(
+            "window state: unknown:worker auth-fix metadata has invalid tmux window target"
+        )
     );
 
     assert!(!tmux_log.exists());
@@ -2596,16 +2600,14 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
 }
 
 #[test]
-fn respawn_after_cross_cwd_close_does_not_inherit_archived_state() {
+fn respawn_after_invoker_close_does_not_inherit_archived_state() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-respawn-cross-cwd");
     let home = niles_home(&root);
     let invoker = root.join("invoker");
     let project = root.join("project");
-    let unrelated = root.join("unrelated");
     fs::create_dir_all(&invoker).unwrap();
     fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&unrelated).unwrap();
     let (bin, tmux_log) = write_worker_test_bins(&root);
     let path = path_with_bin(&bin);
 
@@ -2634,7 +2636,7 @@ fn respawn_after_cross_cwd_close_does_not_inherit_archived_state() {
 
     let close = Command::new(niles)
         .args(["worker-close", "job1"])
-        .current_dir(&unrelated)
+        .current_dir(&invoker)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
@@ -2673,14 +2675,12 @@ fn respawn_after_cross_cwd_close_does_not_inherit_archived_state() {
 }
 
 #[test]
-fn report_falls_back_to_most_recent_archive_from_unrelated_cwd() {
+fn report_falls_back_to_most_recent_local_archive() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let root = temp_workspace("niles-worker-report-archive");
     let home = niles_home(&root);
     let workspace = root.join("workspace");
-    let unrelated = root.join("unrelated");
     fs::create_dir_all(&workspace).unwrap();
-    fs::create_dir_all(&unrelated).unwrap();
     let (bin, tmux_log) = write_worker_test_bins(&root);
     let path = path_with_bin(&bin);
 
@@ -2722,11 +2722,11 @@ fn report_falls_back_to_most_recent_archive_from_unrelated_cwd() {
 
     let report = Command::new(niles)
         .args(["report", "reviewer"])
-        .current_dir(&unrelated)
+        .current_dir(&workspace)
         .env("NILES_HOME", &home)
         .output()
         .unwrap();
-    assert_command_success("archived report from unrelated cwd", &report);
+    assert_command_success("local archived report", &report);
     assert_eq!(String::from_utf8_lossy(&report.stdout), "second report\n");
     let stderr = String::from_utf8_lossy(&report.stderr);
     assert!(stderr.contains("serving archived report from"));

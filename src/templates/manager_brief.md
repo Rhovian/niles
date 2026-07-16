@@ -54,6 +54,7 @@ niles workers
 ```
 
 Workers are tmux windows `niles-<id>`; metadata and briefs live under `.niles/worker/<id>/`.
+Worker by-id commands (`peek`, `report`, `send`, `wait --worker`, `worker-close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
 Use model/effort qualifiers for specific tiers, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.
 Task labels group warm workers for cleanup; they use worker-id ASCII grammar (`A-Z`, `a-z`, `0-9`, `_`, `-`) and reserve `archive`.
 Worker briefs contain status and report paths. Actionable status lines use:
@@ -66,7 +67,7 @@ Each `niles wait --worker <id>` consumes one actionable status line via ack curs
 
 `done:` means awaiting manager follow-up, not termination. Keep workers and reviewer workers open through the send/wait loop: spawn -> (`niles wait --worker <id>` <-> `niles send <id> ...`)* -> cleanup. Cleanup happens only after integration, finalized run, merged PR, or complete wave.
 
-`niles worker-close <id>` snapshots pane content, closes the tmux window, and archives the worker directory to `.niles/worker/archive/<id>-<UTC timestamp>/`. `niles worker-close --task <label>` closes live workers with that task label; `niles worker-close --all` closes all live workers in the current workspace. Batch close reports each worker and continues after individual failures. Archiving frees live ids for fresh `niles spawn <id> ...` calls while keeping artifacts durable. `niles report <id>` reads the live report when active; after close it falls back to the most recent archive for that id and prints the archive path on stderr.
+`niles worker-close <id>` snapshots pane content, closes the tmux window, and archives the worker directory to `.niles/worker/archive/<id>-<UTC timestamp>/`. `niles worker-close --task <label>` closes live workers with that task label; `niles worker-close --all` closes all live workers in the current workspace. Batch close reports each worker and continues after individual failures. Archiving frees live ids for fresh `niles spawn <id> ...` calls while keeping artifacts durable. `niles report <id>` reads the live report when active; after close it falls back to the most recent local archive for that id and prints the archive path on stderr.
 
 ## Workflow Commands
 

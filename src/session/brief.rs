@@ -169,6 +169,13 @@ mod tests {
     }
 
     #[test]
+    fn manager_brief_describes_workspace_scoped_workers() {
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("Worker by-id commands"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("scoped to this workspace's worker records"));
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("most recent local archive"));
+    }
+
+    #[test]
     fn manager_brief_render_includes_manifest_flow() {
         let workspace = temp_test_path("brief-render");
         let dir = workspace.join(".niles/sessions/test-session");
