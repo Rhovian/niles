@@ -8,10 +8,7 @@ use std::{
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use super::{
-    global::write_global_worker_pointer as store_write_global_worker_pointer,
-    worker::{WorkerPointer, WorkerResolver},
-};
+use super::worker::WorkerResolver;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -74,14 +71,8 @@ impl Drop for TempDir {
 }
 
 pub(super) fn worker_resolver_at(local_workers_dir: &Utf8Path) -> WorkerResolver {
-    let local_workspace = local_workers_dir
-        .parent()
-        .and_then(Utf8Path::parent)
-        .unwrap()
-        .to_path_buf();
     WorkerResolver {
         local_workers_dir: local_workers_dir.to_path_buf(),
-        local_workspace,
     }
 }
 
@@ -94,8 +85,7 @@ pub(super) fn assert_worker_resolves_to(
         worker_resolver_at(local_workers_dir)
             .named(worker)
             .unwrap()
-            .unwrap()
-            .worker_dir,
+            .unwrap(),
         worker_dir
     );
 }
@@ -103,27 +93,6 @@ pub(super) fn assert_worker_resolves_to(
 pub(super) fn create_dir(path: Utf8PathBuf) -> Utf8PathBuf {
     fs::create_dir_all(&path).unwrap();
     path
-}
-
-pub(super) fn write_global_worker_pointer(pointer: &WorkerPointer) -> anyhow::Result<()> {
-    store_write_global_worker_pointer(pointer)
-}
-
-pub(super) fn worker_pointer(worker: &str, worker_dir: &Utf8Path) -> WorkerPointer {
-    WorkerPointer {
-        id: worker.to_owned(),
-        workspace: worker_dir
-            .parent()
-            .and_then(Utf8Path::parent)
-            .and_then(Utf8Path::parent)
-            .unwrap_or(Utf8Path::new("/"))
-            .to_path_buf(),
-        worker_dir: worker_dir.to_path_buf(),
-        local_stores: worker_dir
-            .parent()
-            .map(|parent| vec![parent.to_path_buf()])
-            .unwrap_or_default(),
-    }
 }
 
 fn set_env(key: &str, value: &str) {

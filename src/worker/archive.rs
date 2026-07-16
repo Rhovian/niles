@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agent_window, store,
+    agent_window,
     tmux::WindowTarget,
     util::{remove_dir_all_if_exists, timestamp_id},
 };
@@ -46,7 +46,6 @@ pub(super) fn archive_worker_dir(
         .with_context(|| format!("failed to create {archive_root}"))?;
     let archive_dir = archive_root.join(format!("{id}-{}", timestamp_id(&archived_at)));
     move_dir(worker_dir, &archive_dir)?;
-    store::register_worker_archive(id, &archive_dir, archived_at)?;
     Ok(archive_dir)
 }
 

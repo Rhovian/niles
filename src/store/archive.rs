@@ -1,35 +1,19 @@
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::util::read_dir_utf8_paths;
 
-use super::{global::write_global_worker_archive_pointer, paths::current_workers_dir};
+use super::paths::current_workers_dir;
 
-pub(crate) fn register_worker_archive(
-    worker: &str,
-    archive_dir: &Utf8Path,
-    archived_at: DateTime<Utc>,
-) -> Result<WorkerArchivePointer> {
-    let pointer = WorkerArchivePointer {
-        id: worker.to_owned(),
-        archive_dir: archive_dir.to_path_buf(),
-        archived_at,
-    };
-    write_global_worker_archive_pointer(&pointer)?;
-    Ok(pointer)
-}
-
-pub(crate) fn resolve_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
+pub(crate) fn resolve_worker_archives(worker: &str) -> Result<Vec<WorkerArchive>> {
     let mut archives = local_worker_archives(worker)?;
     sort_archives(&mut archives);
     Ok(archives)
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct WorkerArchivePointer {
-    pub(crate) id: String,
+#[derive(Clone, Debug)]
+pub(crate) struct WorkerArchive {
     pub(crate) archive_dir: Utf8PathBuf,
     pub(crate) archived_at: DateTime<Utc>,
 }
@@ -38,7 +22,7 @@ fn worker_archive_root(workers_dir: &Utf8Path) -> Utf8PathBuf {
     workers_dir.join("archive")
 }
 
-fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
+fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchive>> {
     let archive_root = worker_archive_root(&current_workers_dir()?);
     let mut archives = Vec::new();
     for path in read_dir_utf8_paths(&archive_root)? {
@@ -51,8 +35,7 @@ fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
         let Some(archived_at) = worker_archive_timestamp(worker, name) else {
             continue;
         };
-        archives.push(WorkerArchivePointer {
-            id: worker.to_owned(),
+        archives.push(WorkerArchive {
             archive_dir: path,
             archived_at,
         });
@@ -60,7 +43,7 @@ fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchivePointer>> {
     Ok(archives)
 }
 
-fn sort_archives(archives: &mut [WorkerArchivePointer]) {
+fn sort_archives(archives: &mut [WorkerArchive]) {
     archives.sort_by(|left, right| {
         left.archived_at
             .cmp(&right.archived_at)

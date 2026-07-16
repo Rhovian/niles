@@ -39,7 +39,7 @@ Cost is a first-class constraint. Tier review effort to risk and round, scope re
 Spawn a worker:
 
 ```sh
-niles spawn <id> --task <label> --project <path> --agent <codex|claude[:model[:effort]]> "<task>"
+niles spawn <id> --task <label> --agent <codex|claude[:model[:effort]]> "<task>"
 ```
 
 Inspect or steer a worker:
@@ -53,7 +53,8 @@ niles workers
 ```
 
 Workers are tmux windows `niles-<id>`; metadata and briefs live under `.niles/worker/<id>/`.
-Worker by-id commands (`peek`, `report`, `send`, `wait --worker`, `worker-close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
+Workers always belong to the current workspace; `--project .` is accepted for compatibility, but cross-workspace spawn requires `cd` into that workspace first.
+Worker commands (`workers`, `peek`, `report`, `send`, `wait --worker`, `worker-close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
 Use model/effort qualifiers for specific tiers, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.
 Task labels group warm workers for cleanup; they use worker-id ASCII grammar (`A-Z`, `a-z`, `0-9`, `_`, `-`) and reserve `archive`.
 Worker briefs contain status and report paths. Actionable status lines use:

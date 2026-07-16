@@ -5,7 +5,7 @@ use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    store::{self, WorkerLocation},
+    store,
     tmux::{self, TargetState, WindowTarget},
     usage::{self, UsageAgent, UsageDisplay, UsageRollup, UsageSnapshotInput, UsageSubject},
 };
@@ -17,7 +17,7 @@ const EMPTY_STATUS_PLACEHOLDER: &str = "-";
 
 struct LiveWorker {
     id: String,
-    location: WorkerLocation,
+    worker_dir: camino::Utf8PathBuf,
     meta: WorkerMeta,
 }
 
@@ -122,16 +122,16 @@ fn print_workers_usage(workers: Vec<LiveWorker>) -> Result<()> {
 fn live_workers() -> Result<Vec<LiveWorker>> {
     let mut workers = Vec::new();
     for entry in store::resolve_worker_locations()? {
-        let meta_path = meta_path(&entry.location.worker_dir);
+        let meta_path = meta_path(&entry.worker_dir);
         if !meta_path.exists() {
             continue;
         }
-        let Some(meta) = read_meta_if_exists(&entry.location.worker_dir)? else {
+        let Some(meta) = read_meta_if_exists(&entry.worker_dir)? else {
             continue;
         };
         workers.push(LiveWorker {
             id: entry.id,
-            location: entry.location,
+            worker_dir: entry.worker_dir,
             meta,
         });
     }
@@ -181,7 +181,7 @@ fn live_worker_usage(worker: &LiveWorker, now: DateTime<Utc>) -> UsageDisplay {
         attribution: worker.meta.usage_attribution.clone(),
         started_at: worker_started_at(worker),
         finished_at: now,
-        output_path: usage::worker_usage_path(&worker.location.worker_dir),
+        output_path: usage::worker_usage_path(&worker.worker_dir),
     });
     UsageDisplay::from_snapshot(&snapshot, true)
 }
@@ -190,7 +190,7 @@ fn worker_started_at(worker: &LiveWorker) -> Option<DateTime<Utc>> {
     worker
         .meta
         .created_at
-        .or_else(|| path_time(&meta_path(&worker.location.worker_dir)))
+        .or_else(|| path_time(&meta_path(&worker.worker_dir)))
 }
 
 fn worker_task_label(worker: &LiveWorker) -> &str {
@@ -212,7 +212,7 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
 }
 
 fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
-    let status_path = metadata_status_path(&worker.meta, &worker.location.worker_dir);
+    let status_path = metadata_status_path(&worker.meta, &worker.worker_dir);
     let body = match fs::read_to_string(&status_path) {
         Ok(body) => body,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),

@@ -46,7 +46,7 @@ conversation and invokes explicit Niles commands as orchestration tools.
 Spawn a worker agent into a tmux window:
 
 ```sh
-niles spawn auth-fix --task auth --project ../my-app --agent codex "Fix the flaky login test"
+niles spawn auth-fix --task auth --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Rerun the failing test and report the result."
 niles wait --worker auth-fix
@@ -54,9 +54,11 @@ niles workers
 niles worker-close --task auth
 ```
 
-Spawn writes a brief and launch script under `.niles/worker/<id>/`, records tmux
-metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>` window in the
-workspace-pinned tmux session. The pin is resolved from
+Workers always belong to the current workspace; `--project .` is accepted for
+compatibility, but spawning for another path requires `cd` into that workspace
+first. Spawn writes a brief and launch script under `.niles/worker/<id>/`,
+records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>`
+window in the workspace-pinned tmux session. The pin is resolved from
 `.niles/sessions/tmux-session.json`, the latest manager window session, or a
 deterministic detached workspace session. If the operator renames the pinned
 tmux session, `ensure_session_exists` creates a fresh empty session with the
@@ -70,9 +72,10 @@ for closed workers. Close a worker with `niles worker-close <id>`, a group with
 `--task <label>`, or everything in the workspace with `--all`; batch close
 reports each worker and continues past individual failures.
 
-`niles workers` includes a window-health column. `window-dead` means worker
-metadata remains but the recorded tmux window is gone — a stale directory that
-is a cleanup candidate, not a healthy warm pane.
+`niles workers` lists only workers in the current workspace and includes a
+window-health column. `window-dead` means worker metadata remains but the
+recorded tmux window is gone — a stale directory that is a cleanup candidate,
+not a healthy warm pane.
 
 ## Token Usage
 

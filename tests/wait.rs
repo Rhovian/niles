@@ -418,7 +418,6 @@ fn wait_worker_returns_closed_backstop_when_resolved_directory_is_removed() {
     let worker_dir = worker_root.join("auth-fix");
     fs::create_dir_all(&worker_dir).unwrap();
     fs::write(worker_dir.join("status.log"), "working: still running\n").unwrap();
-    write_worker_pointer(&workspace, "auth-fix", &worker_dir);
 
     let waiter = Command::new(niles)
         .args([
@@ -468,28 +467,6 @@ fn write_waiter_registration(dir: &Path, pid: u32, token: &str) {
   "token": "{token}"
 }}
 "#
-        ),
-    )
-    .unwrap();
-}
-
-fn write_worker_pointer(workspace: &Path, id: &str, worker_dir: &Path) {
-    let worker_root = workspace.join(".niles/worker");
-    fs::create_dir_all(&worker_root).unwrap();
-    fs::write(
-        worker_root.join(format!("{id}.json")),
-        format!(
-            r#"{{
-  "niles_schema": 2,
-  "id": "{id}",
-  "workspace": "{}",
-  "worker_dir": "{}",
-  "local_stores": ["{}"]
-}}
-"#,
-            workspace.display(),
-            worker_dir.display(),
-            worker_root.display()
         ),
     )
     .unwrap();

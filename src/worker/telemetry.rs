@@ -30,7 +30,7 @@ pub(crate) struct WorkerDashboardMeta {
 pub(crate) fn live_workers_for_dashboard() -> Result<Vec<WorkerDashboardMeta>> {
     let mut workers = Vec::new();
     for entry in store::resolve_worker_locations()? {
-        let worker_dir = entry.location.worker_dir;
+        let worker_dir = entry.worker_dir;
         let metadata = meta_path(&worker_dir);
         if !metadata.exists() {
             continue;

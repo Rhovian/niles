@@ -179,14 +179,6 @@ fn needs_leading_newline(file: &mut fs::File) -> Result<bool> {
     Ok(byte[0] != b'\n')
 }
 
-pub fn remove_file_if_exists(path: &Utf8Path) -> Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("failed to remove {path}")),
-    }
-}
-
 pub fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
