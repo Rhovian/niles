@@ -1,18 +1,14 @@
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
 use crate::{
     session::{self, SessionMeta},
-    state::{StepKind, StepStatus},
-    store, tmux,
+    tmux,
     tmux::{SessionName, TmuxWindowSnapshot, WindowTarget},
-    usage::UsageAttribution,
-    wake,
     worker::{self, WorkerDashboardMeta},
 };
 
 use super::{
-    progress::{self, RunProgress},
     rows,
     status::WakeState,
     usage_cell::{DashboardUsageCache, UsageCell},
@@ -24,7 +20,6 @@ pub(crate) struct DashboardSnapshot {
     pub(crate) messages: Vec<String>,
     pub(crate) manager_target: Option<String>,
     pub(crate) manager_lifecycle: ManagerLifecycle,
-    pub(crate) progress: Option<RunProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +40,6 @@ pub(crate) enum DashboardRole {
     Home,
     Manager,
     Worker,
-    RunStep,
     UnknownNilesWindow,
 }
 
@@ -77,8 +71,6 @@ pub(crate) struct DashboardSources {
     pub(crate) tmux: TmuxWindows,
     pub(crate) manager: Option<SessionMeta>,
     pub(crate) workers: Vec<WorkerDashboardMeta>,
-    pub(crate) steps: Vec<RunStepDashboardMeta>,
-    pub(crate) progress: Option<RunProgress>,
     pub(crate) messages: Vec<String>,
 }
 
@@ -86,26 +78,6 @@ pub(crate) struct DashboardSources {
 pub(crate) enum TmuxWindows {
     Available(Vec<TmuxWindowSnapshot>),
     Unavailable(String),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RunStepDashboardMeta {
-    pub(crate) run_dir: Utf8PathBuf,
-    pub(crate) run_id: String,
-    pub(crate) index: usize,
-    pub(crate) role: Option<String>,
-    pub(crate) kind: StepKind,
-    pub(crate) label: String,
-    pub(crate) agent_family: Option<String>,
-    pub(crate) model: Option<String>,
-    pub(crate) effort: Option<String>,
-    pub(crate) usage_attribution: Option<UsageAttribution>,
-    pub(crate) usage: Option<Utf8PathBuf>,
-    pub(crate) step_status: StepStatus,
-    pub(crate) started_at: Option<DateTime<Utc>>,
-    pub(crate) finished_at: Option<DateTime<Utc>>,
-    pub(crate) window: String,
-    pub(crate) status_log: Utf8PathBuf,
 }
 
 impl PaneSummary {
@@ -172,13 +144,6 @@ pub(crate) fn collect(
             Vec::new()
         }
     };
-    let run = match collect_run_dashboard(workspace) {
-        Ok(run) => run,
-        Err(err) => {
-            messages.push(format!("run metadata unavailable: {err:#}"));
-            RunDashboard::default()
-        }
-    };
     let tmux = collect_tmux_windows(&manager, &workers, &mut messages);
 
     assemble_snapshot(
@@ -186,8 +151,6 @@ pub(crate) fn collect(
             tmux,
             manager,
             workers,
-            steps: run.steps,
-            progress: run.progress,
             messages,
         },
         now,
@@ -245,55 +208,11 @@ pub(crate) fn assemble_snapshot(
     usage_cache: &mut DashboardUsageCache,
     recompute_usage: bool,
 ) -> DashboardSnapshot {
-    let progress = sources.progress.take();
     let row_assembly = rows::assemble(&mut sources, now, usage_cache, recompute_usage);
     DashboardSnapshot {
         rows: row_assembly.rows,
         messages: sources.messages,
         manager_target: row_assembly.manager_target,
         manager_lifecycle: row_assembly.manager_lifecycle,
-        progress,
     }
-}
-
-#[derive(Default)]
-struct RunDashboard {
-    steps: Vec<RunStepDashboardMeta>,
-    progress: Option<RunProgress>,
-}
-
-fn collect_run_dashboard(workspace: &Utf8Path) -> anyhow::Result<RunDashboard> {
-    let Some(run_dir) = store::resolve_latest_run_dir_from(workspace)? else {
-        return Ok(RunDashboard::default());
-    };
-    let state = store::read_state(&run_dir)?;
-    let progress = progress::from_state(&state)?;
-    let status_log = wake::status_log_path(&run_dir);
-    let run_id = state.id.clone();
-    let mut steps = Vec::new();
-    for step in state.steps {
-        let Some(window) = step.window else {
-            continue;
-        };
-        steps.push(RunStepDashboardMeta {
-            run_dir: run_dir.clone(),
-            run_id: run_id.clone(),
-            index: step.index,
-            role: step.role,
-            kind: step.kind,
-            label: step.label,
-            agent_family: step.agent_family,
-            model: step.model,
-            effort: step.effort,
-            usage_attribution: step.usage_attribution,
-            usage: step.usage,
-            step_status: step.status,
-            started_at: step.started_at,
-            finished_at: step.finished_at,
-            window,
-            status_log: status_log.clone(),
-        });
-    }
-    steps.sort_by_key(|step| step.index);
-    Ok(RunDashboard { steps, progress })
 }

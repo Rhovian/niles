@@ -76,6 +76,7 @@ pub fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(current_dir_utf8()?.join(path))
 }
 
+#[cfg(test)]
 pub fn absolute_path_from(base: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {
     if path.is_absolute() {
         path.to_path_buf()

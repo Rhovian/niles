@@ -8,10 +8,7 @@ use crate::{
     config::spec::{PromptMode, load_project_config_from},
     tmux::{self, SessionName, WindowTarget},
     usage::UsageAttribution,
-    util::slugify,
 };
-
-const UNROLE_STEP_WINDOW_SEGMENT: &str = "step";
 
 #[derive(Clone, Copy)]
 pub(crate) enum AgentWindowPrompt<'a> {
@@ -21,63 +18,6 @@ pub(crate) enum AgentWindowPrompt<'a> {
 
 pub(crate) fn worker_window_name(id: &str) -> String {
     format!("niles-{id}")
-}
-
-/// Self-descriptive tmux window name for a step, e.g. `niles-claude-planner-s1-9000z`.
-/// The agent + role make it readable in `tmux list-windows`; the step number and
-/// a short run-id tail keep it unique across repeated roles and concurrent runs.
-pub(crate) fn step_window_name(
-    run_id: &str,
-    step_number: usize,
-    role: Option<&str>,
-    agent: &str,
-) -> String {
-    let shortid = &run_id[run_id.len().saturating_sub(6)..];
-    let role = match role {
-        Some(role) => role,
-        None => UNROLE_STEP_WINDOW_SEGMENT,
-    };
-    format!(
-        "niles-{}-{}-s{step_number}-{}",
-        slugify(agent),
-        slugify(role),
-        slugify(shortid)
-    )
-}
-
-pub(crate) fn legacy_step_window_name(run_id: &str, index: usize) -> String {
-    format!("niles-{run_id}-s{index}")
-}
-
-/// Launch `agent` interactively in a fresh tmux window driven by `brief_path`,
-/// returning its `session:window` target. Shared by workers and per-step
-/// orchestration so both use the same interactive invocation and launch script.
-pub(crate) fn spawn_agent_window(
-    window_name: &str,
-    cwd: &Utf8Path,
-    agent: &str,
-    project: &Utf8Path,
-    brief_path: &Utf8Path,
-    launch_path: &Utf8Path,
-    usage_attribution: Option<&UsageAttribution>,
-) -> Result<String> {
-    if !brief_path.is_file() {
-        bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
-    }
-
-    let config = load_project_config_from(project)?;
-    let config = agents::config_for(&config.agents, agent)?;
-    let mut invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
-    if let Some(session_id) = usage_attribution.and_then(UsageAttribution::claude_session_id) {
-        agents::append_session_id_arg(&mut invocation, session_id);
-    }
-    spawn_prepared_agent_window(
-        window_name,
-        cwd,
-        &invocation,
-        launch_path,
-        AgentWindowPrompt::BriefFile(brief_path),
-    )
 }
 
 #[expect(
@@ -205,30 +145,12 @@ pub(crate) fn capture_target(target: &WindowTarget, lines: usize) -> Result<Stri
     tmux::capture_pane(target, lines)
 }
 
-/// LEGACY run-step ambient path: capture by window name after resolving the
-/// active tmux session. Workers use recorded `WindowTarget`s instead.
-pub(crate) fn capture_window(window_name: &str, lines: usize) -> Result<String> {
-    capture_target(&active_window_target(window_name)?, lines)
-}
-
 pub(crate) fn send_target(target: &WindowTarget, message: &str) -> Result<()> {
     tmux::send_line(target, message)
 }
 
-/// LEGACY run-step ambient path: send by window name after resolving the active
-/// tmux session. Workers use recorded `WindowTarget`s instead.
-pub(crate) fn send_window(window_name: &str, message: &str) -> Result<()> {
-    tmux::send_line(&active_window_target(window_name)?, message)
-}
-
 pub(crate) fn close_target(target: &WindowTarget) -> Result<()> {
     tmux::kill_window(target)
-}
-
-/// LEGACY run-step ambient path: kill by window name after resolving the active
-/// tmux session. Workers use recorded `WindowTarget`s instead.
-pub(crate) fn close_window(window_name: &str) -> Result<()> {
-    close_target(&active_window_target(window_name)?)
 }
 
 /// Open a detached tmux window running `command` in `cwd` and return its
@@ -248,11 +170,6 @@ pub(crate) fn open_window_in_session(
     let target = WindowTarget::new(session.clone(), window_name.to_owned())?;
     tmux::new_window(session, window_name, cwd, command)?;
     Ok(target)
-}
-
-fn active_window_target(window_name: &str) -> Result<WindowTarget> {
-    let session = SessionName::new(tmux::current_or_named_session("niles")?)?;
-    WindowTarget::new(session, window_name.to_owned())
 }
 
 pub(crate) fn shell_quote(value: &str) -> String {
@@ -282,21 +199,5 @@ mod tests {
     #[test]
     fn worker_window_names_use_niles_prefix() {
         assert_eq!(worker_window_name("auth-fix"), "niles-auth-fix");
-    }
-
-    #[test]
-    fn step_window_names_include_agent_role_step_and_run_tail() {
-        assert_eq!(
-            step_window_name("runabcdef", 2, Some("planner"), "claude"),
-            "niles-claude-planner-s2-abcdef"
-        );
-        assert_eq!(
-            step_window_name("runabcdef", 2, None, "codex cli"),
-            "niles-codex-cli-step-s2-abcdef"
-        );
-        assert_eq!(
-            legacy_step_window_name("runabcdef", 2),
-            "niles-runabcdef-s2"
-        );
     }
 }

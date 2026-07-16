@@ -56,34 +56,6 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
         ArtifactKind::WorkspaceManifest,
     );
 
-    let runs = niles.join("runs");
-    for path in read_dir_paths(&mut observations, &runs) {
-        if path.is_dir() {
-            push_json_if_file(
-                &mut observations,
-                path.join("state.json"),
-                ArtifactKind::RunState,
-            );
-            push_json_if_file(
-                &mut observations,
-                path.join("plan.json"),
-                ArtifactKind::RunPlan,
-            );
-            for step_path in read_dir_paths(&mut observations, &path.join("steps")) {
-                if step_path.extension() == Some("json") {
-                    let kind = if is_usage_snapshot(&step_path) {
-                        ArtifactKind::UsageSnapshot
-                    } else {
-                        ArtifactKind::StepRecord
-                    };
-                    push_json_if_file(&mut observations, step_path, kind);
-                }
-            }
-        } else if path.extension() == Some("json") {
-            push_json_if_file(&mut observations, path, ArtifactKind::RunPointer);
-        }
-    }
-
     let workers = niles.join("worker");
     for path in read_dir_paths(&mut observations, &workers) {
         if path.is_dir() {
@@ -133,11 +105,6 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     Ok(observations)
 }
 
-fn is_usage_snapshot(path: &Utf8Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name.ends_with(".usage.json"))
-}
-
 fn push_json_if_file(
     observations: &mut Vec<SchemaObservation>,
     path: Utf8PathBuf,
@@ -183,20 +150,20 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let root = temp_test_path("unreadable-dir");
-        let steps = root.join(".niles/runs/run-1/steps");
-        fs::create_dir_all(&steps).unwrap();
-        let mut permissions = fs::metadata(&steps).unwrap().permissions();
+        let workers = root.join(".niles/worker");
+        fs::create_dir_all(&workers).unwrap();
+        let mut permissions = fs::metadata(&workers).unwrap().permissions();
         permissions.set_mode(0o000);
-        fs::set_permissions(&steps, permissions).unwrap();
+        fs::set_permissions(&workers, permissions).unwrap();
 
         let observations = scan_workspace(&root).unwrap();
 
-        let mut permissions = fs::metadata(&steps).unwrap().permissions();
+        let mut permissions = fs::metadata(&workers).unwrap().permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&steps, permissions).unwrap();
+        fs::set_permissions(&workers, permissions).unwrap();
         assert!(observations.iter().any(|observation| {
             observation.kind == ArtifactKind::Directory
-                && observation.path == steps
+                && observation.path == workers
                 && observation.status == SchemaStatus::Unreadable
         }));
 

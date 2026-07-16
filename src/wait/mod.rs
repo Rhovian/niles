@@ -19,14 +19,12 @@ use target::{WaitTarget, WaitTargets};
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 pub fn wait(
-    run: Option<String>,
     worker: Vec<String>,
     task: Option<String>,
-    index: Option<usize>,
     interval: f64,
     timeout: Option<f64>,
 ) -> Result<()> {
-    let targets = WaitTargets::resolve(run, worker, task, index)?;
+    let targets = WaitTargets::resolve(worker, task)?;
     let prefix_worker_id = targets.prefix_worker_id();
     let timeout_subject = targets.timeout_subject();
 
@@ -92,48 +90,29 @@ fn wait_for_targets(
     timeout: Duration,
 ) -> Result<FiredWake> {
     match targets {
-        WaitTargets::Run { target, index } => {
-            let worker_id = target.worker_id().map(str::to_owned);
-            Ok(FiredWake {
-                worker_id,
-                result: wait_for_wake(target, index, interval, timeout)?,
-            })
-        }
         WaitTargets::Workers(mut targets) if targets.len() == 1 => {
             let target = targets.remove(0);
             let worker_id = target.worker_id().map(str::to_owned);
             Ok(FiredWake {
                 worker_id,
-                result: wait_for_wake(target, None, interval, timeout)?,
+                result: wait_for_wake(target, interval, timeout)?,
             })
         }
-        WaitTargets::Workers(targets) => wait_for_first_wake(
-            targets
-                .into_iter()
-                .map(|target| (target, None))
-                .collect::<Vec<_>>(),
-            interval,
-            timeout,
-        ),
+        WaitTargets::Workers(targets) => wait_for_first_wake(targets, interval, timeout),
     }
 }
 
-fn wait_for_wake(
-    target: WaitTarget,
-    index: Option<usize>,
-    interval: Duration,
-    timeout: Duration,
-) -> Result<WaitResult> {
-    Ok(wait_for_first_wake(vec![(target, index)], interval, timeout)?.result)
+fn wait_for_wake(target: WaitTarget, interval: Duration, timeout: Duration) -> Result<WaitResult> {
+    Ok(wait_for_first_wake(vec![target], interval, timeout)?.result)
 }
 
 fn wait_for_first_wake(
-    targets: Vec<(WaitTarget, Option<usize>)>,
+    targets: Vec<WaitTarget>,
     interval: Duration,
     timeout: Duration,
 ) -> Result<FiredWake> {
     // Missing worker dirs report WorkerClosed before waiter registration can fail on status.waiter.
-    for (target, _) in &targets {
+    for target in &targets {
         if let Some(result) = target.closed_if_missing() {
             return Ok(FiredWake {
                 worker_id: target.worker_id().map(str::to_owned),
@@ -162,28 +141,24 @@ fn wait_for_first_wake(
     }
 }
 
-fn prepare_wait_entries(targets: Vec<(WaitTarget, Option<usize>)>) -> Result<Vec<WaitEntry>> {
+fn prepare_wait_entries(targets: Vec<WaitTarget>) -> Result<Vec<WaitEntry>> {
     let mut guards = Vec::with_capacity(targets.len());
-    for (target, index) in &targets {
-        let guard = if index.is_none() {
-            Some(WaiterGuard::register(target.status()).with_context(|| {
+    for target in &targets {
+        guards.push(Some(WaiterGuard::register(target.status()).with_context(
+            || {
                 format!(
                     "failed to attach waiter guard for requested target {}",
                     target.status()
                 )
-            })?)
-        } else {
-            None
-        };
-        guards.push(guard);
+            },
+        )?));
     }
 
     let mut entries = Vec::with_capacity(targets.len());
-    for ((target, index), guard) in targets.into_iter().zip(guards) {
+    for (target, guard) in targets.into_iter().zip(guards) {
         let initial_lines = read_lines(target.status())?;
         let scanner = WakeScanner::new(
             &target,
-            index,
             initial_lines.len(),
             guard.as_ref().map(|guard| guard.registration.clone()),
         )?;
@@ -359,7 +334,7 @@ mod tests {
         let first = test_worker_target(root.path(), "second", "done: second worker\n");
         let second = test_worker_target(root.path(), "first", "done: first worker\n");
         let wake = wait_for_first_wake(
-            vec![(first, None), (second, None)],
+            vec![first, second],
             Duration::from_millis(1),
             Duration::ZERO,
         )
@@ -397,7 +372,7 @@ mod tests {
         let root = TestTempDir::new("cursor-isolation");
         let first = test_worker_target(root.path(), "first", "done: first\n");
         let second = test_worker_target(root.path(), "second", "done: second\n");
-        let mut entries = prepare_wait_entries(vec![(first, None), (second, None)]).unwrap();
+        let mut entries = prepare_wait_entries(vec![first, second]).unwrap();
 
         let wake = poll_wait_entries(&mut entries).unwrap().unwrap();
 
@@ -420,7 +395,7 @@ mod tests {
         let third_ack_log = ack_log_path(third.status());
 
         let wake = wait_for_first_wake(
-            vec![(first, None), (second, None), (third, None)],
+            vec![first, second, third],
             Duration::from_millis(1),
             Duration::ZERO,
         )

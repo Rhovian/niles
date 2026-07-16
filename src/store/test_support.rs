@@ -8,14 +8,8 @@ use std::{
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::util::write_json_pretty;
-
 use super::{
-    global::{
-        GlobalIndex, write_global_run_pointer as store_write_global_run_pointer,
-        write_global_worker_pointer as store_write_global_worker_pointer,
-    },
-    run::{RunPointer, RunPointerFile, RunResolver, write_run_pointer},
+    global::write_global_worker_pointer as store_write_global_worker_pointer,
     worker::{WorkerPointer, WorkerResolver},
 };
 
@@ -79,12 +73,6 @@ impl Drop for TempDir {
     }
 }
 
-pub(super) fn resolver_at(local_runs_dir: &Utf8Path) -> RunResolver {
-    RunResolver {
-        local_runs_dir: local_runs_dir.to_path_buf(),
-    }
-}
-
 pub(super) fn worker_resolver_at(local_workers_dir: &Utf8Path) -> WorkerResolver {
     let local_workspace = local_workers_dir
         .parent()
@@ -117,45 +105,8 @@ pub(super) fn create_dir(path: Utf8PathBuf) -> Utf8PathBuf {
     path
 }
 
-pub(super) fn write_local_run_pointer(runs_dir: &Utf8Path, run: &str, run_dir: &Utf8Path) {
-    write_run_pointer(
-        runs_dir,
-        RunPointerFile::Run(run),
-        &run_pointer(run, run_dir),
-    )
-    .unwrap();
-}
-
-pub(super) fn write_latest_pointer(runs_dir: &Utf8Path, run: &str, run_dir: &Utf8Path) {
-    write_run_pointer(runs_dir, RunPointerFile::Latest, &run_pointer(run, run_dir)).unwrap();
-}
-
-pub(super) fn write_global_run_pointer(run: &str, run_dir: &Utf8Path) {
-    store_write_global_run_pointer(&run_pointer(run, run_dir)).unwrap();
-}
-
 pub(super) fn write_global_worker_pointer(pointer: &WorkerPointer) -> anyhow::Result<()> {
     store_write_global_worker_pointer(pointer)
-}
-
-pub(super) fn write_index(path: &Utf8Path, pointers: &[RunPointer]) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-
-    let mut index = GlobalIndex::default();
-    for pointer in pointers {
-        index.runs.insert(pointer.id.clone(), pointer.clone());
-    }
-    write_json_pretty(path, &index).unwrap();
-}
-
-pub(super) fn run_pointer(run: &str, run_dir: &Utf8Path) -> RunPointer {
-    RunPointer {
-        id: run.to_owned(),
-        workspace: run_dir.parent().unwrap_or(Utf8Path::new("/")).to_path_buf(),
-        run_dir: run_dir.to_path_buf(),
-    }
 }
 
 pub(super) fn worker_pointer(worker: &str, worker_dir: &Utf8Path) -> WorkerPointer {

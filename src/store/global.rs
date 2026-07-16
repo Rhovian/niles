@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs};
 
 use anyhow::{Context, Result};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,16 +9,7 @@ use crate::{
     util::{remove_file_if_exists, write_json_pretty},
 };
 
-use super::{
-    archive::WorkerArchivePointer, paths::global_index_path, run::RunPointer, worker::WorkerPointer,
-};
-
-pub(super) fn write_global_run_pointer(pointer: &RunPointer) -> Result<()> {
-    let path = global_index_path()?;
-    let mut index = read_global_index(&path)?;
-    index.runs.insert(pointer.id.clone(), pointer.clone());
-    write_global_index(&path, &index)
-}
+use super::{archive::WorkerArchivePointer, paths::global_index_path, worker::WorkerPointer};
 
 pub(super) fn write_global_worker_pointer(pointer: &WorkerPointer) -> Result<()> {
     let path = global_index_path()?;
@@ -45,7 +36,7 @@ pub(super) fn remove_global_worker_pointer(worker: &str) -> Result<()> {
     let path = global_index_path()?;
     let mut index = read_global_index(&path)?;
     index.workers.remove(worker);
-    if index.runs.is_empty() && index.workers.is_empty() && index.worker_archives.is_empty() {
+    if index.workers.is_empty() && index.worker_archives.is_empty() {
         return remove_file_if_exists(&path);
     }
     write_global_index(&path, &index)
@@ -58,32 +49,14 @@ fn write_global_index(path: &Utf8Path, index: &GlobalIndex) -> Result<()> {
     write_json_pretty(path, index)
 }
 
-pub(super) fn resolve_global_run(run: &str) -> Result<Option<Utf8PathBuf>> {
-    let path = global_index_path()?;
-    Ok(read_global_index(&path)?
-        .runs
-        .get(run)
-        .map(|pointer| pointer.run_dir.clone()))
-}
-
 pub(super) fn read_global_worker_pointer(worker: &str) -> Result<Option<WorkerPointer>> {
     let path = global_index_path()?;
     Ok(read_global_index(&path)?.workers.get(worker).cloned())
 }
 
-pub(super) fn latest_global_run_dir() -> Result<Option<Utf8PathBuf>> {
-    let path = global_index_path()?;
-    Ok(read_global_index(&path)?
-        .runs
-        .into_values()
-        .rev()
-        .map(|pointer| pointer.run_dir)
-        .find(|run_dir| run_dir.is_dir()))
-}
-
 #[expect(
     clippy::disallowed_methods,
-    reason = "the global index is optional until the first registered run or worker creates it"
+    reason = "the global index is optional until the first registered worker creates it"
 )]
 pub(super) fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
     Ok(schema::read_optional_json(path, ArtifactKind::GlobalIndex)?.unwrap_or_default())
@@ -91,8 +64,6 @@ pub(super) fn read_global_index(path: &Utf8Path) -> Result<GlobalIndex> {
 
 #[derive(Default, Deserialize, Serialize)]
 pub(super) struct GlobalIndex {
-    #[serde(default)]
-    pub(super) runs: BTreeMap<String, RunPointer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) workers: BTreeMap<String, WorkerPointer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -103,10 +74,8 @@ pub(super) struct GlobalIndex {
 mod tests {
     use std::fs;
 
-    use super::{read_global_index, write_global_run_pointer};
-    use crate::store::test_support::{
-        ScopedEnv, TempDir, create_dir, resolver_at, run_pointer, write_index,
-    };
+    use super::{read_global_index, write_global_worker_pointer};
+    use crate::store::test_support::{create_dir, worker_pointer, ScopedEnv, TempDir};
 
     #[test]
     fn global_index_uses_niles_home_override() {
@@ -114,28 +83,17 @@ mod tests {
         let niles_home = root.path().join("niles-home");
         let home = root.path().join("home");
         let _env = ScopedEnv::new(&niles_home, &home);
-        let local_runs_dir = root.path().join("workspace/.niles/runs");
         let niles_home_target = create_dir(root.path().join("niles-home-target"));
-        let home_target = create_dir(root.path().join("home-target"));
-        let run = "shared";
+        let worker = "shared";
 
-        write_index(
-            &niles_home.join("runs/index.json"),
-            &[run_pointer(run, &niles_home_target)],
-        );
-        write_index(
-            &home.join(".niles/runs/index.json"),
-            &[run_pointer(run, &home_target)],
-        );
+        write_global_worker_pointer(&worker_pointer(worker, &niles_home_target)).unwrap();
 
         assert_eq!(
             crate::store::global_index_path().unwrap(),
             niles_home.join("runs/index.json")
         );
-        assert_eq!(
-            resolver_at(&local_runs_dir).named(run).unwrap(),
-            niles_home_target
-        );
+        let index = read_global_index(&niles_home.join("runs/index.json")).unwrap();
+        assert_eq!(index.workers[worker].worker_dir, niles_home_target);
     }
 
     #[test]
@@ -152,11 +110,12 @@ mod tests {
             &path,
             format!(
                 r#"{{
-  "runs": {{
+  "workers": {{
     "legacy": {{
       "id": "legacy",
       "workspace": "{}",
-      "run_dir": "{}"
+      "worker_dir": "{}",
+      "local_stores": []
     }}
   }}
 }}
@@ -168,12 +127,58 @@ mod tests {
         .unwrap();
 
         let index = read_global_index(&path).unwrap();
-        assert!(index.runs.contains_key("legacy"));
+        assert!(index.workers.contains_key("legacy"));
 
-        write_global_run_pointer(&run_pointer("new", &new_target)).unwrap();
+        write_global_worker_pointer(&worker_pointer("new", &new_target)).unwrap();
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains(r#""niles_schema": 2"#));
         assert!(body.contains(r#""legacy""#));
         assert!(body.contains(r#""new""#));
+    }
+
+    #[test]
+    fn legacy_global_index_tolerates_removed_runs_key() {
+        let root = TempDir::new("legacy-global-index-runs-key");
+        let _env = ScopedEnv::new(&root.path().join("niles-home"), &root.path().join("home"));
+        let path = crate::store::global_index_path().unwrap();
+        let worker_dir = create_dir(root.path().join("worker-target"));
+        let run_dir = create_dir(root.path().join("run-target"));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(
+            &path,
+            format!(
+                r#"{{
+  "niles_schema": 2,
+  "runs": {{
+    "legacy-run": {{
+      "id": "legacy-run",
+      "workspace": "{}",
+      "run_dir": "{}"
+    }}
+  }},
+  "workers": {{
+    "legacy-worker": {{
+      "id": "legacy-worker",
+      "workspace": "{}",
+      "worker_dir": "{}",
+      "local_stores": []
+    }}
+  }}
+}}
+"#,
+                root.path(),
+                run_dir,
+                root.path(),
+                worker_dir
+            ),
+        )
+        .unwrap();
+
+        let index = read_global_index(&path).unwrap();
+
+        assert_eq!(index.workers.len(), 1);
+        assert_eq!(index.workers["legacy-worker"].worker_dir, worker_dir);
     }
 }

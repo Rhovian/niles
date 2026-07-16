@@ -23,6 +23,7 @@ where
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
 
+#[cfg(test)]
 pub(crate) fn read_json<T>(path: &Utf8Path, kind: ArtifactKind) -> Result<T>
 where
     T: DeserializeOwned,
@@ -41,18 +42,6 @@ where
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
     read_json_body(path, kind, &body).map(Some)
-}
-
-pub(crate) fn read_json_value_as<T>(path: &Utf8Path, kind: ArtifactKind) -> Result<JsonValue>
-where
-    T: DeserializeOwned,
-{
-    let body = fs::read_to_string(path).with_context(|| format!("failed to read {path}"))?;
-    let value = parse_json_value(path, kind, &body)?;
-    let probe = schema_from_json(&value);
-    reject_newer_schema(path, kind, probe)?;
-    T::deserialize(&value).map_err(|err| deserialize_failure(path, kind, probe, err))?;
-    Ok(value)
 }
 
 fn read_json_body<T>(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<T>
@@ -97,7 +86,7 @@ mod tests {
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains(r#""niles_schema": 2"#));
         assert_eq!(
-            read_json::<Example>(&path, ArtifactKind::RunState).unwrap(),
+            read_json::<Example>(&path, ArtifactKind::WorkerMetadata).unwrap(),
             Example {
                 value: "ok".to_owned()
             }
@@ -114,7 +103,7 @@ mod tests {
         fs::write(&path, r#"{"value":"ok"}"#).unwrap();
 
         assert_eq!(
-            read_json::<Example>(&path, ArtifactKind::RunState).unwrap(),
+            read_json::<Example>(&path, ArtifactKind::WorkerMetadata).unwrap(),
             Example {
                 value: "ok".to_owned()
             }
@@ -130,13 +119,13 @@ mod tests {
         let path = root.join("state.json");
         fs::write(&path, r#"{"id":"old"}"#).unwrap();
 
-        let err = read_json::<Example>(&path, ArtifactKind::RunState).unwrap_err();
+        let err = read_json::<Example>(&path, ArtifactKind::WorkerMetadata).unwrap_err();
         let err = err.to_string();
 
-        assert!(err.contains("run state"));
+        assert!(err.contains("worker metadata"));
         assert!(err.contains("schema 1"));
         assert!(err.contains("expects 2"));
-        assert!(err.contains("remove the run directory"));
+        assert!(err.contains("remove the worker dir"));
         assert!(!err.contains("missing field"));
 
         fs::remove_dir_all(root).unwrap();
@@ -149,7 +138,7 @@ mod tests {
         let path = root.join("state.json");
         fs::write(&path, r#"{"niles_schema":2,"id":"bad"}"#).unwrap();
 
-        let err = read_json::<Example>(&path, ArtifactKind::RunState).unwrap_err();
+        let err = read_json::<Example>(&path, ArtifactKind::WorkerMetadata).unwrap_err();
         let chain = err.chain().map(|err| err.to_string()).collect::<Vec<_>>();
 
         assert!(chain[0].contains("declares schema 2"));

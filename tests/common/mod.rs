@@ -2,48 +2,9 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Output,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-#[allow(dead_code)]
-pub fn prepare_run(niles: &str, workspace: &Path, task: &Path) -> Output {
-    let output = Command::new(niles)
-        .arg("run")
-        .arg(task)
-        .current_dir(workspace)
-        .env("NILES_HOME", niles_home(workspace))
-        .output()
-        .unwrap();
-    assert_command_success("run", &output);
-    output
-}
-
-#[allow(dead_code)]
-pub fn exec_step_output(niles: &str, workspace: &Path, index: usize) -> Output {
-    Command::new(niles)
-        .arg("exec-step")
-        .arg("latest")
-        .arg(index.to_string())
-        .current_dir(workspace)
-        .output()
-        .unwrap()
-}
-
-#[allow(dead_code)]
-pub fn drive_exec_steps(
-    niles: &str,
-    workspace: &Path,
-    steps: impl IntoIterator<Item = usize>,
-) -> Vec<Output> {
-    let mut outputs = Vec::new();
-    for index in steps {
-        let output = exec_step_output(niles, workspace, index);
-        assert_command_success(&format!("exec-step {index}"), &output);
-        outputs.push(output);
-    }
-    outputs
-}
 
 pub fn assert_command_success(label: &str, output: &Output) {
     assert!(
@@ -69,22 +30,6 @@ pub fn temp_workspace(prefix: &str) -> PathBuf {
     ));
     fs::create_dir_all(&workspace).unwrap();
     workspace
-}
-
-#[allow(dead_code)]
-pub fn write_task(workspace: &Path, body: &str) -> PathBuf {
-    let task = workspace.join("task.yaml");
-    fs::write(&task, body).unwrap();
-    task
-}
-
-#[allow(dead_code)]
-pub fn run_id(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("run: "))
-        .expect("run output should include run id")
-        .to_owned()
 }
 
 #[allow(dead_code)]

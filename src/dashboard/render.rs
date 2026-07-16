@@ -1,5 +1,4 @@
 use super::{
-    progress,
     snapshot::{DashboardRole, DashboardRow, DashboardSnapshot, ManagerLifecycle, PaneSummary},
     status::WakeState,
 };
@@ -68,10 +67,6 @@ const COLUMNS: &[Column] = &[
 pub(crate) fn render(snapshot: &DashboardSnapshot) -> String {
     let mut output = String::new();
     output.push_str("Niles home\n\n");
-    if let Some(progress) = &snapshot.progress {
-        output.push_str(&progress::progress_line(progress));
-        output.push_str("\n\n");
-    }
     render_header(&mut output);
     render_separator(&mut output);
     for row in &snapshot.rows {
@@ -150,7 +145,6 @@ fn role_label(role: DashboardRole) -> &'static str {
         DashboardRole::Home => "home",
         DashboardRole::Manager => "manager",
         DashboardRole::Worker => "worker",
-        DashboardRole::RunStep => "run-step",
         DashboardRole::UnknownNilesWindow => "unknown-niles-window",
     }
 }
@@ -236,7 +230,6 @@ mod tests {
             messages: Vec::new(),
             manager_target: Some("niles:niles-manager".to_owned()),
             manager_lifecycle: ManagerLifecycle::Exited,
-            progress: None,
         };
 
         let output = render(&snapshot);
@@ -261,7 +254,6 @@ mod tests {
             messages: Vec::new(),
             manager_target: None,
             manager_lifecycle: ManagerLifecycle::Unknown,
-            progress: None,
         };
 
         let output = render(&snapshot);

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
@@ -8,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agents::{self, AgentSpec, InvocationDefaults, version},
     analyze::{ProbeResult, run_probe},
-    config::spec::{AgentConfig, TaskSpec, TaskStep},
+    config::spec::AgentConfig,
     schema::{self, ArtifactKind},
     util::slugify,
 };
@@ -76,30 +74,6 @@ fn stable_hash(value: &str) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
-}
-
-pub(crate) fn validate_task_agents(spec: &TaskSpec) -> Result<()> {
-    let workspace = spec
-        .workspace
-        .as_deref()
-        .context("run spec has no resolved workspace")?;
-
-    for step in &spec.steps {
-        if let TaskStep::Agent { agent, .. } = step {
-            validate_task_agent(workspace, &spec.agents, agent)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) fn validate_task_agent(
-    workspace: &Utf8Path,
-    configs: &BTreeMap<String, AgentConfig>,
-    agent: &str,
-) -> Result<AgentSpec> {
-    let config = agents::config_for(configs, agent)?;
-    validate_agent(workspace, agent, config, InvocationDefaults::Default)
 }
 
 pub(crate) fn validate_agent(
