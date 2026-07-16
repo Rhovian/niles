@@ -1,9 +1,12 @@
 use anyhow::{Context, Result, bail};
 
-const LIST_WINDOWS_FORMAT: &str = "#{window_index}\t#{window_name}\t#{window_active}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}";
+use super::{SessionName, WindowTarget};
+
+pub(crate) const LIST_WINDOWS_FORMAT: &str = "#{window_index}\t#{window_name}\t#{window_active}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TmuxWindowSnapshot {
+    pub(crate) session: SessionName,
     pub(crate) index: usize,
     pub(crate) name: String,
     pub(crate) active: bool,
@@ -12,11 +15,14 @@ pub(crate) struct TmuxWindowSnapshot {
     pub(crate) pane_dead: bool,
 }
 
-pub(crate) fn format() -> &'static str {
-    LIST_WINDOWS_FORMAT
+impl TmuxWindowSnapshot {
+    pub(crate) fn target(&self) -> Result<WindowTarget> {
+        WindowTarget::new(self.session.clone(), self.name.clone())
+            .with_context(|| format!("invalid tmux window snapshot target for {}", self.name))
+    }
 }
 
-pub(crate) fn parse(stdout: &[u8]) -> Result<Vec<TmuxWindowSnapshot>> {
+pub(crate) fn parse(session: &SessionName, stdout: &[u8]) -> Result<Vec<TmuxWindowSnapshot>> {
     let text = String::from_utf8_lossy(stdout);
     let mut snapshots = Vec::new();
 
@@ -24,13 +30,13 @@ pub(crate) fn parse(stdout: &[u8]) -> Result<Vec<TmuxWindowSnapshot>> {
         if line.is_empty() {
             continue;
         }
-        snapshots.push(parse_line(line_number + 1, line)?);
+        snapshots.push(parse_line(session, line_number + 1, line)?);
     }
 
     Ok(snapshots)
 }
 
-fn parse_line(line_number: usize, line: &str) -> Result<TmuxWindowSnapshot> {
+fn parse_line(session: &SessionName, line_number: usize, line: &str) -> Result<TmuxWindowSnapshot> {
     let fields = line.split('\t').collect::<Vec<_>>();
     if fields.len() != 6 {
         bail!(
@@ -40,6 +46,7 @@ fn parse_line(line_number: usize, line: &str) -> Result<TmuxWindowSnapshot> {
     }
 
     Ok(TmuxWindowSnapshot {
+        session: session.clone(),
         index: parse_usize_field(fields[0], "window index", line_number)?,
         name: fields[1].to_owned(),
         active: parse_tmux_bool(fields[2], "window active", line_number)?,
@@ -88,10 +95,12 @@ mod tests {
     #[test]
     fn parses_typed_tmux_fields() {
         let output = b"0\tniles\t1\t12345\tzsh\t0\n1\tniles-manager\t0\t23456\tclaude\t1\n";
+        let session = SessionName::new("home").unwrap();
 
-        let snapshots = parse(output).unwrap();
+        let snapshots = parse(&session, output).unwrap();
 
         assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].session.as_str(), "home");
         assert_eq!(snapshots[0].name, "niles");
         assert!(snapshots[0].active);
         assert_eq!(snapshots[0].pane_pid, Some(12345));
@@ -103,14 +112,16 @@ mod tests {
 
     #[test]
     fn rejects_malformed_field_count() {
-        let err = parse(b"0\tniles\t1\n").unwrap_err();
+        let session = SessionName::new("home").unwrap();
+        let err = parse(&session, b"0\tniles\t1\n").unwrap_err();
 
         assert!(err.to_string().contains("expected 6 fields"));
     }
 
     #[test]
     fn rejects_malformed_typed_fields() {
-        let err = parse(b"0\tniles\tmaybe\t123\tzsh\t0\n").unwrap_err();
+        let session = SessionName::new("home").unwrap();
+        let err = parse(&session, b"0\tniles\tmaybe\t123\tzsh\t0\n").unwrap_err();
 
         assert!(err.to_string().contains("window active"));
     }

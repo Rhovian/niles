@@ -166,6 +166,9 @@ fn wake_label(state: WakeState) -> &'static str {
 }
 
 fn pane_cell(pane: &PaneSummary) -> String {
+    if let Some(state) = &pane.state {
+        return state.clone();
+    }
     let mut value = pane_liveness_label(pane.liveness).to_owned();
     if let Some(pid) = pane.pid {
         value.push_str(" pid=");
@@ -223,6 +226,7 @@ mod tests {
                     liveness: PaneLiveness::Dead,
                     pid: Some(42),
                     command: Some("codex".to_owned()),
+                    state: None,
                 },
                 wall: "1m".to_owned(),
                 usage: UsageCell::unavailable(),
@@ -280,6 +284,7 @@ mod tests {
                 liveness: PaneLiveness::Live,
                 pid: None,
                 command: None,
+                state: None,
             },
             wall: "1m".to_owned(),
             usage: UsageCell::pending(),

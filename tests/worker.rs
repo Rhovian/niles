@@ -106,7 +106,15 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 1 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    if [ "$2" = "-a" ]; then
+      exit 0
+    fi
+    if [ -n "${TMUX_WINDOWS:-}" ]; then
+      printf '%s\n' "$TMUX_WINDOWS"
+    fi
+    exit 0
+    ;;
   capture-pane) printf 'pane output\n'; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -171,8 +179,12 @@ esac
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains("\"task_label\": \"auth\""));
-    assert!(meta.contains("\"window\": \"niles:niles-auth-fix\""));
     assert!(meta.contains("\"created_at\":"));
+    let meta_json: serde_json::Value = serde_json::from_str(&meta).unwrap();
+    let window = meta_json["window"].as_str().unwrap();
+    let project = meta_json["project"].as_str().unwrap();
+    assert!(window.starts_with("niles-niles-worker-test-"));
+    assert!(window.ends_with(":niles-auth-fix"));
 
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("task_label: auth"));
@@ -212,11 +224,106 @@ esac
     assert!(String::from_utf8_lossy(&send.stdout).contains("sent: auth-fix"));
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-session -d -s niles"));
-    assert!(log.contains("new-window -d -t niles: -n niles-auth-fix"));
-    assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -7"));
-    assert!(log.contains("send-keys -t niles:niles-auth-fix -l continue please"));
-    assert!(log.contains("send-keys -t niles:niles-auth-fix C-m"));
+    assert!(log.contains("new-session -d -s niles-niles-worker-test-"));
+    assert!(log.contains("new-window -d -t niles-niles-worker-test-"));
+    assert!(log.contains(": -n niles-auth-fix"));
+    assert!(log.contains(&format!(
+        "set-option -w -t {window} @niles-project {project}"
+    )));
+    assert!(log.contains(&format!(
+        "set-option -w -t {window} @niles-worker-id auth-fix"
+    )));
+    assert!(log.contains(&format!("capture-pane -p -t {window} -S -7")));
+    assert!(log.contains(&format!("send-keys -t {window} -l continue please")));
+    assert!(log.contains(&format!("send-keys -t {window} C-m")));
+}
+
+#[test]
+fn spawn_pins_worker_to_manager_session_and_tags_window_not_ambient() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-pinned-session");
+    let home = niles_home(&workspace);
+
+    let session_dir = workspace.join(".niles/sessions/session-1");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(workspace.join(".niles/sessions/latest"), "session-1").unwrap();
+    fs::write(
+        session_dir.join("session.json"),
+        format!(
+            r#"{{
+  "niles_schema": 2,
+  "id": "session-1",
+  "agent": "codex",
+  "created_at": "2026-07-06T00:00:00Z",
+  "workspace": "{}",
+  "brief": "{}",
+  "window": "home:niles-manager"
+}}"#,
+            workspace.display(),
+            session_dir.join("manager.md").display()
+        ),
+    )
+    .unwrap();
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  display-message) printf 'ambient\n'; exit 0 ;;
+  has-session)
+    if [ "$3" = home ]; then exit 0; fi
+    exit 1
+    ;;
+  list-windows) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let path = path_with_bin(&bin);
+    let spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX", "/tmp/ambient-tmux")
+        .output()
+        .unwrap();
+    assert_command_success("pinned manager-session spawn", &spawn);
+
+    let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
+    assert!(meta.contains(r#""window": "home:niles-auth-fix""#));
+    let pointer = fs::read_to_string(workspace.join(".niles/sessions/tmux-session.json")).unwrap();
+    assert!(pointer.contains(r#""session": "home""#));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("display-message"));
+    assert!(log.contains("has-session -t home"));
+    assert!(log.contains("new-window -d -t home: -n niles-auth-fix"));
+    assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-project"));
+    assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-worker-id auth-fix"));
 }
 
 #[test]
@@ -1251,7 +1358,15 @@ fn spawned_worker_resolves_from_invoking_project_and_unrelated_cwds() {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 1 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    if [ "$2" = "-a" ]; then
+      exit 0
+    fi
+    if [ -n "${TMUX_WINDOWS:-}" ]; then
+      printf '%s\n' "$TMUX_WINDOWS"
+    fi
+    exit 0
+    ;;
   capture-pane) printf 'pane output\n'; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -1353,6 +1468,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_WINDOWS", "niles-auth-fix")
         .env_remove("TMUX")
         .output()
         .unwrap();
@@ -1472,7 +1588,78 @@ esac
     assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-window -d -t niles: -n niles-auth-fix"));
+    assert!(log.contains("new-window -d -t niles-niles-worker-failed-spawn-"));
+    assert!(log.contains(": -n niles-auth-fix"));
+}
+
+#[test]
+fn spawn_meta_write_failure_kills_window_and_cleans_location() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-meta-write-failed-spawn");
+    let home = niles_home(&workspace);
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-windows) exit 0 ;;
+  new-window) mkdir -p "$META_PATH"; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let failed = Command::new(niles)
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+            "auth",
+        ])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env(
+            "META_PATH",
+            workspace.join(".niles/worker/auth-fix/meta.json"),
+        )
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(stderr.contains("failed to finish launching worker auth-fix"));
+    assert!(stderr.contains("cleaned up launched worker"));
+    assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    assert_global_index_lacks(&home, "auth-fix");
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("new-window -d -t niles-niles-worker-meta-write-failed-spawn-"));
+    assert!(log.contains(": -n niles-auth-fix"));
+    assert!(log.contains("set-option -w -t "));
+    assert!(log.contains(" @niles-worker-id auth-fix"));
+    assert!(log.contains("kill-window -t "));
+    assert!(log.contains(":niles-auth-fix"));
 }
 
 #[test]
@@ -1491,6 +1678,13 @@ fn worker_close_tears_down_worker() {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) exit 0 ;;
+  list-windows)
+    if [ "$2" = "-a" ]; then
+      exit 0
+    fi
+    printf 'niles-auth-fix\n'
+    exit 0
+    ;;
   capture-pane) printf 'final pane\n'; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -1547,6 +1741,363 @@ esac
         "durable report\n"
     );
     assert_global_index_lacks_live_worker(&home, "auth-fix");
+}
+
+#[test]
+fn worker_close_targets_recorded_session_not_ambient() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-recorded");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "home:niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_WINDOWS", "niles-auth-fix")
+        .env("TMUX", "/tmp/ambient-tmux")
+        .output()
+        .unwrap();
+    assert_command_success("recorded-target worker-close", &close);
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("display-message"));
+    assert!(log.contains("list-windows -t home -F #{window_name}"));
+    assert!(log.contains("capture-pane -p -t home:niles-auth-fix -S -2000"));
+    assert!(log.contains("kill-window -t home:niles-auth-fix"));
+}
+
+#[test]
+fn worker_close_recovers_renamed_orphan_by_matching_tags() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-recovered");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "old");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "old:niles-auth-fix",
+    );
+
+    let tagged = format!("new:niles-renamed\t{}\tauth-fix", workspace.display());
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_TAGGED_WINDOWS", tagged)
+        .output()
+        .unwrap();
+    assert_command_success("recovered orphan worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(
+        stdout.contains("window state: orphan-recovered:old:niles-auth-fix->new:niles-renamed")
+    );
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("capture-pane -p -t new:niles-renamed -S -2000"));
+    assert!(log.contains("kill-window -t new:niles-renamed"));
+    let archive_dir = latest_archive_dir(&workspace, "auth-fix");
+    assert!(
+        fs::read_to_string(archive_dir.join("status.log"))
+            .unwrap()
+            .contains("closed: auth-fix")
+    );
+}
+
+#[test]
+fn worker_close_ignores_same_id_tag_from_other_workspace() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-other-workspace");
+    let other_workspace = temp_workspace("niles-worker-close-other-project");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "old");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "old:niles-auth-fix",
+    );
+
+    let tagged = format!("other:niles-auth-fix\t{}\tauth-fix", other_workspace.display());
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_TAGGED_WINDOWS", tagged)
+        .output()
+        .unwrap();
+    assert_command_success("cross-workspace tag worker-close", &close);
+    assert!(String::from_utf8_lossy(&close.stdout).contains("window state: orphan-gone"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("kill-window"));
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+    fs::remove_dir_all(other_workspace).unwrap();
+}
+
+#[test]
+fn worker_close_multiple_tag_matches_reaps_without_kill() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-multiple-tags");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "old");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "old:niles-auth-fix",
+    );
+
+    let tagged = format!(
+        "one:niles-auth-fix\t{}\tauth-fix\ntwo:niles-auth-fix\t{}\tauth-fix",
+        workspace.display(),
+        workspace.display()
+    );
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_TAGGED_WINDOWS", tagged)
+        .output()
+        .unwrap();
+    assert_command_success("multiple tagged orphan worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("window state: unknown:multiple tmux windows carry worker tags"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("kill-window"));
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+}
+
+#[test]
+fn worker_close_recovers_window_missing_by_matching_tags() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-window-missing-recovered");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "home:niles-auth-fix",
+    );
+
+    let tagged = format!("other:niles-renamed\t{}\tauth-fix", workspace.display());
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_TAGGED_WINDOWS", tagged)
+        .output()
+        .unwrap();
+    assert_command_success("window-missing recovered worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(
+        stdout.contains("window state: orphan-recovered:home:niles-auth-fix->other:niles-renamed")
+    );
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(log.contains("list-windows -t home -F #{window_name}"));
+    assert!(log.contains("capture-pane -p -t other:niles-renamed -S -2000"));
+    assert!(log.contains("kill-window -t other:niles-renamed"));
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+}
+
+#[test]
+fn worker_close_window_missing_without_tag_is_window_dead() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-window-missing-dead");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "home:niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("window-missing dead worker-close", &close);
+    assert!(String::from_utf8_lossy(&close.stdout).contains("window state: window-dead"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("kill-window"));
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+}
+
+#[test]
+fn worker_close_reports_legacy_candidate_without_auto_kill() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-legacy-candidate");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "old");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "old:niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_TAGGED_WINDOWS", "other:niles-auth-fix\t\t")
+        .output()
+        .unwrap();
+    assert_command_success("legacy candidate worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("window state: orphan-legacy-candidate:other:niles-auth-fix"));
+    assert!(stdout.contains("manual_close: tmux kill-window -t other:niles-auth-fix"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("kill-window"));
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+}
+
+#[test]
+fn worker_close_reaps_unparseable_meta_window_as_unknown() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-invalid-window");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("invalid-window worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(
+        stdout
+            .contains("window state: unknown:worker auth-fix metadata has invalid tmux window target")
+    );
+
+    assert!(!tmux_log.exists());
+    assert_archived_with_closed_sentinel(&workspace, "auth-fix");
+}
+
+#[test]
+fn worker_close_reaps_session_gone_orphan_without_tmux_error() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-gone");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "old");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "old:niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("gone orphan worker-close", &close);
+    let stdout = String::from_utf8_lossy(&close.stdout);
+    assert!(stdout.contains("window state: orphan-gone"));
+    assert!(!stdout.contains("can't find session"));
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(!log.contains("kill-window"));
+    let archive_dir = latest_archive_dir(&workspace, "auth-fix");
+    assert!(
+        fs::read_to_string(archive_dir.join("status.log"))
+            .unwrap()
+            .contains("closed: auth-fix")
+    );
+}
+
+#[test]
+fn worker_close_reaps_current_schema_legacy_missing_session_meta() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-close-aquila");
+    let home = niles_home(&workspace);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_orphan_recovery_tmux(&bin, "aquila");
+    write_worker_fixture_with_window(
+        &workspace,
+        "auth-fix",
+        "working: close requested",
+        "aquila:niles-auth-fix",
+    );
+
+    let close = Command::new(niles)
+        .args(["worker-close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .output()
+        .unwrap();
+    assert_command_success("back-compat missing session close", &close);
+    assert!(String::from_utf8_lossy(&close.stdout).contains("window state: orphan-gone"));
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    assert!(
+        latest_archive_dir(&workspace, "auth-fix")
+            .join("meta.json")
+            .is_file()
+    );
 }
 
 #[test]
@@ -1729,7 +2280,7 @@ fn workers_reports_unknown_when_tmux_window_query_fails() {
 
     assert_command_success("workers", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("window-unknown:tmux list-windows failed for session niles"));
+    assert!(stdout.contains("unknown:tmux list-windows failed for session niles"));
     assert!(stdout.contains("server unreachable retry later"));
     assert!(!stdout.lines().any(|line| line.starts_with("retry later")));
     assert!(!stdout.contains("window-dead"));
@@ -2471,6 +3022,15 @@ fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBu
     write_worker_fixture_with_task(workspace, id, status_body, None)
 }
 
+fn write_worker_fixture_with_window(
+    workspace: &Path,
+    id: &str,
+    status_body: &str,
+    window: &str,
+) -> PathBuf {
+    write_worker_fixture_with_task_and_window(workspace, id, status_body, None, window)
+}
+
 fn write_usage_worker_fixture(
     workspace: &Path,
     id: &str,
@@ -2650,6 +3210,22 @@ fn write_worker_fixture_with_task(
     status_body: &str,
     task_label: Option<&str>,
 ) -> PathBuf {
+    write_worker_fixture_with_task_and_window(
+        workspace,
+        id,
+        status_body,
+        task_label,
+        &format!("niles:niles-{id}"),
+    )
+}
+
+fn write_worker_fixture_with_task_and_window(
+    workspace: &Path,
+    id: &str,
+    status_body: &str,
+    task_label: Option<&str>,
+    window: &str,
+) -> PathBuf {
     let worker_root = workspace.join(".niles/worker");
     let worker_dir = worker_root.join(id);
     fs::create_dir_all(&worker_dir).unwrap();
@@ -2687,7 +3263,7 @@ fn write_worker_fixture_with_task(
   "id": "{id}",
   "agent": "codex",
   "project": "{}",
-  "window": "niles:niles-{id}",
+  "window": "{window}",
   "brief": "{}",
   "launch": "{}",
   "status": "{}"{task_label_field}
@@ -2721,6 +3297,34 @@ fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBuf {
     worker_dir
 }
 
+fn write_orphan_recovery_tmux(bin: &Path, missing_session: &str) {
+    write_executable(
+        &bin.join("tmux"),
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  list-windows)
+    if [ "$2" = "-a" ]; then
+      if [ -n "${{TMUX_TAGGED_WINDOWS:-}}" ]; then
+        printf '%s\n' "$TMUX_TAGGED_WINDOWS"
+      fi
+      exit 0
+    fi
+    if [ "$3" = "{missing_session}" ]; then
+      printf "can't find session: {missing_session}\n" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  capture-pane) printf 'final pane\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#
+        ),
+    );
+}
+
 fn write_worker_test_bins(root: &Path) -> (PathBuf, PathBuf) {
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -2735,6 +3339,12 @@ case "$1" in
     if [ "${TMUX_LIST_WINDOWS_FAIL:-}" = 1 ]; then
       printf 'server unreachable\nretry later\n' >&2
       exit 1
+    fi
+    if [ "$2" = "-a" ]; then
+      if [ -n "${TMUX_TAGGED_WINDOWS:-}" ]; then
+        printf '%s\n' "$TMUX_TAGGED_WINDOWS"
+      fi
+      exit 0
     fi
     if [ -n "${TMUX_WINDOWS:-}" ]; then
       printf '%s\n' "$TMUX_WINDOWS"
@@ -2788,6 +3398,16 @@ fn latest_archive_dir(workspace: &Path, id: &str) -> PathBuf {
         .collect::<Vec<_>>();
     archives.sort();
     archives.pop().expect("expected worker archive")
+}
+
+fn assert_archived_with_closed_sentinel(workspace: &Path, id: &str) {
+    assert!(!workspace.join(".niles/worker").join(id).exists());
+    let archive_dir = latest_archive_dir(workspace, id);
+    assert!(
+        fs::read_to_string(archive_dir.join("status.log"))
+            .unwrap()
+            .contains(&format!("closed: {id}"))
+    );
 }
 
 fn assert_global_index_lacks(home: &Path, id: &str) {

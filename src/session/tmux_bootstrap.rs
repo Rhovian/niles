@@ -23,7 +23,8 @@ pub(super) fn ensure_tmux_session(tmux: Option<&OsStr>, workspace: &Utf8Path) ->
     match tmux_launch_action(tmux, terminal, foreground_session_exists)? {
         TmuxLaunchAction::ContinueHere => Ok(true),
         TmuxLaunchAction::StartSession { session } => {
-            let status = tmux::launch_foreground_session(session, workspace, &current_argv()?)?;
+            let session = tmux::SessionName::new(session)?;
+            let status = tmux::launch_foreground_session(&session, workspace, &current_argv()?)?;
             ensure_tmux_launch_succeeded(status)?;
             Ok(false)
         }
@@ -34,10 +35,11 @@ pub(super) fn ensure_tmux_session(tmux: Option<&OsStr>, workspace: &Utf8Path) ->
             let action =
                 prompt_existing_session_action(&mut input, &mut output, FOREGROUND_TMUX_SESSION)?;
             let status = match action {
-                ExistingSessionAction::AttachExisting => {
-                    tmux::attach_foreground_session(FOREGROUND_TMUX_SESSION)?
-                }
+                ExistingSessionAction::AttachExisting => tmux::attach_foreground_session(
+                    &tmux::SessionName::new(FOREGROUND_TMUX_SESSION)?,
+                )?,
                 ExistingSessionAction::StartNamedSession(session) => {
+                    let session = tmux::SessionName::new(session)?;
                     tmux::launch_foreground_session(&session, workspace, &current_argv()?)?
                 }
             };

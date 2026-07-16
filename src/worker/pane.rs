@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use crate::{
     agent_window,
     store::{read_state, resolve_run_dir},
+    tmux::WindowTarget,
 };
 
 use super::meta::read_meta;
@@ -11,7 +12,7 @@ pub(crate) const DEFAULT_PEEK_LINES: usize = 2000;
 enum PaneTarget {
     Worker {
         id: String,
-        target: String,
+        target: WindowTarget,
     },
     RunStep {
         run: String,
@@ -109,10 +110,9 @@ fn resolve_send_target(
 
 fn worker_target(id: String) -> Result<PaneTarget> {
     let meta = read_meta(&id)?;
-    Ok(PaneTarget::Worker {
-        id,
-        target: meta.window,
-    })
+    let target = WindowTarget::parse(&meta.window)
+        .with_context(|| format!("worker {id} metadata has invalid tmux window target"))?;
+    Ok(PaneTarget::Worker { id, target })
 }
 
 fn run_step_target(run: Option<String>, index: Option<usize>) -> Result<PaneTarget> {
