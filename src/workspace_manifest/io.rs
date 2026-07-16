@@ -18,15 +18,6 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     schema::read_optional_yaml(&path, ArtifactKind::WorkspaceManifest)
 }
 
-pub fn load_required(root: &Utf8Path) -> Result<WorkspaceManifest> {
-    load(root)?.with_context(|| {
-        format!(
-            "workspace manifest {} does not exist; run `niles` in an interactive tmux session to configure workspace roles",
-            manifest_path(root)
-        )
-    })
-}
-
 pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
     let path = manifest_path(root);
     let parent = path
@@ -43,7 +34,7 @@ mod tests {
 
     use super::super::{
         test_support::temp_test_path,
-        types::{flow_summary, WorkspaceFlowRole, WorkspaceManifest, WORKER_REVIEW_LOOP_SUMMARY},
+        types::{WORKER_REVIEW_LOOP_SUMMARY, WorkspaceFlowRole, WorkspaceManifest, flow_summary},
     };
 
     #[test]

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeSet, env, fmt};
+use std::{cmp::Ordering, env, fmt};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agents::{self, AgentProfile, InvocationDefaults},
     analyze::{ProbeResult, ProbeStatus, run_probe},
-    config::spec::{AgentConfig, TaskSpec, TaskStep},
+    config::spec::AgentConfig,
 };
 
 pub(crate) const ALLOW_CLI_MISMATCH_ENV: &str = "NILES_ALLOW_CLI_MISMATCH";
@@ -36,32 +36,6 @@ pub(crate) struct VersionGateReport {
     pub tested_version: String,
     pub detected_version: Option<String>,
     pub message: String,
-}
-
-pub(crate) fn preflight_task_agents(
-    spec: &TaskSpec,
-    allow_cli_mismatch: bool,
-) -> Result<Vec<VersionGateReport>> {
-    let mut agents = BTreeSet::new();
-    for step in &spec.steps {
-        if let TaskStep::Agent { agent, .. } = step {
-            agents.insert(agent.as_str());
-        }
-    }
-
-    let mut reports = Vec::new();
-    for agent in agents {
-        let config = agents::config_for(&spec.agents, agent)?;
-        if let Some(report) = preflight_agent(
-            agent,
-            config,
-            InvocationDefaults::Default,
-            allow_cli_mismatch,
-        )? {
-            reports.push(report);
-        }
-    }
-    Ok(reports)
 }
 
 pub(crate) fn preflight_agent(

@@ -4,19 +4,19 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use camino::Utf8Path;
 
 use crate::{
     agents,
-    config::spec::{PromptMode, load_project_config_from},
-    process::exit_code_label,
+    config::spec::{load_project_config_from, PromptMode},
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::{SessionMeta, brief::write_manager_session};
+use super::{brief::write_manager_session, SessionMeta};
 
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
+const SIGNAL_EXIT_LABEL: &str = "signal";
 
 pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
@@ -161,6 +161,11 @@ fn manager_prompt_args(agent: &str, brief: String) -> Result<Vec<String>> {
 
 fn manager_stdin_prompt(brief: String) -> String {
     format!("{brief}\n\n{STARTUP_PROMPT}")
+}
+
+fn exit_code_label(code: Option<i32>) -> String {
+    code.map(|code| code.to_string())
+        .unwrap_or_else(|| SIGNAL_EXIT_LABEL.to_owned())
 }
 
 #[cfg(test)]

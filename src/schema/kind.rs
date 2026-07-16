@@ -4,10 +4,6 @@ pub(crate) enum ArtifactKind {
     Directory,
     GlobalIndex,
     ManagerSession,
-    RunPlan,
-    RunPointer,
-    RunState,
-    StepRecord,
     UsageSnapshot,
     WorkerMetadata,
     WorkerPointer,
@@ -22,10 +18,6 @@ impl ArtifactKind {
             ArtifactKind::Directory => "artifact directory",
             ArtifactKind::GlobalIndex => "global Niles index",
             ArtifactKind::ManagerSession => "manager session metadata",
-            ArtifactKind::RunPlan => "run plan",
-            ArtifactKind::RunPointer => "run pointer",
-            ArtifactKind::RunState => "run state",
-            ArtifactKind::StepRecord => "step record",
             ArtifactKind::UsageSnapshot => "usage snapshot",
             ArtifactKind::WorkerMetadata => "worker metadata",
             ArtifactKind::WorkerPointer => "worker pointer",
@@ -41,22 +33,10 @@ impl ArtifactKind {
             }
             ArtifactKind::Directory => "fix the directory permissions and rerun `niles doctor`",
             ArtifactKind::GlobalIndex => {
-                "use the binary that wrote it, or remove the index only if you accept losing existing cross-workspace run and worker pointers"
+                "use the binary that wrote it, or remove the index only if you accept losing existing cross-workspace worker pointers"
             }
             ArtifactKind::ManagerSession => {
                 "remove the session directory and start a fresh manager session, or use the older binary that wrote it"
-            }
-            ArtifactKind::RunPlan => {
-                "remove the run directory and start a new run, or use the older binary that wrote it"
-            }
-            ArtifactKind::RunPointer => {
-                "remove the pointer file so Niles can fall back to a local run directory, or use the older binary that wrote it"
-            }
-            ArtifactKind::RunState => {
-                "remove the run directory and start a new run, or use the older binary to inspect or resume it"
-            }
-            ArtifactKind::StepRecord => {
-                "remove the run directory and start a new run, or use the older binary that wrote it"
             }
             ArtifactKind::UsageSnapshot => {
                 "remove the usage snapshot and recapture usage if the source transcript is still available, or use the older binary that wrote it"

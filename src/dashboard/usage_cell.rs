@@ -5,12 +5,9 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     session::SessionMeta,
-    state::{StepKind, StepStatus},
     usage::{self, UsageAgent, UsageDisplay, UsageDisplayStatus, UsageSnapshotInput, UsageSubject},
     worker::WorkerDashboardMeta,
 };
-
-use super::snapshot::RunStepDashboardMeta;
 
 const NOT_APPLICABLE: &str = "n-a";
 
@@ -37,11 +34,6 @@ pub(crate) struct DashboardUsageCache {
 enum UsageCellKey {
     Manager(String),
     Worker(String),
-    RunStep {
-        run_id: String,
-        index: usize,
-        label: String,
-    },
 }
 
 impl UsageCell {
@@ -127,25 +119,6 @@ impl DashboardUsageCache {
         })
     }
 
-    pub(crate) fn run_step_usage(
-        &mut self,
-        step: &RunStepDashboardMeta,
-        now: DateTime<Utc>,
-        recompute: bool,
-    ) -> UsageCell {
-        let key = UsageCellKey::RunStep {
-            run_id: step.run_id.clone(),
-            index: step.index,
-            label: step.label.clone(),
-        };
-        self.cached_or_compute(
-            key,
-            recompute,
-            || fallback_step_usage(step),
-            || run_step_usage_cell(step, now),
-        )
-    }
-
     fn cached_or_compute<Fallback, Compute>(
         &mut self,
         key: UsageCellKey,
@@ -209,92 +182,6 @@ fn worker_usage_cell(worker: &WorkerDashboardMeta, now: DateTime<Utc>) -> UsageC
     UsageCell::from_display(&UsageDisplay::from_snapshot(&snapshot, true))
 }
 
-fn run_step_usage_cell(step: &RunStepDashboardMeta, now: DateTime<Utc>) -> UsageCell {
-    UsageCell::from_display(&step_usage_display(step, now))
-}
-
-fn step_usage_display(step: &RunStepDashboardMeta, now: DateTime<Utc>) -> UsageDisplay {
-    let wall_seconds = step_wall_seconds(step, now);
-    if matches!(step.step_status, StepStatus::Pending) {
-        return UsageDisplay::pending(wall_seconds);
-    }
-
-    if let Some(path) = existing_usage_path(step) {
-        return match usage::read_usage_snapshot(&path) {
-            Ok(snapshot) => UsageDisplay::from_snapshot(&snapshot, false),
-            Err(_) => UsageDisplay::unavailable(wall_seconds),
-        };
-    }
-
-    if step.usage_attribution.is_some() {
-        let steps_dir = steps_dir(&step.run_dir);
-        let snapshot = usage::compute_usage_snapshot(&UsageSnapshotInput {
-            subject: UsageSubject::RunStep {
-                run_id: step.run_id.clone(),
-                index: step.index,
-                role: step.role.clone(),
-                label: step.label.clone(),
-            },
-            agent: UsageAgent {
-                spec: step.label.clone(),
-                family: step.agent_family.clone(),
-                model: step.model.clone(),
-                effort: step.effort.clone(),
-            },
-            attribution: step.usage_attribution.clone(),
-            started_at: step.started_at,
-            finished_at: now,
-            output_path: usage::step_usage_path(&steps_dir, step.index, &step.label),
-        });
-        return UsageDisplay::from_snapshot(&snapshot, true);
-    }
-
-    if matches!(step.step_status, StepStatus::Running) && matches!(step.kind, StepKind::Agent) {
-        UsageDisplay::pending(wall_seconds)
-    } else {
-        UsageDisplay::unavailable(wall_seconds)
-    }
-}
-
-fn fallback_step_usage(step: &RunStepDashboardMeta) -> UsageCell {
-    if matches!(step.step_status, StepStatus::Pending)
-        || (matches!(step.step_status, StepStatus::Running) && matches!(step.kind, StepKind::Agent))
-    {
-        UsageCell::pending()
-    } else {
-        UsageCell::unavailable()
-    }
-}
-
-fn existing_usage_path(step: &RunStepDashboardMeta) -> Option<Utf8PathBuf> {
-    if let Some(path) = &step.usage
-        && path.exists()
-    {
-        return Some(path.clone());
-    }
-
-    let fallback = usage::step_usage_path(&steps_dir(&step.run_dir), step.index, &step.label);
-    if fallback.exists() {
-        return Some(fallback);
-    }
-    None
-}
-
-fn step_wall_seconds(step: &RunStepDashboardMeta, now: DateTime<Utc>) -> Option<i64> {
-    let started_at = step.started_at?;
-    let finished_at = match step.finished_at {
-        Some(finished_at) => finished_at,
-        None => {
-            if matches!(step.step_status, StepStatus::Running) {
-                now
-            } else {
-                return None;
-            }
-        }
-    };
-    Some((finished_at - started_at).num_seconds().max(0))
-}
-
 fn worker_started_at(worker: &WorkerDashboardMeta) -> Option<DateTime<Utc>> {
     match worker.created_at {
         Some(created_at) => Some(created_at),
@@ -319,10 +206,6 @@ fn manager_usage_path(manager: &SessionMeta) -> Utf8PathBuf {
             .join(&manager.id)
             .join("usage.json"),
     }
-}
-
-fn steps_dir(run_dir: &Utf8Path) -> Utf8PathBuf {
-    run_dir.join("steps")
 }
 
 #[cfg(test)]

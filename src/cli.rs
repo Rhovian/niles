@@ -49,61 +49,6 @@ pub enum CommandName {
     },
     /// Report binary identity, workspace schema state, and dev-mode staleness.
     Doctor,
-    /// Prepare a new manager-driven run from a task spec.
-    #[command(alias = "r")]
-    Run {
-        /// Proceed even when a built-in agent CLI is below the pinned version range.
-        #[arg(long, env = "NILES_ALLOW_CLI_MISMATCH")]
-        allow_cli_mismatch: bool,
-        /// YAML task specification.
-        task: Utf8PathBuf,
-    },
-    /// Launch a single run step in its own tmux window.
-    Step {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Step number to launch. Defaults to the first pending step.
-        #[arg(short, long)]
-        index: Option<usize>,
-    },
-    /// Append a step to an existing run (for manager-driven review loops).
-    #[command(name = "step-add")]
-    StepAdd {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Agent id for an agent step.
-        #[arg(short, long, conflicts_with = "command")]
-        agent: Option<String>,
-        /// Named command for a command step.
-        #[arg(long, conflicts_with = "agent")]
-        command: Option<String>,
-        /// Role label for the step.
-        #[arg(short, long)]
-        role: Option<String>,
-        /// Task text (required for an agent step).
-        #[arg(num_args = 0.., trailing_var_arg = true)]
-        task: Vec<String>,
-    },
-    /// Mark a step complete and close its interactive tmux window.
-    #[command(name = "step-close")]
-    StepClose {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Step number to close.
-        #[arg(short, long)]
-        index: usize,
-    },
-    /// Execute one run step in-process, capturing output (used for command steps).
-    #[command(name = "exec-step")]
-    ExecStep {
-        /// Run id or "latest".
-        run: String,
-        /// Step number to execute.
-        index: usize,
-    },
     /// Spawn a worker agent in a tmux window.
     Spawn {
         /// Proceed even when a built-in agent CLI is below the pinned version range.
@@ -156,119 +101,37 @@ pub enum CommandName {
     },
     /// Capture the tail of a worker tmux pane.
     Peek {
-        /// Worker task id. Omit when targeting a run step with --run and --index.
-        id: Option<String>,
-        /// Run id or "latest" for a step window.
-        #[arg(long)]
-        run: Option<String>,
-        /// Step number for a run step window.
-        #[arg(short, long)]
-        index: Option<usize>,
+        /// Worker task id.
+        id: String,
         /// Number of lines to capture. Use 0 for full tmux history.
         #[arg(short, long, default_value_t = crate::worker::DEFAULT_PEEK_LINES)]
         lines: usize,
     },
     /// Send a message to a worker tmux pane.
     Send {
-        /// Run id or "latest" for a step window.
-        #[arg(long)]
-        run: Option<String>,
-        /// Step number for a run step window.
-        #[arg(short, long)]
-        index: Option<usize>,
-        /// Worker task id followed by message, or just message when --run/--index are set.
+        /// Worker task id followed by message.
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
         target_and_message: Vec<String>,
     },
     /// Wait for the next actionable status-log wake and print it.
     Wait {
-        /// Run id. Use --worker/--task for workers.
-        #[arg(
-            required_unless_present_any = ["worker", "task"],
-            conflicts_with_all = ["worker", "task"]
-        )]
-        run: Option<String>,
         /// Worker id to wait on; repeatable to wait on a fleet.
-        #[arg(long, action = ArgAction::Append, conflicts_with = "task")]
+        #[arg(
+            long,
+            action = ArgAction::Append,
+            required_unless_present = "task",
+            conflicts_with = "task"
+        )]
         worker: Vec<String>,
         /// Wait on every live worker carrying this task label.
-        #[arg(long)]
+        #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
         task: Option<String>,
-        /// Step number to wait for. Run waits only.
-        #[arg(short, long, conflicts_with_all = ["worker", "task"])]
-        index: Option<usize>,
         /// Poll interval in seconds.
         #[arg(long, default_value_t = 2.0)]
         interval: f64,
         /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
         #[arg(long)]
         timeout: Option<f64>,
-    },
-    /// Resume a persisted run.
-    #[command(alias = "re")]
-    Resume {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-    },
-    /// Inspect a persisted run.
-    #[command(alias = "s")]
-    Status {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Print raw JSON state.
-        #[arg(long, conflicts_with = "usage")]
-        json: bool,
-        /// Show per-step token usage and run rollup.
-        #[arg(long)]
-        usage: bool,
-    },
-    /// Watch a persisted run until it finishes.
-    #[command(alias = "w")]
-    Watch {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Refresh interval in seconds.
-        #[arg(long, default_value_t = 1.0)]
-        interval: f64,
-        /// Append snapshots instead of clearing the terminal.
-        #[arg(long)]
-        no_clear: bool,
-    },
-    /// Show a compact summary of a persisted run.
-    #[command(alias = "sh")]
-    Show {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-    },
-    /// Print stdout or stderr for a run step.
-    #[command(alias = "l")]
-    Log {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Step number to inspect. Defaults to the last recorded step.
-        #[arg(short, long)]
-        step: Option<usize>,
-        /// Print stderr instead of stdout.
-        #[arg(long)]
-        stderr: bool,
-        /// Print stdout and stderr.
-        #[arg(long)]
-        both: bool,
-    },
-    /// Print the git diff captured after a run step.
-    #[command(alias = "d")]
-    Diff {
-        /// Run id or "latest".
-        #[arg(default_value = "latest")]
-        run: String,
-        /// Step number to inspect. Defaults to the last recorded step.
-        #[arg(short, long)]
-        step: Option<usize>,
     },
 }
 

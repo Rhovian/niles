@@ -2965,59 +2965,6 @@ fn worker_close_unknown_id_errors() {
     );
 }
 
-#[test]
-fn peek_and_send_run_step_require_recorded_window() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-step-window-test");
-
-    let task = write_task(
-        &workspace,
-        r#"
-goal: "Prepare an interactive step"
-agents:
-  echo:
-    binary: /bin/echo
-steps:
-  - agent: echo
-    task: "needs window"
-"#,
-    );
-
-    let prepare = Command::new(niles)
-        .arg("run")
-        .arg(&task)
-        .current_dir(&workspace)
-        .env("NILES_HOME", niles_home(&workspace))
-        .output()
-        .unwrap();
-    assert!(
-        prepare.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&prepare.stdout),
-        String::from_utf8_lossy(&prepare.stderr)
-    );
-
-    let peek = Command::new(niles)
-        .args(["peek", "--run", "latest", "--index", "1", "--lines", "5"])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert!(!peek.status.success());
-    let peek_stderr = String::from_utf8_lossy(&peek.stderr);
-    assert!(peek_stderr.contains("step 1 in run"));
-    assert!(peek_stderr.contains("has no recorded window"));
-
-    let send = Command::new(niles)
-        .args(["send", "--run", "latest", "--index", "1", "continue"])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert!(!send.status.success());
-    let send_stderr = String::from_utf8_lossy(&send.stderr);
-    assert!(send_stderr.contains("step 1 in run"));
-    assert!(send_stderr.contains("has no recorded window"));
-}
-
 fn write_worker_fixture(workspace: &Path, id: &str, status_body: &str) -> PathBuf {
     write_worker_fixture_with_task(workspace, id, status_body, None)
 }

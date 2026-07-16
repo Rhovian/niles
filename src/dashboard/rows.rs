@@ -11,7 +11,7 @@ use crate::{
 use super::{
     snapshot::{
         DashboardRole, DashboardRow, DashboardSources, ManagerLifecycle, PaneLiveness, PaneSummary,
-        RunStepDashboardMeta, TmuxWindows,
+        TmuxWindows,
     },
     status::{self, WakeState},
     usage_cell::{DashboardUsageCache, UsageCell},
@@ -52,10 +52,6 @@ pub(super) fn assemble(
             recompute_usage,
         );
     }
-    for step in std::mem::take(&mut sources.steps) {
-        insert_run_step_row(&mut rows, step, now, usage_cache, recompute_usage);
-    }
-
     match std::mem::replace(&mut sources.tmux, TmuxWindows::Unavailable(String::new())) {
         TmuxWindows::Available(windows) => merge_tmux_windows(&mut rows, windows),
         TmuxWindows::Unavailable(message) => {
@@ -173,36 +169,6 @@ fn insert_worker_row(
     );
 }
 
-fn insert_run_step_row(
-    rows: &mut BTreeMap<String, DashboardRow>,
-    step: RunStepDashboardMeta,
-    now: DateTime<Utc>,
-    usage_cache: &mut DashboardUsageCache,
-    recompute_usage: bool,
-) {
-    let usage = usage_cache.run_step_usage(&step, now, recompute_usage);
-    let window = window_name_from_target(&step.window);
-    rows.insert(
-        step.window.clone(),
-        DashboardRow {
-            window,
-            role: DashboardRole::RunStep,
-            subject: format!("{}:step-{}", step.run_id, step.index),
-            agent: format_agent_tier(
-                &step.label,
-                step.agent_family.as_deref(),
-                step.model.as_deref(),
-                step.effort.as_deref(),
-            ),
-            pane: PaneSummary::missing(),
-            wall: format_wall_since(step.started_at, now),
-            usage,
-            wake: WakeState::NotApplicable,
-            last_status: last_status_text(&step.status_log),
-        },
-    );
-}
-
 fn merge_tmux_windows(rows: &mut BTreeMap<String, DashboardRow>, windows: Vec<TmuxWindowSnapshot>) {
     for window in windows {
         if !is_managed_window(&window.name) {
@@ -265,8 +231,7 @@ fn role_rank(role: DashboardRole) -> usize {
         DashboardRole::Home => 0,
         DashboardRole::Manager => 1,
         DashboardRole::Worker => 2,
-        DashboardRole::RunStep => 3,
-        DashboardRole::UnknownNilesWindow => 4,
+        DashboardRole::UnknownNilesWindow => 3,
     }
 }
 

@@ -1,4 +1,3 @@
-mod progress;
 mod render;
 mod rows;
 mod snapshot;

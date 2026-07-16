@@ -6,7 +6,6 @@ use std::{
 use camino::Utf8PathBuf;
 use chrono::{Duration, Utc};
 
-use crate::state::{StepKind, StepStatus};
 use crate::{
     session::SessionMeta,
     tmux::{SessionName, TargetState, TmuxWindowSnapshot},
@@ -15,7 +14,7 @@ use crate::{
 
 use super::snapshot::{
     DashboardRole, DashboardRow, DashboardSnapshot, DashboardSources, ManagerLifecycle,
-    PaneLiveness, RunStepDashboardMeta, TmuxWindows, assemble_snapshot,
+    PaneLiveness, TmuxWindows, assemble_snapshot,
 };
 use super::status::WakeState;
 use super::usage_cell::DashboardUsageCache;
@@ -24,20 +23,16 @@ use super::usage_cell::DashboardUsageCache;
 fn assembles_rows_from_tmux_and_metadata_sources() {
     let root = temp_dir("assembly");
     let worker_status = root.join("worker-status.log");
-    let step_status = root.join("run-status.log");
     fs::write(
         &worker_status,
         "working: started\ndone: first\nblocked: needs input\n",
     )
     .unwrap();
-    fs::write(&step_status, "working: step\ndone: step 1 complete\n").unwrap();
     let now = Utc::now();
     let worker_dir = root.join("worker");
     fs::create_dir_all(&worker_dir).unwrap();
     let worker_metadata = worker_dir.join("meta.json");
     fs::write(&worker_metadata, "{}").unwrap();
-    let run_dir = root.join("run");
-    fs::create_dir_all(&run_dir).unwrap();
     let mut usage_cache = DashboardUsageCache::default();
 
     let snapshot = assemble_snapshot(
@@ -46,12 +41,6 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
                 tmux_window("niles", false, Some(100), Some("niles")),
                 tmux_window("niles-manager", true, Some(101), Some("claude")),
                 tmux_window("niles-impl53", false, Some(102), Some("codex")),
-                tmux_window(
-                    "niles-codex-review-s1-abcdef",
-                    false,
-                    Some(103),
-                    Some("codex"),
-                ),
                 tmux_window("niles-extra", false, Some(104), Some("zsh")),
             ]),
             manager: Some(SessionMeta {
@@ -82,25 +71,6 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
                 target_state: TargetState::Live,
                 status: worker_status,
             }],
-            steps: vec![RunStepDashboardMeta {
-                run_dir,
-                run_id: "runabcdef".to_owned(),
-                index: 1,
-                role: Some("reviewer".to_owned()),
-                kind: StepKind::Agent,
-                label: "codex".to_owned(),
-                agent_family: Some("codex".to_owned()),
-                model: Some("gpt-5.5".to_owned()),
-                effort: Some("high".to_owned()),
-                usage_attribution: None,
-                usage: None,
-                step_status: StepStatus::Completed,
-                started_at: Some(now - Duration::seconds(245)),
-                finished_at: Some(now),
-                window: "niles-codex-review-s1-abcdef".to_owned(),
-                status_log: step_status,
-            }],
-            progress: None,
             messages: Vec::new(),
         },
         now,
@@ -108,7 +78,7 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
         true,
     );
 
-    assert_eq!(snapshot.rows.len(), 5);
+    assert_eq!(snapshot.rows.len(), 4);
     assert_eq!(snapshot.manager_lifecycle, ManagerLifecycle::Exited);
 
     let manager = row(&snapshot, "niles-manager");
@@ -126,12 +96,6 @@ fn assembles_rows_from_tmux_and_metadata_sources() {
     assert_eq!(worker.wake, WakeState::Pending);
     assert_eq!(worker.last_status, "blocked: needs input");
 
-    let step = row(&snapshot, "niles-codex-review-s1-abcdef");
-    assert_eq!(step.role, DashboardRole::RunStep);
-    assert_eq!(step.agent, "codex/gpt-5.5/high");
-    assert_eq!(step.wall, "4m");
-    assert_eq!(step.wake, WakeState::NotApplicable);
-    assert_eq!(step.last_status, "done: step 1 complete");
     assert_eq!(
         row(&snapshot, "niles:niles-extra").role,
         DashboardRole::UnknownNilesWindow
@@ -162,8 +126,6 @@ fn tmux_failure_keeps_metadata_rows_with_unknown_panes() {
                 launch: Some(root.join("launch.sh")),
             }),
             workers: Vec::new(),
-            steps: Vec::new(),
-            progress: None,
             messages: Vec::new(),
         },
         now,
@@ -231,8 +193,6 @@ fn dashboard_keys_duplicate_window_names_by_full_target() {
                 target_state: TargetState::WindowDead,
                 status: worker_status,
             }],
-            steps: Vec::new(),
-            progress: None,
             messages: Vec::new(),
         },
         now,

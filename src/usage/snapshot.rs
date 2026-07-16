@@ -1,12 +1,8 @@
-use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    schema::{self, ArtifactKind},
-    util::write_json_pretty,
-};
+use crate::util::write_json_pretty;
 
 use super::{
     attribution::UsageAttribution,
@@ -64,13 +60,6 @@ pub(crate) enum UsageSubject {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         task_label: Option<String>,
-    },
-    RunStep {
-        run_id: String,
-        index: usize,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        role: Option<String>,
-        label: String,
     },
 }
 
@@ -174,10 +163,6 @@ pub(crate) fn snapshot_usage(input: UsageSnapshotInput) -> Option<Utf8PathBuf> {
 
 pub(crate) fn compute_usage_snapshot(input: &UsageSnapshotInput) -> UsageSnapshot {
     build_snapshot(input, false)
-}
-
-pub(crate) fn read_usage_snapshot(path: &Utf8Path) -> Result<UsageSnapshot> {
-    schema::read_json(path, ArtifactKind::UsageSnapshot)
 }
 
 fn build_snapshot(input: &UsageSnapshotInput, warn_unavailable: bool) -> UsageSnapshot {

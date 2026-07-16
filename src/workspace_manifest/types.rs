@@ -1,6 +1,5 @@
 use std::fmt;
 
-use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 pub(in crate::workspace_manifest) const WORKER_REVIEW_LOOP_SUMMARY: &str =
@@ -67,16 +66,6 @@ pub enum WorkspaceFlowRole {
 }
 
 impl WorkspaceFlowRole {
-    pub(in crate::workspace_manifest) fn parse(value: &str) -> Result<Self> {
-        match value {
-            "planner" => Ok(Self::Planner),
-            "worker" => Ok(Self::Worker),
-            "validation" => Ok(Self::Validation),
-            "reviewer" => Ok(Self::Reviewer),
-            _ => bail!("unknown workspace role `{value}`"),
-        }
-    }
-
     fn as_str(self) -> &'static str {
         match self {
             Self::Planner => "planner",

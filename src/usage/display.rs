@@ -96,6 +96,7 @@ impl UsageDisplay {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn pending(wall_seconds: Option<i64>) -> Self {
         Self {
             status: UsageDisplayStatus::Pending,
@@ -105,6 +106,7 @@ impl UsageDisplay {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn unavailable(wall_seconds: Option<i64>) -> Self {
         Self {
             status: UsageDisplayStatus::Unavailable,

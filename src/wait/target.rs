@@ -2,26 +2,17 @@ use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    store,
-    wake::{WakeKind, is_closed_wake, status_log_path},
+    wake::{WakeKind, is_closed_wake},
     worker,
 };
 
 use super::WaitResult;
 
 pub(in crate::wait) enum WaitTargets {
-    Run {
-        target: WaitTarget,
-        index: Option<usize>,
-    },
     Workers(Vec<WaitTarget>),
 }
 
 pub(in crate::wait) enum WaitTarget {
-    Run {
-        status: Utf8PathBuf,
-        run_dir: Utf8PathBuf,
-    },
     Worker {
         id: String,
         status: Utf8PathBuf,
@@ -30,36 +21,13 @@ pub(in crate::wait) enum WaitTarget {
 }
 
 impl WaitTargets {
-    pub(in crate::wait) fn resolve(
-        run: Option<String>,
-        worker_ids: Vec<String>,
-        task: Option<String>,
-        index: Option<usize>,
-    ) -> Result<Self> {
-        if let Some(0) = index {
-            bail!("step index must be >= 1");
-        }
-
+    pub(in crate::wait) fn resolve(worker_ids: Vec<String>, task: Option<String>) -> Result<Self> {
         let has_workers = !worker_ids.is_empty();
-        match (run, has_workers, task) {
-            (Some(run), false, None) => {
-                let run_dir = store::resolve_run_dir(&run)?;
-                Ok(Self::Run {
-                    target: WaitTarget::Run {
-                        status: status_log_path(&run_dir),
-                        run_dir,
-                    },
-                    index,
-                })
-            }
-            (None, true, None) => {
-                reject_index_for_worker_targets(index)?;
-                Ok(Self::Workers(resolve_worker_targets(dedup_worker_ids(
-                    worker_ids,
-                ))?))
-            }
-            (None, false, Some(label)) => {
-                reject_index_for_worker_targets(index)?;
+        match (has_workers, task) {
+            (true, None) => Ok(Self::Workers(resolve_worker_targets(dedup_worker_ids(
+                worker_ids,
+            ))?)),
+            (false, Some(label)) => {
                 worker::validate_task_label(&label)?;
                 let selection = worker::select_worker_ids_by_task(&label)?;
                 Ok(Self::Workers(resolve_task_selection(
@@ -68,26 +36,19 @@ impl WaitTargets {
                     resolve_worker_target,
                 )?))
             }
-            (Some(_), true, None) => bail!("use either a run id or --worker <id>, not both"),
-            (Some(_), false, Some(_)) => bail!("use either a run id or --task <label>, not both"),
-            (Some(_), true, Some(_)) => bail!("use exactly one of a run id, --worker, or --task"),
-            (None, true, Some(_)) => bail!("use either --worker <id> or --task <label>, not both"),
-            (None, false, None) => {
-                bail!("wait requires a run id, --worker <id>, or --task <label>")
-            }
+            (true, Some(_)) => bail!("use either --worker <id> or --task <label>, not both"),
+            (false, None) => bail!("wait requires --worker <id> or --task <label>"),
         }
     }
 
     pub(in crate::wait) fn prefix_worker_id(&self) -> bool {
         match self {
-            Self::Run { .. } => false,
             Self::Workers(targets) => targets.len() > 1,
         }
     }
 
     pub(in crate::wait) fn timeout_subject(&self) -> String {
         match self {
-            Self::Run { target, .. } => target.status().to_string(),
             Self::Workers(targets) if targets.len() == 1 => targets[0].status().to_string(),
             Self::Workers(_) => "requested workers".to_owned(),
         }
@@ -97,13 +58,12 @@ impl WaitTargets {
 impl WaitTarget {
     pub(in crate::wait) fn status(&self) -> &Utf8Path {
         match self {
-            WaitTarget::Run { status, .. } | WaitTarget::Worker { status, .. } => status,
+            WaitTarget::Worker { status, .. } => status,
         }
     }
 
     pub(in crate::wait) fn closed_if_missing(&self) -> Option<WaitResult> {
         match self {
-            WaitTarget::Run { .. } => None,
             WaitTarget::Worker { id, dir, .. } if !dir.exists() => Some(WaitResult::WorkerClosed {
                 id: id.clone(),
                 line: crate::wake::line(
@@ -122,23 +82,14 @@ impl WaitTarget {
                 line,
             },
             WaitTarget::Worker { .. } => WaitResult::Line(line),
-            WaitTarget::Run { .. } => WaitResult::Line(line),
         }
     }
 
     pub(in crate::wait) fn worker_id(&self) -> Option<&str> {
         match self {
-            WaitTarget::Run { .. } => None,
             WaitTarget::Worker { id, .. } => Some(id),
         }
     }
-}
-
-fn reject_index_for_worker_targets(index: Option<usize>) -> Result<()> {
-    if index.is_some() {
-        bail!("--index is only valid with a run target");
-    }
-    Ok(())
 }
 
 fn dedup_worker_ids(worker_ids: Vec<String>) -> Vec<String> {
@@ -234,19 +185,6 @@ mod tests {
         .err()
         .unwrap();
         assert!(format!("{err:#}").contains("no live workers with task label missing"));
-    }
-
-    #[test]
-    fn worker_targets_reject_index_at_boundary() {
-        let err = WaitTargets::resolve(None, vec!["known".to_owned()], None, Some(1))
-            .err()
-            .unwrap();
-        assert!(format!("{err:#}").contains("--index is only valid with a run target"));
-
-        let err = WaitTargets::resolve(None, Vec::new(), Some("issue-48".to_owned()), Some(1))
-            .err()
-            .unwrap();
-        assert!(format!("{err:#}").contains("--index is only valid with a run target"));
     }
 
     #[test]

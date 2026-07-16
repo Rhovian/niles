@@ -12,8 +12,7 @@ pub(crate) use attribution::{UsageAttribution, attribution_for_family};
 pub(crate) use display::{
     UsageDisplay, UsageDisplayStatus, UsageRollup, format_optional, format_rollup_wall, format_wall,
 };
-pub(crate) use path::{step_usage_path, worker_usage_path};
+pub(crate) use path::worker_usage_path;
 pub(crate) use snapshot::{
-    UsageAgent, UsageSnapshotInput, UsageSubject, compute_usage_snapshot, read_usage_snapshot,
-    snapshot_usage,
+    UsageAgent, UsageSnapshotInput, UsageSubject, compute_usage_snapshot, snapshot_usage,
 };

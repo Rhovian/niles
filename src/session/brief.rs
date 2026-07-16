@@ -147,13 +147,15 @@ mod tests {
     #[test]
     fn manager_brief_omits_removed_manifest_command() {
         assert!(MANAGER_BRIEF_TEMPLATE.contains("niles spawn <id>"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("niles run"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("manifest: {manifest}"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("flow: {flow}"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("source of truth"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("standard worker-verification-reviewer loop"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("CONSENSUS OR ESCALATE"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Do not generate a task YAML file"));
+        for removed in removed_workflow_commands() {
+            assert!(!MANAGER_BRIEF_TEMPLATE.contains(&removed));
+        }
+        assert!(!MANAGER_BRIEF_TEMPLATE.contains("task YAML"));
         assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
     }
 
@@ -192,7 +194,7 @@ mod tests {
             ],
         };
 
-        let body = render_manager_brief(&agent, &workspace, &dir, &manifest, "latest_run: none");
+        let body = render_manager_brief(&agent, &workspace, &dir, &manifest, "worker: none");
 
         assert!(body.contains(&format!(
             "manifest: {}",
@@ -200,7 +202,7 @@ mod tests {
         )));
         assert!(body.contains("flow: reviewer -> validation"));
         assert!(body.contains("manager_agent: codex:gpt-5.5:xhigh"));
-        assert!(body.contains("latest_run: none"));
+        assert!(body.contains("worker: none"));
         assert!(!body.contains("{manifest}"));
         assert!(!body.contains("{flow}"));
     }
@@ -236,5 +238,18 @@ mod tests {
         let read = read_latest_session(&workspace).unwrap().unwrap();
         assert_eq!(read.usage_attribution, Some(usage_attribution));
         fs::remove_dir_all(workspace).unwrap();
+    }
+
+    fn removed_workflow_commands() -> [String; 8] {
+        [
+            format!("{} {}", "niles", "run"),
+            format!("{} {}", "niles", "step"),
+            format!("exec{}step", "-"),
+            format!("{} {}", "niles", "status"),
+            format!("{} {}", "niles", "show"),
+            format!("{} {}", "niles", "log"),
+            format!("{} {}", "niles", "diff"),
+            format!("latest_{}", "run"),
+        ]
     }
 }

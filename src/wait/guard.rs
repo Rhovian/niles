@@ -242,7 +242,7 @@ mod tests {
         let third_waiter = waiter_path(third.status());
 
         let err = wait_for_first_wake(
-            vec![(first, None), (second, None), (third, None)],
+            vec![first, second, third],
             Duration::from_millis(1),
             Duration::ZERO,
         )
@@ -264,7 +264,7 @@ mod tests {
         let second_waiter = waiter_path(second.status());
 
         let wake = wait_for_first_wake(
-            vec![(first, None), (second, None)],
+            vec![first, second],
             Duration::from_millis(1),
             Duration::ZERO,
         )
@@ -285,7 +285,7 @@ mod tests {
         let second = test_worker_target(root.path(), "second", "done: second\n");
 
         let wake = wait_for_first_wake(
-            vec![(first, None), (second, None)],
+            vec![first, second],
             Duration::from_millis(1),
             Duration::ZERO,
         )
