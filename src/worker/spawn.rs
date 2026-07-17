@@ -288,6 +288,18 @@ mod tests {
     }
 
     #[test]
+    fn worker_brief_mentions_gate_policy() {
+        assert!(WORKER_BRIEF_TEMPLATE.contains("runs the gate"));
+        assert!(WORKER_BRIEF_TEMPLATE.contains("times out mid-run"));
+        assert!(WORKER_BRIEF_TEMPLATE.contains("do not re-run deterministic gates"));
+        assert!(WORKER_BRIEF_TEMPLATE.contains("audit the runner's transcript gate output"));
+        assert!(
+            WORKER_BRIEF_TEMPLATE
+                .contains("Never use `working:`/`done:` to imply unrun gates passed")
+        );
+    }
+
+    #[test]
     fn worker_brief_mentions_modularity_standard() {
         assert!(WORKER_BRIEF_TEMPLATE.contains("split it by responsibility"));
     }
