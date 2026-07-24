@@ -3,15 +3,15 @@ use std::{
     io::{self, BufRead, IsTerminal, Write},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
     agents::picker,
-    config::spec::{load_project_config_from, AgentConfig},
+    config::spec::{AgentConfig, load_project_config_from},
 };
 
-use super::{load, manifest_path, save, WorkspaceManifest};
+use super::{WorkspaceManifest, load, manifest_path, save};
 
 pub fn ensure_interactive(
     root: &Utf8Path,

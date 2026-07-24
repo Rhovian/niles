@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fs};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;

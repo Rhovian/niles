@@ -4,16 +4,16 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
     agents,
-    config::spec::{load_project_config_from, PromptMode},
+    config::spec::{PromptMode, load_project_config_from},
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::{brief::write_manager_session, SessionMeta};
+use super::{SessionMeta, brief::write_manager_session};
 
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 const SIGNAL_EXIT_LABEL: &str = "signal";

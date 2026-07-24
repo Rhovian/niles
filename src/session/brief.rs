@@ -170,9 +170,7 @@ mod tests {
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Gate only stale/scoped evidence"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("call that independent verification"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Run at most one authoritative manager gate"));
-        assert!(
-            MANAGER_BRIEF_TEMPLATE.contains("do not present it to the user as gate-verified")
-        );
+        assert!(MANAGER_BRIEF_TEMPLATE.contains("do not present it to the user as gate-verified"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Investigation/repro is judgment"));
         assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
     }

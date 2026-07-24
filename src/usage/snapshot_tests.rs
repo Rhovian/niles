@@ -8,12 +8,12 @@ use std::{
 use camino::{Utf8Path, Utf8PathBuf};
 
 use super::{
+    UsageAttribution,
     home::CODEX_HOME_ENV,
     snapshot::{
-        snapshot_usage, UsageAgent, UsageSnapshot, UsageSnapshotInput, UsageSnapshotUsage,
-        UsageSubject, UsageUnavailableReason,
+        UsageAgent, UsageSnapshot, UsageSnapshotInput, UsageSnapshotUsage, UsageSubject,
+        UsageUnavailableReason, snapshot_usage,
     },
-    UsageAttribution,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
