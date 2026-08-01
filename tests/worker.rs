@@ -2814,6 +2814,7 @@ esac
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(10));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

@@ -132,6 +132,9 @@ pub enum CommandName {
         /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
         #[arg(long)]
         timeout: Option<f64>,
+        /// Explicitly terminate and replace the currently registered waiter.
+        #[arg(long, action = ArgAction::SetTrue)]
+        takeover: bool,
     },
 }
 

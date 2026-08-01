@@ -1,4 +1,5 @@
 mod guard;
+mod outcome;
 mod scanner;
 mod target;
 
@@ -12,7 +13,9 @@ use camino::Utf8Path;
 
 use crate::util::read_optional_to_string;
 
-use guard::WaiterGuard;
+use guard::{GuardCheck, WaiterAttach, WaiterGuard, WaiterOptions};
+pub(crate) use outcome::WaitExit;
+use outcome::{WaitIndeterminate, WaitOutcome, WaitTimeout};
 use scanner::WakeScanner;
 use target::{WaitTarget, WaitTargets};
 
@@ -23,7 +26,8 @@ pub fn wait(
     task: Option<String>,
     interval: f64,
     timeout: Option<f64>,
-) -> Result<()> {
+    takeover: bool,
+) -> Result<WaitExit> {
     let targets = WaitTargets::resolve(worker, task)?;
     let prefix_worker_id = targets.prefix_worker_id();
     let timeout_subject = targets.timeout_subject();
@@ -37,33 +41,8 @@ pub fn wait(
         None => DEFAULT_WAIT_TIMEOUT,
     };
 
-    let wake = wait_for_targets(targets, interval, timeout)?;
-    let worker_id = wake.worker_id;
-    match wake.result {
-        WaitResult::Line(line) => {
-            println!(
-                "{}",
-                format_wake_line(worker_id.as_deref(), line, prefix_worker_id)
-            );
-            Ok(())
-        }
-        WaitResult::WorkerClosed { id, line } => {
-            println!(
-                "{}",
-                format_wake_line(worker_id.as_deref(), line, prefix_worker_id)
-            );
-            bail!("worker '{id}' closed")
-        }
-        WaitResult::Timeout => {
-            bail!("timeout: no actionable wake line appeared in {timeout_subject}")
-        }
-    }
-}
-
-enum WaitResult {
-    Line(String),
-    WorkerClosed { id: String, line: String },
-    Timeout,
+    let wake = wait_for_targets(targets, interval, timeout, takeover, timeout_subject)?;
+    Ok(WaitExit::from_outcome(wake, prefix_worker_id))
 }
 
 struct WaitEntry {
@@ -72,56 +51,73 @@ struct WaitEntry {
     guard: Option<WaiterGuard>,
 }
 
-struct FiredWake {
-    worker_id: Option<String>,
-    result: WaitResult,
-}
-
-fn format_wake_line(worker_id: Option<&str>, line: String, prefix_worker_id: bool) -> String {
-    if prefix_worker_id && let Some(id) = worker_id {
-        return format!("{id}: {line}");
-    }
-    line
+enum PreparedWaitEntries {
+    Entries(Vec<WaitEntry>),
+    Outcome(WaitOutcome),
 }
 
 fn wait_for_targets(
     targets: WaitTargets,
     interval: Duration,
     timeout: Duration,
-) -> Result<FiredWake> {
+    takeover: bool,
+    timeout_subject: String,
+) -> Result<WaitOutcome> {
     match targets {
         WaitTargets::Workers(mut targets) if targets.len() == 1 => {
             let target = targets.remove(0);
-            let worker_id = target.worker_id().map(str::to_owned);
-            Ok(FiredWake {
-                worker_id,
-                result: wait_for_wake(target, interval, timeout)?,
-            })
+            wait_for_wake(target, interval, timeout, takeover, timeout_subject)
         }
-        WaitTargets::Workers(targets) => wait_for_first_wake(targets, interval, timeout),
+        WaitTargets::Workers(targets) => {
+            wait_for_first_wake_with_options(targets, interval, timeout, takeover, timeout_subject)
+        }
     }
 }
 
-fn wait_for_wake(target: WaitTarget, interval: Duration, timeout: Duration) -> Result<WaitResult> {
-    Ok(wait_for_first_wake(vec![target], interval, timeout)?.result)
+fn wait_for_wake(
+    target: WaitTarget,
+    interval: Duration,
+    timeout: Duration,
+    takeover: bool,
+    timeout_subject: String,
+) -> Result<WaitOutcome> {
+    wait_for_first_wake_with_options(vec![target], interval, timeout, takeover, timeout_subject)
 }
 
+#[cfg(test)]
 fn wait_for_first_wake(
     targets: Vec<WaitTarget>,
     interval: Duration,
     timeout: Duration,
-) -> Result<FiredWake> {
+) -> Result<WaitOutcome> {
+    wait_for_first_wake_with_options(
+        targets,
+        interval,
+        timeout,
+        false,
+        "requested workers".to_owned(),
+    )
+}
+
+fn wait_for_first_wake_with_options(
+    targets: Vec<WaitTarget>,
+    interval: Duration,
+    timeout: Duration,
+    takeover: bool,
+    timeout_subject: String,
+) -> Result<WaitOutcome> {
     // Missing worker dirs report WorkerClosed before waiter registration can fail on status.waiter.
     for target in &targets {
         if let Some(result) = target.closed_if_missing() {
-            return Ok(FiredWake {
-                worker_id: target.worker_id().map(str::to_owned),
-                result,
-            });
+            return Ok(result);
         }
     }
 
-    let mut entries = prepare_wait_entries(targets)?;
+    let options = WaiterOptions::new(takeover, interval);
+    let mut entries = match prepare_wait_entries(targets, &options)? {
+        PreparedWaitEntries::Entries(entries) => entries,
+        PreparedWaitEntries::Outcome(outcome) => return Ok(outcome),
+    };
     let deadline = Instant::now() + timeout;
 
     loop {
@@ -131,27 +127,33 @@ fn wait_for_first_wake(
 
         let now = Instant::now();
         if now >= deadline {
-            return Ok(FiredWake {
-                worker_id: None,
-                result: WaitResult::Timeout,
-            });
+            return Ok(WaitOutcome::Timeout(WaitTimeout {
+                target: timeout_subject,
+                timeout,
+            }));
         }
 
         thread::sleep(interval.min(deadline - now));
     }
 }
 
-fn prepare_wait_entries(targets: Vec<WaitTarget>) -> Result<Vec<WaitEntry>> {
+fn prepare_wait_entries(
+    targets: Vec<WaitTarget>,
+    options: &WaiterOptions,
+) -> Result<PreparedWaitEntries> {
     let mut guards = Vec::with_capacity(targets.len());
     for target in &targets {
-        guards.push(Some(WaiterGuard::register(target.status()).with_context(
+        match WaiterGuard::register(target.status(), target.worker_id(), options).with_context(
             || {
                 format!(
                     "failed to attach waiter guard for requested target {}",
                     target.status()
                 )
             },
-        )?));
+        )? {
+            WaiterAttach::Attached(guard) => guards.push(Some(guard)),
+            WaiterAttach::Outcome(outcome) => return Ok(PreparedWaitEntries::Outcome(outcome)),
+        }
     }
 
     let mut entries = Vec::with_capacity(targets.len());
@@ -168,42 +170,48 @@ fn prepare_wait_entries(targets: Vec<WaitTarget>) -> Result<Vec<WaitEntry>> {
             guard,
         });
     }
-    Ok(entries)
+    Ok(PreparedWaitEntries::Entries(entries))
 }
 
-fn poll_wait_entries(entries: &mut [WaitEntry]) -> Result<Option<FiredWake>> {
+fn poll_wait_entries(entries: &mut [WaitEntry]) -> Result<Option<WaitOutcome>> {
     for entry in entries.iter_mut() {
         if let Some(result) = entry.target.closed_if_missing() {
-            return Ok(Some(FiredWake {
-                worker_id: entry.target.worker_id().map(str::to_owned),
-                result,
-            }));
+            return Ok(Some(result));
         }
-        if let Some(waiter) = &entry.guard
-            && let Err(err) = waiter.verify()
-        {
-            if let Some(result) = entry.target.closed_if_missing() {
-                return Ok(Some(FiredWake {
-                    worker_id: entry.target.worker_id().map(str::to_owned),
-                    result,
-                }));
+        if let Some(waiter) = &mut entry.guard {
+            let heartbeat = waiter.heartbeat();
+            let heartbeat = match heartbeat {
+                Ok(heartbeat) => heartbeat,
+                Err(err) => {
+                    if let Some(result) = entry.target.closed_if_missing() {
+                        return Ok(Some(result));
+                    }
+                    return Err(err);
+                }
+            };
+            match heartbeat {
+                GuardCheck::Verified => {}
+                GuardCheck::Lost { detail } | GuardCheck::Indeterminate { detail } => {
+                    if let Some(result) = entry.target.closed_if_missing() {
+                        return Ok(Some(result));
+                    }
+                    return Ok(Some(WaitOutcome::Indeterminate(WaitIndeterminate {
+                        worker_id: entry.target.worker_id().map(str::to_owned),
+                        status: Some(entry.target.status().to_path_buf()),
+                        waiter: Some(waiter.path().to_path_buf()),
+                        detail,
+                    })));
+                }
             }
-            return Err(err);
         }
 
         let lines = read_lines(entry.target.status())?;
         if let Some(result) = entry.scanner.select(&entry.target, &lines)? {
-            return Ok(Some(FiredWake {
-                worker_id: entry.target.worker_id().map(str::to_owned),
-                result,
-            }));
+            return Ok(Some(result));
         }
 
         if let Some(result) = entry.target.closed_if_missing() {
-            return Ok(Some(FiredWake {
-                worker_id: entry.target.worker_id().map(str::to_owned),
-                result,
-            }));
+            return Ok(Some(result));
         }
     }
     Ok(None)
@@ -243,15 +251,15 @@ fn non_negative_seconds_duration(seconds: f64, label: &str) -> Result<Duration> 
 
 #[cfg(test)]
 mod test_support {
-    use super::{WaitResult, target::WaitTarget};
+    use super::{outcome::WaitOutcome, target::WaitTarget};
     use camino::{Utf8Path, Utf8PathBuf};
     use std::{
         env, fs,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    pub(in crate::wait) fn assert_wait_line(result: WaitResult, expected: &str) {
-        let WaitResult::Line(line) = result else {
+    pub(in crate::wait) fn assert_wait_line(result: WaitOutcome, expected: &str) {
+        let WaitOutcome::Wake { line, .. } = result else {
             panic!("expected line result");
         };
         assert_eq!(line, expected);
@@ -323,6 +331,7 @@ mod tests {
     use super::*;
     use crate::wait::{
         guard::waiter_path,
+        outcome::{WaitOutcome, format_wake_line},
         scanner::{ack_log_path, ack_path},
         test_support::{TestTempDir, assert_wait_line, test_worker_target},
     };
@@ -340,8 +349,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(wake.worker_id.as_deref(), Some("second"));
-        assert_wait_line(wake.result, "done: second worker");
+        assert_eq!(wake.worker_id(), Some("second"));
+        assert_wait_line(wake, "done: second worker");
     }
 
     #[test]
@@ -349,18 +358,14 @@ mod tests {
         let root = TestTempDir::new("single-element");
         let target = test_worker_target(root.path(), "only", "done: single\n");
         let status = target.status().to_path_buf();
-        let wake = wait_for_targets(
-            WaitTargets::Workers(vec![target]),
-            Duration::from_millis(1),
-            Duration::ZERO,
-        )
-        .unwrap();
+        let wake =
+            wait_for_first_wake(vec![target], Duration::from_millis(1), Duration::ZERO).unwrap();
 
-        let WaitResult::Line(line) = wake.result else {
+        let WaitOutcome::Wake { worker_id, line } = wake else {
             panic!("expected line result");
         };
         assert_eq!(
-            format_wake_line(wake.worker_id.as_deref(), line, false),
+            format_wake_line(worker_id.as_deref(), line, false),
             "done: single"
         );
         assert_eq!(fs::read_to_string(ack_path(&status)).unwrap(), "1\n");
@@ -372,11 +377,16 @@ mod tests {
         let root = TestTempDir::new("cursor-isolation");
         let first = test_worker_target(root.path(), "first", "done: first\n");
         let second = test_worker_target(root.path(), "second", "done: second\n");
-        let mut entries = prepare_wait_entries(vec![first, second]).unwrap();
+        let options = WaiterOptions::new(false, Duration::from_millis(1));
+        let PreparedWaitEntries::Entries(mut entries) =
+            prepare_wait_entries(vec![first, second], &options).unwrap()
+        else {
+            panic!("expected wait entries");
+        };
 
         let wake = poll_wait_entries(&mut entries).unwrap().unwrap();
 
-        assert_eq!(wake.worker_id.as_deref(), Some("first"));
+        assert_eq!(wake.worker_id(), Some("first"));
         assert_eq!(entries[0].scanner.cursor, 1);
         assert_eq!(entries[1].scanner.cursor, 0);
     }
@@ -401,7 +411,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(wake.worker_id.as_deref(), Some("second"));
+        assert_eq!(wake.worker_id(), Some("second"));
         assert!(!first_ack.exists());
         assert!(!first_ack_log.exists());
         assert_eq!(fs::read_to_string(second_ack).unwrap(), "1\n");

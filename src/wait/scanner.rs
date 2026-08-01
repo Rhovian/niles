@@ -8,7 +8,7 @@ use crate::{
     wake::is_actionable_wake,
 };
 
-use super::{WaitResult, guard::WaiterRegistration, target::WaitTarget};
+use super::{guard::WaiterRegistration, outcome::WaitOutcome, target::WaitTarget};
 
 pub(in crate::wait) struct WakeScanner {
     pub(in crate::wait) cursor: usize,
@@ -30,7 +30,7 @@ impl WakeScanner {
         &mut self,
         target: &WaitTarget,
         lines: &[String],
-    ) -> Result<Option<WaitResult>> {
+    ) -> Result<Option<WaitOutcome>> {
         let start = self.cursor.min(lines.len());
         if let Some((offset, line)) = select_wake_with_offset(&lines[start..]) {
             self.acknowledge(target.status(), start + offset + 1, &line)?;
