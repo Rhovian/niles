@@ -6,7 +6,7 @@ use crate::{
     worker,
 };
 
-use super::WaitResult;
+use super::outcome::WaitOutcome;
 
 pub(in crate::wait) enum WaitTargets {
     Workers(Vec<WaitTarget>),
@@ -62,26 +62,37 @@ impl WaitTarget {
         }
     }
 
-    pub(in crate::wait) fn closed_if_missing(&self) -> Option<WaitResult> {
+    pub(in crate::wait) fn closed_if_missing(&self) -> Option<WaitOutcome> {
         match self {
-            WaitTarget::Worker { id, dir, .. } if !dir.exists() => Some(WaitResult::WorkerClosed {
-                id: id.clone(),
-                line: crate::wake::line(
-                    WakeKind::Closed,
-                    &format!("worker '{id}' directory removed"),
-                ),
-            }),
+            WaitTarget::Worker { id, status, dir } if !dir.exists() => {
+                Some(WaitOutcome::WorkerClosed {
+                    worker_id: Some(id.clone()),
+                    id: id.clone(),
+                    status: status.clone(),
+                    line: crate::wake::line(
+                        WakeKind::Closed,
+                        &format!("worker '{id}' directory removed"),
+                    ),
+                })
+            }
             WaitTarget::Worker { .. } => None,
         }
     }
 
-    pub(in crate::wait) fn result_for_line(&self, line: String) -> WaitResult {
+    pub(in crate::wait) fn result_for_line(&self, line: String) -> WaitOutcome {
         match self {
-            WaitTarget::Worker { id, .. } if is_closed_wake(&line) => WaitResult::WorkerClosed {
-                id: id.clone(),
+            WaitTarget::Worker { id, status, .. } if is_closed_wake(&line) => {
+                WaitOutcome::WorkerClosed {
+                    worker_id: Some(id.clone()),
+                    id: id.clone(),
+                    status: status.clone(),
+                    line,
+                }
+            }
+            WaitTarget::Worker { id, .. } => WaitOutcome::Wake {
+                worker_id: Some(id.clone()),
                 line,
             },
-            WaitTarget::Worker { .. } => WaitResult::Line(line),
         }
     }
 
