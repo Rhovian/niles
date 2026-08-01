@@ -21,6 +21,11 @@ use target::{WaitTarget, WaitTargets};
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+/// Largest accepted `--interval`. A poll interval beyond the default wait timeout is always a
+/// typo, and an unbounded one is stored as the registration's heartbeat interval, where an absurd
+/// value would push the staleness threshold out of reach and wedge the worker.
+const MAX_WAIT_INTERVAL_SECS: f64 = 3600.0;
+
 pub fn wait(
     worker: Vec<String>,
     task: Option<String>,
@@ -235,6 +240,9 @@ fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
     if !seconds.is_finite() || seconds <= 0.0 {
         bail!("{label} must be a finite positive number");
     }
+    if seconds > MAX_WAIT_INTERVAL_SECS {
+        bail!("{label} must be at most {MAX_WAIT_INTERVAL_SECS} seconds");
+    }
     Ok(Duration::from_secs_f64(seconds))
 }
 
@@ -281,16 +289,25 @@ mod test_support {
         }
     }
 
-    pub(in crate::wait) fn write_waiter_registration(status: &Utf8Path, pid: u32, token: &str) {
+    /// Writes a pre-heartbeat registration, as an older niles binary would have left behind.
+    /// `started_at` is explicit because a registration with no heartbeat fields now ages out from
+    /// it, so callers must say whether they mean a recent holder or an abandoned one.
+    pub(in crate::wait) fn write_waiter_registration(
+        status: &Utf8Path,
+        pid: u32,
+        token: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) {
         fs::write(
             super::guard::waiter_path(status),
             format!(
                 r#"{{
   "pid": {pid},
-  "started_at": "2000-01-01T00:00:00Z",
+  "started_at": "{}",
   "token": "{token}"
 }}
-"#
+"#,
+                started_at.to_rfc3339()
             ),
         )
         .unwrap();

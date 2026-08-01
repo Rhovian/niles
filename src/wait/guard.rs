@@ -17,6 +17,7 @@ use super::outcome::{
 };
 
 mod file;
+mod liveness;
 mod log;
 mod process;
 
@@ -24,11 +25,11 @@ use file::{
     RegistrationRead, RegistrationTokenCheck, read_registration, registration_body,
     remove_waiter_file, replace_registration_if_token_matches, verify_registration_token,
 };
+use liveness::{heartbeat_state, invalid_pid_reason};
 use log::{log_stale_waiter_reclaimed, log_waiter_taken_over, log_waiter_takeover_requested};
 use process::SystemWaiterProcess;
 pub(in crate::wait) use process::WaiterProcess;
 
-const MIN_STALE_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_TAKEOVER_GRACE: Duration = Duration::from_millis(500);
 const TAKEOVER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -253,6 +254,12 @@ fn resolve_existing_waiter(
         }
     };
 
+    // A structurally impossible pid can never be a live holder, and pid 0 would turn the takeover
+    // signal into a process-group broadcast, so neither reaches the liveness check.
+    if let Some(reason) = invalid_pid_reason(waiter.pid) {
+        return reclaim_waiter(status, path, &waiter, reason);
+    }
+
     match process.is_running(waiter.pid) {
         Ok(false) => reclaim_waiter(status, path, &waiter, "pid-dead"),
         Ok(true) => resolve_live_waiter(status, worker_id, path, waiter, options, process),
@@ -412,21 +419,6 @@ pub(in crate::wait) fn waiter_path(status: &Utf8Path) -> Utf8PathBuf {
     status.with_extension("waiter")
 }
 
-fn heartbeat_state(waiter: &WaiterRegistration, now: DateTime<Utc>) -> HeartbeatState {
-    let (Some(heartbeat_at), Some(interval_ms)) =
-        (waiter.heartbeat_at, waiter.heartbeat_interval_ms)
-    else {
-        return HeartbeatState::Missing;
-    };
-    let threshold = interval_ms.saturating_mul(3).max(MIN_STALE_HEARTBEAT_MS);
-    let age = now.signed_duration_since(heartbeat_at).num_milliseconds();
-    if age > u64_to_i64_saturating(threshold) {
-        HeartbeatState::Stale
-    } else {
-        HeartbeatState::Fresh
-    }
-}
-
 fn indeterminate(
     worker_id: Option<&str>,
     status: Option<&Utf8Path>,
@@ -460,14 +452,6 @@ fn takeover_failed(
 
 fn duration_millis(duration: Duration) -> u64 {
     u128_to_u64_saturating(duration.as_millis())
-}
-
-fn u64_to_i64_saturating(value: u64) -> i64 {
-    if value > i64::MAX as u64 {
-        i64::MAX
-    } else {
-        value as i64
-    }
 }
 
 fn u128_to_u64_saturating(value: u128) -> u64 {
