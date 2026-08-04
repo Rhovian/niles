@@ -30,6 +30,13 @@ fn capability_manifest_containing(workspace: &Path, needle: &str) -> String {
     );
 }
 
+/// The tmux `-t` form of a recorded `session:window`. Niles anchors both
+/// components with `=` so tmux cannot prefix-match a neighbouring window.
+fn exact_target(window: &str) -> String {
+    let (session, name) = window.split_once(':').expect("recorded session:window");
+    format!("={session}:={name}")
+}
+
 #[test]
 fn spawn_enforces_known_agent_cli_min_version() {
     let niles = env!("CARGO_BIN_EXE_niles");
@@ -181,6 +188,7 @@ esac
     assert!(meta.contains("\"created_at\":"));
     let meta_json: serde_json::Value = serde_json::from_str(&meta).unwrap();
     let window = meta_json["window"].as_str().unwrap();
+    let target = exact_target(window);
     let project = meta_json["project"].as_str().unwrap();
     assert!(window.starts_with("niles-niles-worker-test-"));
     assert!(window.ends_with(":niles-auth-fix"));
@@ -224,17 +232,17 @@ esac
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("new-session -d -s niles-niles-worker-test-"));
-    assert!(log.contains("new-window -d -t niles-niles-worker-test-"));
+    assert!(log.contains("new-window -d -t =niles-niles-worker-test-"));
     assert!(log.contains(": -n niles-auth-fix"));
     assert!(log.contains(&format!(
-        "set-option -w -t {window} @niles-project {project}"
+        "set-option -w -t {target} @niles-project {project}"
     )));
     assert!(log.contains(&format!(
-        "set-option -w -t {window} @niles-worker-id auth-fix"
+        "set-option -w -t {target} @niles-worker-id auth-fix"
     )));
-    assert!(log.contains(&format!("capture-pane -p -t {window} -S -7")));
-    assert!(log.contains(&format!("send-keys -t {window} -l continue please")));
-    assert!(log.contains(&format!("send-keys -t {window} C-m")));
+    assert!(log.contains(&format!("capture-pane -p -t {target} -S -7")));
+    assert!(log.contains(&format!("send-keys -t {target} -l continue please")));
+    assert!(log.contains(&format!("send-keys -t {target} C-m")));
 }
 
 #[test]
@@ -320,9 +328,9 @@ esac
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(!log.contains("display-message"));
     assert!(log.contains("has-session -t =home"));
-    assert!(log.contains("new-window -d -t home: -n niles-auth-fix"));
-    assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-project"));
-    assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-worker-id auth-fix"));
+    assert!(log.contains("new-window -d -t =home: -n niles-auth-fix"));
+    assert!(log.contains("set-option -w -t =home:=niles-auth-fix @niles-project"));
+    assert!(log.contains("set-option -w -t =home:=niles-auth-fix @niles-worker-id auth-fix"));
 }
 
 #[test]
@@ -440,11 +448,11 @@ esac
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(
         log.lines()
-            .any(|line| line == "capture-pane -p -t niles:niles-auth-fix -S -2000")
+            .any(|line| line == "capture-pane -p -t =niles:=niles-auth-fix -S -2000")
     );
     assert!(
         log.lines()
-            .any(|line| line == "capture-pane -p -t niles:niles-auth-fix -S -")
+            .any(|line| line == "capture-pane -p -t =niles:=niles-auth-fix -S -")
     );
 }
 
@@ -1553,7 +1561,7 @@ esac
     assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-window -d -t niles-niles-worker-failed-spawn-"));
+    assert!(log.contains("new-window -d -t =niles-niles-worker-failed-spawn-"));
     assert!(log.contains(": -n niles-auth-fix"));
 }
 
@@ -1619,12 +1627,12 @@ esac
     assert_global_index_absent(&home);
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-window -d -t niles-niles-worker-meta-write-failed-spawn-"));
+    assert!(log.contains("new-window -d -t =niles-niles-worker-meta-write-failed-spawn-"));
     assert!(log.contains(": -n niles-auth-fix"));
     assert!(log.contains("set-option -w -t "));
     assert!(log.contains(" @niles-worker-id auth-fix"));
     assert!(log.contains("kill-window -t "));
-    assert!(log.contains(":niles-auth-fix"));
+    assert!(log.contains(":=niles-auth-fix"));
 }
 
 #[test]
@@ -1692,8 +1700,8 @@ esac
     assert!(close_stdout.contains("closed: auth-fix"));
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("capture-pane -p -t niles:niles-auth-fix -S -2000"));
-    assert!(log.contains("kill-window -t niles:niles-auth-fix"));
+    assert!(log.contains("capture-pane -p -t =niles:=niles-auth-fix -S -2000"));
+    assert!(log.contains("kill-window -t =niles:=niles-auth-fix"));
     assert!(!workspace.join(".niles/worker/auth-fix.json").exists());
     assert!(!worker_dir.exists());
     let archive_dir = latest_archive_dir(&workspace, "auth-fix");
@@ -1737,9 +1745,9 @@ fn worker_close_targets_recorded_session_not_ambient() {
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(!log.contains("display-message"));
-    assert!(log.contains("list-windows -t home -F #{window_name}"));
-    assert!(log.contains("capture-pane -p -t home:niles-auth-fix -S -2000"));
-    assert!(log.contains("kill-window -t home:niles-auth-fix"));
+    assert!(log.contains("list-windows -t =home -F #{window_name}"));
+    assert!(log.contains("capture-pane -p -t =home:=niles-auth-fix -S -2000"));
+    assert!(log.contains("kill-window -t =home:=niles-auth-fix"));
 }
 
 #[test]
@@ -1775,8 +1783,8 @@ fn worker_close_recovers_renamed_orphan_by_matching_tags() {
     );
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("capture-pane -p -t new:niles-renamed -S -2000"));
-    assert!(log.contains("kill-window -t new:niles-renamed"));
+    assert!(log.contains("capture-pane -p -t =new:=niles-renamed -S -2000"));
+    assert!(log.contains("kill-window -t =new:=niles-renamed"));
     let archive_dir = latest_archive_dir(&workspace, "auth-fix");
     assert!(
         fs::read_to_string(archive_dir.join("status.log"))
@@ -1893,9 +1901,9 @@ fn worker_close_recovers_window_missing_by_matching_tags() {
     );
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("list-windows -t home -F #{window_name}"));
-    assert!(log.contains("capture-pane -p -t other:niles-renamed -S -2000"));
-    assert!(log.contains("kill-window -t other:niles-renamed"));
+    assert!(log.contains("list-windows -t =home -F #{window_name}"));
+    assert!(log.contains("capture-pane -p -t =other:=niles-renamed -S -2000"));
+    assert!(log.contains("kill-window -t =other:=niles-renamed"));
     assert_archived_with_closed_sentinel(&workspace, "auth-fix");
 }
 
@@ -3120,7 +3128,7 @@ case "$1" in
       fi
       exit 0
     fi
-    if [ "$3" = "{missing_session}" ]; then
+    if [ "$3" = "={missing_session}" ]; then
       printf "can't find session: {missing_session}\n" >&2
       exit 1
     fi

@@ -72,8 +72,8 @@ fn status_with_terminal(args: &[OsString]) -> Result<ExitStatus> {
 
 pub(crate) fn capture_pane(target: &WindowTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
-    let target = target.render();
-    let output = output(["capture-pane", "-p", "-t", &target, "-S", &start])
+    let arg = target.target_arg();
+    let output = output(["capture-pane", "-p", "-t", &arg, "-S", &start])
         .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
     if !output.status.success() {
@@ -95,11 +95,11 @@ fn capture_start(lines: usize) -> String {
 }
 
 pub(crate) fn send_line(target: &WindowTarget, line: &str) -> Result<()> {
-    let target = target.render();
-    run(send_line_literal_args(&target, line))?;
+    let arg = target.target_arg();
+    run(send_line_literal_args(&arg, line))?;
     // Give the worker TUI a render tick before sending the submit keystroke.
     thread::sleep(SEND_LINE_SUBMIT_DELAY);
-    run(send_line_submit_args(&target))
+    run(send_line_submit_args(&arg))
 }
 
 pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
@@ -136,15 +136,14 @@ pub(crate) fn rename_current_window(name: &str) -> Result<()> {
 }
 
 pub(crate) fn switch_client(target: &WindowTarget) -> Result<()> {
-    let target = target.render();
-    run(["switch-client", "-t", &target])
+    run(["switch-client", "-t", &target.target_arg()])
 }
 
 pub(crate) fn list_windows(session: &SessionName) -> Result<Vec<TmuxWindowSnapshot>> {
     let output = output([
         "list-windows",
         "-t",
-        session.as_str(),
+        &target::exact(session.as_str()),
         "-F",
         list_windows::LIST_WINDOWS_FORMAT,
     ])
@@ -164,7 +163,7 @@ pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) 
     let output = output([
         "list-windows",
         "-t",
-        session.as_str(),
+        &target::exact(session.as_str()),
         "-F",
         "#{window_name}",
     ])
@@ -195,7 +194,7 @@ pub(crate) fn new_window(
 }
 
 fn new_window_session_target(session: &SessionName) -> String {
-    format!("{session}:")
+    format!("{}:", target::exact(session.as_str()))
 }
 
 fn new_window_args<'a>(
@@ -218,8 +217,7 @@ fn new_window_args<'a>(
 }
 
 pub(crate) fn kill_window(target: &WindowTarget) -> Result<()> {
-    let target = target.render();
-    run(["kill-window", "-t", &target])
+    run(["kill-window", "-t", &target.target_arg()])
 }
 
 pub(crate) fn target_exists(target: &str) -> Result<bool> {
@@ -228,7 +226,7 @@ pub(crate) fn target_exists(target: &str) -> Result<bool> {
     let output = output([
         "list-windows",
         "-t",
-        target.session().as_str(),
+        &target::exact(target.session().as_str()),
         "-F",
         "#{window_name}",
     ])
@@ -260,8 +258,14 @@ pub(crate) fn ensure_session_exists(session: &SessionName) -> Result<()> {
 }
 
 pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str) -> Result<()> {
-    let target = target.render();
-    run(["set-option", "-w", "-t", &target, option, value])
+    run([
+        "set-option",
+        "-w",
+        "-t",
+        &target.target_arg(),
+        option,
+        value,
+    ])
 }
 
 pub(crate) fn current_session_name() -> Result<Option<String>> {
@@ -277,7 +281,7 @@ pub(crate) fn current_session_name() -> Result<Option<String>> {
 pub(crate) fn has_session(name: &str) -> bool {
     matches!(
         Command::new("tmux")
-            .args(["has-session", "-t", &exact_target(name)])
+            .args(["has-session", "-t", &target::exact(name)])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -343,15 +347,9 @@ fn foreground_new_session_args(
 }
 
 fn foreground_attach_session_args(session: &SessionName) -> Vec<OsString> {
-    ["attach-session", "-t", &exact_target(session.as_str())]
+    ["attach-session", "-t", &target::exact(session.as_str())]
         .map(OsString::from)
         .to_vec()
-}
-
-/// tmux resolves a bare `-t` name exact, then by glob, then by prefix, so
-/// `-t pla` happily attaches to `plain`. `=` pins it to an exact match.
-fn exact_target(name: &str) -> String {
-    format!("={name}")
 }
 
 /// Sessions running a Niles manager window, newest tmux ordering preserved.
@@ -448,7 +446,7 @@ mod tests {
             foreground_attach_session_args(&session),
             ["attach-session", "-t", "=niles"].map(OsString::from)
         );
-        assert_eq!(exact_target("pla"), "=pla");
+        assert_eq!(target::exact("pla"), "=pla");
     }
 
     #[test]
@@ -521,7 +519,7 @@ mod tests {
                 "new-window",
                 "-d",
                 "-t",
-                "niles:",
+                "=niles:",
                 "-n",
                 "niles-auth-fix",
                 "-c",
