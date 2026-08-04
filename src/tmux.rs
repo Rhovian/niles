@@ -13,7 +13,9 @@ mod list_windows;
 mod target;
 
 pub(crate) use list_windows::TmuxWindowSnapshot;
-pub(crate) use target::{SessionName, TargetState, WindowTarget, target_state};
+pub(crate) use target::{
+    SessionName, TargetState, WindowTarget, target_state, unaddressable_reason,
+};
 
 const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
@@ -262,7 +264,7 @@ pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str
     run(["set-option", "-w", "-t", &target, option, value])
 }
 
-fn current_session_name() -> Result<Option<String>> {
+pub(crate) fn current_session_name() -> Result<Option<String>> {
     let output =
         output(["display-message", "-p", "#S"]).context("failed to query current tmux session")?;
     if !output.status.success() {
@@ -275,7 +277,7 @@ fn current_session_name() -> Result<Option<String>> {
 pub(crate) fn has_session(name: &str) -> bool {
     matches!(
         Command::new("tmux")
-            .args(["has-session", "-t", name])
+            .args(["has-session", "-t", &exact_target(name)])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -341,14 +343,113 @@ fn foreground_new_session_args(
 }
 
 fn foreground_attach_session_args(session: &SessionName) -> Vec<OsString> {
-    ["attach-session", "-t", session.as_str()]
+    ["attach-session", "-t", &exact_target(session.as_str())]
         .map(OsString::from)
         .to_vec()
+}
+
+/// tmux resolves a bare `-t` name exact, then by glob, then by prefix, so
+/// `-t pla` happily attaches to `plain`. `=` pins it to an exact match.
+fn exact_target(name: &str) -> String {
+    format!("={name}")
+}
+
+/// Sessions running a Niles manager window, newest tmux ordering preserved.
+/// A missing tmux server is "nothing is running", not a failure.
+pub(crate) fn live_manager_sessions(window: &str) -> Result<Vec<String>> {
+    let output = output([
+        "list-windows",
+        "-a",
+        "-F",
+        "#{session_name}\t#{window_name}",
+    ])
+    .context("failed to list tmux windows across sessions")?;
+    if !output.status.success() {
+        return if no_server_running(&output.stderr) {
+            Ok(Vec::new())
+        } else {
+            bail!(
+                "tmux list-windows across sessions failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+        };
+    }
+
+    Ok(parse_manager_sessions(&output.stdout, window))
+}
+
+fn no_server_running(stderr: &[u8]) -> bool {
+    let stderr = String::from_utf8_lossy(stderr);
+    stderr.contains("no server running") || stderr.contains("error connecting")
+}
+
+fn parse_manager_sessions(stdout: &[u8], window: &str) -> Vec<String> {
+    let mut sessions = Vec::new();
+    for line in String::from_utf8_lossy(stdout).lines() {
+        // A session name may itself contain a tab, so split from the right:
+        // the window name is the last field.
+        let Some((session, window_name)) = line.rsplit_once('\t') else {
+            continue;
+        };
+        if window_name == window && !sessions.iter().any(|seen| seen == session) {
+            sessions.push(session.to_owned());
+        }
+    }
+    sessions
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_sessions_dedup_and_ignore_other_windows() {
+        let stdout =
+            b"niles\tniles-manager\nniles\tniles-impl\naquila\tniles-manager\nother\tvim\n";
+
+        assert_eq!(
+            parse_manager_sessions(stdout, "niles-manager"),
+            ["niles", "aquila"]
+        );
+    }
+
+    #[test]
+    fn manager_sessions_split_from_the_right_so_tabbed_names_survive() {
+        // The window name is the last field; a tab in the session name must not
+        // steal it and silently drop the session.
+        let stdout = b"od\td\tniles-manager\n";
+
+        assert_eq!(parse_manager_sessions(stdout, "niles-manager"), ["od\td"]);
+    }
+
+    #[test]
+    fn manager_sessions_are_empty_when_nothing_matches() {
+        assert!(parse_manager_sessions(b"other\tvim\n", "niles-manager").is_empty());
+        assert!(parse_manager_sessions(b"", "niles-manager").is_empty());
+    }
+
+    #[test]
+    fn no_server_running_recognizes_both_tmux_wordings() {
+        assert!(no_server_running(
+            b"no server running on /tmp/tmux-501/default"
+        ));
+        assert!(no_server_running(
+            b"error connecting to /tmp/tmux-501/default (No such file or directory)"
+        ));
+        assert!(!no_server_running(b"can't find session: nope"));
+    }
+
+    #[test]
+    fn attach_and_has_session_pin_the_target_to_an_exact_match() {
+        // Without `=`, tmux resolves `-t pla` to a session named `plain`.
+        let session = SessionName::new("niles").unwrap();
+
+        assert_eq!(
+            foreground_attach_session_args(&session),
+            ["attach-session", "-t", "=niles"].map(OsString::from)
+        );
+        assert_eq!(exact_target("pla"), "=pla");
+    }
 
     #[test]
     fn collect_args_owns_argument_strings() {
@@ -463,7 +564,7 @@ mod tests {
         let session = SessionName::new("niles").unwrap();
         assert_eq!(
             foreground_attach_session_args(&session),
-            ["attach-session", "-t", "niles"].map(OsString::from)
+            ["attach-session", "-t", "=niles"].map(OsString::from)
         );
     }
 }

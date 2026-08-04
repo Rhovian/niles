@@ -26,9 +26,13 @@ pub use brief::SessionMeta;
 pub(crate) use brief::read_latest_session as read_latest_manager_session;
 pub(crate) use workspace_session::resolve_workspace_tmux_session;
 
-pub fn run(manager: Option<String>) -> Result<()> {
+pub fn run(manager: Option<String>, session: Option<String>) -> Result<()> {
     let workspace = current_dir_utf8()?;
-    if !ensure_tmux_session(env::var_os("TMUX").as_deref(), &workspace)? {
+    if !ensure_tmux_session(
+        env::var_os("TMUX").as_deref(),
+        &workspace,
+        session.as_deref(),
+    )? {
         return Ok(());
     }
 
@@ -43,9 +47,13 @@ pub fn run(manager: Option<String>) -> Result<()> {
     dashboard::run(&workspace)
 }
 
-pub fn launch_foreground(manager: Option<String>) -> Result<()> {
+pub fn launch_foreground(manager: Option<String>, session: Option<String>) -> Result<()> {
     let workspace = current_dir_utf8()?;
-    if !ensure_tmux_session(env::var_os("TMUX").as_deref(), &workspace)? {
+    if !ensure_tmux_session(
+        env::var_os("TMUX").as_deref(),
+        &workspace,
+        session.as_deref(),
+    )? {
         return Ok(());
     }
 
