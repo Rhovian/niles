@@ -19,7 +19,7 @@ mod workspace_manifest;
 
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
 
 use crate::cli::{BareSessionMode, Cli, CommandName};
@@ -39,14 +39,18 @@ fn run() -> Result<ExitCode> {
 
     if let Some(mode) = cli.bare_session_mode() {
         match mode {
-            BareSessionMode::Resident => session::run(cli.manager)?,
-            BareSessionMode::Foreground => session::launch_foreground(cli.manager)?,
+            BareSessionMode::Resident => session::run(cli.manager, cli.session)?,
+            BareSessionMode::Foreground => session::launch_foreground(cli.manager, cli.session)?,
         }
         return Ok(ExitCode::SUCCESS);
     }
 
+    if cli.session.is_some() {
+        bail!("`--session` configures the tmux session for bare `niles` and has no effect here");
+    }
+
     match cli.command {
-        None => session::run(cli.manager)?,
+        None => session::run(cli.manager, None)?,
         Some(CommandName::Analyze { agent }) => analyze::analyze(agent)?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {

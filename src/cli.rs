@@ -11,6 +11,9 @@ pub struct Cli {
     /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
     pub manager: Option<String>,
+    /// Attach to this tmux session for bare `niles`, creating it when absent.
+    #[arg(short = 's', long)]
+    pub session: Option<String>,
     /// Launch the legacy foreground manager in this tmux pane.
     #[arg(short = 'd', long = "detached", action = ArgAction::SetTrue)]
     pub detached: bool,

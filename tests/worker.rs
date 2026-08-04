@@ -274,7 +274,7 @@ printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'ambient\n'; exit 0 ;;
   has-session)
-    if [ "$3" = home ]; then exit 0; fi
+    if [ "$3" = "=home" ]; then exit 0; fi
     exit 1
     ;;
   list-windows) exit 0 ;;
@@ -319,7 +319,7 @@ esac
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(!log.contains("display-message"));
-    assert!(log.contains("has-session -t home"));
+    assert!(log.contains("has-session -t =home"));
     assert!(log.contains("new-window -d -t home: -n niles-auth-fix"));
     assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-project"));
     assert!(log.contains("set-option -w -t home:niles-auth-fix @niles-worker-id auth-fix"));

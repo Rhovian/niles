@@ -15,10 +15,39 @@ impl SessionName {
         Ok(Self(value))
     }
 
+    /// Build a name from user input, rejecting anything tmux cannot round-trip
+    /// through a `-t` target. `:` and `.` separate the window and pane
+    /// components of a target, so a session carrying either is unaddressable
+    /// even when tmux itself allows the name.
+    pub(crate) fn requested(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        match unaddressable_reason(&value) {
+            Some(reason) => bail!("invalid tmux session name `{value}`: {reason}"),
+            None => Ok(Self(value)),
+        }
+    }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
+
+/// Why `name` cannot be used as a tmux `-t` target, if it cannot.
+pub(crate) fn unaddressable_reason(name: &str) -> Option<&'static str> {
+    if name.trim().is_empty() {
+        Some("name cannot be empty")
+    } else if name.len() > MAX_SESSION_NAME_BYTES {
+        Some("name is too long")
+    } else if name.contains(':') || name.contains('.') {
+        Some("tmux reads `:` and `.` as target separators; rename the session")
+    } else if name.chars().any(char::is_control) {
+        Some("name cannot contain control characters")
+    } else {
+        None
+    }
+}
+
+const MAX_SESSION_NAME_BYTES: usize = 256;
 
 impl fmt::Display for SessionName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -296,6 +325,39 @@ enum RecordedWindowState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requested_session_names_reject_tmux_target_separators() {
+        // tmux accepts these as names but reads them as session:window.pane in
+        // a target, so `-t my.proj` fails with "can't find pane: proj".
+        for name in ["my.proj", "10:30-debug"] {
+            let err = SessionName::requested(name).unwrap_err().to_string();
+            assert!(err.contains("target separators"), "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn requested_session_names_reject_empty_control_and_overlong() {
+        assert!(SessionName::requested("").is_err());
+        assert!(SessionName::requested("   ").is_err());
+        assert!(SessionName::requested("a\u{1b}[31mX").is_err());
+        assert!(SessionName::requested("a\nb").is_err());
+        assert!(SessionName::requested("x".repeat(MAX_SESSION_NAME_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn requested_session_names_accept_ordinary_names() {
+        for name in ["niles", "aquila", "niles-2", "my_proj", "-dash"] {
+            assert_eq!(SessionName::requested(name).unwrap().as_str(), name);
+        }
+    }
+
+    #[test]
+    fn recorded_session_names_stay_permissive() {
+        // Workers already running inside a dotted session recorded that name;
+        // tightening `new` would strand them.
+        assert!(SessionName::new("my.proj").is_ok());
+    }
 
     #[test]
     fn parses_valid_window_target() {
