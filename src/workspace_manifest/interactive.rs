@@ -11,7 +11,11 @@ use crate::{
     config::spec::{AgentConfig, load_project_config_from},
 };
 
-use super::{WorkspaceManifest, load, manifest_path, save};
+use super::{
+    WorkspaceManifest, load, manifest_path,
+    roles_table::{display_note, print_manifest_roles},
+    save,
+};
 
 pub fn ensure_interactive(
     root: &Utf8Path,
@@ -105,6 +109,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
     manifest: &mut WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<()> {
+    print_manifest_roles(output, manifest, agent_configs)?;
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
@@ -114,6 +119,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
         *manifest = prompt_manifest_values(root, input, output, manager, manifest, agent_configs)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
+        print_manifest_roles(output, manifest, agent_configs)?;
     }
 
     Ok(())
@@ -187,7 +193,7 @@ fn prompt_value<R: BufRead, W: Write>(
     default: &str,
 ) -> Result<String> {
     loop {
-        write!(output, "{label} [{default}]: ")?;
+        write!(output, "{label} [{}]: ", display_note(default))?;
         output.flush()?;
 
         let mut line = String::new();
@@ -215,6 +221,43 @@ mod tests {
     use std::{fs, io::Cursor};
 
     use super::super::{io::manifest_path, test_support::temp_test_path};
+
+    #[test]
+    fn manifest_roles_are_printed_before_change_prompt() -> Result<()> {
+        let root = temp_test_path("roles-table-before-prompt");
+        let path = manifest_path(&root);
+        let mut manifest = WorkspaceManifest {
+            manager: "codex:gpt-5.5:xhigh".to_owned(),
+            planner: "claude:opus:high".to_owned(),
+            worker: "codex".to_owned(),
+            reviewer: "claude:opus:max".to_owned(),
+            validation_command: "cargo test".to_owned(),
+            flow: super::super::initial_flow(),
+        };
+        let mut input = Cursor::new(b"n\n".to_vec());
+        let mut output = Vec::new();
+
+        maybe_update_manifest_roles(
+            &root,
+            &mut input,
+            &mut output,
+            &path,
+            &mut manifest,
+            &BTreeMap::new(),
+        )?;
+
+        assert_eq!(
+            String::from_utf8(output)?,
+            "\
+manager     codex   gpt-5.5  xhigh
+planner     claude  opus     high
+worker      codex   -        -
+reviewer    claude  opus     max
+validation  cargo test
+Change any manifest roles? [y/N]: "
+        );
+        Ok(())
+    }
 
     #[test]
     fn existing_workspace_manifest_errors_when_stdin_is_not_interactive() {
