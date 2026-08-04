@@ -7,10 +7,13 @@ use crate::{agents, config::spec::AgentConfig};
 
 use super::WorkspaceManifest;
 
-const MAX_FAMILY_WIDTH: usize = 22;
+const MAX_TABLE_WIDTH: usize = 80;
+const MAX_FAMILY_WIDTH: usize = 30;
 const MAX_MODEL_WIDTH: usize = 28;
 const MAX_TABLE_NOTE_WIDTH: usize = 68;
 const MISSING_SPEC_PART: &str = "-";
+const INVALID_NOTE: &str = "invalid";
+const INVALID_REASON_LABEL: &str = "reason: ";
 const TRUNCATION_MARKER: &str = "...";
 const VALIDATION_ROLE: &str = "validation";
 
@@ -39,16 +42,11 @@ pub(super) fn print_manifest_roles<W: Write>(
     );
 
     for row in &rows {
-        write_padded(output, row.role, widths.role)?;
-        write!(output, "  ")?;
-        write_padded(output, &row.family, widths.family)?;
-        write!(output, "  ")?;
-        write_padded(output, &row.model, widths.model)?;
-        write!(output, "  {}", row.effort)?;
-        if let Some(note) = &row.note {
-            write!(output, "  {note}")?;
+        if let Some(invalid_reason) = &row.invalid_reason {
+            write_invalid_row(output, row, &widths, invalid_reason)?;
+        } else {
+            write_valid_row(output, row, &widths)?;
         }
-        writeln!(output)?;
     }
     write_padded(output, VALIDATION_ROLE, widths.role)?;
     writeln!(output, "  {}", display_note(&manifest.validation_command))?;
@@ -75,7 +73,7 @@ fn manifest_role_row(
         family: display_family(spec.family()),
         model: display_spec_part(spec.model()),
         effort: display_spec_part(spec.effort()),
-        note: None,
+        invalid_reason: None,
     }
 }
 
@@ -86,14 +84,70 @@ fn display_spec_part(value: Option<&str>) -> String {
     }
 }
 
-fn invalid_manifest_role_row(role: &'static str, value: &str, _error: &str) -> ManifestRoleRow {
+fn invalid_manifest_role_row(role: &'static str, value: &str, error: &str) -> ManifestRoleRow {
     ManifestRoleRow {
         role,
         family: display_family(value),
         model: MISSING_SPEC_PART.to_owned(),
         effort: MISSING_SPEC_PART.to_owned(),
-        note: Some("invalid".to_owned()),
+        invalid_reason: Some(error.to_owned()),
     }
+}
+
+fn write_valid_row<W: Write>(
+    output: &mut W,
+    row: &ManifestRoleRow,
+    widths: &TableWidths,
+) -> Result<()> {
+    write_padded(output, row.role, widths.role)?;
+    write!(output, "  ")?;
+    write_padded(output, &row.family, widths.family)?;
+    write!(output, "  ")?;
+    write_padded(output, &row.model, widths.model)?;
+    writeln!(output, "  {}", row.effort)?;
+    Ok(())
+}
+
+fn write_invalid_row<W: Write>(
+    output: &mut W,
+    row: &ManifestRoleRow,
+    widths: &TableWidths,
+    invalid_reason: &str,
+) -> Result<()> {
+    let model_width = invalid_row_model_width(row, widths);
+    write_padded(output, row.role, widths.role)?;
+    write!(output, "  ")?;
+    write_padded(output, &row.family, widths.family)?;
+    write!(output, "  ")?;
+    write_padded(output, &row.model, model_width)?;
+    writeln!(output, "  {}  {INVALID_NOTE}", row.effort)?;
+    write_padded(output, "", widths.role)?;
+    writeln!(
+        output,
+        "  {INVALID_REASON_LABEL}{}",
+        display_invalid_reason(invalid_reason, widths)
+    )?;
+    Ok(())
+}
+
+fn invalid_row_model_width(row: &ManifestRoleRow, widths: &TableWidths) -> usize {
+    if invalid_row_width(row, widths, widths.model) <= MAX_TABLE_WIDTH {
+        return widths.model;
+    }
+
+    display_width(&row.model)
+}
+
+fn invalid_row_width(row: &ManifestRoleRow, widths: &TableWidths, model_width: usize) -> usize {
+    widths.role
+        + display_width("  ")
+        + widths.family
+        + display_width("  ")
+        + model_width
+        + display_width("  ")
+        + display_width(&row.effort)
+        + display_width("  ")
+        + display_width(INVALID_NOTE)
 }
 
 fn write_padded<W: Write>(output: &mut W, value: &str, width: usize) -> Result<()> {
@@ -114,6 +168,12 @@ fn display_model(value: &str) -> String {
 
 pub(super) fn display_note(value: &str) -> String {
     display_value(value, MAX_TABLE_NOTE_WIDTH, MAX_TABLE_NOTE_WIDTH)
+}
+
+fn display_invalid_reason(value: &str, widths: &TableWidths) -> String {
+    let max_width = MAX_TABLE_WIDTH
+        .saturating_sub(widths.role + display_width("  ") + display_width(INVALID_REASON_LABEL));
+    display_value(value, max_width, max_width)
 }
 
 fn display_value(value: &str, max_width: usize, max_chars: usize) -> String {
@@ -202,7 +262,7 @@ struct ManifestRoleRow {
     family: String,
     model: String,
     effort: String,
-    note: Option<String>,
+    invalid_reason: Option<String>,
 }
 
 struct TableWidths {
@@ -235,12 +295,38 @@ mod tests {
             String::from_utf8(output)?,
             "\
 manager     codex::xhigh  -      -  invalid
+            reason: invalid agent spec `codex::xhigh`; family, model, and eff...
 planner     ghost         -      -  invalid
+            reason: unknown agent `ghost`; configure it in niles.yaml or choo...
 worker      codex         -      -
 reviewer    claude        haiku  -
 validation  cargo clippy --all-targets -- -D warnings
 "
         );
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_roles_do_not_truncate_thirty_column_custom_agents() -> Result<()> {
+        let custom_agent = "custom-agent-name-123456789012";
+        assert_eq!(display_width(custom_agent), MAX_FAMILY_WIDTH);
+        let mut agent_configs = BTreeMap::new();
+        agent_configs.insert(custom_agent.to_owned(), agent_config());
+        let manifest = WorkspaceManifest {
+            manager: "codex".to_owned(),
+            planner: custom_agent.to_owned(),
+            worker: "codex".to_owned(),
+            reviewer: "claude".to_owned(),
+            validation_command: "cargo test".to_owned(),
+            flow: super::super::initial_flow(),
+        };
+        let mut output = Vec::new();
+
+        print_manifest_roles(&mut output, &manifest, &agent_configs)?;
+
+        let output = String::from_utf8(output)?;
+        assert!(output.contains(custom_agent));
+        assert!(!output.contains(TRUNCATION_MARKER));
         Ok(())
     }
 
