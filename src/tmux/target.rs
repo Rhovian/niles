@@ -86,9 +86,24 @@ impl WindowTarget {
         &self.window
     }
 
+    /// The stored, human-readable form. This is what lands in worker metadata
+    /// and what `parse` round-trips, so it must stay free of target syntax.
     pub(crate) fn render(&self) -> String {
         format!("{}:{}", self.session, self.window)
     }
+
+    /// The form to hand tmux after `-t`. See [`exact`].
+    pub(crate) fn target_arg(&self) -> String {
+        format!("{}:{}", exact(self.session.as_str()), exact(&self.window))
+    }
+}
+
+/// tmux resolves a `-t` component exact, then by glob, then by *prefix*, and
+/// it does so independently for the session and window halves. Unanchored,
+/// `-t niles:niles-auth` reaches `niles-auth-fix` once `niles-auth` is gone —
+/// exit 0, wrong window, no warning. `=` pins the component to an exact match.
+pub(crate) fn exact(name: &str) -> String {
+    format!("={name}")
 }
 
 impl fmt::Display for WindowTarget {
@@ -145,7 +160,7 @@ fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
     let output = match super::output([
         "list-windows",
         "-t",
-        recorded.session().as_str(),
+        &exact(recorded.session().as_str()),
         "-F",
         "#{window_name}",
     ]) {
@@ -357,6 +372,28 @@ mod tests {
         // Workers already running inside a dotted session recorded that name;
         // tightening `new` would strand them.
         assert!(SessionName::new("my.proj").is_ok());
+    }
+
+    #[test]
+    fn target_arg_anchors_both_components() {
+        // Unanchored, tmux resolves `-t niles:niles-auth` to `niles-auth-fix`
+        // once `niles-auth` is gone: exit 0, wrong window, no warning.
+        let target = WindowTarget::parse("niles:niles-auth").unwrap();
+
+        assert_eq!(target.target_arg(), "=niles:=niles-auth");
+    }
+
+    #[test]
+    fn the_stored_form_stays_free_of_target_syntax() {
+        // `render` lands in worker metadata and must round-trip through
+        // `parse`; anchoring it would corrupt every recorded worker.
+        let target = WindowTarget::parse("niles:niles-auth").unwrap();
+
+        assert_eq!(target.render(), "niles:niles-auth");
+        assert_eq!(
+            WindowTarget::parse(&target.render()).unwrap().render(),
+            "niles:niles-auth"
+        );
     }
 
     #[test]
