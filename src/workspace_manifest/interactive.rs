@@ -7,11 +7,15 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
-    agents::{self, picker},
+    agents::picker,
     config::spec::{AgentConfig, load_project_config_from},
 };
 
-use super::{WorkspaceManifest, load, manifest_path, save};
+use super::{
+    WorkspaceManifest, load, manifest_path,
+    roles_table::{display_note, print_manifest_roles},
+    save,
+};
 
 pub fn ensure_interactive(
     root: &Utf8Path,
@@ -93,7 +97,6 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     let manifest = prompt_manifest_values(root, input, output, manager, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
-    print_manifest_roles(output, &manifest)?;
 
     Ok(manifest)
 }
@@ -106,7 +109,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
     manifest: &mut WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<()> {
-    print_manifest_roles(output, manifest)?;
+    print_manifest_roles(output, manifest, agent_configs)?;
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
@@ -116,85 +119,11 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
         *manifest = prompt_manifest_values(root, input, output, manager, manifest, agent_configs)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
-        print_manifest_roles(output, manifest)?;
+        print_manifest_roles(output, manifest, agent_configs)?;
     }
 
     Ok(())
 }
-
-fn print_manifest_roles<W: Write>(output: &mut W, manifest: &WorkspaceManifest) -> Result<()> {
-    let rows = [
-        manifest_role_row("manager", &manifest.manager),
-        manifest_role_row("planner", &manifest.planner),
-        manifest_role_row("worker", &manifest.worker),
-        manifest_role_row("reviewer", &manifest.reviewer),
-    ];
-    let role_width = rows
-        .iter()
-        .map(|row| row.role.len())
-        .chain([VALIDATION_ROLE.len()])
-        .max()
-        .context("manifest roles table has no role labels")?;
-    let family_width = rows
-        .iter()
-        .map(|row| row.family.len())
-        .max()
-        .context("manifest roles table has no family values")?;
-    let model_width = rows
-        .iter()
-        .map(|row| row.model.len())
-        .max()
-        .context("manifest roles table has no model values")?;
-
-    for row in rows {
-        writeln!(
-            output,
-            "{:<role_width$}  {:<family_width$}  {:<model_width$}  {}",
-            row.role, row.family, row.model, row.effort
-        )?;
-    }
-    writeln!(
-        output,
-        "{:<role_width$}  {}",
-        VALIDATION_ROLE, manifest.validation_command
-    )?;
-
-    Ok(())
-}
-
-fn manifest_role_row(role: &'static str, value: &str) -> ManifestRoleRow {
-    match agents::parse_spec(value) {
-        Ok(spec) => ManifestRoleRow {
-            role,
-            family: spec.family().to_owned(),
-            model: display_spec_part(spec.model()),
-            effort: display_spec_part(spec.effort()),
-        },
-        Err(_) => ManifestRoleRow {
-            role,
-            family: format!("{value:?}"),
-            model: MISSING_SPEC_PART.to_owned(),
-            effort: MISSING_SPEC_PART.to_owned(),
-        },
-    }
-}
-
-fn display_spec_part(value: Option<&str>) -> String {
-    match value {
-        Some(value) => value.to_owned(),
-        None => MISSING_SPEC_PART.to_owned(),
-    }
-}
-
-struct ManifestRoleRow {
-    role: &'static str,
-    family: String,
-    model: String,
-    effort: String,
-}
-
-const MISSING_SPEC_PART: &str = "-";
-const VALIDATION_ROLE: &str = "validation";
 
 fn prompt_manifest_values<R: BufRead, W: Write>(
     root: &Utf8Path,
@@ -264,7 +193,7 @@ fn prompt_value<R: BufRead, W: Write>(
     default: &str,
 ) -> Result<String> {
     loop {
-        write!(output, "{label} [{default}]: ")?;
+        write!(output, "{label} [{}]: ", display_note(default))?;
         output.flush()?;
 
         let mut line = String::new();
@@ -326,33 +255,6 @@ worker      codex   -        -
 reviewer    claude  opus     max
 validation  cargo test
 Change any manifest roles? [y/N]: "
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn manifest_roles_quote_unparseable_specs_without_failing() -> Result<()> {
-        let manifest = WorkspaceManifest {
-            manager: "codex::xhigh".to_owned(),
-            planner: "custom:model:high".to_owned(),
-            worker: "codex".to_owned(),
-            reviewer: "claude:haiku".to_owned(),
-            validation_command: "cargo clippy --all-targets -- -D warnings".to_owned(),
-            flow: super::super::initial_flow(),
-        };
-        let mut output = Vec::new();
-
-        print_manifest_roles(&mut output, &manifest)?;
-
-        assert_eq!(
-            String::from_utf8(output)?,
-            "\
-manager     \"codex::xhigh\"       -      -
-planner     \"custom:model:high\"  -      -
-worker      codex                -      -
-reviewer    claude               haiku  -
-validation  cargo clippy --all-targets -- -D warnings
-"
         );
         Ok(())
     }
