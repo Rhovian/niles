@@ -3,18 +3,11 @@ use camino::Utf8PathBuf;
 
 use crate::{store, wake};
 
-use super::{
-    meta::{metadata_status_path, read_meta_if_exists},
-    validation::validate_id,
-};
+use super::{meta::read_meta_if_exists, validation::validate_id};
 
 pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
     validate_id(id)?;
-    let worker_dir = resolve_worker(id)?;
-    if let Some(meta) = read_meta_if_exists(&worker_dir)? {
-        return Ok(metadata_status_path(&meta, &worker_dir));
-    }
-    Ok(wake::status_log_path(&worker_dir))
+    Ok(wake::status_log_path(&resolve_worker(id)?))
 }
 
 pub(super) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {

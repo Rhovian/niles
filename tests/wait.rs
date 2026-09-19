@@ -5,537 +5,436 @@ use std::{
     fs,
     io::Write,
     path::Path,
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
-#[test]
-fn wait_worker_returns_unconsumed_wake_already_in_status() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-preexisting");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
+/// Starts a wait and returns the child. Callers that need the wait to already be polling before
+/// they perturb the worker use [`settle`] — with the waiter-registration file gone there is no
+/// artifact to synchronise on, and the wait has nothing to race against anyway.
+fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_niles"))
+        .arg("wait")
+        .args(args)
+        .current_dir(workspace)
+        .env("NILES_HOME", niles_home(workspace))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn run_wait(workspace: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_niles"))
+        .arg("wait")
+        .args(args)
+        .current_dir(workspace)
+        .env("NILES_HOME", niles_home(workspace))
+        .output()
+        .unwrap()
+}
+
+fn settle() {
+    thread::sleep(Duration::from_millis(300));
+}
+
+fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
+    let worker_dir = workspace.join(".niles/worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
-    let status_log = worker_dir.join("status.log");
-    fs::write(&status_log, "done: already complete\n").unwrap();
+    fs::write(worker_dir.join("status.log"), status).unwrap();
+    worker_dir
+}
+
+fn cursor(worker_dir: &Path) -> String {
+    fs::read_to_string(worker_dir.join("status.cursor")).unwrap()
+}
+
+fn stdout_of(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr_of(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn returns_unconsumed_wake_already_in_status() {
+    let workspace = temp_workspace("niles-wait-preexisting");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: already complete\n");
 
     let started = Instant::now();
-    let output = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
 
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        stdout_of(&output),
+        stderr_of(&output)
     );
     assert_command_success("wait --worker preexisting", &output);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "done: already complete\n"
-    );
-    assert_eq!(
-        fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
-        "1\n"
-    );
+    assert_eq!(stdout_of(&output), "done: already complete\n");
+    // The cursor is a byte offset just past the delivered line, here the whole file.
+    assert_eq!(cursor(&worker_dir), "23\n");
 }
 
 #[test]
-fn wait_worker_does_not_redeliver_consumed_wake_and_delivers_next() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-ack");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let status_log = worker_dir.join("status.log");
-    fs::write(&status_log, "done: first\n").unwrap();
+fn does_not_redeliver_consumed_wake_and_delivers_next() {
+    let workspace = temp_workspace("niles-wait-cursor");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
+    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"];
 
-    let first = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert_command_success("first wait --worker", &first);
-    assert_eq!(String::from_utf8_lossy(&first.stdout), "done: first\n");
+    let first = run_wait(&workspace, &args);
+    assert_command_success("first wait", &first);
+    assert_eq!(stdout_of(&first), "done: first\n");
+    assert_eq!(cursor(&worker_dir), "12\n");
 
-    let second = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
+    let second = run_wait(&workspace, &args);
     assert!(!second.status.success());
-    assert!(String::from_utf8_lossy(&second.stdout).is_empty());
-    assert!(String::from_utf8_lossy(&second.stderr).contains("timeout"));
+    assert_eq!(second.status.code(), Some(22));
+    assert!(stdout_of(&second).is_empty());
+    assert!(stderr_of(&second).contains("timeout"));
 
     let mut status = fs::OpenOptions::new()
         .append(true)
-        .open(&status_log)
+        .open(worker_dir.join("status.log"))
         .unwrap();
     writeln!(status, "done: second").unwrap();
 
-    let third = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert_command_success("third wait --worker", &third);
-    assert_eq!(String::from_utf8_lossy(&third.stdout), "done: second\n");
-    assert_eq!(
-        fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
-        "2\n"
-    );
+    let third = run_wait(&workspace, &args);
+    assert_command_success("third wait", &third);
+    assert_eq!(stdout_of(&third), "done: second\n");
+    assert_eq!(cursor(&worker_dir), "25\n");
 }
 
 #[test]
-fn wait_worker_second_sequential_wait_returns_followup_wake() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-followup");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let status_log = worker_dir.join("status.log");
-    fs::write(&status_log, "done: first result\n").unwrap();
-
-    let first = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert_command_success("first sequential wait --worker", &first);
-    assert_eq!(
-        String::from_utf8_lossy(&first.stdout),
-        "done: first result\n"
+fn skips_non_actionable_lines_without_persisting_past_an_undelivered_wake() {
+    let workspace = temp_workspace("niles-wait-working");
+    let worker_dir = worker_with_status(
+        &workspace,
+        "auth-fix",
+        b"working: one\nworking: two\nneeds-decision: pick a lane\nworking: three\n",
     );
 
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(&status_log)
-        .unwrap();
-    writeln!(status, "done: follow-up result").unwrap();
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
 
-    let second = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-    assert_command_success("second sequential wait --worker", &second);
-    assert_eq!(
-        String::from_utf8_lossy(&second.stdout),
-        "done: follow-up result\n"
-    );
-    assert!(!worker_dir.join("status.waiter").exists());
-    assert_eq!(
-        fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
-        "2\n"
-    );
+    assert_command_success("wait past working lines", &output);
+    assert_eq!(stdout_of(&output), "needs-decision: pick a lane\n");
+    // Stops just past the decision line, not at EOF: the trailing `working:` stays unscanned.
+    assert_eq!(cursor(&worker_dir), "54\n");
 }
 
 #[test]
-fn wait_worker_rejects_second_unindexed_wait_while_first_is_attached() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-duplicate");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let status_log = worker_dir.join("status.log");
-    fs::write(&status_log, "working: first waiter is attached\n").unwrap();
+fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
+    let workspace = temp_workspace("niles-wait-partial");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: comp");
 
-    let first = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
-        .current_dir(&workspace)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    wait_for_path(&worker_dir.join("status.waiter"));
-
-    let second = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-
-    assert!(!second.status.success());
-    assert_eq!(second.status.code(), Some(21));
-    assert!(String::from_utf8_lossy(&second.stdout).is_empty());
-    let second_stderr = String::from_utf8_lossy(&second.stderr);
-    assert!(second_stderr.starts_with("wait: waiter-conflict"));
-    assert!(second_stderr.contains("holder_pid="));
-    assert!(second_stderr.contains("heartbeat=fresh"));
-    assert!(second_stderr.contains("status.waiter"));
-
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(&status_log)
-        .unwrap();
-    writeln!(status, "done: first waiter wake").unwrap();
-
-    let first = first.wait_with_output().unwrap();
-    assert_command_success("first wait --worker duplicate", &first);
-    assert_eq!(
-        String::from_utf8_lossy(&first.stdout),
-        "done: first waiter wake\n"
+    let partial = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
-    assert!(!worker_dir.join("status.waiter").exists());
-
-    let ack_log = fs::read_to_string(worker_dir.join("status.ack.log")).unwrap();
-    assert!(ack_log.contains(r#""event":"wake-consumed""#));
-    assert!(ack_log.contains(r#""line":"done: first waiter wake""#));
-    assert!(ack_log.contains(r#""pid":"#));
-}
-
-#[test]
-fn wait_worker_bails_when_guard_is_removed_mid_wait() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-guard-removed");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "working: waiting\n").unwrap();
-
-    let waiter = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
-        .current_dir(&workspace)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let guard = worker_dir.join("status.waiter");
-    wait_for_path(&guard);
-    fs::remove_file(&guard).unwrap();
-
-    let output = waiter.wait_with_output().unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("waiter registration was removed/replaced while waiting"));
-    assert!(!stderr.contains("timeout"));
-}
-
-#[test]
-fn wait_worker_reclaims_dead_waiter_registration() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-dead-guard");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "done: after stale waiter\n").unwrap();
-    write_waiter_registration(&worker_dir, i32::MAX as u32, "stale-token");
-
-    let output = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-
-    assert_command_success("wait --worker dead waiter reclaim", &output);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "done: after stale waiter\n"
-    );
-    assert!(!worker_dir.join("status.waiter").exists());
-
-    let ack_log = fs::read_to_string(worker_dir.join("status.ack.log")).unwrap();
-    assert!(ack_log.contains(r#""event":"stale-waiter-reclaimed""#));
-    assert!(ack_log.contains(r#""pid":2147483647"#));
-    assert!(ack_log.contains(r#""token":"stale-token""#));
-    assert!(ack_log.contains(r#""event":"wake-consumed""#));
-}
-
-#[test]
-fn wait_worker_cleans_guard_on_timeout() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-timeout-cleanup");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "working: no wake yet\n").unwrap();
-
-    let output = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    assert_eq!(output.status.code(), Some(22));
-    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).starts_with("wait: timeout"));
-    assert!(!worker_dir.join("status.waiter").exists());
-}
-
-#[test]
-fn wait_worker_takeover_replaces_abandoned_live_waiter() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-takeover");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    let status_log = worker_dir.join("status.log");
-    fs::write(&status_log, "working: first waiter is attached\n").unwrap();
-
-    let first = Command::new("sh")
-        .arg("-c")
-        .arg(
-            r#""$NILES_BIN" wait --worker auth-fix --interval 0.05 --timeout 5 &
-child=$!
-wait "$child"
-"#,
-        )
-        .current_dir(&workspace)
-        .env("NILES_BIN", niles)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let guard = worker_dir.join("status.waiter");
-    wait_for_path(&guard);
-    let first_token = waiter_token(&guard);
-
-    let second = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-            "--takeover",
-        ])
-        .current_dir(&workspace)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let replacement_token = wait_for_waiter_token_change(&guard, &first_token);
-    assert_ne!(replacement_token, first_token);
-
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(&status_log)
-        .unwrap();
-    writeln!(status, "done: takeover wake").unwrap();
-
-    let second = second.wait_with_output().unwrap();
-    assert_command_success("takeover wait --worker", &second);
-    assert_eq!(
-        String::from_utf8_lossy(&second.stdout),
-        "done: takeover wake\n"
-    );
-    assert!(String::from_utf8_lossy(&second.stderr).is_empty());
-
-    let first = first.wait_with_output().unwrap();
+    assert_eq!(partial.status.code(), Some(22));
+    // The cursor file exists because it doubles as the lock, but holds no advanced position.
+    let recorded = cursor(&worker_dir);
     assert!(
-        !first.status.success(),
-        "first stdout:\n{}\nfirst stderr:\n{}",
-        String::from_utf8_lossy(&first.stdout),
-        String::from_utf8_lossy(&first.stderr)
+        recorded.trim().is_empty() || recorded.trim() == "0",
+        "a half-written line must not advance the cursor, found {recorded:?}"
     );
 
-    assert!(!guard.exists());
-    let ack_log = fs::read_to_string(worker_dir.join("status.ack.log")).unwrap();
-    assert!(ack_log.contains(r#""event":"waiter-takeover-requested""#));
-    assert!(ack_log.contains(r#""event":"waiter-taken-over""#));
-    assert!(ack_log.contains(r#""event":"wake-consumed""#));
-    assert!(ack_log.contains(r#""line":"done: takeover wake""#));
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(worker_dir.join("status.log"))
+        .unwrap();
+    status.write_all(b"lete\n").unwrap();
+
+    let whole = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+    assert_command_success("wait after line completed", &whole);
+    assert_eq!(stdout_of(&whole), "done: complete\n");
 }
 
 #[test]
-fn wait_worker_corrupt_ack_fails_loudly() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-corrupt-ack");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "done: after corrupt ack\n").unwrap();
-    fs::write(worker_dir.join("status.ack"), "not a number\n").unwrap();
+fn escapes_control_characters_instead_of_emitting_them() {
+    let workspace = temp_workspace("niles-wait-control");
+    worker_with_status(
+        &workspace,
+        "auth-fix",
+        b"done: shipped\x1b[2J\x1b[H\x07 and cleared your screen\n",
+    );
 
-    let output = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .output()
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert_command_success("wait with control characters", &output);
+    let stdout = stdout_of(&output);
+    assert!(!stdout.contains('\x1b'), "raw escape reached stdout: {stdout:?}");
+    assert!(!stdout.contains('\x07'), "raw bell reached stdout: {stdout:?}");
+    assert!(stdout.contains("shipped"));
+    assert!(stdout.contains("and cleared your screen"));
+}
+
+#[test]
+fn non_utf8_bytes_do_not_desynchronise_the_cursor() {
+    let workspace = temp_workspace("niles-wait-binary");
+    let mut status = b"working: \xff\xfe garbage\n".to_vec();
+    status.extend_from_slice(b"done: recovered\n");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", &status);
+    let total = fs::metadata(worker_dir.join("status.log")).unwrap().len();
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert_command_success("wait past non-utf8", &output);
+    assert_eq!(stdout_of(&output), "done: recovered\n");
+    // Offsets come from raw bytes, so lossy decoding of the garbage line cannot shift them.
+    assert_eq!(cursor(&worker_dir), format!("{total}\n"));
+}
+
+#[test]
+fn a_truncated_log_rescans_from_the_start() {
+    let workspace = temp_workspace("niles-wait-truncated");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
+    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"];
+
+    assert_command_success("first wait", &run_wait(&workspace, &args));
+    assert_eq!(cursor(&worker_dir), "12\n");
+
+    // Rewrite the log shorter than the recorded offset of 12.
+    fs::write(worker_dir.join("status.log"), b"done: new\n").unwrap();
+
+    let output = run_wait(&workspace, &args);
+    assert_command_success("wait after truncation", &output);
+    assert_eq!(stdout_of(&output), "done: new\n");
+    assert_eq!(cursor(&worker_dir), "10\n");
+}
+
+#[test]
+fn concurrent_waits_deliver_the_line_to_exactly_one() {
+    let workspace = temp_workspace("niles-wait-concurrent");
+    worker_with_status(&workspace, "auth-fix", b"working: still running\n");
+    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "5"];
+
+    let first = spawn_wait(&workspace, &args);
+    let second = spawn_wait(&workspace, &args);
+    settle();
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(workspace.join(".niles/worker/auth-fix/status.log"))
         .unwrap();
+    writeln!(status, "done: only once").unwrap();
 
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("invalid ack cursor"));
-    assert!(stderr.contains("invalid digit found in string"));
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+
+    // Neither wait is rejected for the other's existence; exactly one is handed the line.
+    let winners = [&first, &second]
+        .into_iter()
+        .filter(|output| stdout_of(output).contains("done: only once"))
+        .count();
     assert_eq!(
-        fs::read_to_string(worker_dir.join("status.ack")).unwrap(),
-        "not a number\n"
+        winners,
+        1,
+        "first: {:?}/{:?}\nsecond: {:?}/{:?}",
+        stdout_of(&first),
+        stderr_of(&first),
+        stdout_of(&second),
+        stderr_of(&second)
     );
+    let losers = [&first, &second]
+        .into_iter()
+        .filter(|output| output.status.code() == Some(22))
+        .count();
+    assert_eq!(losers, 1, "the wait that lost the race should time out");
 }
 
 #[test]
-fn wait_worker_unknown_id_errors_without_closed_backstop() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-unknown");
+fn waiting_on_several_workers_prefixes_the_winning_id() {
+    let workspace = temp_workspace("niles-wait-fleet");
+    worker_with_status(&workspace, "alpha", b"working: nothing yet\n");
+    worker_with_status(&workspace, "beta", b"done: beta finished\n");
 
-    let output = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "missing",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "0",
-        ])
-        .current_dir(&workspace)
-        .env("NILES_HOME", niles_home(&workspace))
-        .output()
-        .unwrap();
+    let output = run_wait(
+        &workspace,
+        &[
+            "--worker", "alpha", "--worker", "beta", "--interval", "0.05", "--timeout", "0",
+        ],
+    );
+
+    assert_command_success("fleet wait", &output);
+    assert_eq!(stdout_of(&output), "beta: done: beta finished\n");
+}
+
+#[test]
+fn corrupt_cursor_fails_loudly_and_names_the_file() {
+    let workspace = temp_workspace("niles-wait-corrupt");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: ready\n");
+    fs::write(worker_dir.join("status.cursor"), "not-a-number\n").unwrap();
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
 
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("invalid wake cursor"), "stderr: {stderr}");
+    // The operator has to be told which file to delete, or the worker is wedged.
+    assert!(stderr.contains("status.cursor"), "stderr: {stderr}");
+    assert!(stderr.contains("remove it to resume"), "stderr: {stderr}");
+}
+
+#[test]
+fn unknown_id_errors_without_closed_backstop() {
+    let workspace = temp_workspace("niles-wait-unknown");
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "missing", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert!(!output.status.success());
+    assert!(stdout_of(&output).is_empty());
+    let stderr = stderr_of(&output);
     assert!(stderr.contains("unknown worker id 'missing'"));
     assert!(!stderr.contains("worker 'missing' closed"));
 }
 
 #[test]
-fn wait_worker_returns_closed_backstop_when_resolved_directory_is_removed() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-wait-removed");
-    let worker_root = workspace.join(".niles/worker");
-    let worker_dir = worker_root.join("auth-fix");
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "working: still running\n").unwrap();
+fn returns_closed_backstop_when_the_directory_is_removed_mid_wait() {
+    let workspace = temp_workspace("niles-wait-removed");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"working: still running\n");
 
-    let waiter = Command::new(niles)
-        .args([
-            "wait",
-            "--worker",
-            "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
-        .current_dir(&workspace)
-        .env("NILES_HOME", niles_home(&workspace))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    wait_for_path(&worker_dir.join("status.waiter"));
+    let waiter = spawn_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "5"],
+    );
+    // The removal has to land after target resolution, or this is the unknown-id path instead.
+    settle();
     remove_dir_all_eventually(&worker_dir);
 
     let output = waiter.wait_with_output().unwrap();
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(10));
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        stdout_of(&output),
         "closed: worker 'auth-fix' directory removed\n"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr_of(&output);
     assert!(stderr.contains("worker 'auth-fix' closed"));
     assert!(!stderr.contains("timeout"));
 }
 
-fn wait_for_path(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !path.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(path.exists(), "{} did not appear", path.display());
+#[test]
+fn a_symlinked_cursor_path_is_refused_rather_than_followed() {
+    let workspace = temp_workspace("niles-wait-symlink");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: ready\n");
+    let outside = workspace.join("outside.txt");
+    fs::write(&outside, "untouched\n").unwrap();
+    std::os::unix::fs::symlink(&outside, worker_dir.join("status.cursor")).unwrap();
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(&outside).unwrap(),
+        "untouched\n",
+        "the cursor write followed a symlink out of the worker directory"
+    );
+}
+
+#[test]
+fn rejects_both_worker_and_task_selectors() {
+    let workspace = temp_workspace("niles-wait-selectors");
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--task", "auth", "--timeout", "0"],
+    );
+
+    assert!(!output.status.success());
+    let combined = format!("{}{}", stdout_of(&output), stderr_of(&output));
+    assert!(
+        combined.contains("cannot be used with") || combined.contains("use either"),
+        "output: {combined}"
+    );
+}
+
+#[test]
+fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
+    let workspace = temp_workspace("niles-wait-huge");
+    let mut status = b"done: ".to_vec();
+    status.extend(std::iter::repeat_n(b'x', 64 * 1024));
+    status.push(b'\n');
+    worker_with_status(&workspace, "auth-fix", &status);
+
+    let output = run_wait(
+        &workspace,
+        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert_command_success("wait with an enormous line", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.starts_with("done: xxx"));
+    assert!(stdout.contains("(truncated)"), "stdout was not capped");
+    assert!(stdout.len() < 8 * 1024, "stdout was {} bytes", stdout.len());
+}
+
+#[test]
+fn task_label_waits_on_every_live_worker_carrying_it() {
+    let workspace = temp_workspace("niles-wait-task");
+    write_task_worker(&workspace, "alpha", "auth", b"working: nothing yet\n");
+    write_task_worker(&workspace, "beta", "auth", b"blocked: needs a decision\n");
+    write_task_worker(&workspace, "gamma", "other", b"done: unrelated task\n");
+
+    let output = run_wait(
+        &workspace,
+        &["--task", "auth", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert_command_success("wait --task", &output);
+    // gamma carries a different label, so its wake must not satisfy this wait.
+    assert_eq!(stdout_of(&output), "beta: blocked: needs a decision\n");
+}
+
+/// Writes a worker directory complete enough for task-label selection to find it.
+fn write_task_worker(workspace: &Path, id: &str, task_label: &str, status: &[u8]) {
+    let worker_dir = worker_with_status(workspace, id, status);
+    fs::write(
+        worker_dir.join("meta.json"),
+        format!(
+            r#"{{
+  "niles_schema": 2,
+  "id": "{id}",
+  "agent": "codex",
+  "project": "{}",
+  "window": "niles:niles-{id}",
+  "brief": "{}",
+  "launch": "{}",
+  "task_label": "{task_label}"
+}}
+"#,
+            workspace.display(),
+            worker_dir.join("brief.md").display(),
+            worker_dir.join("launch.sh").display(),
+        ),
+    )
+    .unwrap();
 }
 
 fn remove_dir_all_eventually(path: &Path) {
@@ -553,43 +452,4 @@ fn remove_dir_all_eventually(path: &Path) {
             Err(err) => panic!("failed to remove {}: {err}", path.display()),
         }
     }
-}
-
-fn wait_for_waiter_token_change(path: &Path, old_token: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if path.exists() {
-            let token = waiter_token(path);
-            if token != old_token {
-                return token;
-            }
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    panic!("{} did not get a replacement waiter token", path.display());
-}
-
-fn waiter_token(path: &Path) -> String {
-    let body = fs::read_to_string(path).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-    value
-        .get("token")
-        .and_then(serde_json::Value::as_str)
-        .unwrap()
-        .to_owned()
-}
-
-fn write_waiter_registration(dir: &Path, pid: u32, token: &str) {
-    fs::write(
-        dir.join("status.waiter"),
-        format!(
-            r#"{{
-  "pid": {pid},
-  "started_at": "2000-01-01T00:00:00Z",
-  "token": "{token}"
-}}
-"#
-        ),
-    )
-    .unwrap();
 }

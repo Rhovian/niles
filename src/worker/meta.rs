@@ -9,7 +9,6 @@ use crate::{
     schema::{self, ArtifactKind},
     usage::UsageAttribution,
     util::write_json_pretty,
-    wake,
 };
 
 use super::{resolve::resolve_worker, validation::validate_id};
@@ -38,7 +37,6 @@ pub(super) struct WorkerMeta {
     pub(super) window: String,
     pub(super) brief: Utf8PathBuf,
     pub(super) launch: Utf8PathBuf,
-    pub(super) status: Option<Utf8PathBuf>,
 }
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
@@ -69,12 +67,4 @@ pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
 
 pub(super) fn report_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
     worker_dir.join(REPORT_FILE)
-}
-
-pub(super) fn metadata_status_path(meta: &WorkerMeta, worker_dir: &Utf8Path) -> Utf8PathBuf {
-    match &meta.status {
-        Some(status) => status.clone(),
-        // Older worker metadata did not stamp `status`; the canonical log lives beside the worker.
-        None => wake::status_log_path(worker_dir),
-    }
 }

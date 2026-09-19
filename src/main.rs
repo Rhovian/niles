@@ -83,8 +83,7 @@ fn run() -> Result<ExitCode> {
             task,
             interval,
             timeout,
-            takeover,
-        }) => return Ok(wait::wait(worker, task, interval, timeout, takeover)?.emit()),
+        }) => return Ok(wait::wait(worker, task, interval, timeout)?.emit()),
     }
 
     Ok(ExitCode::SUCCESS)

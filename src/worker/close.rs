@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     archive::{archive_worker_dir, capture_final_pane, final_pane_path},
-    meta::{meta_path, metadata_status_path, read_meta_if_exists, write_meta},
+    meta::{meta_path, read_meta_if_exists, write_meta},
     resolve::{no_live_worker_message, resolve_worker_if_exists},
     validation::{validate_id, validate_task_label},
 };
@@ -179,7 +179,7 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     validate_id(id)?;
     let worker_dir = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
     let mut meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
-    let status_path = metadata_status_path(&meta, &worker_dir);
+    let status_path = wake::status_log_path(&worker_dir);
     append_closed_sentinel(&status_path, id)?;
 
     let target_state = worker_target_state(&meta);

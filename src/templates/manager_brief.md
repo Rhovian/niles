@@ -65,7 +65,7 @@ Worker briefs contain status and report paths. Actionable status lines use:
 {worker_wake_examples}
 ```
 
-Each `niles wait --worker <id>` consumes one actionable status line via ack cursor; after a wake and follow-up send, re-run it for the next line. Concurrent waits on the same worker are rejected via `status.waiter`; sequential waits attach normally.
+Each `niles wait --worker <id>` consumes one actionable status line and records how far it read, so after a wake and follow-up send you re-run it for the next line. Concurrent waits on one worker are allowed and are serialised: exactly one of them is handed any given line.
 
 `done:` means awaiting manager follow-up, not termination. Keep workers and reviewer workers open through the send/wait loop: spawn -> (`niles wait --worker <id>` <-> `niles send <id> ...`)* -> cleanup. Cleanup happens only after integration, merged PR, or complete wave.
 
