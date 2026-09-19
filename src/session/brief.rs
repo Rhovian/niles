@@ -39,7 +39,7 @@ pub(super) fn write_manager_session(
     let id = timestamp_id(&now);
     let dir = workspace.join(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
-    let path = dir.join("manager.md");
+    let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
     let body = render_lead_brief(agent, workspace, &dir, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
@@ -104,7 +104,7 @@ mod tests {
     /// derived twice is the duplication #89 describes.
     #[test]
     fn lead_brief_keeps_the_plan_and_delegates_the_implementation() {
-        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and you own the plan"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and the plan"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
         // The undershoot half: dispatching a worker for a check it could finish itself (#121).
@@ -155,6 +155,14 @@ mod tests {
     fn lead_brief_keeps_delegation_inside_niles() {
         assert!(LEAD_BRIEF_TEMPLATE.contains("Delegation goes through niles"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --role"));
+        // The command surface is fetched, not carried: it costs tokens at every session start.
+        assert!(LEAD_BRIEF_TEMPLATE.contains("niles <command> --help"));
+        for fetchable in ["niles peek <id>", "niles workers", "niles close <id>", "niles wait <id>"] {
+            assert!(
+                !LEAD_BRIEF_TEMPLATE.contains(fetchable),
+                "{fetchable} is in spawn output and --help; do not carry it in the brief"
+            );
+        }
     }
 
     #[test]

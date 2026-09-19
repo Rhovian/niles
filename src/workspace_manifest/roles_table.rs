@@ -13,7 +13,6 @@ use super::WorkspaceManifest;
 const MAX_CELL: usize = 40;
 const MAX_REASON: usize = 68;
 const MISSING: &str = "-";
-const VALIDATION_ROLE: &str = "validation";
 
 pub(super) fn print_manifest_roles<W: Write>(
     output: &mut W,
@@ -21,16 +20,16 @@ pub(super) fn print_manifest_roles<W: Write>(
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<()> {
     let rows = [
-        role_row("manager", &manifest.manager, agent_configs),
-        role_row("planner", &manifest.planner, agent_configs),
+        role_row("lead", &manifest.lead, agent_configs),
         role_row("worker", &manifest.worker, agent_configs),
         role_row("reviewer", &manifest.reviewer, agent_configs),
+        role_row("security", &manifest.security, agent_configs),
     ];
 
     let role_width = rows
         .iter()
         .map(|row| row.role.len())
-        .fold(VALIDATION_ROLE.len(), usize::max);
+        .fold(0, usize::max);
     let family_width = rows
         .iter()
         .map(|row| cells(&row.family))
@@ -47,13 +46,6 @@ pub(super) fn print_manifest_roles<W: Write>(
             writeln!(output, "{:<role_width$}  reason: {reason}", "")?;
         }
     }
-
-    writeln!(
-        output,
-        "{:<role_width$}  {}",
-        VALIDATION_ROLE,
-        display_note(&manifest.validation_command)
-    )?;
 
     Ok(())
 }
@@ -98,10 +90,6 @@ fn cell(value: &str) -> String {
     clamp(value, MAX_CELL)
 }
 
-pub(super) fn display_note(value: &str) -> String {
-    clamp(value, MAX_REASON)
-}
-
 /// Render a manifest value as one inert line. Control characters are dropped
 /// rather than escaped: a bare newline forges a whole extra table row, and an
 /// ESC sequence rewrites rows already printed.
@@ -130,16 +118,12 @@ fn cells(value: &str) -> usize {
 mod tests {
     use super::*;
 
-    use crate::workspace_manifest::initial_flow;
-
-    fn manifest(planner: &str, validation: &str) -> WorkspaceManifest {
+    fn manifest(reviewer: &str) -> WorkspaceManifest {
         WorkspaceManifest {
-            manager: "codex:gpt-5.5:xhigh".to_owned(),
-            planner: planner.to_owned(),
+            lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: "claude:opus:max".to_owned(),
-            validation_command: validation.to_owned(),
-            flow: initial_flow(),
+            reviewer: reviewer.to_owned(),
+            security: "claude:opus:max".to_owned(),
         }
     }
 
@@ -152,13 +136,12 @@ mod tests {
     #[test]
     fn renders_the_table_a_user_actually_sees() {
         assert_eq!(
-            render(&manifest("claude:opus:high", "cargo test")),
+            render(&manifest("claude:opus:max")),
             "\
-manager     codex   gpt-5.5  xhigh
-planner     claude  opus     high
-worker      codex   -        -
-reviewer    claude  opus     max
-validation  cargo test
+lead      codex   gpt-5.5  xhigh
+worker    codex   -        -
+reviewer  claude  opus     max
+security  claude  opus     max
 "
         );
     }
@@ -166,17 +149,23 @@ validation  cargo test
     #[test]
     fn an_unpinned_model_or_effort_is_not_invented() {
         // A bare `codex` must not be resolved into whatever it would launch as.
-        let rendered = render(&manifest("codex", "cargo test"));
+        let rendered = render(&manifest("codex"));
 
-        assert!(
-            rendered.contains("planner     codex   -        -"),
+        // Cells, not spacing: padding shifts whenever another binding gets wider.
+        let row = rendered
+            .lines()
+            .find(|line| line.starts_with("reviewer"))
+            .unwrap_or_default();
+        assert_eq!(
+            row.split_whitespace().collect::<Vec<_>>(),
+            ["reviewer", "codex", "-", "-"],
             "{rendered}"
         );
     }
 
     #[test]
     fn an_invalid_binding_says_why_instead_of_aborting() {
-        let rendered = render(&manifest("ghost", "cargo test"));
+        let rendered = render(&manifest("ghost"));
 
         assert!(rendered.contains("reason: "), "{rendered}");
         assert!(rendered.contains("ghost"), "{rendered}");
@@ -184,21 +173,17 @@ validation  cargo test
 
     #[test]
     fn a_newline_cannot_forge_an_extra_row() {
-        let rendered = render(&manifest(
-            "claude",
-            "cargo test\nreviewer  totally  fake  max",
-        ));
+        let rendered = render(&manifest("claude\nreviewer  totally  fake  max"));
 
-        assert_eq!(rendered.lines().count(), 5, "{rendered}");
+        // Continuation lines are indented, so a role row is one that starts at column zero.
+        let role_rows = rendered.lines().filter(|line| !line.starts_with(' ')).count();
+        assert_eq!(role_rows, 4, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 
     #[test]
     fn escape_sequences_cannot_rewrite_rows_already_printed() {
-        let rendered = render(&manifest(
-            "\u{1b}[1A\u{1b}[2Kmanager  claude  opus  max",
-            "cargo test\u{1b}]0;pwned\u{7}",
-        ));
+        let rendered = render(&manifest("\u{1b}[1A\u{1b}[2Klead  claude  opus  max\u{1b}]0;pwned\u{7}"));
 
         assert!(!rendered.contains('\u{1b}'), "{rendered}");
         assert!(!rendered.contains('\u{7}'), "{rendered}");
@@ -207,7 +192,7 @@ validation  cargo test
     #[test]
     fn an_enormous_value_is_clamped_rather_than_panicking() {
         // A runtime format width is a u16; past 65535 the format call panics.
-        let rendered = render(&manifest(&"q".repeat(70_000), &"v".repeat(70_000)));
+        let rendered = render(&manifest(&"q".repeat(70_000)));
 
         assert!(
             rendered.lines().all(|line| line.chars().count() < 200),
@@ -218,10 +203,7 @@ validation  cargo test
 
     #[test]
     fn a_long_model_name_widens_every_row_together() {
-        let rendered = render(&manifest(
-            "claude:claude-haiku-4-5-20251001:medium",
-            "cargo test",
-        ));
+        let rendered = render(&manifest("claude:claude-haiku-4-5-20251001:medium"));
 
         assert!(rendered.contains("claude-haiku-4-5-20251001"), "{rendered}");
         let effort_columns: Vec<Option<usize>> = rendered

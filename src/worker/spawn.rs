@@ -25,7 +25,6 @@ use super::{
     validation::{validate_id, validate_task_label},
 };
 
-const WORKER_CORE_TEMPLATE: &str = include_str!("../templates/worker_core.md");
 
 
 pub fn spawn(
@@ -75,7 +74,6 @@ pub fn spawn(
                 role,
                 task_label: task_label.as_deref(),
                 project: &project,
-                agent: &agent,
                 task: &task.join(" "),
             })?;
             path
@@ -146,6 +144,8 @@ pub fn spawn(
         println!("task: {label}");
     }
     println!("brief: {}", meta.brief);
+    // wait first: it is the command the lead reaches for next, and it was the one omission here.
+    println!("wait: niles wait {id}");
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
@@ -202,7 +202,6 @@ struct BriefInputs<'a> {
     role: WorkerRole,
     task_label: Option<&'a str>,
     project: &'a Utf8Path,
-    agent: &'a str,
     task: &'a str,
 }
 
@@ -214,7 +213,6 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
         role,
         task_label,
         project,
-        agent,
         task,
     } = inputs;
     let status_path = wake::status_log_path(dir);
@@ -225,15 +223,13 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
     };
     // Every worker gets the shared contract plus exactly one role fragment, so a worker is not
     // handed doctrine addressed to a role it is not playing.
-    let template = format!("{WORKER_CORE_TEMPLATE}\n{}", role.fragment());
     let body = render_template(
-        &template,
+        &role.brief(),
         &[
             ("{id}", id),
             ("{role}", role.as_str()),
             ("{task_label}", task_label),
             ("{project}", project.as_str()),
-            ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
@@ -260,10 +256,4 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
     } else {
         bail!("{}", failures.join("; "))
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
 }

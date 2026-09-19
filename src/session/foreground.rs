@@ -22,7 +22,7 @@ pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
-    let agent = &manifest.manager;
+    let agent = &manifest.lead;
     let invocation = foreground_invocation_for_project(workspace, agent)?;
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec)?;
     let brief = fs::read_to_string(&meta.brief)

@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     WorkspaceManifest, load, manifest_path,
-    roles_table::{display_note, print_manifest_roles},
+    roles_table::print_manifest_roles,
     save,
 };
 
@@ -54,7 +54,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     if !interactive {
         if existing.is_some() {
             bail!(
-                "workspace manifest {path} exists but stdin is not interactive; start or attach a tmux session and run `niles` interactively to choose the manager agent"
+                "workspace manifest {path} exists but stdin is not interactive; start or attach a tmux session and run `niles` interactively to choose the lead agent"
             );
         } else {
             bail!(
@@ -67,15 +67,14 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         writeln!(output, "Niles workspace manifest: {path}")?;
         writeln!(
             output,
-            "Choose the foreground manager agent. Press Enter to accept the default."
+            "Choose the foreground lead agent. Press Enter to accept the default."
         )?;
-        let manager =
-            picker::prompt_agent_value("Manager agent", &manifest.manager, &agent_configs)?;
-        let manager_changed = manager != manifest.manager;
-        manifest.manager = manager;
-        if manager_changed {
+        let lead = picker::prompt_agent_value("Lead agent", &manifest.lead, &agent_configs)?;
+        let lead_changed = lead != manifest.lead;
+        manifest.lead = lead;
+        if lead_changed {
             save(root, &manifest)?;
-            writeln!(output, "manifest: {path} (updated manager)")?;
+            writeln!(output, "manifest: {path} (updated lead)")?;
         }
 
         maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &agent_configs)?;
@@ -92,9 +91,8 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let manager =
-        picker::prompt_agent_value("Manager agent", &defaults.manager, &agent_configs)?;
-    let manifest = prompt_manifest_values(input, output, manager, defaults, &agent_configs)?;
+    let lead = picker::prompt_agent_value("Lead agent", &defaults.lead, &agent_configs)?;
+    let manifest = prompt_manifest_values(lead, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -115,8 +113,8 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
-        let manager = manifest.manager.clone();
-        *manifest = prompt_manifest_values(input, output, manager, manifest, agent_configs)?;
+        let lead = manifest.lead.clone();
+        *manifest = prompt_manifest_values(lead, manifest, agent_configs)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
         print_manifest_roles(output, manifest, agent_configs)?;
@@ -125,31 +123,16 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
     Ok(())
 }
 
-fn prompt_manifest_values<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    manager: String,
+fn prompt_manifest_values(
+    lead: String,
     defaults: &WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
-        manager,
-        planner: picker::prompt_agent_value("Planner agent",
-            &defaults.planner,
-            agent_configs,
-        )?,
+        lead,
         worker: picker::prompt_agent_value("Worker agent", &defaults.worker, agent_configs)?,
-        reviewer: picker::prompt_agent_value("Reviewer agent",
-            &defaults.reviewer,
-            agent_configs,
-        )?,
-        validation_command: prompt_value(
-            input,
-            output,
-            "Default validation command",
-            &defaults.validation_command,
-        )?,
-        flow: defaults.flow.clone(),
+        reviewer: picker::prompt_agent_value("Reviewer agent", &defaults.reviewer, agent_configs)?,
+        security: picker::prompt_agent_value("Security agent", &defaults.security, agent_configs)?,
     })
 }
 
@@ -181,34 +164,6 @@ fn prompt_yes_no<R: BufRead, W: Write>(
     }
 }
 
-fn prompt_value<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: &str,
-) -> Result<String> {
-    loop {
-        write!(output, "{label} [{}]: ", display_note(default))?;
-        output.flush()?;
-
-        let mut line = String::new();
-        let bytes = input
-            .read_line(&mut line)
-            .with_context(|| format!("failed to read {label}"))?;
-        if bytes == 0 {
-            bail!("stdin closed before workspace manifest was configured");
-        }
-
-        let value = line.trim();
-        let value = if value.is_empty() { default } else { value };
-        if !value.trim().is_empty() {
-            return Ok(value.to_owned());
-        }
-
-        writeln!(output, "{label} cannot be empty")?;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,12 +177,10 @@ mod tests {
         let root = temp_test_path("roles-table-before-prompt");
         let path = manifest_path(&root);
         let mut manifest = WorkspaceManifest {
-            manager: "codex:gpt-5.5:xhigh".to_owned(),
-            planner: "claude:opus:high".to_owned(),
+            lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
             reviewer: "claude:opus:max".to_owned(),
-            validation_command: "cargo test".to_owned(),
-            flow: super::super::initial_flow(),
+            security: "claude:opus:max".to_owned(),
         };
         let mut input = Cursor::new(b"n\n".to_vec());
         let mut output = Vec::new();
@@ -244,11 +197,10 @@ mod tests {
         assert_eq!(
             String::from_utf8(output)?,
             "\
-manager     codex   gpt-5.5  xhigh
-planner     claude  opus     high
-worker      codex   -        -
-reviewer    claude  opus     max
-validation  cargo test
+lead      codex   gpt-5.5  xhigh
+worker    codex   -        -
+reviewer  claude  opus     max
+security  claude  opus     max
 Change any manifest roles? [y/N]: "
         );
         Ok(())
@@ -261,11 +213,10 @@ Change any manifest roles? [y/N]: "
         fs::write(
             manifest_path(&root),
             r#"
-manager: codex
-planner: claude
+lead: codex
 worker: codex
 reviewer: claude
-validation_command: lint
+security: claude
 niles_schema: 2
 "#,
         )
@@ -283,7 +234,7 @@ niles_schema: 2
         .unwrap_err();
 
         assert!(err.to_string().contains("stdin is not interactive"));
-        assert!(err.to_string().contains("choose the manager agent"));
+        assert!(err.to_string().contains("choose the lead agent"));
 
         fs::remove_dir_all(root).unwrap();
     }
