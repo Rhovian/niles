@@ -105,16 +105,6 @@ impl UsageDisplay {
             totals: UsageTotals::default(),
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn unavailable(wall_seconds: Option<i64>) -> Self {
-        Self {
-            status: UsageDisplayStatus::Unavailable,
-            wall_seconds,
-            turns: None,
-            totals: UsageTotals::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

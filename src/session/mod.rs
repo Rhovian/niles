@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use crate::{
-    dashboard, tmux,
+    tmux,
     util::current_dir_utf8,
     workspace_manifest::{self, WorkspaceManifest},
 };
@@ -37,14 +37,13 @@ pub fn run(manager: Option<String>, session: Option<String>) -> Result<()> {
     }
 
     let manifest = launch_prelude(&workspace, manager.as_deref())?;
-    tmux::rename_current_window("niles")?;
     let meta = ensure_manager_window(&workspace, &manifest)?;
     let target = meta
         .window
         .as_deref()
         .context("manager session metadata missing tmux window after launch")?;
     tmux::switch_client(&tmux::WindowTarget::parse(target)?)?;
-    dashboard::run(&workspace)
+    Ok(())
 }
 
 pub fn launch_foreground(manager: Option<String>, session: Option<String>) -> Result<()> {
