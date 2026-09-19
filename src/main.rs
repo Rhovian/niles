@@ -9,7 +9,6 @@ mod schema;
 mod session;
 mod store;
 mod tmux;
-mod usage;
 mod util;
 mod wait;
 mod wake;
@@ -62,7 +61,7 @@ fn run() -> Result<ExitCode> {
             task_label,
             all,
         }) => worker::worker_close(id, task_label, all)?,
-        Some(CommandName::Workers { usage }) => worker::workers(usage)?,
+        Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
         Some(CommandName::Send { target_and_message }) => worker::send(target_and_message)?,

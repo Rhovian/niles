@@ -3,7 +3,6 @@ pub(crate) enum ArtifactKind {
     CapabilityManifest,
     Directory,
     ManagerSession,
-    UsageSnapshot,
     WorkerMetadata,
     WorkspaceManifest,
 }
@@ -14,7 +13,6 @@ impl ArtifactKind {
             ArtifactKind::CapabilityManifest => "capability manifest",
             ArtifactKind::Directory => "artifact directory",
             ArtifactKind::ManagerSession => "manager session metadata",
-            ArtifactKind::UsageSnapshot => "usage snapshot",
             ArtifactKind::WorkerMetadata => "worker metadata",
             ArtifactKind::WorkspaceManifest => "workspace manifest",
         }
@@ -28,9 +26,6 @@ impl ArtifactKind {
             ArtifactKind::Directory => "fix the directory permissions and rerun `niles doctor`",
             ArtifactKind::ManagerSession => {
                 "remove the session directory and start a fresh manager session, or use the older binary that wrote it"
-            }
-            ArtifactKind::UsageSnapshot => {
-                "remove the usage snapshot and recapture usage if the source transcript is still available, or use the older binary that wrote it"
             }
             ArtifactKind::WorkerMetadata => {
                 "remove the worker dir and respawn, or use the older binary to close it"

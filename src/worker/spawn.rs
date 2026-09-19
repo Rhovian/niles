@@ -9,7 +9,6 @@ use crate::{
     config::spec::load_project_config_from,
     store,
     tmux::{self, WindowTarget},
-    usage,
     util::{
         absolute_existing_dir, absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists,
         render_template,
@@ -101,9 +100,6 @@ pub fn spawn(
         .with_context(|| format!("failed to create {status_path}"))?;
 
     let window_name = agent_window::worker_window_name(&id);
-    let launched_at = Utc::now();
-    let usage_attribution =
-        usage::attribution_for_family(agent_spec.family(), &project, launched_at, Some(1));
     let target = match spawn_worker_window(
         &session,
         &window_name,
@@ -111,7 +107,6 @@ pub fn spawn(
         &agent,
         &brief_path,
         &launch_path,
-        &usage_attribution,
     ) {
         Ok(target) => target,
         Err(err) => {
@@ -132,10 +127,8 @@ pub fn spawn(
         agent_family: agent_spec.tier().map(|tier| tier.family),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
-        usage_attribution: Some(usage_attribution),
-        usage: None,
         task_label,
-        created_at: Some(launched_at),
+        created_at: Some(Utc::now()),
         project: project.clone(),
         window: target.render(),
         brief: brief_path,
@@ -195,7 +188,6 @@ fn spawn_worker_window(
     agent: &str,
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
-    usage_attribution: &usage::UsageAttribution,
 ) -> Result<WindowTarget> {
     agent_window::spawn_agent_window_in_session(
         session,
@@ -205,7 +197,6 @@ fn spawn_worker_window(
         project,
         brief_path,
         launch_path,
-        Some(usage_attribution),
     )
 }
 

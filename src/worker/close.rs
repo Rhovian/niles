@@ -5,14 +5,13 @@ use chrono::Utc;
 use crate::{
     agent_window, store,
     tmux::{self, TargetState, WindowTarget},
-    usage::{self, UsageAgent, UsageSnapshotInput, UsageSubject},
     util::append_line,
     wake::{self, WakeKind},
 };
 
 use super::{
     archive::{archive_worker_dir, capture_final_pane, final_pane_path},
-    meta::{meta_path, read_meta_if_exists, write_meta},
+    meta::{meta_path, read_meta_if_exists},
     resolve::{no_live_worker_message, resolve_worker_if_exists},
     validation::{validate_id, validate_task_label},
 };
@@ -178,7 +177,7 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     validate_id(id)?;
     let worker_dir = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
-    let mut meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
+    let meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
     let status_path = wake::status_log_path(&worker_dir);
     append_closed_sentinel(&status_path, id)?;
 
@@ -200,28 +199,6 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
         .map(|err| err.to_string());
 
     let finished_at = Utc::now();
-    if let Some(path) = usage::snapshot_usage(UsageSnapshotInput {
-        subject: UsageSubject::Worker {
-            id: meta.id.clone(),
-            task_label: meta.task_label.clone(),
-        },
-        agent: UsageAgent {
-            spec: meta.agent.clone(),
-            family: meta.agent_family.clone(),
-            model: meta.model.clone(),
-            effort: meta.effort.clone(),
-        },
-        attribution: meta.usage_attribution.clone(),
-        started_at: meta.created_at,
-        finished_at,
-        output_path: usage::worker_usage_path(&worker_dir),
-    }) {
-        meta.usage = Some(path);
-        if let Err(err) = write_meta(&worker_dir, &meta) {
-            eprintln!("warning: failed to record usage snapshot path in worker metadata: {err:#}");
-        }
-    }
-
     let archive_dir = archive_worker_dir(id, &worker_dir, finished_at)?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
     Ok(WorkerCloseOutcome {

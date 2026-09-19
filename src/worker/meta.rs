@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     schema::{self, ArtifactKind},
-    usage::UsageAttribution,
     util::write_json_pretty,
 };
 
@@ -25,10 +24,6 @@ pub(super) struct WorkerMeta {
     pub(super) model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) usage_attribution: Option<UsageAttribution>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) usage: Option<Utf8PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) task_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
