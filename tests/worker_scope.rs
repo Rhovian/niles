@@ -164,7 +164,7 @@ fn scoped_command(
         .env("PATH", path)
         .env("NILES_HOME", home)
         .env("TMUX_LOG", tmux_log)
-        .env_remove("TMUX");
+        .env("TMUX", "/tmp/niles-test-tmux,0,0");
     command
 }
 
@@ -191,6 +191,7 @@ fn write_scope_test_bins(root: &Path) -> (PathBuf, PathBuf) {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 0 ;;
   list-windows)
     if [ -n "${TMUX_WINDOWS:-}" ]; then

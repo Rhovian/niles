@@ -11,34 +11,8 @@ pub struct Cli {
     /// Override and persist the manager agent for bare `niles`.
     #[arg(long)]
     pub manager: Option<String>,
-    /// Attach to this tmux session for bare `niles`, creating it when absent.
-    #[arg(short = 's', long)]
-    pub session: Option<String>,
-    /// Launch the legacy foreground manager in this tmux pane.
-    #[arg(short = 'd', long = "detached", action = ArgAction::SetTrue)]
-    pub detached: bool,
     #[command(subcommand)]
     pub command: Option<CommandName>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BareSessionMode {
-    Resident,
-    Foreground,
-}
-
-impl Cli {
-    pub(crate) fn bare_session_mode(&self) -> Option<BareSessionMode> {
-        if self.command.is_some() {
-            return None;
-        }
-
-        if self.detached {
-            Some(BareSessionMode::Foreground)
-        } else {
-            Some(BareSessionMode::Resident)
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -143,32 +117,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bare_niles_selects_resident_session() {
+    fn bare_niles_runs_the_manager_with_no_subcommand() {
         let cli = Cli::try_parse_from(["niles"]).unwrap();
 
-        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Resident));
+        assert!(cli.command.is_none());
     }
 
     #[test]
-    fn detached_bare_niles_selects_foreground_session() {
-        let cli = Cli::try_parse_from(["niles", "-d"]).unwrap();
-
-        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Foreground));
-    }
-
-    #[test]
-    fn manager_override_combines_with_detached_session() {
-        let cli =
-            Cli::try_parse_from(["niles", "--manager", "claude:opus:max", "--detached"]).unwrap();
+    fn manager_override_parses_without_a_session_mode_flag() {
+        let cli = Cli::try_parse_from(["niles", "--manager", "claude:opus:max"]).unwrap();
 
         assert_eq!(cli.manager.as_deref(), Some("claude:opus:max"));
-        assert_eq!(cli.bare_session_mode(), Some(BareSessionMode::Foreground));
+        assert!(cli.command.is_none());
     }
 
     #[test]
-    fn subcommands_do_not_select_a_bare_session_mode() {
+    fn retired_session_flags_are_rejected() {
+        for retired in [
+            vec!["niles", "--session", "niles"],
+            vec!["niles", "--detached"],
+            vec!["niles", "-d"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&retired).is_err(),
+                "{retired:?} should no longer parse"
+            );
+        }
+    }
+
+    #[test]
+    fn subcommands_still_parse() {
         let cli = Cli::try_parse_from(["niles", "workers"]).unwrap();
 
-        assert_eq!(cli.bare_session_mode(), None);
+        assert!(cli.command.is_some());
     }
 }

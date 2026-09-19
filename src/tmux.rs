@@ -1,7 +1,6 @@
 use std::{
     env,
-    ffi::OsString,
-    process::{Command, ExitStatus, Output, Stdio},
+    process::{Command, Output, Stdio},
     thread,
     time::Duration,
 };
@@ -12,7 +11,7 @@ use camino::Utf8Path;
 mod target;
 
 pub(crate) use target::{
-    SessionName, TargetState, WindowTarget, target_state, unaddressable_reason,
+    SessionName, TargetState, WindowTarget, target_state,
 };
 
 const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
@@ -58,16 +57,6 @@ where
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
 }
 
-fn status_with_terminal(args: &[OsString]) -> Result<ExitStatus> {
-    Command::new("tmux")
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .with_context(|| format!("failed to run tmux {}", display_os_args(args)))
-}
-
 pub(crate) fn capture_pane(target: &WindowTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.target_arg();
@@ -100,39 +89,23 @@ pub(crate) fn send_line(target: &WindowTarget, line: &str) -> Result<()> {
     run(send_line_submit_args(&arg))
 }
 
-pub(crate) fn current_or_named_session(name: &str) -> Result<String> {
-    if env::var_os("TMUX").is_some()
-        && let Some(session) = current_session_name()?
-    {
-        return Ok(session);
+/// The tmux session this process is running in.
+///
+/// Niles places manager and worker windows in the session the operator is already attached to.
+/// Being outside tmux is therefore an error, not a cue to invent a session: a window created in
+/// a session nobody is watching is indistinguishable from a worker that never started.
+pub(crate) fn current_session() -> Result<SessionName> {
+    if env::var_os("TMUX").is_none() {
+        bail!(
+            "niles must run inside tmux. Start one with `tmux new -s niles`, or attach an existing session, then rerun."
+        );
     }
 
-    if has_session(name) {
-        Ok(name.to_owned())
-    } else {
-        run(["new-session", "-d", "-s", name])?;
-        Ok(name.to_owned())
-    }
+    let Some(name) = current_session_name()? else {
+        bail!("failed to determine the current tmux session name");
+    };
+    SessionName::new(name)
 }
-
-pub(crate) fn launch_foreground_session(
-    session: &SessionName,
-    cwd: &Utf8Path,
-    argv: &[OsString],
-) -> Result<ExitStatus> {
-    let args = foreground_new_session_args(session, cwd, argv);
-    status_with_terminal(&args)
-}
-
-pub(crate) fn attach_foreground_session(session: &SessionName) -> Result<ExitStatus> {
-    let args = foreground_attach_session_args(session);
-    status_with_terminal(&args)
-}
-
-pub(crate) fn switch_client(target: &WindowTarget) -> Result<()> {
-    run(["switch-client", "-t", &target.target_arg()])
-}
-
 
 pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) -> Result<()> {
     let output = output([
@@ -195,43 +168,6 @@ pub(crate) fn kill_window(target: &WindowTarget) -> Result<()> {
     run(["kill-window", "-t", &target.target_arg()])
 }
 
-pub(crate) fn target_exists(target: &str) -> Result<bool> {
-    let target = WindowTarget::parse(target)?;
-
-    let output = output([
-        "list-windows",
-        "-t",
-        &target::exact(target.session().as_str()),
-        "-F",
-        "#{window_name}",
-    ])
-    .with_context(|| {
-        format!(
-            "failed to list tmux windows in session {}",
-            target.session()
-        )
-    })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr)
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        bail!(
-            "tmux list-windows failed for session {}: {stderr}",
-            target.session()
-        );
-    }
-
-    Ok(window_list_contains(&output.stdout, target.window()))
-}
-
-pub(crate) fn ensure_session_exists(session: &SessionName) -> Result<()> {
-    if has_session(session.as_str()) {
-        return Ok(());
-    }
-    run(["new-session", "-d", "-s", session.as_str()])
-}
-
 pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str) -> Result<()> {
     run([
         "set-option",
@@ -251,25 +187,6 @@ pub(crate) fn current_session_name() -> Result<Option<String>> {
     }
 
     Ok(session_name_from_stdout(&output.stdout))
-}
-
-pub(crate) fn has_session(name: &str) -> bool {
-    matches!(
-        Command::new("tmux")
-            .args(["has-session", "-t", &target::exact(name)])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status(),
-        Ok(status) if status.success()
-    )
-}
-
-fn display_os_args(args: &[OsString]) -> String {
-    args.iter()
-        .map(|arg| arg.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn format_capture(stdout: &[u8]) -> String {
@@ -302,127 +219,9 @@ fn send_line_submit_args(target: &str) -> [&str; 4] {
     ["send-keys", "-t", target, SEND_LINE_SUBMIT_KEY]
 }
 
-fn foreground_new_session_args(
-    session: &SessionName,
-    cwd: &Utf8Path,
-    argv: &[OsString],
-) -> Vec<OsString> {
-    let mut args = [
-        "new-session",
-        "-s",
-        session.as_str(),
-        "-c",
-        cwd.as_str(),
-        "--",
-    ]
-    .map(OsString::from)
-    .to_vec();
-    args.extend(argv.iter().cloned());
-    args
-}
-
-fn foreground_attach_session_args(session: &SessionName) -> Vec<OsString> {
-    ["attach-session", "-t", &target::exact(session.as_str())]
-        .map(OsString::from)
-        .to_vec()
-}
-
-/// Sessions running a Niles manager window, newest tmux ordering preserved.
-/// A missing tmux server is "nothing is running", not a failure.
-pub(crate) fn live_manager_sessions(window: &str) -> Result<Vec<String>> {
-    let output = output([
-        "list-windows",
-        "-a",
-        "-F",
-        "#{session_name}\t#{window_name}",
-    ])
-    .context("failed to list tmux windows across sessions")?;
-    if !output.status.success() {
-        return if no_server_running(&output.stderr) {
-            Ok(Vec::new())
-        } else {
-            bail!(
-                "tmux list-windows across sessions failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )
-        };
-    }
-
-    Ok(parse_manager_sessions(&output.stdout, window))
-}
-
-fn no_server_running(stderr: &[u8]) -> bool {
-    let stderr = String::from_utf8_lossy(stderr);
-    stderr.contains("no server running") || stderr.contains("error connecting")
-}
-
-fn parse_manager_sessions(stdout: &[u8], window: &str) -> Vec<String> {
-    let mut sessions = Vec::new();
-    for line in String::from_utf8_lossy(stdout).lines() {
-        // A session name may itself contain a tab, so split from the right:
-        // the window name is the last field.
-        let Some((session, window_name)) = line.rsplit_once('\t') else {
-            continue;
-        };
-        if window_name == window && !sessions.iter().any(|seen| seen == session) {
-            sessions.push(session.to_owned());
-        }
-    }
-    sessions
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn manager_sessions_dedup_and_ignore_other_windows() {
-        let stdout =
-            b"niles\tniles-manager\nniles\tniles-impl\naquila\tniles-manager\nother\tvim\n";
-
-        assert_eq!(
-            parse_manager_sessions(stdout, "niles-manager"),
-            ["niles", "aquila"]
-        );
-    }
-
-    #[test]
-    fn manager_sessions_split_from_the_right_so_tabbed_names_survive() {
-        // The window name is the last field; a tab in the session name must not
-        // steal it and silently drop the session.
-        let stdout = b"od\td\tniles-manager\n";
-
-        assert_eq!(parse_manager_sessions(stdout, "niles-manager"), ["od\td"]);
-    }
-
-    #[test]
-    fn manager_sessions_are_empty_when_nothing_matches() {
-        assert!(parse_manager_sessions(b"other\tvim\n", "niles-manager").is_empty());
-        assert!(parse_manager_sessions(b"", "niles-manager").is_empty());
-    }
-
-    #[test]
-    fn no_server_running_recognizes_both_tmux_wordings() {
-        assert!(no_server_running(
-            b"no server running on /tmp/tmux-501/default"
-        ));
-        assert!(no_server_running(
-            b"error connecting to /tmp/tmux-501/default (No such file or directory)"
-        ));
-        assert!(!no_server_running(b"can't find session: nope"));
-    }
-
-    #[test]
-    fn attach_and_has_session_pin_the_target_to_an_exact_match() {
-        // Without `=`, tmux resolves `-t pla` to a session named `plain`.
-        let session = SessionName::new("niles").unwrap();
-
-        assert_eq!(
-            foreground_attach_session_args(&session),
-            ["attach-session", "-t", "=niles"].map(OsString::from)
-        );
-        assert_eq!(target::exact("pla"), "=pla");
-    }
 
     #[test]
     fn collect_args_owns_argument_strings() {
@@ -504,40 +303,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn foreground_new_session_args_preserve_argv_boundaries_for_named_session() {
-        let argv = ["/opt/homebrew/bin/niles", "--manager", "codex:gpt-5:high"].map(OsString::from);
-
-        let session = SessionName::new("niles-2").unwrap();
-        let args = foreground_new_session_args(
-            &session,
-            Utf8Path::new("/tmp/workspace with spaces"),
-            &argv,
-        );
-
-        assert_eq!(
-            args,
-            [
-                "new-session",
-                "-s",
-                "niles-2",
-                "-c",
-                "/tmp/workspace with spaces",
-                "--",
-                "/opt/homebrew/bin/niles",
-                "--manager",
-                "codex:gpt-5:high",
-            ]
-            .map(OsString::from)
-        );
-    }
-
-    #[test]
-    fn foreground_attach_session_args_target_existing_session() {
-        let session = SessionName::new("niles").unwrap();
-        assert_eq!(
-            foreground_attach_session_args(&session),
-            ["attach-session", "-t", "=niles"].map(OsString::from)
-        );
-    }
 }

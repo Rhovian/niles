@@ -106,17 +106,6 @@ fn absolute_existing_path(
     Ok(path)
 }
 
-pub fn read_optional_to_string(
-    path: &Utf8Path,
-    read_context: impl FnOnce(&Utf8Path) -> String,
-) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(body) => Ok(Some(body)),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).with_context(|| read_context(path)),
-    }
-}
-
 pub fn write_json_pretty<T>(path: &Utf8Path, value: &T) -> Result<()>
 where
     T: Serialize + ?Sized,

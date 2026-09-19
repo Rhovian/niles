@@ -54,7 +54,7 @@ niles wait --worker <id>
 niles workers
 ```
 
-Workers are tmux windows `niles-<id>`; metadata and briefs live under `.niles/worker/<id>/`.
+Workers are tmux windows `niles-<id>` in the same tmux session you are running in; metadata and briefs live under `.niles/worker/<id>/`.
 Workers always belong to the current workspace; `--project .` is accepted for compatibility, but cross-workspace spawn requires `cd` into that workspace first.
 Worker commands (`workers`, `peek`, `report`, `send`, `wait --worker`, `worker-close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
 Use model/effort qualifiers for specific tiers, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.

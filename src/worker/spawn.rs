@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
-    session, store,
+    store,
     tmux::{self, WindowTarget},
     usage,
     util::{
@@ -65,6 +65,9 @@ pub fn spawn(
     if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }
+    // Resolved before any worker state is written: a spawn that cannot place a window should
+    // leave no half-built worker directory behind.
+    let session = tmux::current_session()?;
 
     let dir = store::workspace_worker_dir(&project, &id)?;
     if dir.exists() {
@@ -101,8 +104,6 @@ pub fn spawn(
     let launched_at = Utc::now();
     let usage_attribution =
         usage::attribution_for_family(agent_spec.family(), &project, launched_at, Some(1));
-    let session = session::resolve_workspace_tmux_session(&project)?;
-    tmux::ensure_session_exists(&session)?;
     let target = match spawn_worker_window(
         &session,
         &window_name,
