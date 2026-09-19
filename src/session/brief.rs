@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
-    schema::{self, ArtifactKind},
     usage::{self, UsageAttribution},
     util::{timestamp_id, write_json_pretty},
     wake,
@@ -34,10 +33,6 @@ pub struct SessionMeta {
     pub created_at: chrono::DateTime<Utc>,
     pub workspace: Utf8PathBuf,
     pub brief: Utf8PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub launch: Option<Utf8PathBuf>,
 }
 
 pub(super) fn write_manager_session(
@@ -68,31 +63,11 @@ pub(super) fn write_manager_session(
         created_at: now,
         workspace: workspace.to_path_buf(),
         brief: path,
-        window: None,
-        launch: None,
     };
     write_session_meta(workspace, &meta)?;
     fs::write(latest_session_path(workspace), &id)
         .context("failed to write latest session pointer")?;
     Ok(meta)
-}
-
-pub(crate) fn read_latest_session(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
-    let Some(id) = crate::util::read_optional_to_string(&latest_session_path(workspace), |path| {
-        format!("failed to read latest manager session pointer {path}")
-    })?
-    else {
-        return Ok(None);
-    };
-    let id = id.trim();
-    if id.is_empty() {
-        return Ok(None);
-    }
-
-    schema::read_optional_json(
-        &session_meta_path(workspace, id),
-        ArtifactKind::ManagerSession,
-    )
 }
 
 pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
@@ -212,39 +187,6 @@ mod tests {
         assert!(body.contains("worker: none"));
         assert!(!body.contains("{manifest}"));
         assert!(!body.contains("{flow}"));
-    }
-
-    #[test]
-    fn manager_session_meta_round_trips_usage_attribution() {
-        let workspace = temp_test_path("manager-usage-roundtrip");
-        let session_dir = workspace.join(".niles/sessions/session");
-        fs::create_dir_all(&session_dir).unwrap();
-        let usage_attribution = UsageAttribution::ClaudeSession {
-            session_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-            cwd: workspace.clone(),
-            launched_at: "2026-07-06T00:00:00Z".parse().unwrap(),
-            niles_prompt_count: Some(1),
-        };
-        let meta = SessionMeta {
-            id: "session".to_owned(),
-            agent: "claude:opus:max".to_owned(),
-            agent_family: Some("claude".to_owned()),
-            model: Some("opus".to_owned()),
-            effort: Some("max".to_owned()),
-            usage_attribution: Some(usage_attribution.clone()),
-            created_at: "2026-07-06T00:00:00Z".parse().unwrap(),
-            workspace: workspace.clone(),
-            brief: session_dir.join("manager.md"),
-            window: Some("niles:niles-manager".to_owned()),
-            launch: Some(session_dir.join("launch.sh")),
-        };
-
-        write_session_meta(&workspace, &meta).unwrap();
-        fs::write(latest_session_path(&workspace), "session").unwrap();
-
-        let read = read_latest_session(&workspace).unwrap().unwrap();
-        assert_eq!(read.usage_attribution, Some(usage_attribution));
-        fs::remove_dir_all(workspace).unwrap();
     }
 
     fn removed_workflow_commands() -> [String; 8] {

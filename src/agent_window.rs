@@ -10,12 +10,6 @@ use crate::{
     usage::UsageAttribution,
 };
 
-#[derive(Clone, Copy)]
-pub(crate) enum AgentWindowPrompt<'a> {
-    BriefFile(&'a Utf8Path),
-    Prepared { stdin: Option<&'a str> },
-}
-
 pub(crate) fn worker_window_name(id: &str) -> String {
     format!("niles-{id}")
 }
@@ -50,20 +44,8 @@ pub(crate) fn spawn_agent_window_in_session(
         cwd,
         &invocation,
         launch_path,
-        AgentWindowPrompt::BriefFile(brief_path),
+        brief_path,
     )
-}
-
-pub(crate) fn spawn_prepared_agent_window(
-    window_name: &str,
-    cwd: &Utf8Path,
-    invocation: &agents::AgentInvocation,
-    launch_path: &Utf8Path,
-    prompt: AgentWindowPrompt<'_>,
-) -> Result<String> {
-    write_launch_script(launch_path, invocation, prompt)?;
-    let command = format!("sh {}", shell_quote(launch_path.as_str()));
-    open_window(window_name, cwd, &command)
 }
 
 pub(crate) fn spawn_prepared_agent_window_in_session(
@@ -72,9 +54,9 @@ pub(crate) fn spawn_prepared_agent_window_in_session(
     cwd: &Utf8Path,
     invocation: &agents::AgentInvocation,
     launch_path: &Utf8Path,
-    prompt: AgentWindowPrompt<'_>,
+    brief_path: &Utf8Path,
 ) -> Result<WindowTarget> {
-    write_launch_script(launch_path, invocation, prompt)?;
+    write_launch_script(launch_path, invocation, brief_path)?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     open_window_in_session(session, window_name, cwd, &command)
 }
@@ -82,16 +64,14 @@ pub(crate) fn spawn_prepared_agent_window_in_session(
 fn write_launch_script(
     path: &Utf8Path,
     invocation: &agents::AgentInvocation,
-    prompt: AgentWindowPrompt<'_>,
+    brief_path: &Utf8Path,
 ) -> Result<()> {
     let mut body = String::new();
     body.push_str("#!/bin/sh\n");
     body.push_str("set -eu\n");
-    if let AgentWindowPrompt::BriefFile(brief_path) = prompt {
-        body.push_str("BRIEF=");
-        body.push_str(&shell_quote(brief_path.as_str()));
-        body.push('\n');
-    }
+    body.push_str("BRIEF=");
+    body.push_str(&shell_quote(brief_path.as_str()));
+    body.push('\n');
     for (key, value) in &invocation.env {
         body.push_str("export ");
         body.push_str(key);
@@ -99,24 +79,10 @@ fn write_launch_script(
         body.push_str(&shell_assignment_value(value));
         body.push('\n');
     }
-    let prepared_stdin = match prompt {
-        AgentWindowPrompt::Prepared { stdin } => stdin,
-        AgentWindowPrompt::BriefFile(_) => None,
-    };
-    if let Some(stdin) = prepared_stdin {
-        write_prepared_stdin_setup(&mut body, path, stdin);
-    }
-
     write_exec_command(&mut body, invocation);
-    match prompt {
-        AgentWindowPrompt::BriefFile(_) => match invocation.prompt {
-            PromptMode::Arg => body.push_str(" \"$(cat \"$BRIEF\")\"\n"),
-            PromptMode::Stdin => body.push_str(" < \"$BRIEF\"\n"),
-        },
-        AgentWindowPrompt::Prepared { stdin } => match stdin {
-            Some(_) => body.push_str(" < \"$PROMPT_INPUT\"\n"),
-            None => body.push('\n'),
-        },
+    match invocation.prompt {
+        PromptMode::Arg => body.push_str(" \"$(cat \"$BRIEF\")\"\n"),
+        PromptMode::Stdin => body.push_str(" < \"$BRIEF\"\n"),
     }
 
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
@@ -131,16 +97,6 @@ fn write_exec_command(body: &mut String, invocation: &agents::AgentInvocation) {
     }
 }
 
-fn write_prepared_stdin_setup(body: &mut String, launch_path: &Utf8Path, stdin: &str) {
-    let prompt_path = launch_path.with_extension("stdin");
-    body.push_str("PROMPT_INPUT=");
-    body.push_str(&shell_quote(prompt_path.as_str()));
-    body.push('\n');
-    body.push_str("printf '%s' ");
-    body.push_str(&shell_quote(stdin));
-    body.push_str(" > \"$PROMPT_INPUT\"\n");
-}
-
 pub(crate) fn capture_target(target: &WindowTarget, lines: usize) -> Result<String> {
     tmux::capture_pane(target, lines)
 }
@@ -151,13 +107,6 @@ pub(crate) fn send_target(target: &WindowTarget, message: &str) -> Result<()> {
 
 pub(crate) fn close_target(target: &WindowTarget) -> Result<()> {
     tmux::kill_window(target)
-}
-
-/// Open a detached tmux window running `command` in `cwd` and return its
-/// `session:window` target.
-pub(crate) fn open_window(window_name: &str, cwd: &Utf8Path, command: &str) -> Result<String> {
-    let session = SessionName::new(tmux::current_or_named_session("niles")?)?;
-    Ok(open_window_in_session(&session, window_name, cwd, command)?.render())
 }
 
 pub(crate) fn open_window_in_session(

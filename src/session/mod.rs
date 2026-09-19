@@ -1,13 +1,10 @@
 mod brief;
 mod foreground;
-mod manager_window;
 mod startup;
 #[cfg(test)]
 mod test_support;
-mod tmux_bootstrap;
-mod workspace_session;
 
-use std::{env, fs};
+use std::fs;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -19,43 +16,17 @@ use crate::{
 };
 
 use foreground::launch_foreground_agent;
-use manager_window::ensure_manager_window;
-use tmux_bootstrap::ensure_tmux_session;
 
 pub use brief::SessionMeta;
-pub(crate) use brief::read_latest_session as read_latest_manager_session;
-pub(crate) use workspace_session::resolve_workspace_tmux_session;
 
-pub fn run(manager: Option<String>, session: Option<String>) -> Result<()> {
+/// Turns the current tmux pane into the manager agent.
+///
+/// Niles does not create, name, pin or attach tmux sessions. The operator's current session is
+/// the session, which is what lets worker placement be a fact rather than a resolution strategy.
+pub fn run(manager: Option<String>) -> Result<()> {
     let workspace = current_dir_utf8()?;
-    if !ensure_tmux_session(
-        env::var_os("TMUX").as_deref(),
-        &workspace,
-        session.as_deref(),
-    )? {
-        return Ok(());
-    }
-
-    let manifest = launch_prelude(&workspace, manager.as_deref())?;
-    let meta = ensure_manager_window(&workspace, &manifest)?;
-    let target = meta
-        .window
-        .as_deref()
-        .context("manager session metadata missing tmux window after launch")?;
-    tmux::switch_client(&tmux::WindowTarget::parse(target)?)?;
-    Ok(())
-}
-
-pub fn launch_foreground(manager: Option<String>, session: Option<String>) -> Result<()> {
-    let workspace = current_dir_utf8()?;
-    if !ensure_tmux_session(
-        env::var_os("TMUX").as_deref(),
-        &workspace,
-        session.as_deref(),
-    )? {
-        return Ok(());
-    }
-
+    // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
+    tmux::current_session()?;
     let manifest = launch_prelude(&workspace, manager.as_deref())?;
     launch_foreground_agent(&workspace, &manifest)
 }

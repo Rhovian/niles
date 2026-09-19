@@ -111,6 +111,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows)
     if [ "$2" = "-a" ]; then
@@ -163,7 +164,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(
@@ -190,8 +191,7 @@ esac
     let window = meta_json["window"].as_str().unwrap();
     let target = exact_target(window);
     let project = meta_json["project"].as_str().unwrap();
-    assert!(window.starts_with("niles-niles-worker-test-"));
-    assert!(window.ends_with(":niles-auth-fix"));
+    assert_eq!(window, "niles-test-session:niles-auth-fix");
 
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("task_label: auth"));
@@ -212,7 +212,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(peek.status.success());
@@ -224,15 +224,18 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(send.status.success());
     assert!(String::from_utf8_lossy(&send.stdout).contains("sent: auth-fix"));
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-session -d -s niles-niles-worker-test-"));
-    assert!(log.contains("new-window -d -t =niles-niles-worker-test-"));
+    assert!(
+        !log.contains("new-session"),
+        "niles must not create tmux sessions; it uses the one it was run from"
+    );
+    assert!(log.contains("new-window -d -t =niles-test-session: -n niles-auth-fix"));
     assert!(log.contains(": -n niles-auth-fix"));
     assert!(log.contains(&format!(
         "set-option -w -t {target} @niles-project {project}"
@@ -246,31 +249,57 @@ esac
 }
 
 #[test]
-fn spawn_pins_worker_to_manager_session_and_tags_window_not_ambient() {
+fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-worker-pinned-session");
+    let workspace = temp_workspace("niles-worker-no-tmux");
     let home = niles_home(&workspace);
 
-    let session_dir = workspace.join(".niles/sessions/session-1");
-    fs::create_dir_all(&session_dir).unwrap();
-    fs::write(workspace.join(".niles/sessions/latest"), "session-1").unwrap();
-    fs::write(
-        session_dir.join("session.json"),
-        format!(
-            r#"{{
-  "niles_schema": 2,
-  "id": "session-1",
-  "agent": "codex",
-  "created_at": "2026-07-06T00:00:00Z",
-  "workspace": "{}",
-  "brief": "{}",
-  "window": "home:niles-manager"
-}}"#,
-            workspace.display(),
-            session_dir.join("manager.md").display()
-        ),
-    )
-    .unwrap();
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    write_executable(
+        &bin.join("tmux"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+"#,
+    );
+    write_executable(
+        &bin.join("claude"),
+        r#"#!/bin/sh
+case "$1" in
+  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    );
+
+    let spawn = Command::new(niles)
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+
+    assert!(!spawn.status.success());
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("must run inside tmux"), "{stderr}");
+    assert!(stderr.contains("tmux new -s niles"), "{stderr}");
+    // Refusing is the point: no window, no session, no worker directory left behind.
+    assert!(!workspace.join(".niles/worker/auth-fix").exists());
+    let log = fs::read_to_string(&tmux_log).unwrap_or_default();
+    assert!(!log.contains("new-session"), "{log}");
+    assert!(!log.contains("new-window"), "{log}");
+}
+
+#[test]
+fn spawn_places_the_worker_in_the_current_tmux_session() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-current-session");
+    let home = niles_home(&workspace);
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -281,10 +310,7 @@ fn spawn_pins_worker_to_manager_session_and_tags_window_not_ambient() {
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'ambient\n'; exit 0 ;;
-  has-session)
-    if [ "$3" = "=home" ]; then exit 0; fi
-    exit 1
-    ;;
+  has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
 esac
@@ -315,24 +341,25 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env("TMUX", "/tmp/ambient-tmux")
+        .env("TMUX", "/tmp/ambient-tmux,0,0")
         .output()
         .unwrap();
-    assert_command_success("pinned manager-session spawn", &spawn);
+    assert_command_success("current-session spawn", &spawn);
 
+    // The session the operator is attached to is the session, so it is asked for by name
+    // rather than resolved from a recorded pointer.
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
-    assert!(meta.contains(r#""window": "home:niles-auth-fix""#));
-    let pointer = fs::read_to_string(workspace.join(".niles/sessions/tmux-session.json")).unwrap();
-    assert!(pointer.contains(r#""session": "home""#));
+    assert!(meta.contains(r#""window": "ambient:niles-auth-fix""#), "{meta}");
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(!log.contains("display-message"));
-    assert!(log.contains("has-session -t =home"));
-    assert!(log.contains("new-window -d -t =home: -n niles-auth-fix"));
-    assert!(log.contains("set-option -w -t =home:=niles-auth-fix @niles-project"));
-    assert!(log.contains("set-option -w -t =home:=niles-auth-fix @niles-worker-id auth-fix"));
+    assert!(log.contains("display-message -p #S"), "{log}");
+    assert!(log.contains("new-window -d -t =ambient: -n niles-auth-fix"), "{log}");
+    assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-project"));
+    assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-worker-id auth-fix"));
+    // No pointer file, no invented session.
+    assert!(!workspace.join(".niles/sessions/tmux-session.json").exists());
+    assert!(!log.contains("new-session"), "{log}");
 }
-
 #[test]
 fn spawn_rejects_reserved_archive_task_label() {
     let niles = env!("CARGO_BIN_EXE_niles");
@@ -414,6 +441,7 @@ fn peek_defaults_deep_and_zero_lines_captures_full_history() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   capture-pane) printf 'pane output\n'; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -470,6 +498,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -516,7 +545,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("codex tiered spawn", &codex_spawn);
@@ -554,7 +583,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("claude tiered spawn", &claude_spawn);
@@ -619,6 +648,7 @@ fn spawn_uses_fresh_capability_manifest_for_accepted_and_rejected_models() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -675,7 +705,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("accepted model spawn", &accepted_spawn);
@@ -707,7 +737,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!rejected_spawn.status.success());
@@ -730,6 +760,7 @@ fn analyze_uses_project_configured_agent_binary_for_model_probes() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -799,7 +830,7 @@ printf 'custom accepted\n'
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("configured binary accepted spawn", &accepted_spawn);
@@ -818,7 +849,7 @@ printf 'custom accepted\n'
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!unprobed_effort_spawn.status.success());
@@ -919,6 +950,7 @@ fn default_analyze_writes_manifest_for_exact_configured_role_binary() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -1000,7 +1032,7 @@ printf 'custom codex accepted\n'
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("configured role binary spawn", &spawn);
@@ -1028,6 +1060,7 @@ fn binary_specific_capability_manifest_paths_resist_slug_collisions() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -1144,7 +1177,7 @@ esac
             .env("PATH", &path)
             .env("NILES_HOME", &home)
             .env("TMUX_LOG", &tmux_log)
-            .env_remove("TMUX")
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .output()
             .unwrap();
         assert_command_success(&format!("spawn {agent}"), &spawn);
@@ -1173,6 +1206,7 @@ fn capability_model_probe_matching_includes_effort() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   *) exit 0 ;;
@@ -1251,7 +1285,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("accepted effort spawn", &accepted_spawn);
@@ -1270,7 +1304,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!rejected_spawn.status.success());
@@ -1371,7 +1405,7 @@ fn spawn_rejects_cross_workspace_project_without_state() {
             .args(["Fix", "auth"])
             .current_dir(&invoker)
             .env("NILES_HOME", &home)
-            .env_remove("TMUX")
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .output()
             .unwrap();
 
@@ -1412,7 +1446,7 @@ fn spawn_accepts_project_symlink_to_current_workspace() {
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
 
@@ -1472,6 +1506,7 @@ fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   new-window)
@@ -1517,7 +1552,7 @@ esac
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_FAIL_NEW_WINDOW", "1")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!failed.status.success());
@@ -1552,7 +1587,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("respawn", &respawn);
@@ -1561,7 +1596,7 @@ esac
     assert!(workspace.join(".niles/worker/auth-fix/meta.json").is_file());
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-window -d -t =niles-niles-worker-failed-spawn-"));
+    assert!(log.contains("new-window -d -t =niles-test-session:"));
     assert!(log.contains(": -n niles-auth-fix"));
 }
 
@@ -1579,6 +1614,7 @@ fn spawn_meta_write_failure_kills_window_and_cleans_location() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 1 ;;
   list-windows) exit 0 ;;
   new-window) mkdir -p "$META_PATH"; exit 0 ;;
@@ -1615,7 +1651,7 @@ esac
             "META_PATH",
             workspace.join(".niles/worker/auth-fix/meta.json"),
         )
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!failed.status.success());
@@ -1627,7 +1663,7 @@ esac
     assert_global_index_absent(&home);
 
     let log = fs::read_to_string(&tmux_log).unwrap();
-    assert!(log.contains("new-window -d -t =niles-niles-worker-meta-write-failed-spawn-"));
+    assert!(log.contains("new-window -d -t =niles-test-session:"));
     assert!(log.contains(": -n niles-auth-fix"));
     assert!(log.contains("set-option -w -t "));
     assert!(log.contains(" @niles-worker-id auth-fix"));
@@ -1650,6 +1686,7 @@ fn worker_close_tears_down_worker() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 0 ;;
   list-windows)
     if [ "$2" = "-a" ]; then
@@ -1684,7 +1721,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(
@@ -2282,7 +2319,7 @@ fn worker_close_by_task_closes_matching_workers_only() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
 
@@ -2343,7 +2380,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
             .env("PATH", &path)
             .env("NILES_HOME", &home)
             .env("TMUX_LOG", &tmux_log)
-            .env_remove("TMUX")
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .output()
             .unwrap();
         assert_command_success("scoped close spawn", &spawn);
@@ -2356,7 +2393,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("workspace-scoped worker-close --all", &close);
@@ -2375,7 +2412,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(!close_foreign_task.status.success());
@@ -2437,7 +2474,7 @@ fn worker_close_by_task_reports_selection_failures_and_closes_matches() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
 
@@ -2473,7 +2510,7 @@ fn worker_close_all_reports_partial_failures_without_aborting_rest() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
 
@@ -2513,7 +2550,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("first spawn", &first);
@@ -2529,7 +2566,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "first pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("close first worker", &close);
@@ -2555,7 +2592,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("respawn after close", &second);
@@ -2597,7 +2634,7 @@ fn report_falls_back_to_most_recent_local_archive() {
             .env("PATH", &path)
             .env("NILES_HOME", &home)
             .env("TMUX_LOG", &tmux_log)
-            .env_remove("TMUX")
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .output()
             .unwrap();
         assert_command_success("spawn archived report worker", &spawn);
@@ -2612,7 +2649,7 @@ fn report_falls_back_to_most_recent_local_archive() {
             .env("NILES_HOME", &home)
             .env("TMUX_LOG", &tmux_log)
             .env("TMUX_CAPTURE", task)
-            .env_remove("TMUX")
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .output()
             .unwrap();
         assert_command_success("close archived report worker", &close);
@@ -2674,7 +2711,7 @@ fn worker_close_on_archived_worker_errors_and_mentions_archive() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE", "pane")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("first close", &close);
@@ -2707,7 +2744,7 @@ fn worker_close_does_not_write_or_advertise_empty_final_pane() {
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
         .env("TMUX_CAPTURE_EMPTY", "1")
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("close empty pane worker", &close);
@@ -2767,6 +2804,7 @@ fn worker_close_wakes_waiters_with_nonzero_closed_status() {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 0 ;;
   *) exit 0 ;;
 esac
@@ -2808,7 +2846,7 @@ esac
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env_remove("TMUX")
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert_command_success("worker-close", &close);
@@ -3121,6 +3159,7 @@ fn write_orphan_recovery_tmux(bin: &Path, missing_session: &str) {
             r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   list-windows)
     if [ "$2" = "-a" ]; then
       if [ -n "${{TMUX_TAGGED_WINDOWS:-}}" ]; then
@@ -3151,6 +3190,7 @@ fn write_worker_test_bins(root: &Path) -> (PathBuf, PathBuf) {
         r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
   has-session) exit 0 ;;
   list-windows)
     if [ "${TMUX_LIST_WINDOWS_FAIL:-}" = 1 ]; then

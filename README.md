@@ -10,7 +10,8 @@ handoff wording, and deciding when a task is complete.
 ## Requirements
 
 - A Rust toolchain with edition 2024 support (1.85+).
-- `tmux` — Niles runs the manager and workers as tmux windows.
+- `tmux` — Niles runs the manager and workers as windows of your current tmux
+  session, so `niles` must be run from inside tmux.
 - The agent CLIs you intend to use, on your `PATH` (e.g. `codex`, `claude`).
 
 ## Install
@@ -26,14 +27,15 @@ cargo build --release    # or a local build at target/release/niles
 niles
 ```
 
-Bare `niles` launches the foreground manager agent and is tmux-only. When run
-outside tmux from an interactive terminal it starts an attached `niles` tmux
-session and re-runs the original command inside it; if that session already
-exists it prompts to attach or launch a differently named session. Non-TTY
-launches fail with guidance to start or attach tmux. The launch prelude creates
-`.niles/worker/` and interactively ensures `.niles/manifest.yaml` exists,
-prompting for the foreground `manager` (defaulting to Claude on first setup) and
-optionally the other role bindings.
+Bare `niles` turns the current tmux pane into the manager agent. Niles never
+creates, names, pins, or attaches a tmux session: run it inside the session you
+are already attached to, and it fails with one line of guidance if you are not
+in tmux. That is also what makes worker placement a fact rather than a
+resolution strategy — workers are windows of the session you are looking at.
+
+The launch prelude creates `.niles/worker/` and interactively ensures
+`.niles/manifest.yaml` exists, prompting for the `manager` (defaulting to
+Claude on first setup) and optionally the other role bindings.
 
 Niles writes a manager brief under `.niles/sessions/<id>/manager.md` pointing at
 the manifest and its flow. For Claude the brief is passed via
@@ -58,12 +60,9 @@ Workers always belong to the current workspace; `--project .` is accepted for
 compatibility, but spawning for another path requires `cd` into that workspace
 first. Spawn writes a brief and launch script under `.niles/worker/<id>/`,
 records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>`
-window in the workspace-pinned tmux session. The pin is resolved from
-`.niles/sessions/tmux-session.json`, the latest manager window session, or a
-deterministic detached workspace session. If the operator renames the pinned
-tmux session, `ensure_session_exists` creates a fresh empty session with the
-bound name and later workers land there. The normal lifecycle is
-`spawn -> (wait <-> send)* -> cleanup`.
+window in the tmux session the spawn was run from. `niles spawn` outside tmux
+fails before writing anything, rather than placing a worker in a session nobody
+is attached to. The normal lifecycle is `spawn -> (wait <-> send)* -> cleanup`.
 
 `--task <label>` records a task label so a task or wave can be cleaned up as a
 group. Labels use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`,

@@ -6,7 +6,6 @@ pub(crate) enum ArtifactKind {
     UsageSnapshot,
     WorkerMetadata,
     WorkspaceManifest,
-    WorkspaceTmuxSession,
 }
 
 impl ArtifactKind {
@@ -18,7 +17,6 @@ impl ArtifactKind {
             ArtifactKind::UsageSnapshot => "usage snapshot",
             ArtifactKind::WorkerMetadata => "worker metadata",
             ArtifactKind::WorkspaceManifest => "workspace manifest",
-            ArtifactKind::WorkspaceTmuxSession => "workspace tmux session pointer",
         }
     }
 
@@ -39,9 +37,6 @@ impl ArtifactKind {
             }
             ArtifactKind::WorkspaceManifest => {
                 "delete .niles/manifest.yaml and rerun `niles`, or use the older binary that wrote it"
-            }
-            ArtifactKind::WorkspaceTmuxSession => {
-                "remove .niles/sessions/tmux-session.json and respawn the worker, or use the older binary that wrote it"
             }
         }
     }

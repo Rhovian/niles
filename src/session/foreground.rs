@@ -239,8 +239,6 @@ agents:
             created_at: "2026-07-06T00:00:00Z".parse().unwrap(),
             workspace: root.clone(),
             brief: root.join("manager.md"),
-            window: None,
-            launch: None,
         };
 
         append_manager_session_id_arg(&mut invocation, &meta);
