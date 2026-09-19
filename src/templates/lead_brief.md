@@ -35,6 +35,7 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 
 ```sh
 niles spawn <id> --role <worker|reviewer|security> --agent <agent[:model[:effort]]> "<task>"
+niles spawn <id> --wait ...   # one worker: spawn and block for its report
 ```
 
 Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.

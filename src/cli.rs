@@ -15,6 +15,21 @@ pub struct Cli {
     pub command: Option<CommandName>,
 }
 
+/// Pulls a leading `--wait` out of a trailing var-arg list, reporting whether it was there.
+///
+/// `spawn`'s task text and `send`'s message are both trailing var-args, so clap hands `--wait`
+/// over as ordinary text whenever it is written after the positional that starts them — which is
+/// exactly where it gets typed. Without this it would be passed through to the agent.
+pub(crate) fn take_leading_wait(args: &mut Vec<String>) -> bool {
+    let present = args.first().is_some_and(|first| first == WAIT_FLAG);
+    if present {
+        args.remove(0);
+    }
+    present
+}
+
+const WAIT_FLAG: &str = "--wait";
+
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
     /// Report binary identity, workspace schema state, and dev-mode staleness.
@@ -24,8 +39,15 @@ pub enum CommandName {
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
     /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy, and
     /// `security` is the adversarial pass.
+    ///
+    /// `--wait` then blocks for this worker's first actionable line, so a single-worker turn does
+    /// not need a separate `niles wait`. Leave it off when spawning a fleet and block on the group
+    /// with `niles wait --task <label>` instead.
     #[command(verbatim_doc_comment)]
     Spawn {
+        /// Block for this worker's first actionable wake after spawning.
+        #[arg(long)]
+        wait: bool,
         /// Worker task id used for window and metadata names.
         id: String,
         /// Which brief the worker gets.

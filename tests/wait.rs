@@ -440,11 +440,13 @@ fn write_task_worker(workspace: &Path, id: &str, task_label: &str, status: &[u8]
 #[test]
 fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it() {
     let workspace = temp_workspace("niles-send-cursor");
+    let server = TmuxServer::start(&workspace, "send-cursor");
+    server.new_window("niles-auth-fix");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"working: starting\n");
-    write_worker_meta(&workspace, "auth-fix", None);
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    write_stub_tmux(&bin, &workspace);
+    write_stub_agent(&bin);
 
     // The worker reports done, and the operator sends a follow-up without waiting first.
     let mut status = fs::OpenOptions::new()
@@ -453,15 +455,14 @@ fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it(
         .unwrap();
     writeln!(status, "done: first pass").unwrap();
 
-    let send = Command::new(env!("CARGO_BIN_EXE_niles"))
-        .args(["send", "auth-fix", "another", "pass", "please"])
-        .current_dir(&workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
-        .env("NILES_HOME", niles_home(&workspace))
-        .env("TMUX_LOG", workspace.join("tmux.log"))
-        .env("TMUX", "/tmp/niles-test-tmux,0,0")
-        .output()
-        .unwrap();
+    let send = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["send", "auth-fix", "another", "pass", "please"],
+    )
+    .output()
+    .unwrap();
     assert_command_success("send", &send);
     // The wake it stepped over is surfaced, not dropped silently.
     assert!(
@@ -471,10 +472,14 @@ fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it(
     );
 
     // The pre-send `done:` must not satisfy the wait that follows the send.
-    let waited = run_wait(
+    let waited = niles_in(
+        &server,
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
-    );
+        &bin,
+        &["wait", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+    )
+    .output()
+    .unwrap();
     assert_eq!(
         waited.status.code(),
         Some(22),
@@ -486,25 +491,26 @@ fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it(
 #[test]
 fn send_wait_blocks_for_the_reply_that_follows_the_message() {
     let workspace = temp_workspace("niles-send-wait");
+    let server = TmuxServer::start(&workspace, "send-wait");
+    server.new_window("niles-auth-fix");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: stale pass\n");
-    write_worker_meta(&workspace, "auth-fix", None);
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    write_stub_tmux(&bin, &workspace);
+    write_stub_agent(&bin);
 
-    let child = Command::new(env!("CARGO_BIN_EXE_niles"))
+    let child = niles_in(
+        &server,
+        &workspace,
+        &bin,
         // `--wait` written after the id, which is where clap's trailing var-arg would
         // otherwise swallow it into the message and type it into the agent's pane.
-        .args(["send", "auth-fix", "--wait", "keep", "going"])
-        .current_dir(&workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
-        .env("NILES_HOME", niles_home(&workspace))
-        .env("TMUX_LOG", workspace.join("tmux.log"))
-        .env("TMUX", "/tmp/niles-test-tmux,0,0")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        &["send", "auth-fix", "--wait", "keep", "going"],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
     settle();
 
     let mut status = fs::OpenOptions::new()
@@ -522,66 +528,35 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
     assert!(!stdout.contains("stale pass"), "stdout: {stdout}");
 }
 
-/// Writes a tmux stub that reports the worker's window as present or absent.
-fn write_window_tmux(bin: &Path, window_present: bool) {
-    let listing = if window_present { "niles-auth-fix" } else { "" };
-    let tmux = bin.join("tmux");
-    fs::write(
-        &tmux,
-        format!(
-            r#"#!/bin/sh
-case "$1 $2" in
-  "display-message -p") printf 'niles-test-session\n'; exit 0 ;;
-esac
-case "$1" in
-  list-windows) printf '{listing}\n'; exit 0 ;;
-  has-session) exit 0 ;;
-  *) exit 0 ;;
-esac
-"#
-        ),
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    fs::set_permissions(&tmux, permissions).unwrap();
-}
-
-fn wait_with_tmux(workspace: &Path, bin: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_niles"))
-        .arg("wait")
-        .args(args)
-        .current_dir(workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
-        .env("NILES_HOME", niles_home(workspace))
-        .env("TMUX_LOG", workspace.join("tmux.log"))
-        .env("TMUX", "/tmp/niles-test-tmux,0,0")
-        .output()
-        .unwrap()
-}
-
 /// A worker whose window is gone can never append again, so waiting out the timeout on it is
 /// pure delay — with the default timeout, an hour of it.
 #[test]
 fn a_gone_window_ends_the_wait_instead_of_blocking() {
     let workspace = temp_workspace("niles-wait-window-gone");
+    // The session is real and live; this worker's window was never created in it.
+    let server = TmuxServer::start(&workspace, "window-gone");
     worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    write_worker_meta(&workspace, "auth-fix", None);
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    write_window_tmux(&bin, false);
+    write_stub_agent(&bin);
+    assert!(!server.windows().contains("niles-auth-fix"));
 
     let started = Instant::now();
-    let output = wait_with_tmux(
+    let output = niles_in(
+        &server,
         &workspace,
         &bin,
-        &["auth-fix", "--interval", "0.05", "--timeout", "30"],
-    );
+        &["wait", "auth-fix", "--interval", "0.05", "--timeout", "30"],
+    )
+    .output()
+    .unwrap();
 
     assert!(
         started.elapsed() < Duration::from_secs(10),
-        "wait did not return promptly: {}",
-        stderr_of(&output)
+        "wait did not return promptly: {}\n{}",
+        stderr_of(&output),
+        server.diagnostics()
     );
     assert_eq!(output.status.code(), Some(10), "{}", stderr_of(&output));
     assert!(
@@ -596,27 +571,27 @@ fn a_gone_window_ends_the_wait_instead_of_blocking() {
 #[test]
 fn a_final_line_is_delivered_before_a_gone_window_is_reported() {
     let workspace = temp_workspace("niles-wait-window-gone-late-line");
+    let server = TmuxServer::start(&workspace, "gone-late-line");
     worker_with_status(&workspace, "auth-fix", b"done: finished the work\n");
-    write_worker_meta(&workspace, "auth-fix", None);
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    write_window_tmux(&bin, false);
+    write_stub_agent(&bin);
 
-    let reported = wait_with_tmux(
-        &workspace,
-        &bin,
-        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
-    );
+    let args = ["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"];
+    let reported = niles_in(&server, &workspace, &bin, &args).output().unwrap();
     assert_command_success("wait with a final line", &reported);
     assert_eq!(stdout_of(&reported), "done: finished the work\n");
 
     // Only once the log is drained does the gone window become the answer.
-    let drained = wait_with_tmux(
-        &workspace,
-        &bin,
-        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
+    let drained = niles_in(&server, &workspace, &bin, &args).output().unwrap();
+    assert_eq!(
+        drained.status.code(),
+        Some(10),
+        "{}\n{}",
+        stderr_of(&drained),
+        server.diagnostics()
     );
-    assert_eq!(drained.status.code(), Some(10), "{}", stderr_of(&drained));
     assert!(stdout_of(&drained).contains("exited without reporting"));
 }
 
@@ -624,44 +599,230 @@ fn a_final_line_is_delivered_before_a_gone_window_is_reported() {
 #[test]
 fn a_live_window_keeps_the_wait_running() {
     let workspace = temp_workspace("niles-wait-window-live");
+    let server = TmuxServer::start(&workspace, "window-live");
+    server.new_window("niles-auth-fix");
     worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    write_worker_meta(&workspace, "auth-fix", None);
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
-    write_window_tmux(&bin, true);
+    write_stub_agent(&bin);
 
-    let output = wait_with_tmux(
+    let output = niles_in(
+        &server,
         &workspace,
         &bin,
-        &["auth-fix", "--interval", "0.05", "--timeout", "1"],
-    );
+        &["wait", "auth-fix", "--interval", "0.05", "--timeout", "1"],
+    )
+    .output()
+    .unwrap();
 
     assert_eq!(output.status.code(), Some(22), "{}", stdout_of(&output));
     assert!(stderr_of(&output).contains("timeout"));
 }
 
-/// A tmux stub that accepts the window queries `send` makes.
-fn write_stub_tmux(bin: &Path, workspace: &Path) {
-    let tmux = bin.join("tmux");
-    fs::write(
-        &tmux,
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
-  has-session) exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
+/// A single-worker turn should not need a bare `niles wait` after the spawn.
+#[test]
+fn spawn_wait_blocks_for_the_workers_first_report() {
+    let workspace = temp_workspace("niles-spawn-wait");
+    let server = TmuxServer::start(&workspace, "spawn-wait");
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_agent(&bin);
+
+    // `--wait` after the id, where clap's trailing var-arg would otherwise swallow it into the
+    // task text and write it into the worker's brief.
+    let child = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["spawn", "w1", "--wait", "fix", "the", "login", "bug"],
     )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
     .unwrap();
-    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    fs::set_permissions(&tmux, permissions).unwrap();
-    let _ = workspace;
+
+    // Poll for `meta.json`, which spawn writes last — after the window exists and is tagged. The
+    // brief lands earlier, so waiting on it says nothing about whether the window is up yet.
+    wait_for_file(&workspace.join(".niles/worker/w1/meta.json"));
+    let brief = fs::read_to_string(workspace.join(".niles/worker/w1/brief.md")).unwrap();
+    assert!(brief.contains("fix the login bug"), "{brief}");
+    assert!(!brief.contains("--wait"), "the flag leaked into the task: {brief}");
+    assert!(server.windows().contains("niles-w1"), "spawn created no window");
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(workspace.join(".niles/worker/w1/status.log"))
+        .unwrap();
+    writeln!(status, "done: first report").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert_command_success("spawn --wait", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("spawned: w1"), "{stdout}");
+    assert!(stdout.contains("done: first report"), "{stdout}");
 }
 
-fn write_worker_meta(workspace: &Path, id: &str, task_label: Option<&str>) {
+/// Without `--wait`, spawn returns as soon as the window is up.
+#[test]
+fn spawn_without_wait_returns_immediately() {
+    let workspace = temp_workspace("niles-spawn-no-wait");
+    let server = TmuxServer::start(&workspace, "spawn-no-wait");
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_agent(&bin);
+
+    let started = Instant::now();
+    let output = niles_in(&server, &workspace, &bin, &["spawn", "w1", "do", "the", "thing"])
+        .output()
+        .unwrap();
+
+    assert_command_success("spawn", &output);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "spawn without --wait should not block"
+    );
+    assert!(!stdout_of(&output).contains("done:"));
+    assert!(server.windows().contains("niles-w1"));
+}
+
+/// A private tmux server on its own socket, torn down when the test ends.
+///
+/// These tests assert on tmux window state, and a stub that answers window queries is a second
+/// implementation of tmux that has to stay correct as niles's use of it grows — the previous stub
+/// claimed to create a window and then reported none existed, which hid a real bug. A per-test
+/// socket keeps parallel tests from seeing each other's sessions, and keeps them out of the
+/// developer's own tmux.
+struct TmuxServer {
+    socket: std::path::PathBuf,
+    session: String,
+}
+
+impl TmuxServer {
+    fn start(workspace: &Path, session: &str) -> Self {
+        // Not under the workspace: a unix socket path is capped near 104 bytes on macOS, and the
+        // temp workspace names are long enough on their own to blow it.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket = std::path::PathBuf::from(format!("/tmp/nt-{nanos}.sock"));
+        let server = Self {
+            socket,
+            session: session.to_owned(),
+        };
+        // The session runs a long-lived command rather than a shell. A shell that exits takes
+        // the last window with it, which destroys the session — and a worker whose whole tmux
+        // server has gone is a different state from one whose window has, with different
+        // answers from every query after it.
+        server.run(&[
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            &workspace.display().to_string(),
+            "sleep 600",
+        ]);
+        server
+    }
+
+    /// The value niles reads from `$TMUX` to find this server.
+    fn tmux_env(&self) -> String {
+        format!("{},0,0", self.socket.display())
+    }
+
+    fn new_window(&self, name: &str) {
+        self.run(&["new-window", "-d", "-t", &self.session, "-n", name]);
+    }
+
+    /// Whatever tmux says about this server right now, for failure messages.
+    fn diagnostics(&self) -> String {
+        let sessions = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string(), "list-sessions"])
+            .output()
+            .unwrap();
+        format!(
+            "socket={} exists={} sessions={:?}/{:?} windows={:?}",
+            self.socket.display(),
+            self.socket.exists(),
+            String::from_utf8_lossy(&sessions.stdout),
+            String::from_utf8_lossy(&sessions.stderr),
+            self.windows()
+        )
+    }
+
+    fn windows(&self) -> String {
+        let output = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string()])
+            .args(["list-windows", "-t", &format!("={}", self.session), "-F", "#{window_name}"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn run(&self, args: &[&str]) {
+        let output = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+impl Drop for TmuxServer {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string(), "kill-server"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = fs::remove_file(&self.socket);
+    }
+}
+
+/// Runs a niles command against `server`, with a stub agent binary on PATH.
+fn niles_in(server: &TmuxServer, workspace: &Path, bin: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_niles"));
+    command
+        .args(args)
+        .current_dir(workspace)
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env("NILES_HOME", niles_home(workspace))
+        .env("TMUX", server.tmux_env());
+    command
+}
+
+/// Blocks until `path` exists, or fails the test saying it never appeared.
+fn wait_for_file(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("{} never appeared", path.display());
+}
+
+fn write_stub_agent(bin: &Path) {
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        "#!/bin/sh\ncase \"$1\" in --version) echo 'codex-cli 0.144.1'; exit 0 ;; esac\nsleep 30\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&codex).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&codex, permissions).unwrap();
+}
+
+fn write_worker_meta(workspace: &Path, session: &str, id: &str, task_label: Option<&str>) {
     let worker_dir = workspace.join(".niles/worker").join(id);
     let label = task_label
         .map(|l| format!(",\n  \"task_label\": \"{l}\""))
@@ -674,7 +835,7 @@ fn write_worker_meta(workspace: &Path, id: &str, task_label: Option<&str>) {
   "id": "{id}",
   "agent": "codex",
   "project": "{}",
-  "window": "niles-test-session:niles-{id}",
+  "window": "{session}:niles-{id}",
   "brief": "{}",
   "launch": "{}"{label}
 }}
