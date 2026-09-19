@@ -261,9 +261,3 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
         bail!("{}", failures.join("; "))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}

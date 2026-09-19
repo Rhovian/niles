@@ -8,7 +8,7 @@ fn doctor_reports_binary_identity_and_workspace_schema_state() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-doctor-test");
     let home = niles_home(&workspace);
-    write_workspace_manifest(&workspace, "claude", "claude", "codex", "claude", "test");
+    write_workspace_manifest(&workspace, "claude", "codex", "claude");
     fs::create_dir_all(home.join("runs")).unwrap();
     fs::write(home.join("runs/index.json"), "{ invalid global index").unwrap();
 
@@ -41,7 +41,7 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
     fs::create_dir_all(workspace.join(".niles/sessions/session-1")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
-        "manager: claude\nplanner: claude\nworker: codex\nreviewer: claude\nvalidation_command: test\n",
+        "lead: claude\nworker: codex\nreviewer: claude\n",
     )
     .unwrap();
     fs::write(workspace.join(".niles/worker/worker-1/meta.json"), "{}").unwrap();

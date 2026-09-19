@@ -39,7 +39,7 @@ pub(super) fn write_manager_session(
     let id = timestamp_id(&now);
     let dir = workspace.join(".niles").join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
-    let path = dir.join("manager.md");
+    let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
     let body = render_lead_brief(agent, workspace, &dir, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;

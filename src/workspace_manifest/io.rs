@@ -32,16 +32,13 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use super::super::{
-        test_support::temp_test_path,
-        types::{WorkspaceFlowRole, WorkspaceManifest},
-    };
+    use super::super::{test_support::temp_test_path, types::WorkspaceManifest};
 
     #[test]
     fn skewed_manifest_remediation_names_delete_and_rerun() {
         let root = temp_test_path("skewed-remediation");
         fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(manifest_path(&root), "manager: codex\n").unwrap();
+        fs::write(manifest_path(&root), "lead: codex\n").unwrap();
 
         let err = load(&root).unwrap_err().to_string();
 
@@ -53,17 +50,15 @@ mod tests {
     }
 
     #[test]
-    fn manifest_without_flow_loads_initial_flow() {
-        let root = temp_test_path("manifest-flow");
+    fn current_manifest_loads_role_bindings() {
+        let root = temp_test_path("manifest-roles");
         fs::create_dir_all(root.join(".niles")).unwrap();
         fs::write(
             manifest_path(&root),
             r#"
-manager: codex
-planner: claude
+lead: claude
 worker: codex
 reviewer: claude
-validation_command: lint
 niles_schema: 2
 "#,
         )
@@ -72,63 +67,75 @@ niles_schema: 2
         let manifest = load(&root).unwrap().unwrap();
 
         assert_eq!(
-            manifest.flow,
-            vec![
-                WorkspaceFlowRole::Planner,
-                WorkspaceFlowRole::Worker,
-                WorkspaceFlowRole::Reviewer,
-            ]
+            manifest,
+            WorkspaceManifest {
+                lead: "claude".to_owned(),
+                worker: "codex".to_owned(),
+                reviewer: "claude".to_owned(),
+            }
         );
 
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The manifest carries role bindings and nothing else, so a manifest written before the
+    /// lead rename is rejected by name rather than silently losing its fields.
     #[test]
-    fn current_manifest_loads_flow() {
-        let root = temp_test_path("manifest-current-flow");
+    fn pre_lead_manifest_is_rejected_and_names_the_offending_field() {
+        let root = temp_test_path("manifest-pre-lead");
         fs::create_dir_all(root.join(".niles")).unwrap();
         fs::write(
             manifest_path(&root),
             r#"
-manager: codex
+manager: claude
 planner: claude
 worker: codex
 reviewer: claude
-validation_command: lint
+validation_command: test
 flow:
   - planner
+  - worker
   - reviewer
 niles_schema: 2
 "#,
         )
         .unwrap();
 
-        let manifest = load(&root).unwrap().unwrap();
+        let err = format!("{:#}", load(&root).unwrap_err());
 
-        assert_eq!(
-            manifest.flow,
-            vec![WorkspaceFlowRole::Planner, WorkspaceFlowRole::Reviewer]
+        // Names the offending field, the fields that replaced it, and what to do about it.
+        assert!(err.contains("unknown field `manager`"), "{err}");
+        assert!(
+            err.contains("expected one of `lead`, `worker`, `reviewer`"),
+            "{err}"
+        );
+        assert!(
+            err.contains("delete .niles/manifest.yaml and rerun `niles`"),
+            "{err}"
         );
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn saving_manifest_writes_flow() {
-        let root = temp_test_path("manifest-save-flow");
+    fn saving_manifest_writes_role_bindings_and_nothing_else() {
+        let root = temp_test_path("manifest-save");
         let manifest = WorkspaceManifest {
-            manager: "claude".to_owned(),
-            planner: "planbot".to_owned(),
+            lead: "claude".to_owned(),
             worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
-            validation_command: "check".to_owned(),
-            flow: vec![WorkspaceFlowRole::Worker],
         };
 
         save(&root, &manifest).unwrap();
         let body = fs::read_to_string(manifest_path(&root)).unwrap();
 
-        assert!(body.contains("flow:\n- worker"));
+        assert!(body.contains("lead: claude"), "{body}");
+        assert!(body.contains("worker: codebot"), "{body}");
+        assert!(body.contains("reviewer: reviewbot"), "{body}");
+        for gone in ["manager:", "planner:", "validation_command:", "flow:"] {
+            assert!(!body.contains(gone), "{gone} should be gone:\n{body}");
+        }
+
         fs::remove_dir_all(root).unwrap();
     }
 }

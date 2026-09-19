@@ -34,10 +34,10 @@ in tmux. That is also what makes worker placement a fact rather than a
 resolution strategy — workers are windows of the session you are looking at.
 
 The launch prelude creates `.niles/worker/` and interactively ensures
-`.niles/manifest.yaml` exists, prompting for the `manager` (defaulting to
+`.niles/manifest.yaml` exists, prompting for the `lead` (defaulting to
 Claude on first setup) and optionally the other role bindings.
 
-Niles writes a lead brief under `.niles/sessions/<id>/manager.md` pointing at
+Niles writes a lead brief under `.niles/sessions/<id>/lead.md` pointing at
 the manifest and its flow. For Claude the brief is passed via
 `--append-system-prompt` (hidden context); other agents receive it in their
 initial prompt. Niles owns no chat grammar — the foreground agent drives the
@@ -121,19 +121,17 @@ hardening exercise against an attacker nobody named.
 Workspace role bindings live in `.niles/manifest.yaml`:
 
 ```yaml
-manager: claude
-planner: claude
+lead: claude
 worker: codex
 reviewer: claude
-validation_command: test
-flow:
-  - planner
-  - worker
-  - reviewer
 ```
 
-Manifest bindings accept built-in agent families and agents from project
-config; unknown bare agent names are rejected.
+That is the whole manifest: which agent plays each standing role. A security
+pass uses the `reviewer` binding unless the lead names an agent for it, since it
+is commissioned rarely and a fourth binding would mostly go stale.
+
+Bindings accept built-in agent families and agents from project config; unknown
+bare agent names are rejected.
 
 ## Project Config
 
