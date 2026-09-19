@@ -133,11 +133,14 @@ esac
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("task_label: auth"));
     assert!(brief.contains("Fix auth"));
-    assert!(brief.contains("niles peek auth-fix"));
     assert!(brief.contains("report_file:"));
     assert!(brief.contains(".niles/worker/auth-fix/report.md"));
-    assert!(brief.contains("Write substantial deliverable content"));
     assert!(brief.contains("done: <short result>; report:"));
+    // Default role, so the worker fragment and none of the reviewer's doctrine.
+    assert!(brief.contains("You are the worker"));
+    assert!(brief.contains("You own the gate"));
+    assert!(!brief.contains("You are the reviewer"));
+    assert!(!brief.contains("name the attacker"));
 
     let launch = fs::read_to_string(workspace.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
@@ -227,6 +230,54 @@ fn spawn_always_targets_the_invoking_workspace_and_rejects_a_project_flag() {
     assert_command_success("workspace-local spawn", &spawn);
     assert!(workspace.join(".niles/worker/auth-fix").exists());
     assert!(!elsewhere.join(".niles").exists());
+}
+
+#[test]
+fn role_selects_the_brief_and_gate_ownership() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-roles");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    for (id, role) in [("impl", "worker"), ("rev", "reviewer")] {
+        let spawn = Command::new(niles)
+            .args(["spawn", id, "--role", role, "--agent", "claude", "Do", "it"])
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
+            .output()
+            .unwrap();
+        assert_command_success(&format!("spawn --role {role}"), &spawn);
+    }
+
+    let worker = fs::read_to_string(workspace.join(".niles/worker/impl/brief.md")).unwrap();
+    let reviewer = fs::read_to_string(workspace.join(".niles/worker/rev/brief.md")).unwrap();
+
+    // Exactly one role is told to run the project's checks. This is the whole point: three
+    // agents running the same test suite is what the split exists to stop.
+    assert!(worker.contains("You own the gate"), "{worker}");
+    assert!(reviewer.contains("Do not run the gate"), "{reviewer}");
+    assert!(!worker.contains("Do not run the gate"));
+    assert!(!reviewer.contains("You own the gate"));
+
+    // Security doctrine reaches the reviewer only, and demands a reachable attacker.
+    assert!(reviewer.contains("name the attacker"), "{reviewer}");
+    assert!(!worker.contains("name the attacker"));
+
+    // Both still carry the shared reporting contract.
+    for brief in [&worker, &reviewer] {
+        assert!(brief.contains("## Reporting"), "{brief}");
+        assert!(brief.contains("done: <short result>; report:"), "{brief}");
+    }
+
+    // A role brief the agent will actually read.
+    for (label, brief) in [("worker", &worker), ("reviewer", &reviewer)] {
+        let lines = brief.lines().count();
+        assert!(lines < 60, "{label} brief is {lines} lines:\n{brief}");
+    }
 }
 
 #[test]

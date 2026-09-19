@@ -34,7 +34,7 @@ mod tests {
 
     use super::super::{
         test_support::temp_test_path,
-        types::{WORKER_REVIEW_LOOP_SUMMARY, WorkspaceFlowRole, WorkspaceManifest, flow_summary},
+        types::{WorkspaceFlowRole, WorkspaceManifest},
     };
 
     #[test]
@@ -71,7 +71,14 @@ niles_schema: 2
 
         let manifest = load(&root).unwrap().unwrap();
 
-        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
+        assert_eq!(
+            manifest.flow,
+            vec![
+                WorkspaceFlowRole::Planner,
+                WorkspaceFlowRole::Worker,
+                WorkspaceFlowRole::Reviewer,
+            ]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -98,7 +105,10 @@ niles_schema: 2
 
         let manifest = load(&root).unwrap().unwrap();
 
-        assert_eq!(flow_summary(&manifest.flow), "planner -> reviewer");
+        assert_eq!(
+            manifest.flow,
+            vec![WorkspaceFlowRole::Planner, WorkspaceFlowRole::Reviewer]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

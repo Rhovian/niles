@@ -2,8 +2,6 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub(in crate::workspace_manifest) const WORKER_REVIEW_LOOP_SUMMARY: &str =
-    "planner -> worker <verification> <-> reviewer -> CONSENSUS OR ESCALATE";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "WorkspaceManifestWire")]
@@ -90,37 +88,6 @@ pub fn initial_flow() -> Vec<WorkspaceFlowRole> {
     ]
 }
 
-pub fn flow_summary(flow: &[WorkspaceFlowRole]) -> String {
-    if flow.is_empty() {
-        return "<empty>".to_owned();
-    }
-
-    if is_worker_review_loop(flow) {
-        return WORKER_REVIEW_LOOP_SUMMARY.to_owned();
-    }
-
-    flow.iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(" -> ")
-}
-
-fn is_worker_review_loop(flow: &[WorkspaceFlowRole]) -> bool {
-    matches!(
-        flow,
-        [
-            WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Worker,
-            WorkspaceFlowRole::Reviewer
-        ] | [
-            WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Worker,
-            WorkspaceFlowRole::Validation,
-            WorkspaceFlowRole::Reviewer
-        ]
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,18 +104,6 @@ mod tests {
                 WorkspaceFlowRole::Reviewer,
             ]
         );
-        assert_eq!(flow_summary(&manifest.flow), WORKER_REVIEW_LOOP_SUMMARY);
     }
 
-    #[test]
-    fn manifest_worker_validation_reviewer_flow_renders_worker_review_loop() {
-        let flow = [
-            WorkspaceFlowRole::Planner,
-            WorkspaceFlowRole::Worker,
-            WorkspaceFlowRole::Validation,
-            WorkspaceFlowRole::Reviewer,
-        ];
-
-        assert_eq!(flow_summary(&flow), WORKER_REVIEW_LOOP_SUMMARY);
-    }
 }

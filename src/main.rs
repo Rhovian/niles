@@ -39,11 +39,12 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
             id,
+            role,
             task_label,
             agent,
             brief,
             task,
-        }) => worker::spawn(id, task_label, agent, brief, task)?,
+        }) => worker::spawn(id, role, task_label, agent, brief, task)?,
         Some(CommandName::Close {
             id,
             task_label,

@@ -24,7 +24,7 @@ pub(super) fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = &manifest.manager;
     let invocation = foreground_invocation_for_project(workspace, agent)?;
-    let meta: SessionMeta = write_manager_session(workspace, &invocation.spec, manifest)?;
+    let meta: SessionMeta = write_manager_session(workspace, &invocation.spec)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
     let command = prepare_manager_command(invocation, brief)?;

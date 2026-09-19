@@ -68,43 +68,6 @@ pub(crate) fn is_closed_wake(line: &str) -> bool {
     WakeKind::parse_line(line).is_some_and(WakeKind::is_terminal)
 }
 
-pub(crate) fn worker_contract_examples(status_path: &Utf8Path) -> String {
-    worker_contract_examples_for_target(status_path.as_str())
-}
-
-pub(crate) fn manager_worker_contract_examples(status_target: &str) -> String {
-    render_echo_examples(
-        &[
-            line(WakeKind::Done, "short result"),
-            line(WakeKind::Blocked, "blocker summary"),
-            line(WakeKind::NeedsDecision, "decision needed"),
-            line(WakeKind::Failed, "failure summary"),
-            line(WakeKind::Closed, "worker closed"),
-        ],
-        status_target,
-    )
-}
-
-fn worker_contract_examples_for_target(status_target: &str) -> String {
-    render_echo_examples(
-        &[
-            line(WakeKind::Done, "short result"),
-            line(WakeKind::Blocked, "blocker summary"),
-            line(WakeKind::NeedsDecision, "decision needed"),
-            line(WakeKind::Failed, "failure summary"),
-        ],
-        status_target,
-    )
-}
-
-fn render_echo_examples(lines: &[String], status_target: &str) -> String {
-    lines
-        .iter()
-        .map(|line| format!("echo \"{line}\" >> {status_target}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,14 +103,4 @@ mod tests {
         assert_eq!(line(WakeKind::Closed, "auth-fix"), "closed: auth-fix");
     }
 
-    #[test]
-    fn renders_contract_echo_examples() {
-        assert_eq!(
-            worker_contract_examples(Utf8Path::new("/tmp/status.log")),
-            "echo \"done: short result\" >> /tmp/status.log\n\
-echo \"blocked: blocker summary\" >> /tmp/status.log\n\
-echo \"needs-decision: decision needed\" >> /tmp/status.log\n\
-echo \"failed: failure summary\" >> /tmp/status.log"
-        );
-    }
 }
