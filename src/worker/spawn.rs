@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::{
+    role::WorkerRole,
     archive::archive_worker_dir,
     list::UNLABELED_TASK_LABEL,
     meta::{WorkerMeta, report_path, write_meta},
@@ -24,10 +25,12 @@ use super::{
     validation::{validate_id, validate_task_label},
 };
 
-const WORKER_BRIEF_TEMPLATE: &str = include_str!("../templates/worker_brief.md");
+const WORKER_CORE_TEMPLATE: &str = include_str!("../templates/worker_core.md");
+
 
 pub fn spawn(
     id: String,
+    role: WorkerRole,
     task_label: Option<String>,
     agent: String,
     brief: Option<Utf8PathBuf>,
@@ -65,15 +68,16 @@ pub fn spawn(
         Some(path) => absolute_existing_file(&path, "brief")?,
         None => {
             let path = dir.join("brief.md");
-            write_brief(
-                &dir,
-                &path,
-                &id,
-                task_label.as_deref(),
-                &project,
-                &agent,
-                &task.join(" "),
-            )?;
+            write_brief(&BriefInputs {
+                dir: &dir,
+                path: &path,
+                id: &id,
+                role,
+                task_label: task_label.as_deref(),
+                project: &project,
+                agent: &agent,
+                task: &task.join(" "),
+            })?;
             path
         }
     };
@@ -190,33 +194,49 @@ fn print_worker_tier(meta: &WorkerMeta) {
     }
 }
 
-fn write_brief(
-    dir: &Utf8Path,
-    path: &Utf8Path,
-    id: &str,
-    task_label: Option<&str>,
-    project: &Utf8Path,
-    agent: &str,
-    task: &str,
-) -> Result<()> {
+/// Everything the worker brief interpolates.
+struct BriefInputs<'a> {
+    dir: &'a Utf8Path,
+    path: &'a Utf8Path,
+    id: &'a str,
+    role: WorkerRole,
+    task_label: Option<&'a str>,
+    project: &'a Utf8Path,
+    agent: &'a str,
+    task: &'a str,
+}
+
+fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
+    let &BriefInputs {
+        dir,
+        path,
+        id,
+        role,
+        task_label,
+        project,
+        agent,
+        task,
+    } = inputs;
     let status_path = wake::status_log_path(dir);
     let report_file = report_path(dir);
-    let wake_examples = wake::worker_contract_examples(&status_path);
     let task_label = match task_label {
         Some(task_label) => task_label,
         None => UNLABELED_TASK_LABEL,
     };
+    // Every worker gets the shared contract plus exactly one role fragment, so a worker is not
+    // handed doctrine addressed to a role it is not playing.
+    let template = format!("{WORKER_CORE_TEMPLATE}\n{}", role.fragment());
     let body = render_template(
-        WORKER_BRIEF_TEMPLATE,
+        &template,
         &[
             ("{id}", id),
+            ("{role}", role.as_str()),
             ("{task_label}", task_label),
             ("{project}", project.as_str()),
             ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
-            ("{wake_examples}", &wake_examples),
         ],
     );
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
@@ -246,25 +266,4 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
 mod tests {
     use super::*;
 
-    #[test]
-    fn worker_brief_mentions_followup_review_scope() {
-        assert!(WORKER_BRIEF_TEMPLATE.contains("follow-up review after a fix"));
-    }
-
-    #[test]
-    fn worker_brief_mentions_gate_policy() {
-        assert!(WORKER_BRIEF_TEMPLATE.contains("runs the gate"));
-        assert!(WORKER_BRIEF_TEMPLATE.contains("times out mid-run"));
-        assert!(WORKER_BRIEF_TEMPLATE.contains("do not re-run deterministic gates"));
-        assert!(WORKER_BRIEF_TEMPLATE.contains("audit the runner's transcript gate output"));
-        assert!(
-            WORKER_BRIEF_TEMPLATE
-                .contains("Never use `working:`/`done:` to imply unrun gates passed")
-        );
-    }
-
-    #[test]
-    fn worker_brief_mentions_modularity_standard() {
-        assert!(WORKER_BRIEF_TEMPLATE.contains("split it by responsibility"));
-    }
 }

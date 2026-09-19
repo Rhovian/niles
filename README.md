@@ -10,7 +10,7 @@ handoff wording, and deciding when a task is complete.
 ## Requirements
 
 - A Rust toolchain with edition 2024 support (1.85+).
-- `tmux` — Niles runs the manager and workers as windows of your current tmux
+- `tmux` — Niles runs the lead and its workers as windows of your current tmux
   session, so `niles` must be run from inside tmux.
 - The agent CLIs you intend to use, on your `PATH` (e.g. `codex`, `claude`).
 
@@ -27,7 +27,7 @@ cargo build --release    # or a local build at target/release/niles
 niles
 ```
 
-Bare `niles` turns the current tmux pane into the manager agent. Niles never
+Bare `niles` turns the current tmux pane into the lead agent. Niles never
 creates, names, pins, or attaches a tmux session: run it inside the session you
 are already attached to, and it fails with one line of guidance if you are not
 in tmux. That is also what makes worker placement a fact rather than a
@@ -37,7 +37,7 @@ The launch prelude creates `.niles/worker/` and interactively ensures
 `.niles/manifest.yaml` exists, prompting for the `manager` (defaulting to
 Claude on first setup) and optionally the other role bindings.
 
-Niles writes a manager brief under `.niles/sessions/<id>/manager.md` pointing at
+Niles writes a lead brief under `.niles/sessions/<id>/manager.md` pointing at
 the manifest and its flow. For Claude the brief is passed via
 `--append-system-prompt` (hidden context); other agents receive it in their
 initial prompt. Niles owns no chat grammar — the foreground agent drives the
@@ -82,7 +82,7 @@ not a healthy warm pane.
 actionable line from a worker status log. Use `niles wait <id>` for
 one worker or `niles wait --task <label>` for a live task group. The five
 actionable states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and
-`closed:`. Workers stay warm after `done:` — it tells the manager to inspect
+`closed:`. Workers stay warm after `done:` — it tells the lead to inspect
 and optionally send follow-up, not to terminate; cleanup happens explicitly at
 integration time. Each wait records a byte offset into the status log in
 `.niles/worker/<id>/status.cursor` and advances it only when it delivers a
@@ -90,7 +90,33 @@ line, so each actionable line is returned exactly once. Concurrent waits on one
 worker are serialised by an advisory lock on that cursor rather than rejected:
 one is handed the line, the other keeps waiting.
 
-## Role Workflows
+## Roles
+
+Niles composes a brief per role rather than handing every agent the same one.
+A worker's brief is a short shared contract — its id, its report file, and the
+status lines that wake the lead — plus exactly one role fragment:
+
+```sh
+niles spawn impl --role worker   --agent codex  "Implement the fix"
+niles spawn rev  --role reviewer --agent claude "Review impl's change"
+niles spawn aud  --role security --agent claude "Attack impl's change"
+```
+
+- **lead** — the foreground agent. Owns the outcome *and the plan*: decides what
+  gets built and how, then delegates the implementation, independent judgment on
+  it, and anything needing parallelism or a fresh context. Does not implement.
+- **worker** — owns the change, and owns the gate. Runs the project's build,
+  tests and linters before reporting `done:`, and says what they printed.
+- **reviewer** — owns correctness, idiom and economy: does it work, does it read
+  like the code around it, could it have been done in less code, and are the
+  tests redundant. Does not run the gate and does not write hardening findings.
+- **security** — owns the adversarial pass, commissioned only when the change is
+  a security boundary. Must name a reachable attacker before any finding.
+
+Two splits do the work here. **Gate ownership**: when every agent is told the
+same thing about verification, every agent runs the test suite. And **security
+as its own pass**: fused into code review, it turns every small change into a
+hardening exercise against an attacker nobody named.
 
 Workspace role bindings live in `.niles/manifest.yaml`:
 
@@ -106,15 +132,8 @@ flow:
   - reviewer
 ```
 
-`flow` holds manifest role tokens, not a one-shot plan. The manager-facing flow
-is a worker-verification-reviewer loop ending in reviewer consensus or
-escalation, with `validation_command` supplying verification between worker and
-reviewer passes — the manifest is the only source of truth for the orchestration
-path. Manifest prompts accept built-in agent families and agents from project
+Manifest bindings accept built-in agent families and agents from project
 config; unknown bare agent names are rejected.
-
-The manager applies this flow by spawning planner, worker, validation, and
-reviewer workers as needed, using worker reports as durable handoff artifacts.
 
 ## Project Config
 
@@ -137,20 +156,20 @@ manifest role bindings.
 ## Example Task
 
 ```sh
-niles spawn auth-plan --task auth --agent claude:opus:high \
-  "Analyze the flaky auth test. Do not edit files; write findings to report.md."
-niles wait auth-plan
-niles report auth-plan
 niles spawn auth-impl --task auth --agent codex:gpt-5.5:xhigh \
-  "Implement the auth test fix using the planner report, then run cargo test auth."
+  "Fix the flaky auth test, then run the project's checks."
 niles wait auth-impl
 niles report auth-impl
+niles spawn auth-rev --task auth --role reviewer --agent claude:opus:high \
+  "Review auth-impl's fix. Its report says which checks it ran."
+niles wait auth-rev
+niles report auth-rev
 niles close --task auth
 ```
 
 ## Status
 
-Niles currently supports manager sessions in the current tmux pane, tmux worker
+Niles currently supports lead sessions in the current tmux pane, tmux worker
 windows, workspace role manifests, worker reports, worker archives, and
 worker status-log wake delivery.
 

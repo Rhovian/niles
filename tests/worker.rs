@@ -133,11 +133,14 @@ esac
     let brief = fs::read_to_string(workspace.join(".niles/worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("task_label: auth"));
     assert!(brief.contains("Fix auth"));
-    assert!(brief.contains("niles peek auth-fix"));
     assert!(brief.contains("report_file:"));
     assert!(brief.contains(".niles/worker/auth-fix/report.md"));
-    assert!(brief.contains("Write substantial deliverable content"));
     assert!(brief.contains("done: <short result>; report:"));
+    // Default role, so the worker fragment and none of the reviewer's doctrine.
+    assert!(brief.contains("You are the worker"));
+    assert!(brief.contains("You own the gate"));
+    assert!(!brief.contains("You are the reviewer"));
+    assert!(!brief.contains("name the attacker"));
 
     let launch = fs::read_to_string(workspace.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
@@ -227,6 +230,46 @@ fn spawn_always_targets_the_invoking_workspace_and_rejects_a_project_flag() {
     assert_command_success("workspace-local spawn", &spawn);
     assert!(workspace.join(".niles/worker/auth-fix").exists());
     assert!(!elsewhere.join(".niles").exists());
+}
+
+/// Wiring only: `--role` reaches brief composition and each role gets its own fragment on
+/// top of the shared contract. What each fragment *says* is asserted in `worker::role`.
+#[test]
+fn role_selects_which_fragment_the_brief_carries() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-roles");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    let mut briefs = Vec::new();
+    for role in ["worker", "reviewer", "security"] {
+        let spawn = Command::new(niles)
+            .args(["spawn", role, "--role", role, "--agent", "claude", "Do", "it"])
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .env("NILES_HOME", &home)
+            .env("TMUX_LOG", &tmux_log)
+            .env("TMUX", "/tmp/niles-test-tmux,0,0")
+            .output()
+            .unwrap();
+        assert_command_success(&format!("spawn --role {role}"), &spawn);
+
+        let brief =
+            fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
+                .unwrap();
+        assert!(brief.contains(&format!("You are the {role}")), "{brief}");
+        assert!(brief.contains("## Reporting"), "{brief}");
+        assert!(brief.contains("done: <short result>; report:"), "{brief}");
+        briefs.push(brief);
+    }
+
+    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
+        assert_ne!(
+            briefs[left], briefs[right],
+            "each role must get a different brief"
+        );
+    }
 }
 
 #[test]

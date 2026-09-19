@@ -23,6 +23,9 @@ pub enum CommandName {
     Spawn {
         /// Worker task id used for window and metadata names.
         id: String,
+        /// Which brief the worker gets.
+        #[arg(long, value_enum, default_value_t = crate::worker::WorkerRole::Worker)]
+        role: crate::worker::WorkerRole,
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,

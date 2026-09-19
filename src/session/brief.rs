@@ -8,13 +8,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agents,
     util::{timestamp_id, write_json_pretty},
-    wake,
-    workspace_manifest::{self, WorkspaceManifest},
+    workspace_manifest,
 };
 
 use super::startup::startup_context;
 
-const MANAGER_BRIEF_TEMPLATE: &str = include_str!("../templates/manager_brief.md");
+const LEAD_BRIEF_TEMPLATE: &str = include_str!("../templates/lead_brief.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -35,7 +34,6 @@ pub struct SessionMeta {
 pub(super) fn write_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
-    manifest: &WorkspaceManifest,
 ) -> Result<SessionMeta> {
     let now = Utc::now();
     let id = timestamp_id(&now);
@@ -43,7 +41,7 @@ pub(super) fn write_manager_session(
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("manager.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_manager_brief(agent, workspace, &dir, manifest, &startup_context);
+    let body = render_lead_brief(agent, workspace, &dir, &startup_context);
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -66,26 +64,19 @@ pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Re
     write_json_pretty(&meta_path, meta)
 }
 
-fn render_manager_brief(
+fn render_lead_brief(
     agent: &agents::AgentSpec,
     workspace: &Utf8Path,
     dir: &Utf8Path,
-    manifest: &WorkspaceManifest,
     startup_context: &str,
 ) -> String {
     let manifest_path = workspace_manifest::manifest_path(workspace);
-    let flow = workspace_manifest::flow_summary(&manifest.flow);
-    MANAGER_BRIEF_TEMPLATE
+    LEAD_BRIEF_TEMPLATE
         .replace("{workspace}", workspace.as_str())
         .replace("{agent}", &agent.canonical())
         .replace("{dir}", dir.as_str())
         .replace("{manifest}", manifest_path.as_str())
-        .replace("{flow}", &flow)
         .replace("{startup_context}", startup_context)
-        .replace(
-            "{worker_wake_examples}",
-            &wake::manager_worker_contract_examples("<status-file>"),
-        )
 }
 
 fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
@@ -109,88 +100,84 @@ mod tests {
     use super::super::test_support::temp_test_path;
     use super::*;
 
+    /// Planning is the lead's, implementation is not. With no planner role left, a plan
+    /// derived twice is the duplication #89 describes.
     #[test]
-    fn manager_brief_omits_removed_manifest_command() {
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("niles spawn <id>"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("manifest: {manifest}"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("flow: {flow}"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("source of truth"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("standard worker-verification-reviewer loop"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("CONSENSUS OR ESCALATE"));
-        for removed in removed_workflow_commands() {
-            assert!(!MANAGER_BRIEF_TEMPLATE.contains(&removed));
-        }
-        assert!(!MANAGER_BRIEF_TEMPLATE.contains("task YAML"));
-        assert!(!MANAGER_BRIEF_TEMPLATE.contains("niles manifest"));
-    }
-
-    #[test]
-    fn cost_discipline_guidance() {
-        assert_eq!(
-            MANAGER_BRIEF_TEMPLATE.matches("## Cost Discipline").count(),
-            1
-        );
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Tier reviewers by surface risk"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Scope re-reviews to the fix delta"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Gate only stale/scoped evidence"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("call that independent verification"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Run at most one authoritative manager gate"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("do not present it to the user as gate-verified"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Investigation/repro is judgment"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Keep manager context lean"));
-    }
-
-    #[test]
-    fn manager_brief_describes_workspace_scoped_workers() {
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("Worker commands"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("`workers`, `peek`, `report`"));
+    fn lead_brief_keeps_the_plan_and_delegates_the_implementation() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and you own the plan"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
+        // The undershoot half: dispatching a worker for a check it could finish itself (#121).
         assert!(
-            MANAGER_BRIEF_TEMPLATE.contains("Workers always belong to the workspace the spawn ran from")
+            LEAD_BRIEF_TEMPLATE.contains("Do inline whatever is cheaper to do than to delegate")
         );
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("scoped to this workspace's worker records"));
-        assert!(MANAGER_BRIEF_TEMPLATE.contains("most recent local archive"));
+    }
+
+    /// The audit is commissioned deliberately, not folded into every review (#119).
+    #[test]
+    fn lead_brief_commissions_security_only_for_security_boundaries() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("will not write hardening findings"));
+        assert!(
+            LEAD_BRIEF_TEMPLATE.contains("only when the change is itself a security boundary")
+        );
+    }
+
+
+
+    /// The gate has exactly one owner, and it is not the lead (the token-burn fix).
+    #[test]
+    fn lead_brief_assigns_the_gate_to_the_worker() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("The gate belongs to the worker"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("the same command a third time, not verification"));
+    }
+
+    /// Naming model tiers in the brief dates it to a release (#90).
+    #[test]
+    fn lead_brief_tiers_effort_without_naming_models() {
+        for model in ["opus", "sonnet", "gpt-5", "claude:", "codex:gpt"] {
+            assert!(
+                !LEAD_BRIEF_TEMPLATE.contains(model),
+                "lead brief should not hardcode the model ladder, found {model:?}"
+            );
+        }
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Effort follows risk"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Scope a re-review to the fix"));
+    }
+
+    /// The brief is read on every session start; length is a running cost.
+    #[test]
+    fn lead_brief_stays_short() {
+        let lines = LEAD_BRIEF_TEMPLATE.lines().count();
+        assert!(lines <= 50, "lead brief is {lines} lines; keep it tight");
     }
 
     #[test]
-    fn manager_brief_render_includes_manifest_flow() {
+    fn lead_brief_keeps_delegation_inside_niles() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Delegation goes through niles"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --role"));
+    }
+
+    #[test]
+    fn lead_brief_render_fills_every_placeholder() {
         let workspace = temp_test_path("brief-render");
         let dir = workspace.join(".niles/sessions/test-session");
         let agent = agents::parse_spec("codex:gpt-5.5:xhigh").unwrap();
-        let manifest = WorkspaceManifest {
-            manager: "codex:gpt-5.5:xhigh".to_owned(),
-            planner: "planbot".to_owned(),
-            worker: "codebot".to_owned(),
-            reviewer: "reviewbot".to_owned(),
-            validation_command: "check".to_owned(),
-            flow: vec![
-                workspace_manifest::WorkspaceFlowRole::Reviewer,
-                workspace_manifest::WorkspaceFlowRole::Validation,
-            ],
-        };
 
-        let body = render_manager_brief(&agent, &workspace, &dir, &manifest, "worker: none");
+        let body = render_lead_brief(&agent, &workspace, &dir, "worker: none");
 
         assert!(body.contains(&format!(
             "manifest: {}",
             workspace_manifest::manifest_path(&workspace)
         )));
-        assert!(body.contains("flow: reviewer -> validation"));
-        assert!(body.contains("manager_agent: codex:gpt-5.5:xhigh"));
+        assert!(body.contains("lead_agent: codex:gpt-5.5:xhigh"));
         assert!(body.contains("worker: none"));
-        assert!(!body.contains("{manifest}"));
-        assert!(!body.contains("{flow}"));
-    }
-
-    fn removed_workflow_commands() -> [String; 8] {
-        [
-            format!("{} {}", "niles", "run"),
-            format!("{} {}", "niles", "step"),
-            format!("exec{}step", "-"),
-            format!("{} {}", "niles", "status"),
-            format!("{} {}", "niles", "show"),
-            format!("{} {}", "niles", "log"),
-            format!("{} {}", "niles", "diff"),
-            format!("latest_{}", "run"),
-        ]
+        assert!(!body.contains("{manifest}"), "unfilled placeholder: {body}");
+        assert!(!body.contains("{workspace}"), "unfilled placeholder: {body}");
+        assert!(!body.contains("{agent}"), "unfilled placeholder: {body}");
+        assert!(!body.contains("{dir}"), "unfilled placeholder: {body}");
+        assert!(
+            !body.contains("{startup_context}"),
+            "unfilled placeholder: {body}"
+        );
     }
 }
