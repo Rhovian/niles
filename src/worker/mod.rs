@@ -14,7 +14,7 @@ pub use list::workers;
 pub use pane::{peek, send};
 pub use role::WorkerRole;
 pub use report::report;
-pub use resolve::status_log_path;
+pub use resolve::{status_log_path, window_is_gone};
 pub use spawn::spawn;
 
 pub(crate) use close::select_worker_ids_by_task;

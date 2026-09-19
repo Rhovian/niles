@@ -522,6 +522,124 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
     assert!(!stdout.contains("stale pass"), "stdout: {stdout}");
 }
 
+/// Writes a tmux stub that reports the worker's window as present or absent.
+fn write_window_tmux(bin: &Path, window_present: bool) {
+    let listing = if window_present { "niles-auth-fix" } else { "" };
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "display-message -p") printf 'niles-test-session\n'; exit 0 ;;
+esac
+case "$1" in
+  list-windows) printf '{listing}\n'; exit 0 ;;
+  has-session) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+}
+
+fn wait_with_tmux(workspace: &Path, bin: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_niles"))
+        .arg("wait")
+        .args(args)
+        .current_dir(workspace)
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env("NILES_HOME", niles_home(workspace))
+        .env("TMUX_LOG", workspace.join("tmux.log"))
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .output()
+        .unwrap()
+}
+
+/// A worker whose window is gone can never append again, so waiting out the timeout on it is
+/// pure delay — with the default timeout, an hour of it.
+#[test]
+fn a_gone_window_ends_the_wait_instead_of_blocking() {
+    let workspace = temp_workspace("niles-wait-window-gone");
+    worker_with_status(&workspace, "auth-fix", b"working: still running\n");
+    write_worker_meta(&workspace, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_window_tmux(&bin, false);
+
+    let started = Instant::now();
+    let output = wait_with_tmux(
+        &workspace,
+        &bin,
+        &["auth-fix", "--interval", "0.05", "--timeout", "30"],
+    );
+
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "wait did not return promptly: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(output.status.code(), Some(10), "{}", stderr_of(&output));
+    assert!(
+        stdout_of(&output).contains("exited without reporting"),
+        "stdout: {}",
+        stdout_of(&output)
+    );
+}
+
+/// A worker can report and *then* exit. The report must win; losing it would turn a completed
+/// task into a crash report.
+#[test]
+fn a_final_line_is_delivered_before_a_gone_window_is_reported() {
+    let workspace = temp_workspace("niles-wait-window-gone-late-line");
+    worker_with_status(&workspace, "auth-fix", b"done: finished the work\n");
+    write_worker_meta(&workspace, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_window_tmux(&bin, false);
+
+    let reported = wait_with_tmux(
+        &workspace,
+        &bin,
+        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
+    );
+    assert_command_success("wait with a final line", &reported);
+    assert_eq!(stdout_of(&reported), "done: finished the work\n");
+
+    // Only once the log is drained does the gone window become the answer.
+    let drained = wait_with_tmux(
+        &workspace,
+        &bin,
+        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
+    );
+    assert_eq!(drained.status.code(), Some(10), "{}", stderr_of(&drained));
+    assert!(stdout_of(&drained).contains("exited without reporting"));
+}
+
+/// A live window must never be mistaken for a gone one.
+#[test]
+fn a_live_window_keeps_the_wait_running() {
+    let workspace = temp_workspace("niles-wait-window-live");
+    worker_with_status(&workspace, "auth-fix", b"working: still running\n");
+    write_worker_meta(&workspace, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_window_tmux(&bin, true);
+
+    let output = wait_with_tmux(
+        &workspace,
+        &bin,
+        &["auth-fix", "--interval", "0.05", "--timeout", "1"],
+    );
+
+    assert_eq!(output.status.code(), Some(22), "{}", stdout_of(&output));
+    assert!(stderr_of(&output).contains("timeout"));
+}
+
 /// A tmux stub that accepts the window queries `send` makes.
 fn write_stub_tmux(bin: &Path, workspace: &Path) {
     let tmux = bin.join("tmux");

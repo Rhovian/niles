@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     store,
-    tmux::{self, TargetState, WindowTarget},
 };
 
 use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
@@ -32,7 +31,7 @@ pub fn workers() -> Result<()> {
     for worker in workers {
         let task = worker_task_label(&worker);
         let age = worker_age(&worker, now);
-        let window = worker_window_state(&worker.meta);
+        let window = super::resolve::window_state(&worker.meta);
         let status = last_status_line(&worker)?;
         let status = match status {
             Some(status) => status,
@@ -70,15 +69,6 @@ fn live_workers() -> Result<Vec<LiveWorker>> {
     }
     workers.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(workers)
-}
-
-fn worker_window_state(meta: &WorkerMeta) -> TargetState {
-    match WindowTarget::parse(&meta.window) {
-        Ok(target) => tmux::target_state(&target, &meta.project, &meta.id),
-        Err(err) => TargetState::Unknown {
-            error: format!("{err:#}"),
-        },
-    }
 }
 
 fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {

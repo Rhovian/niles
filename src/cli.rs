@@ -102,7 +102,11 @@ pub enum CommandName {
     /// follow-up you run it again for the next one. Waiting on several workers returns the first
     /// line any of them produces, prefixed with its id.
     ///
-    /// Exits 0 on a wake, 10 when the worker closed, 22 on timeout.
+    /// A worker whose tmux window has gone ends the wait rather than blocking on a log nothing
+    /// can append to again — but only once its log holds no further line, so a worker that
+    /// reported and then exited still hands that report over.
+    ///
+    /// Exits 0 on a wake, 10 when the worker closed or its window is gone, 22 on timeout.
     #[command(verbatim_doc_comment)]
     Wait {
         /// Worker ids to wait on. Pass several to wait on a fleet.
