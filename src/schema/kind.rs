@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArtifactKind {
-    CapabilityManifest,
     Directory,
     ManagerSession,
     WorkerMetadata,
@@ -10,7 +9,6 @@ pub(crate) enum ArtifactKind {
 impl ArtifactKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            ArtifactKind::CapabilityManifest => "capability manifest",
             ArtifactKind::Directory => "artifact directory",
             ArtifactKind::ManagerSession => "manager session metadata",
             ArtifactKind::WorkerMetadata => "worker metadata",
@@ -20,9 +18,6 @@ impl ArtifactKind {
 
     pub(in crate::schema) fn remediation(self) -> &'static str {
         match self {
-            ArtifactKind::CapabilityManifest => {
-                "rerun `niles analyze` to regenerate it, or use the older binary that wrote it"
-            }
             ArtifactKind::Directory => "fix the directory permissions and rerun `niles doctor`",
             ArtifactKind::ManagerSession => {
                 "remove the session directory and start a fresh manager session, or use the older binary that wrote it"

@@ -9,28 +9,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-pub fn slugify(value: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_separator = false;
-
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            slug.push(ch.to_ascii_lowercase());
-            last_was_separator = false;
-        } else if !last_was_separator {
-            slug.push('-');
-            last_was_separator = true;
-        }
-    }
-
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "step".to_owned()
-    } else {
-        slug.to_owned()
-    }
-}
-
 pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     format!(
         "{}{:09}Z",
@@ -310,24 +288,6 @@ mod tests {
             "test temp path",
         )
         .unwrap()
-    }
-
-    #[test]
-    fn slugify_normalizes_labels_for_step_filenames() {
-        assert_eq!(slugify("Hello World!"), "hello-world");
-        assert_eq!(slugify("Already_OK-123"), "already_ok-123");
-    }
-
-    #[test]
-    fn slugify_collapses_and_trims_separators() {
-        assert_eq!(slugify("--Hello!!!World--"), "hello-world");
-        assert_eq!(slugify("a / b : c"), "a-b-c");
-    }
-
-    #[test]
-    fn slugify_uses_step_for_empty_slugs() {
-        assert_eq!(slugify("!!!"), "step");
-        assert_eq!(slugify(""), "step");
     }
 
     #[test]

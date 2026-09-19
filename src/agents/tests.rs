@@ -1,32 +1,9 @@
 use super::*;
 
 #[test]
-fn codex_defaults_to_workspace_write() {
+fn known_and_unknown_agents_resolve_a_binary_name() {
     assert_eq!(default_binary("codex"), "codex");
-    assert_eq!(
-        default_args("codex"),
-        ["exec", "--sandbox", "workspace-write"].map(str::to_owned)
-    );
-    assert!(matches!(default_prompt("codex"), PromptMode::Arg));
-}
-
-#[test]
-fn unknown_agents_default_to_binary_name() {
     assert_eq!(default_binary("custom"), "custom");
-    assert!(default_args("custom").is_empty());
-    assert!(matches!(default_prompt("custom"), PromptMode::Arg));
-}
-
-#[test]
-fn invocation_applies_default_agent_args() {
-    let invocation = invocation("codex", None, InvocationDefaults::Default).unwrap();
-
-    assert_eq!(invocation.binary, "codex");
-    assert_eq!(
-        invocation.args,
-        ["exec", "--sandbox", "workspace-write"].map(str::to_owned)
-    );
-    assert!(matches!(invocation.prompt, PromptMode::Arg));
 }
 
 #[test]
@@ -128,15 +105,13 @@ fn static_validation_rejects_unknown_builtin_models() {
 
 #[test]
 fn invocation_maps_codex_model_effort_flags() {
-    let invocation = invocation("codex:gpt-5.5:xhigh", None, InvocationDefaults::Default).unwrap();
+    let invocation = invocation("codex:gpt-5.5:xhigh", None, InvocationDefaults::Worker).unwrap();
 
     assert_eq!(invocation.binary, "codex");
     assert_eq!(
         invocation.args,
         [
-            "exec",
-            "--sandbox",
-            "workspace-write",
+            "--dangerously-bypass-approvals-and-sandbox",
             "--model",
             "gpt-5.5",
             "--config",

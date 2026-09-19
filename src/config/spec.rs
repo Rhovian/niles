@@ -27,10 +27,6 @@ pub enum PromptMode {
     Stdin,
 }
 
-pub fn load_project_config() -> Result<ProjectConfig> {
-    load_project_config_from(Utf8Path::new("."))
-}
-
 pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
     for path in [Utf8Path::new("niles.yaml"), Utf8Path::new(".niles.yaml")] {
         let path = root.join(path);

@@ -3,7 +3,7 @@
 Niles is a Rust CLI orchestration harness for coordinating agent CLIs such as
 Codex and Claude in tmux sessions. The Rust CLI owns deterministic work —
 workspace manifests, tmux window placement, worker metadata, status logs,
-schema-stamped artifacts, and agent binary probing —
+and schema-stamped artifacts —
 while agents own the judgment-heavy work: planning, implementation, review,
 handoff wording, and deciding when a task is complete.
 
@@ -129,7 +129,7 @@ agents:
 ```
 
 Niles has built-in profiles for common agents such as `codex` and `claude`, so
-`binary`/`args` can be omitted for known agents. Agent references accept a
+`binary` can be omitted for known agents. Agent references accept a
 `family:model[:effort]` qualifier — for example `codex:gpt-5.5:xhigh`,
 `claude:opus:max`, or `claude:sonnet:med` — in `niles spawn --agent` and
 manifest role bindings.
@@ -148,23 +148,11 @@ niles report auth-impl
 niles worker-close --task auth
 ```
 
-## Analyzer
-
-Agent CLIs change quickly, so Niles does not assume a fixed flag set. `niles
-analyze` builds a local capability manifest under `.niles/capabilities/` by
-running safe probes (`--version`, `--help`) and probing model acceptance for
-requested specs, built-in aliases, and model-qualified manifest bindings; pass
-`--agent <name>` to probe a single agent. Manifests record accepted and rejected
-models with CLI version and timestamp;
-launch validation consults fresh manifests first, fails before spawning for
-known-rejected models, and falls back to static validation otherwise. `niles
-doctor` reports environment readiness and schema state.
-
 ## Status
 
 Niles currently supports manager sessions in the current tmux pane, tmux worker
-windows, workspace role manifests, local analyzer support, worker reports,
-worker archives, and worker status-log wake delivery.
+windows, workspace role manifests, worker reports, worker archives, and
+worker status-log wake delivery.
 
 ## License
 

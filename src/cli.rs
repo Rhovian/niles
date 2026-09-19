@@ -17,20 +17,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
-    /// Probe configured agent CLIs and write local capability manifests.
-    #[command(alias = "scan")]
-    Analyze {
-        /// Agent id to probe. Defaults to codex and claude.
-        #[arg(short, long)]
-        agent: Option<String>,
-    },
     /// Report binary identity, workspace schema state, and dev-mode staleness.
     Doctor,
     /// Spawn a worker agent in a tmux window.
     Spawn {
-        /// Proceed even when a built-in agent CLI is below the pinned version range.
-        #[arg(long, env = "NILES_ALLOW_CLI_MISMATCH")]
-        allow_cli_mismatch: bool,
         /// Worker task id used for window and metadata names.
         id: String,
         /// Task label for grouping warm workers.

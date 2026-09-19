@@ -4,13 +4,11 @@ use anyhow::{Result, bail};
 
 use crate::config::spec::{AgentConfig, PromptMode};
 
-pub(crate) mod capabilities;
 pub(crate) mod catalog;
 mod families;
 pub(crate) mod picker;
 #[cfg(test)]
 mod tests;
-pub(crate) mod version;
 
 pub use families::AgentProfile;
 
@@ -22,7 +20,6 @@ const CUSTOM_AGENT_SUPPORTED_EFFORTS: &[&str] = &[];
 
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationDefaults {
-    Default,
     Foreground,
     Worker,
 }
@@ -75,22 +72,6 @@ pub fn default_binary(agent: &str) -> String {
     default_binary_for_family(family.clone(), profile_for(&family))
 }
 
-pub fn default_args(agent: &str) -> Vec<String> {
-    let family = family_or_self(agent);
-    match profile_for(&family) {
-        Some(profile) => profile_args(profile),
-        None => args(CUSTOM_AGENT_DEFAULT_ARGS),
-    }
-}
-
-pub fn default_prompt(agent: &str) -> PromptMode {
-    let family = family_or_self(agent);
-    match profile_for(&family) {
-        Some(profile) => profile.prompt,
-        None => CUSTOM_AGENT_PROMPT_MODE,
-    }
-}
-
 pub fn invocation(
     agent: &str,
     config: Option<&AgentConfig>,
@@ -129,13 +110,6 @@ pub fn foreground_invocation(agent: &str, config: Option<&AgentConfig>) -> Resul
 fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentInvocation {
     let profile = profile_for(spec.family());
     match defaults {
-        InvocationDefaults::Default => AgentInvocation {
-            binary: default_binary(spec.family()),
-            args: default_args(spec.family()),
-            prompt: default_prompt(spec.family()),
-            env: launch_env(profile),
-            spec: spec.clone(),
-        },
         InvocationDefaults::Foreground => AgentInvocation {
             binary: default_binary(spec.family()),
             args: Vec::new(),
@@ -179,10 +153,6 @@ fn prompt_for_profile(profile: Option<AgentProfile>) -> PromptMode {
         Some(profile) => profile.worker_prompt,
         None => CUSTOM_AGENT_PROMPT_MODE,
     }
-}
-
-fn profile_args(profile: AgentProfile) -> Vec<String> {
-    args(profile.args)
 }
 
 fn args(args: &[&str]) -> Vec<String> {

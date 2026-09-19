@@ -1,6 +1,5 @@
 mod agent_window;
 mod agents;
-mod analyze;
 mod build_info;
 mod cli;
 mod config;
@@ -37,25 +36,15 @@ fn run() -> Result<ExitCode> {
 
     match cli.command {
         None => session::run(cli.manager)?,
-        Some(CommandName::Analyze { agent }) => analyze::analyze(agent)?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
-            allow_cli_mismatch,
             id,
             task_label,
             project,
             agent,
             brief,
             task,
-        }) => worker::spawn(
-            id,
-            task_label,
-            project,
-            agent,
-            brief,
-            task,
-            allow_cli_mismatch,
-        )?,
+        }) => worker::spawn(id, task_label, project, agent, brief, task)?,
         Some(CommandName::WorkerClose {
             id,
             task_label,
