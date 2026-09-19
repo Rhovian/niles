@@ -78,13 +78,6 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
         }
     }
 
-    let capabilities = niles.join("capabilities");
-    for path in read_dir_paths(&mut observations, &capabilities) {
-        if path.extension() == Some("json") {
-            push_json_if_file(&mut observations, path, ArtifactKind::CapabilityManifest);
-        }
-    }
-
     observations.sort_by(|left, right| {
         left.path
             .cmp(&right.path)

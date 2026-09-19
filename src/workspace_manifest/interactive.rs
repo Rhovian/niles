@@ -70,7 +70,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             "Choose the foreground manager agent. Press Enter to accept the default."
         )?;
         let manager =
-            picker::prompt_agent_value(root, "Manager agent", &manifest.manager, &agent_configs)?;
+            picker::prompt_agent_value("Manager agent", &manifest.manager, &agent_configs)?;
         let manager_changed = manager != manifest.manager;
         manifest.manager = manager;
         if manager_changed {
@@ -93,8 +93,8 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
     let manager =
-        picker::prompt_agent_value(root, "Manager agent", &defaults.manager, &agent_configs)?;
-    let manifest = prompt_manifest_values(root, input, output, manager, defaults, &agent_configs)?;
+        picker::prompt_agent_value("Manager agent", &defaults.manager, &agent_configs)?;
+    let manifest = prompt_manifest_values(input, output, manager, defaults, &agent_configs)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -116,7 +116,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
         let manager = manifest.manager.clone();
-        *manifest = prompt_manifest_values(root, input, output, manager, manifest, agent_configs)?;
+        *manifest = prompt_manifest_values(input, output, manager, manifest, agent_configs)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
         print_manifest_roles(output, manifest, agent_configs)?;
@@ -126,7 +126,6 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
 }
 
 fn prompt_manifest_values<R: BufRead, W: Write>(
-    root: &Utf8Path,
     input: &mut R,
     output: &mut W,
     manager: String,
@@ -135,16 +134,12 @@ fn prompt_manifest_values<R: BufRead, W: Write>(
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
         manager,
-        planner: picker::prompt_agent_value(
-            root,
-            "Planner agent",
+        planner: picker::prompt_agent_value("Planner agent",
             &defaults.planner,
             agent_configs,
         )?,
-        worker: picker::prompt_agent_value(root, "Worker agent", &defaults.worker, agent_configs)?,
-        reviewer: picker::prompt_agent_value(
-            root,
-            "Reviewer agent",
+        worker: picker::prompt_agent_value("Worker agent", &defaults.worker, agent_configs)?,
+        reviewer: picker::prompt_agent_value("Reviewer agent",
             &defaults.reviewer,
             agent_configs,
         )?,

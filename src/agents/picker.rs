@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
-use camino::Utf8Path;
 use dialoguer::{Select, console::Term};
 
 use super::catalog::{ModelCatalog, ModelGroup, model_catalog};
@@ -11,7 +10,6 @@ use crate::{agents, config::spec::AgentConfig};
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
 
 pub(crate) fn prompt_agent_value(
-    root: &Utf8Path,
     label: &str,
     default: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -20,18 +18,11 @@ pub(crate) fn prompt_agent_value(
     let default_spec = agents::parse_spec(default)?;
     let choices = agent_choices(default, &default_spec, agent_configs);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
-    prompt_selected_agent(
-        &term,
-        root,
-        &choices[index].value,
-        &default_spec,
-        agent_configs,
-    )
+    prompt_selected_agent(&term, &choices[index].value, &default_spec, agent_configs)
 }
 
 fn prompt_selected_agent(
     term: &Term,
-    root: &Utf8Path,
     agent: &str,
     default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -41,12 +32,11 @@ fn prompt_selected_agent(
         return agents::canonical_manifest_agent(&spec, agent_configs);
     }
 
-    prompt_builtin_agent(term, root, spec.family(), default_spec, agent_configs)
+    prompt_builtin_agent(term, spec.family(), default_spec, agent_configs)
 }
 
 fn prompt_builtin_agent(
     term: &Term,
-    root: &Utf8Path,
     family: &str,
     default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
@@ -55,15 +45,10 @@ fn prompt_builtin_agent(
         true => Some(default_spec),
         false => None,
     };
-    let catalog = model_catalog(root, family, agent_configs)?;
-    if let Some(message) = catalog.source_message(family) {
-        term.write_line(&message)
-            .with_context(|| format!("failed to write {family} catalog source"))?;
-    }
-
+    let catalog = model_catalog(family);
     let model = prompt_model(term, family, default_spec, &catalog)?;
 
-    let effort = prompt_effort(term, family, &model, default_spec, &catalog)?;
+    let effort = prompt_effort(term, family, &model, default_spec)?;
     let spec = agents::AgentSpec::from_parts(family, Some(&model), effort.as_deref())?;
     agents::canonical_manifest_agent(&spec, agent_configs)
 }
@@ -146,9 +131,8 @@ fn prompt_effort(
     family: &str,
     model: &str,
     default_spec: Option<&agents::AgentSpec>,
-    catalog: &ModelCatalog,
 ) -> Result<Option<String>> {
-    let efforts = catalog.effort_options(family, model);
+    let efforts = ModelCatalog::effort_options(family);
     if efforts.is_empty() {
         return Ok(None);
     }
@@ -251,8 +235,7 @@ struct MenuChoice<T> {
 mod tests {
     use super::*;
 
-    use camino::Utf8Path;
-
+    
     #[test]
     fn agent_choices_do_not_include_free_text_escape_hatch() {
         let default = agents::parse_spec("codex").unwrap();
@@ -268,12 +251,7 @@ mod tests {
 
     #[test]
     fn bare_family_defaults_to_first_catalog_model() {
-        let catalog = model_catalog(
-            Utf8Path::new("/tmp/niles-picker-bare-family"),
-            "codex",
-            &BTreeMap::new(),
-        )
-        .unwrap();
+        let catalog = model_catalog("codex");
         let choices = model_choices_from_catalog("codex", None, &catalog);
 
         assert_eq!(choices[0].label, "gpt-5.5");
@@ -293,12 +271,7 @@ mod tests {
     #[test]
     fn existing_model_default_still_selects_matching_group() {
         let default = agents::parse_spec("codex:o3-pro:xhigh").unwrap();
-        let catalog = model_catalog(
-            Utf8Path::new("/tmp/niles-picker-existing-model"),
-            "codex",
-            &BTreeMap::new(),
-        )
-        .unwrap();
+        let catalog = model_catalog("codex");
         let choices = model_choices_from_catalog("codex", Some(&default), &catalog);
 
         assert_eq!(

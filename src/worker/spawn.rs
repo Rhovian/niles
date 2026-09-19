@@ -33,7 +33,6 @@ pub fn spawn(
     agent: String,
     brief: Option<Utf8PathBuf>,
     task: Vec<String>,
-    allow_cli_mismatch: bool,
 ) -> Result<()> {
     validate_id(&id)?;
     if let Some(label) = &task_label {
@@ -48,19 +47,11 @@ pub fn spawn(
     require_current_workspace_project(&current_workspace, &requested_project)?;
     let project = current_workspace;
     let config = load_project_config_from(&project)?;
-    let agent_config = agents::config_for(&config.agents, &agent)?;
-    let agent_spec = agents::capabilities::validate_agent(
-        &project,
-        &agent,
-        agent_config,
-        agents::InvocationDefaults::Worker,
-    )?;
-    agents::version::preflight_agent(
-        &agent,
-        agent_config,
-        agents::InvocationDefaults::Worker,
-        allow_cli_mismatch,
-    )?;
+    // Rejects unknown bare agent names before any worker state is written.
+    agents::config_for(&config.agents, &agent)?;
+    let agent_spec = agents::parse_spec(&agent)?;
+    // Static check against the built-in family aliases: no probe, no manifest, no subprocess.
+    agents::validate_static_model(&agent_spec)?;
     if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }

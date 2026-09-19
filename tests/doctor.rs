@@ -39,7 +39,6 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
 
     fs::create_dir_all(workspace.join(".niles/worker/worker-1")).unwrap();
     fs::create_dir_all(workspace.join(".niles/sessions/session-1")).unwrap();
-    fs::create_dir_all(workspace.join(".niles/capabilities")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
         "manager: claude\nplanner: claude\nworker: codex\nreviewer: claude\nvalidation_command: test\n",
@@ -52,7 +51,6 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
         "{}",
     )
     .unwrap();
-    fs::write(workspace.join(".niles/capabilities/codex.json"), "{}").unwrap();
 
     let output = Command::new(niles)
         .arg("doctor")
@@ -69,7 +67,6 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
     assert!(stdout.contains(
         "manager session metadata,.niles/sessions/session-1/session.json,older schema 1"
     ));
-    assert!(stdout.contains("capability manifest,.niles/capabilities/codex.json,older schema 1"));
     assert!(!stdout.contains("global Niles index"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("doctor found non-current"));
 }

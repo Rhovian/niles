@@ -6,10 +6,6 @@ use crate::config::spec::PromptMode;
 pub struct AgentProfile {
     pub id: &'static str,
     pub binary: &'static str,
-    pub args: &'static [&'static str],
-    pub min_version: &'static str,
-    pub tested_version: &'static str,
-    pub prompt: PromptMode,
     pub worker_args: &'static [&'static str],
     pub worker_prompt: PromptMode,
     pub model_aliases: &'static [&'static str],
@@ -52,10 +48,6 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
-        args: &["exec", "--sandbox", "workspace-write"],
-        min_version: "0.144.1",
-        tested_version: "0.144.1",
-        prompt: PromptMode::Arg,
         worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
         worker_prompt: PromptMode::Arg,
         model_aliases: &["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
@@ -75,10 +67,6 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
-        args: &["-p"],
-        min_version: "2.1.206",
-        tested_version: "2.1.206",
-        prompt: PromptMode::Arg,
         worker_args: &["--dangerously-skip-permissions"],
         worker_prompt: PromptMode::Arg,
         model_aliases: &["opus", "sonnet", "fable", "haiku"],
