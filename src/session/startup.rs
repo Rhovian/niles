@@ -1,29 +1,25 @@
 use anyhow::Result;
 use camino::Utf8Path;
 
-use crate::util::read_dir_utf8_paths;
+use crate::store;
 
+/// The workers the lead is inheriting, read from the workspace it is starting in.
+///
+/// This used to scan for `.niles/worker/<id>.json` files, a layout that stopped existing when a
+/// worker became a directory — so it reported `worker: none` in every session and the lead began
+/// blind to whatever was already running. It now reads the same worker locations the rest of the
+/// CLI does, so there is no second layout to drift out of step.
 pub(super) fn startup_context(workspace: &Utf8Path) -> Result<String> {
-    worker_context(workspace)
-}
-
-fn worker_context(workspace: &Utf8Path) -> Result<String> {
-    let worker_dir = workspace.join(".niles").join("worker");
-    let mut ids = read_dir_utf8_paths(&worker_dir)?
+    let mut ids = store::resolve_worker_locations_in(workspace)?
         .into_iter()
-        .filter(|path| path.extension() == Some("json"))
-        .filter_map(|path| {
-            path.file_stem()
-                .map(|stem| stem.to_owned())
-                .filter(|stem| !stem.is_empty())
-        })
+        .map(|entry| entry.id)
         .collect::<Vec<_>>();
     ids.sort();
+
     if ids.is_empty() {
-        Ok("worker: none".to_owned())
-    } else {
-        Ok(format!("worker: {}", ids.join(", ")))
+        return Ok("worker: none".to_owned());
     }
+    Ok(format!("worker: {}", ids.join(", ")))
 }
 
 #[cfg(test)]
@@ -33,17 +29,29 @@ mod tests {
 
     use std::fs;
 
+    /// Regression: a worker is a directory. The previous implementation looked for `<id>.json`
+    /// files and its test wrote them, so the test passed while every real session saw nothing.
     #[test]
-    fn startup_context_reports_workers_only() {
+    fn startup_context_lists_worker_directories() {
         let root = temp_test_path("startup-context-workers");
-        let worker_dir = root.join(".niles/worker");
-        fs::create_dir_all(&worker_dir).unwrap();
-        fs::write(worker_dir.join("beta.json"), "{}").unwrap();
-        fs::write(worker_dir.join("alpha.json"), "{}").unwrap();
+        let workers = root.join(".niles/worker");
+        fs::create_dir_all(workers.join("beta")).unwrap();
+        fs::create_dir_all(workers.join("alpha")).unwrap();
+        // The archive is a sibling directory, not a worker.
+        fs::create_dir_all(workers.join("archive")).unwrap();
 
-        let context = startup_context(&root).unwrap();
+        assert_eq!(startup_context(&root).unwrap(), "worker: alpha, beta");
 
-        assert_eq!(context, "worker: alpha, beta");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_context_reports_none_for_an_empty_workspace() {
+        let root = temp_test_path("startup-context-empty");
+        fs::create_dir_all(root.join(".niles/worker")).unwrap();
+
+        assert_eq!(startup_context(&root).unwrap(), "worker: none");
+
         fs::remove_dir_all(root).unwrap();
     }
 }

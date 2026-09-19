@@ -4,6 +4,7 @@ use common::*;
 use std::{
     fs,
     io::Write,
+    sync::atomic::{AtomicU64, Ordering},
     path::Path,
     process::{Command, Output, Stdio},
     thread,
@@ -702,11 +703,14 @@ impl TmuxServer {
     fn start(workspace: &Path, session: &str) -> Self {
         // Not under the workspace: a unix socket path is capped near 104 bytes on macOS, and the
         // temp workspace names are long enough on their own to blow it.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let socket = std::path::PathBuf::from(format!("/tmp/nt-{nanos}.sock"));
+        //
+        // Named from a counter, not a timestamp. `SystemTime` is microsecond-resolution here, so
+        // two tests starting in the same microsecond got the same socket: the second joined the
+        // first's server, and the first's `Drop` then killed it mid-test.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let socket =
+            std::path::PathBuf::from(format!("/tmp/nt-{}-{unique}.sock", std::process::id()));
         let server = Self {
             socket,
             session: session.to_owned(),

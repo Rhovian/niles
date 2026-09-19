@@ -236,6 +236,13 @@ fn close_plan(
                 Some(recorded.clone()),
                 CloseWindowState::Closed { target: recorded },
             ),
+            // The agent has exited but the window is still there holding its output: capture
+            // it and kill it, exactly as for a live one.
+            TargetState::PaneExited => (
+                Some(recorded.clone()),
+                Some(recorded.clone()),
+                CloseWindowState::Closed { target: recorded },
+            ),
             TargetState::WindowDead => (None, None, CloseWindowState::WindowDead),
             TargetState::OrphanRecovered { actual } => (
                 Some(actual.clone()),

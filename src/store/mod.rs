@@ -6,4 +6,4 @@ mod worker;
 
 pub(crate) use archive::{WorkerArchive, resolve_worker_archives};
 pub(crate) use paths::workspace_worker_dir;
-pub(crate) use worker::{resolve_worker_location, resolve_worker_locations};
+pub(crate) use worker::{resolve_worker_location, resolve_worker_locations, resolve_worker_locations_in};

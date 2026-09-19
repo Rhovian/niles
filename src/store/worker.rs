@@ -1,5 +1,5 @@
 use anyhow::Result;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::util::{current_dir_utf8, read_dir_utf8_paths};
 
@@ -13,16 +13,24 @@ pub(crate) fn resolve_worker_locations() -> Result<Vec<WorkerListEntry>> {
     WorkerResolver::from_current()?.all()
 }
 
+/// The same listing, for a workspace named explicitly rather than taken from the cwd.
+pub(crate) fn resolve_worker_locations_in(workspace: &Utf8Path) -> Result<Vec<WorkerListEntry>> {
+    WorkerResolver::from_root(workspace).all()
+}
+
 pub(super) struct WorkerResolver {
     pub(super) local_workers_dir: Utf8PathBuf,
 }
 
 impl WorkerResolver {
     fn from_current() -> Result<Self> {
-        let local_workspace = current_dir_utf8()?;
-        Ok(Self {
-            local_workers_dir: local_workspace.join(NILES_DIR).join(WORKERS_DIR),
-        })
+        Ok(Self::from_root(&current_dir_utf8()?))
+    }
+
+    fn from_root(workspace: &Utf8Path) -> Self {
+        Self {
+            local_workers_dir: workspace.join(NILES_DIR).join(WORKERS_DIR),
+        }
     }
 
     pub(super) fn named(&self, worker: &str) -> Result<Option<Utf8PathBuf>> {

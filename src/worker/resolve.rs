@@ -33,7 +33,7 @@ pub fn window_is_gone(id: &str) -> Result<bool> {
     };
 
     Ok(match window_state(&meta) {
-        TargetState::WindowDead | TargetState::OrphanGone => true,
+        TargetState::PaneExited | TargetState::WindowDead | TargetState::OrphanGone => true,
         TargetState::Live
         | TargetState::OrphanRecovered { .. }
         | TargetState::OrphanLegacyCandidate { .. }

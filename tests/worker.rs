@@ -144,7 +144,11 @@ esac
 
     let launch = fs::read_to_string(workspace.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
-    assert!(launch.contains("exec 'claude'"));
+    // The agent runs as a child, not via exec, so the script survives to report its exit.
+    assert!(launch.contains("'claude'"), "{launch}");
+    assert!(!launch.contains("exec "), "{launch}");
+    assert!(launch.contains("|| code=$?"), "{launch}");
+    assert!(launch.contains(">> \"$STATUS\""), "{launch}");
 
     let peek = Command::new(niles)
         .args(["peek", "auth-fix", "--lines", "7"])
@@ -842,6 +846,72 @@ esac
     assert!(log.contains(":=niles-auth-fix"));
 }
 
+/// A worker whose agent exited keeps its window so the pane stays readable. That window is
+/// still there to clean up — treating it as already gone left it behind forever.
+#[test]
+fn worker_close_kills_a_window_whose_agent_has_exited() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-close-exited");
+    let home = niles_home(&workspace);
+
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let tmux_log = workspace.join("tmux.log");
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
+  has-session) exit 0 ;;
+  list-windows)
+    if [ "$2" = "-a" ]; then
+      exit 0
+    fi
+    printf 'niles-auth-fix\t1\n'
+    exit 0
+    ;;
+  capture-pane) printf 'Do you trust the contents of this directory?\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+
+    write_worker_fixture(&workspace, "auth-fix", "closed: agent exited (status 3)");
+
+    let close = Command::new(niles)
+        .args(["close", "auth-fix"])
+        .current_dir(&workspace)
+        .env("PATH", path_with_bin(&bin))
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .output()
+        .unwrap();
+    assert_command_success("close after agent exit", &close);
+
+    let log = fs::read_to_string(&tmux_log).unwrap();
+    assert!(
+        log.contains("kill-window -t =niles:=niles-auth-fix"),
+        "the window was left behind:\n{log}"
+    );
+    // Its output is the only record of why the agent died, so it is captured before the kill.
+    assert!(log.contains("capture-pane"), "{log}");
+    let archived = fs::read_dir(workspace.join(".niles/worker/archive"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let pane = fs::read_to_string(archived.join("final-pane.txt")).unwrap();
+    assert!(pane.contains("Do you trust"), "{pane}");
+}
+
 #[test]
 fn worker_close_tears_down_worker() {
     let niles = env!("CARGO_BIN_EXE_niles");
@@ -974,7 +1044,7 @@ fn worker_close_recovers_renamed_orphan_by_matching_tags() {
         "old:niles-auth-fix",
     );
 
-    let tagged = format!("new:niles-renamed\t{}\tauth-fix", workspace.display());
+    let tagged = format!("new:niles-renamed\t{}\tauth-fix\t0", workspace.display());
     let close = Command::new(niles)
         .args(["close", "auth-fix"])
         .current_dir(&workspace)
@@ -1019,7 +1089,7 @@ fn worker_close_ignores_same_id_tag_from_other_workspace() {
     );
 
     let tagged = format!(
-        "other:niles-auth-fix\t{}\tauth-fix",
+        "other:niles-auth-fix\t{}\tauth-fix\t0",
         other_workspace.display()
     );
     let close = Command::new(niles)
@@ -1057,7 +1127,7 @@ fn worker_close_multiple_tag_matches_reaps_without_kill() {
     );
 
     let tagged = format!(
-        "one:niles-auth-fix\t{}\tauth-fix\ntwo:niles-auth-fix\t{}\tauth-fix",
+        "one:niles-auth-fix\t{}\tauth-fix\t0\ntwo:niles-auth-fix\t{}\tauth-fix\t0",
         workspace.display(),
         workspace.display()
     );
@@ -1092,7 +1162,7 @@ fn worker_close_recovers_window_missing_by_matching_tags() {
         "home:niles-auth-fix",
     );
 
-    let tagged = format!("other:niles-renamed\t{}\tauth-fix", workspace.display());
+    let tagged = format!("other:niles-renamed\t{}\tauth-fix\t0", workspace.display());
     let close = Command::new(niles)
         .args(["close", "auth-fix"])
         .current_dir(&workspace)
@@ -1166,7 +1236,7 @@ fn worker_close_reports_legacy_candidate_without_auto_kill() {
         .env("PATH", path_with_bin(&bin))
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env("TMUX_TAGGED_WINDOWS", "other:niles-auth-fix\t\t")
+        .env("TMUX_TAGGED_WINDOWS", "other:niles-auth-fix\t\t\t0")
         .output()
         .unwrap();
     assert_command_success("legacy candidate close", &close);
