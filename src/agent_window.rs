@@ -7,17 +7,12 @@ use crate::{
     agents,
     config::spec::{PromptMode, load_project_config_from},
     tmux::{self, SessionName, WindowTarget},
-    usage::UsageAttribution,
 };
 
 pub(crate) fn worker_window_name(id: &str) -> String {
     format!("niles-{id}")
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "explicit-session worker launch mirrors the legacy launch helper with one required tmux session target"
-)]
 pub(crate) fn spawn_agent_window_in_session(
     session: &SessionName,
     window_name: &str,
@@ -26,7 +21,6 @@ pub(crate) fn spawn_agent_window_in_session(
     project: &Utf8Path,
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
-    usage_attribution: Option<&UsageAttribution>,
 ) -> Result<WindowTarget> {
     if !brief_path.is_file() {
         bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
@@ -34,10 +28,7 @@ pub(crate) fn spawn_agent_window_in_session(
 
     let config = load_project_config_from(project)?;
     let config = agents::config_for(&config.agents, agent)?;
-    let mut invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
-    if let Some(session_id) = usage_attribution.and_then(UsageAttribution::claude_session_id) {
-        agents::append_session_id_arg(&mut invocation, session_id);
-    }
+    let invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
     spawn_prepared_agent_window_in_session(
         session,
         window_name,

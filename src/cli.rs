@@ -66,11 +66,7 @@ pub enum CommandName {
         all: bool,
     },
     /// List live spawned workers.
-    Workers {
-        /// Show live token usage and task rollups.
-        #[arg(long)]
-        usage: bool,
-    },
+    Workers,
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.

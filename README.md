@@ -3,7 +3,7 @@
 Niles is a Rust CLI orchestration harness for coordinating agent CLIs such as
 Codex and Claude in tmux sessions. The Rust CLI owns deterministic work —
 workspace manifests, tmux window placement, worker metadata, status logs,
-schema-stamped artifacts, token usage snapshots, and agent binary probing —
+schema-stamped artifacts, and agent binary probing —
 while agents own the judgment-heavy work: planning, implementation, review,
 handoff wording, and deciding when a task is complete.
 
@@ -75,40 +75,6 @@ reports each worker and continues past individual failures.
 window-health column. `window-dead` means worker metadata remains but the
 recorded tmux window is gone — a stale directory that is a cleanup candidate,
 not a healthy warm pane.
-
-## Token Usage
-
-Niles records token usage for supported agent families when a worker closes, and
-can also compute a read-only live view while an agent is still running:
-
-```sh
-niles workers --usage
-```
-
-The default `niles workers` output is unchanged. `--usage` adds union columns
-for Codex and Claude ledgers: both fill `input`, `output`, and `total`; Codex
-fills `cached` and `reasoning`; Claude fills `cache_create` and `cache_read`.
-Per-worker task rollups group by `--task` label. `pending` means the live
-transcript is not available or has no token events yet; `unavailable` means
-Niles could not attribute usage, the family is unsupported, Codex candidates
-were ambiguous, or the transcript/sidecar could not be parsed. Numeric fields
-render as `-` for pending and unavailable rows.
-
-Usage snapshots are schema-stamped JSON artifacts:
-
-- Workers: `.niles/worker/<id>/usage.json`, archived with the worker on close.
-
-The top-level `usage.json` shape records `subject`, `agent`, `captured_at`,
-optional `started_at`, `finished_at`, optional `wall_seconds`, `attribution`,
-`turns`, and a tagged `usage` object. `usage.status = "available"` includes
-`family`, `input_tokens`, `output_tokens`, `total_tokens`, plus family-specific
-cache/reasoning fields. `usage.status = "unavailable"` includes `reason` and
-`detail`; reasons include `missing`, `ambiguous_codex_candidates`,
-`parse_error`, and `unsupported`.
-
-Ledger home discovery uses `CODEX_HOME` for Codex, falling back to
-`$HOME/.codex`, and `CLAUDE_CONFIG_DIR` for Claude, falling back to
-`$HOME/.claude`.
 
 ## Wake Contract
 
@@ -196,9 +162,9 @@ doctor` reports environment readiness and schema state.
 
 ## Status
 
-Niles currently supports resident manager sessions, tmux worker windows,
-workspace role manifests, local analyzer support, worker reports, worker
-archives, and worker status-log wake delivery.
+Niles currently supports manager sessions in the current tmux pane, tmux worker
+windows, workspace role manifests, local analyzer support, worker reports,
+worker archives, and worker status-log wake delivery.
 
 ## License
 

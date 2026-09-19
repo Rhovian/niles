@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, io::ErrorKind};
+use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -7,7 +7,6 @@ use chrono::{DateTime, Utc};
 use crate::{
     store,
     tmux::{self, TargetState, WindowTarget},
-    usage::{self, UsageAgent, UsageDisplay, UsageRollup, UsageSnapshotInput, UsageSubject},
 };
 
 use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
@@ -22,16 +21,8 @@ struct LiveWorker {
     meta: WorkerMeta,
 }
 
-pub fn workers(usage: bool) -> Result<()> {
+pub fn workers() -> Result<()> {
     let workers = live_workers()?;
-    if usage {
-        return print_workers_usage(workers);
-    }
-
-    print_workers_default(workers)
-}
-
-fn print_workers_default(workers: Vec<LiveWorker>) -> Result<()> {
     println!(
         "workers[{}]{{id,agent,task,age,window,last_status}}:",
         workers.len()
@@ -39,10 +30,7 @@ fn print_workers_default(workers: Vec<LiveWorker>) -> Result<()> {
 
     let now = Utc::now();
     for worker in workers {
-        let task = match worker.meta.task_label.as_deref() {
-            Some(task) => task,
-            None => UNLABELED_TASK_LABEL,
-        };
+        let task = worker_task_label(&worker);
         let age = worker_age(&worker, now);
         let window = worker_window_state(&worker.meta);
         let status = last_status_line(&worker)?;
@@ -58,62 +46,6 @@ fn print_workers_default(workers: Vec<LiveWorker>) -> Result<()> {
             age,
             window,
             status
-        );
-    }
-
-    Ok(())
-}
-
-fn print_workers_usage(workers: Vec<LiveWorker>) -> Result<()> {
-    println!(
-        "workers[{}]{{id,agent,task,age,wall,turns,total,input,cache_create,cache_read,cached,output,reasoning,usage}}:",
-        workers.len()
-    );
-
-    let now = Utc::now();
-    let mut rollups = BTreeMap::<String, UsageRollup>::new();
-    for worker in workers {
-        let task = worker_task_label(&worker).to_owned();
-        let age = worker_age(&worker, now);
-        let usage = live_worker_usage(&worker, now);
-        let rollup = rollups.entry(task.clone()).or_default();
-        rollup.add(&usage);
-        println!(
-            "  {},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            worker.id,
-            worker.meta.agent.as_str(),
-            task,
-            age,
-            usage::format_wall(usage.wall_seconds),
-            usage::format_optional(usage.turns),
-            usage::format_optional(usage.totals.total),
-            usage::format_optional(usage.totals.input),
-            usage::format_optional(usage.totals.cache_create),
-            usage::format_optional(usage.totals.cache_read),
-            usage::format_optional(usage.totals.cached),
-            usage::format_optional(usage.totals.output),
-            usage::format_optional(usage.totals.reasoning),
-            usage.status
-        );
-    }
-
-    println!(
-        "task_usage[{}]{{task,workers,total,input,cache_create,cache_read,cached,output,reasoning,wall}}:",
-        rollups.len()
-    );
-    for (task, rollup) in rollups {
-        println!(
-            "  {},{},{},{},{},{},{},{},{},{}",
-            task,
-            rollup.available_subjects,
-            usage::format_optional(rollup.totals.total),
-            usage::format_optional(rollup.totals.input),
-            usage::format_optional(rollup.totals.cache_create),
-            usage::format_optional(rollup.totals.cache_read),
-            usage::format_optional(rollup.totals.cached),
-            usage::format_optional(rollup.totals.output),
-            usage::format_optional(rollup.totals.reasoning),
-            usage::format_rollup_wall(rollup.wall_seconds)
         );
     }
 
@@ -165,26 +97,6 @@ fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
     } else {
         format!("{}d", seconds / (60 * 60 * 24))
     }
-}
-
-fn live_worker_usage(worker: &LiveWorker, now: DateTime<Utc>) -> UsageDisplay {
-    let snapshot = usage::compute_usage_snapshot(&UsageSnapshotInput {
-        subject: UsageSubject::Worker {
-            id: worker.meta.id.clone(),
-            task_label: worker.meta.task_label.clone(),
-        },
-        agent: UsageAgent {
-            spec: worker.meta.agent.clone(),
-            family: worker.meta.agent_family.clone(),
-            model: worker.meta.model.clone(),
-            effort: worker.meta.effort.clone(),
-        },
-        attribution: worker.meta.usage_attribution.clone(),
-        started_at: worker_started_at(worker),
-        finished_at: now,
-        output_path: usage::worker_usage_path(&worker.worker_dir),
-    });
-    UsageDisplay::from_snapshot(&snapshot, true)
 }
 
 fn worker_started_at(worker: &LiveWorker) -> Option<DateTime<Utc>> {

@@ -64,11 +64,6 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
                 path.join("meta.json"),
                 ArtifactKind::WorkerMetadata,
             );
-            push_json_if_file(
-                &mut observations,
-                path.join("usage.json"),
-                ArtifactKind::UsageSnapshot,
-            );
         }
     }
 

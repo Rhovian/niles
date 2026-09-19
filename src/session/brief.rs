@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
-    usage::{self, UsageAttribution},
     util::{timestamp_id, write_json_pretty},
     wake,
     workspace_manifest::{self, WorkspaceManifest},
@@ -27,8 +26,6 @@ pub struct SessionMeta {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usage_attribution: Option<UsageAttribution>,
     #[serde(default = "default_created_at")]
     pub created_at: chrono::DateTime<Utc>,
     pub workspace: Utf8PathBuf,
@@ -54,12 +51,6 @@ pub(super) fn write_manager_session(
         agent_family: agent.tier().map(|tier| tier.family),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
-        usage_attribution: Some(usage::attribution_for_family(
-            agent.family(),
-            workspace,
-            now,
-            Some(1),
-        )),
         created_at: now,
         workspace: workspace.to_path_buf(),
         brief: path,
@@ -117,7 +108,6 @@ fn default_created_at() -> chrono::DateTime<Utc> {
 mod tests {
     use super::super::test_support::temp_test_path;
     use super::*;
-    use crate::usage::UsageAttribution;
 
     #[test]
     fn manager_brief_omits_removed_manifest_command() {
