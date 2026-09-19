@@ -35,6 +35,9 @@ pub const EXIT_TIMEOUT: u8 = 22;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+/// Poll interval used by `niles wait` and by `niles send --wait`.
+pub const DEFAULT_INTERVAL_SECS: f64 = 2.0;
+
 /// Largest accepted `--interval`. A poll interval beyond the default timeout is always a typo.
 const MAX_INTERVAL_SECS: f64 = 3600.0;
 
@@ -80,6 +83,16 @@ pub fn wait(
         }
         thread::sleep(interval.min(deadline - now));
     }
+}
+
+/// Advances a worker's wake cursor past everything already in its status log, returning any
+/// actionable lines it skipped.
+///
+/// `send` calls this so a line the worker wrote *before* the message cannot satisfy the wait that
+/// follows it. The skipped lines are returned rather than dropped silently, because a `blocked:`
+/// that lands just before a send is real information the operator should still see.
+pub(crate) fn advance_cursor(worker_id: &str) -> Result<Vec<String>> {
+    Target::resolve(worker_id.to_owned())?.skip_to_end()
 }
 
 /// One worker being waited on, plus how far into its status log this process has already looked.
@@ -191,6 +204,25 @@ impl Target {
 
         self.scanned += as_u64(start);
         Ok(None)
+    }
+
+    /// Consumes every actionable line currently in the log and persists the end position.
+    fn skip_to_end(&mut self) -> Result<Vec<String>> {
+        let path = cursor_path(&self.dir);
+        let mut cursor = open_cursor(&path)?;
+        let guard = CursorLock::acquire(&cursor, &path)?;
+        self.scanned = self.scanned.max(read_cursor(&mut cursor, &path)?);
+
+        let mut skipped = Vec::new();
+        while let Some((line, end)) = self.next_actionable()? {
+            skipped.push(line);
+            self.scanned = end;
+        }
+        // A failed scan leaves `scanned` just past the last complete line, which is where the
+        // next wait should resume from.
+        write_cursor(&mut cursor, &path, self.scanned)?;
+        drop(guard);
+        Ok(skipped)
     }
 
     fn closed(&self, line: String) -> Outcome {

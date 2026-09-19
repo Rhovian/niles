@@ -24,7 +24,7 @@ Delegation goes through Niles only. All delegated or parallel work MUST run as N
 - Treat `.niles/manifest.yaml` as the only source of truth for workspace flow and role bindings. Read it when choosing planner, worker, verification (`validation_command`/`validation`), and reviewer path.
 - Use `niles report` for durable worker deliverables.
 - Do not invent a Niles natural-language command grammar. The user talks to you; Niles provides explicit commands.
-- Workers wake you via status lines; use `niles wait --worker <id>` or `niles wait --task <label>` as the single wake mechanism. Details are below.
+- Workers wake you via status lines; use `niles wait <id>` or `niles wait --task <label>` as the single wake mechanism. Details are below.
 
 ## Cost Discipline
 
@@ -49,14 +49,18 @@ Inspect or steer a worker:
 ```sh
 niles peek <id>
 niles report <id>
-niles send <id> "<message>"
-niles wait --worker <id>
+niles send <id> "<message>"          # also advances the wake cursor
+niles send <id> --wait "<message>"   # ... and blocks for that worker's reply
+niles wait <id> [<id>...]
+niles wait --task <label>
 niles workers
 ```
 
+Use `send --wait` for a single-worker turnaround. With a fleet in flight, prefer plain `send` followed by `niles wait --task <label>`, so another worker finishing is not missed while you block on this one.
+
 Workers are tmux windows `niles-<id>` in the same tmux session you are running in; metadata and briefs live under `.niles/worker/<id>/`.
-Workers always belong to the current workspace; `--project .` is accepted for compatibility, but cross-workspace spawn requires `cd` into that workspace first.
-Worker commands (`workers`, `peek`, `report`, `send`, `wait --worker`, `worker-close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
+Workers always belong to the workspace the spawn ran from; to work in another one, `cd` there first.
+Worker commands (`workers`, `peek`, `report`, `send`, `wait`, `close <id>`) are scoped to this workspace's worker records. A worker with the same id in another workspace is invisible from here.
 Use model/effort qualifiers for specific tiers, for example `--agent codex:gpt-5.5:xhigh` or `--agent claude:opus:max`.
 Task labels group warm workers for cleanup; they use worker-id ASCII grammar (`A-Z`, `a-z`, `0-9`, `_`, `-`) and reserve `archive`.
 Worker briefs contain status and report paths. Actionable status lines use:
@@ -65,8 +69,8 @@ Worker briefs contain status and report paths. Actionable status lines use:
 {worker_wake_examples}
 ```
 
-Each `niles wait --worker <id>` consumes one actionable status line and records how far it read, so after a wake and follow-up send you re-run it for the next line. Concurrent waits on one worker are allowed and are serialised: exactly one of them is handed any given line.
+Each `niles wait <id>` consumes one actionable status line and records how far it read, so after a wake and follow-up send you re-run it for the next line. Concurrent waits on one worker are allowed and are serialised: exactly one of them is handed any given line.
 
-`done:` means awaiting manager follow-up, not termination. Keep workers and reviewer workers open through the send/wait loop: spawn -> (`niles wait --worker <id>` <-> `niles send <id> ...`)* -> cleanup. Cleanup happens only after integration, merged PR, or complete wave.
+`done:` means awaiting manager follow-up, not termination. Keep workers and reviewer workers open through the send/wait loop: spawn -> (`niles wait <id>` <-> `niles send <id> ...`)* -> cleanup. Cleanup happens only after integration, merged PR, or complete wave.
 
-`niles worker-close <id>` snapshots pane content, closes the tmux window, and archives the worker directory to `.niles/worker/archive/<id>-<UTC timestamp>/`. `niles worker-close --task <label>` closes live workers with that task label; `niles worker-close --all` closes all live workers in the current workspace. Batch close reports each worker and continues after individual failures. Archiving frees live ids for fresh `niles spawn <id> ...` calls while keeping artifacts durable. `niles report <id>` reads the live report when active; after close it falls back to the most recent local archive for that id and prints the archive path on stderr.
+`niles close <id>` snapshots pane content, closes the tmux window, and archives the worker directory to `.niles/worker/archive/<id>-<UTC timestamp>/`. `niles close --task <label>` closes live workers with that task label; `niles close --all` closes all live workers in the current workspace. Batch close reports each worker and continues after individual failures. Archiving frees live ids for fresh `niles spawn <id> ...` calls while keeping artifacts durable. `niles report <id>` reads the live report when active; after close it falls back to the most recent local archive for that id and prints the archive path on stderr.

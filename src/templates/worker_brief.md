@@ -17,7 +17,7 @@ Work autonomously in this tmux window. The foreground Niles manager can inspect 
 
 Write concise status/progress lines to the status file. Write substantial deliverable content, such as audit reports, review findings, plans, and implementation notes, to the report file above. Do not rely on tmux pane scrollback for deliverables.
 
-Stay warm after `done:`. In Niles, `done:` means the manager should wake and decide the next follow-up; it is not a request to terminate this worker. Keep the pane open until the manager explicitly cleans up the task with `niles worker-close`.
+Stay warm after `done:`. In Niles, `done:` means the manager should wake and decide the next follow-up; it is not a request to terminate this worker. Keep the pane open until the manager explicitly cleans up the task with `niles close`.
 
 When your task is a follow-up review after a fix, verify the named fixes against your prior findings and hunt regressions in the changed area — do not re-run your full original investigation unless the task says the change touched substrate.
 

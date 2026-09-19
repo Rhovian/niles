@@ -10,7 +10,7 @@ use crate::{
     store,
     tmux::{self, WindowTarget},
     util::{
-        absolute_existing_dir, absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists,
+        absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists,
         render_template,
     },
     wake,
@@ -29,7 +29,6 @@ const WORKER_BRIEF_TEMPLATE: &str = include_str!("../templates/worker_brief.md")
 pub fn spawn(
     id: String,
     task_label: Option<String>,
-    project: Utf8PathBuf,
     agent: String,
     brief: Option<Utf8PathBuf>,
     task: Vec<String>,
@@ -42,10 +41,7 @@ pub fn spawn(
         bail!("spawn requires either --brief or task text");
     }
 
-    let current_workspace = current_dir_utf8()?;
-    let requested_project = absolute_existing_dir(&project, "project")?;
-    require_current_workspace_project(&current_workspace, &requested_project)?;
-    let project = current_workspace;
+    let project = current_dir_utf8()?;
     let config = load_project_config_from(&project)?;
     // Rejects unknown bare agent names before any worker state is written.
     agents::config_for(&config.agents, &agent)?;
@@ -149,26 +145,12 @@ pub fn spawn(
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
-    println!("close: niles worker-close {id}");
+    println!("close: niles close {id}");
     if let Some(label) = &meta.task_label {
-        println!("close_task: niles worker-close --task {label}");
+        println!("close_task: niles close --task {label}");
     }
     println!("workers: niles workers");
 
-    Ok(())
-}
-
-fn require_current_workspace_project(
-    current_workspace: &Utf8Path,
-    requested_project: &Utf8Path,
-) -> Result<()> {
-    let current = fs::canonicalize(current_workspace)
-        .with_context(|| format!("failed to canonicalize current workspace {current_workspace}"))?;
-    let requested = fs::canonicalize(requested_project)
-        .with_context(|| format!("failed to canonicalize project {requested_project}"))?;
-    if current != requested {
-        bail!("spawn --project must be the current workspace; cd there and spawn");
-    }
     Ok(())
 }
 

@@ -122,7 +122,7 @@ fn close_worker_group(
         Ok(())
     } else {
         bail!(
-            "worker-close {selection} failed for {} worker(s): {}",
+            "close {selection} failed for {} worker(s): {}",
             failures.len(),
             failures.join(", ")
         )
