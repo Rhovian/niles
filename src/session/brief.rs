@@ -155,6 +155,14 @@ mod tests {
     fn lead_brief_keeps_delegation_inside_niles() {
         assert!(LEAD_BRIEF_TEMPLATE.contains("Delegation goes through niles"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --role"));
+        // The command surface is fetched, not carried: it costs tokens at every session start.
+        assert!(LEAD_BRIEF_TEMPLATE.contains("niles <command> --help"));
+        for fetchable in ["niles peek <id>", "niles workers", "niles close <id>", "niles wait <id>"] {
+            assert!(
+                !LEAD_BRIEF_TEMPLATE.contains(fetchable),
+                "{fetchable} is in spawn output and --help; do not carry it in the brief"
+            );
+        }
     }
 
     #[test]

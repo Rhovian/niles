@@ -31,18 +31,12 @@ The gate belongs to the worker, who runs the checks before reporting `done:` and
 
 Keep your context lean. Status lines are the signal; read reports selectively, quote only what you need, and never paste large command output back into your own context.
 
-## Commands
+## Delegating
 
 ```sh
 niles spawn <id> --role <worker|reviewer|security> --agent <agent[:model[:effort]]> "<task>"
-niles wait <id>... | niles wait --task <label>    # block for the next actionable line
-niles send <id> ["--wait"] "<message>"            # steer; --wait blocks for the reply
-niles peek <id> | niles report <id> | niles workers
-niles close <id> | --task <label> | --all
 ```
 
-Workers are tmux windows in your session, scoped to this workspace. Each wait consumes one actionable line, so wait again after every follow-up. With several in flight prefer `send` then `wait --task`: `send --wait` blocks on one and will miss another finishing.
-
-`done:` means a worker has something to hand back, not that it is finished. Close at integration time; `niles report` still works afterwards.
+Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.

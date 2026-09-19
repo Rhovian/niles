@@ -8,9 +8,9 @@ use clap::{ArgAction, Parser, Subcommand};
     infer_subcommands = true
 )]
 pub struct Cli {
-    /// Override and persist the manager agent for bare `niles`.
+    /// Override and persist the lead agent for bare `niles`.
     #[arg(long)]
-    pub manager: Option<String>,
+    pub lead: Option<String>,
     #[command(subcommand)]
     pub command: Option<CommandName>,
 }
@@ -20,6 +20,11 @@ pub enum CommandName {
     /// Report binary identity, workspace schema state, and dev-mode staleness.
     Doctor,
     /// Spawn a worker agent in a tmux window.
+    ///
+    /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
+    /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy, and
+    /// `security` is the adversarial pass.
+    #[command(verbatim_doc_comment)]
     Spawn {
         /// Worker task id used for window and metadata names.
         id: String,
@@ -40,6 +45,11 @@ pub enum CommandName {
         task: Vec<String>,
     },
     /// Close spawned worker windows and archive their metadata.
+    ///
+    /// `done:` is a handback, not a finish: a worker that reported it is waiting for a follow-up,
+    /// not asking to exit. Keep workers warm through the send/wait loop and close at integration
+    /// time. Closing archives the worker's directory, so `niles report <id>` still works after.
+    #[command(verbatim_doc_comment)]
     Close {
         /// Worker id to close.
         #[arg(
@@ -70,6 +80,14 @@ pub enum CommandName {
         lines: usize,
     },
     /// Send a message to a worker tmux pane.
+    ///
+    /// Advances the worker's wake cursor first, so a status line written before the message
+    /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
+    ///
+    /// `--wait` then blocks for that worker's reply. With several workers in flight prefer plain
+    /// `send` followed by `niles wait --task <label>`: `--wait` blocks on one worker and will not
+    /// notice another finishing.
+    #[command(verbatim_doc_comment)]
     Send {
         /// Block for this worker's next actionable wake after sending.
         #[arg(long)]
@@ -79,6 +97,13 @@ pub enum CommandName {
         target_and_message: Vec<String>,
     },
     /// Wait for the next actionable status-log wake and print it.
+    ///
+    /// Each wait consumes one actionable line and records how far it read, so after a wake and a
+    /// follow-up you run it again for the next one. Waiting on several workers returns the first
+    /// line any of them produces, prefixed with its id.
+    ///
+    /// Exits 0 on a wake, 10 when the worker closed, 22 on timeout.
+    #[command(verbatim_doc_comment)]
     Wait {
         /// Worker ids to wait on. Pass several to wait on a fleet.
         #[arg(required_unless_present = "task", conflicts_with = "task")]
@@ -107,10 +132,10 @@ mod tests {
     }
 
     #[test]
-    fn manager_override_parses_without_a_session_mode_flag() {
-        let cli = Cli::try_parse_from(["niles", "--manager", "claude:opus:max"]).unwrap();
+    fn lead_override_parses_without_a_session_mode_flag() {
+        let cli = Cli::try_parse_from(["niles", "--lead", "claude:opus:max"]).unwrap();
 
-        assert_eq!(cli.manager.as_deref(), Some("claude:opus:max"));
+        assert_eq!(cli.lead.as_deref(), Some("claude:opus:max"));
         assert!(cli.command.is_none());
     }
 

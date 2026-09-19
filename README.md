@@ -34,7 +34,7 @@ in tmux. That is also what makes worker placement a fact rather than a
 resolution strategy — workers are windows of the session you are looking at.
 
 The launch prelude creates `.niles/worker/` and interactively ensures
-`.niles/manifest.yaml` exists, prompting for the `lead` (defaulting to
+`.niles/manifest.yaml` exists, prompting for the `lead` agent (defaulting to
 Claude on first setup) and optionally the other role bindings.
 
 Niles writes a lead brief under `.niles/sessions/<id>/lead.md` pointing at

@@ -144,6 +144,8 @@ pub fn spawn(
         println!("task: {label}");
     }
     println!("brief: {}", meta.brief);
+    // wait first: it is the command the lead reaches for next, and it was the one omission here.
+    println!("wait: niles wait {id}");
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
