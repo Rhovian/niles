@@ -23,6 +23,8 @@ Do not implement. Once you are editing the files under review, you have stopped 
 
 Effort follows risk. Reserve your most capable agents and highest effort for first-pass review of concurrency, locking, cross-version compatibility, and anything an attacker can reach. Confirm rounds and small re-reviews warrant far less — name the tier per spawn.
 
+`--role reviewer` covers correctness, idiom and economy, and will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
+
 Scope a re-review to the fix and regressions around it, not the original pass. Full re-review is for changes that touched shared substrate.
 
 The gate belongs to the worker. Workers run the build, tests and linters before reporting `done:` and say what printed. Do not commission a pass to re-run them, and do not re-run them yourself on an unchanged tree — that is the same command a third time, not verification. Re-run only when the evidence is stale or was scoped narrower than the change.
@@ -32,7 +34,7 @@ Keep your context lean. Status lines are the signal; read reports selectively an
 ## Commands
 
 ```sh
-niles spawn <id> --role <worker|reviewer> --agent <agent[:model[:effort]]> "<task>"
+niles spawn <id> --role <worker|reviewer|security> --agent <agent[:model[:effort]]> "<task>"
 niles wait <id>... | niles wait --task <label>    # block for the next actionable line
 niles send <id> ["--wait"] "<message>"            # steer; --wait blocks for the reply
 niles peek <id> | niles report <id> | niles workers

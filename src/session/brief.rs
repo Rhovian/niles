@@ -107,15 +107,22 @@ mod tests {
         assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and you own the plan"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
-    }
-
-    /// The undershoot half: dispatching a worker for a check it could finish itself (#121).
-    #[test]
-    fn lead_brief_keeps_cheap_checks_inline() {
+        // The undershoot half: dispatching a worker for a check it could finish itself (#121).
         assert!(
             LEAD_BRIEF_TEMPLATE.contains("Do inline whatever is cheaper to do than to delegate")
         );
     }
+
+    /// The audit is commissioned deliberately, not folded into every review (#119).
+    #[test]
+    fn lead_brief_commissions_security_only_for_security_boundaries() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("will not write hardening findings"));
+        assert!(
+            LEAD_BRIEF_TEMPLATE.contains("only when the change is itself a security boundary")
+        );
+    }
+
+
 
     /// The gate has exactly one owner, and it is not the lead (the token-burn fix).
     #[test]

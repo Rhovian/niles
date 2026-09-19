@@ -99,6 +99,7 @@ status lines that wake the lead — plus exactly one role fragment:
 ```sh
 niles spawn impl --role worker   --agent codex  "Implement the fix"
 niles spawn rev  --role reviewer --agent claude "Review impl's change"
+niles spawn aud  --role security --agent claude "Attack impl's change"
 ```
 
 - **lead** — the foreground agent. Owns the outcome *and the plan*: decides what
@@ -106,11 +107,16 @@ niles spawn rev  --role reviewer --agent claude "Review impl's change"
   it, and anything needing parallelism or a fresh context. Does not implement.
 - **worker** — owns the change, and owns the gate. Runs the project's build,
   tests and linters before reporting `done:`, and says what they printed.
-- **reviewer** — owns judgment about the change. Does not re-run the gate, and
-  must name a reachable attacker before writing a hardening finding.
+- **reviewer** — owns correctness, idiom and economy: does it work, does it read
+  like the code around it, could it have been done in less code, and are the
+  tests redundant. Does not run the gate and does not write hardening findings.
+- **security** — owns the adversarial pass, commissioned only when the change is
+  a security boundary. Must name a reachable attacker before any finding.
 
-Gate ownership is the reason the fragments are split: when every agent is told
-the same thing about verification, every agent runs the test suite.
+Two splits do the work here. **Gate ownership**: when every agent is told the
+same thing about verification, every agent runs the test suite. And **security
+as its own pass**: fused into code review, it turns every small change into a
+hardening exercise against an attacker nobody named.
 
 Workspace role bindings live in `.niles/manifest.yaml`:
 

@@ -232,17 +232,20 @@ fn spawn_always_targets_the_invoking_workspace_and_rejects_a_project_flag() {
     assert!(!elsewhere.join(".niles").exists());
 }
 
+/// Wiring only: `--role` reaches brief composition and each role gets its own fragment on
+/// top of the shared contract. What each fragment *says* is asserted in `worker::role`.
 #[test]
-fn role_selects_the_brief_and_gate_ownership() {
+fn role_selects_which_fragment_the_brief_carries() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-roles");
     let home = niles_home(&workspace);
     let (bin, tmux_log) = write_worker_test_bins(&workspace);
     let path = path_with_bin(&bin);
 
-    for (id, role) in [("impl", "worker"), ("rev", "reviewer")] {
+    let mut briefs = Vec::new();
+    for role in ["worker", "reviewer", "security"] {
         let spawn = Command::new(niles)
-            .args(["spawn", id, "--role", role, "--agent", "claude", "Do", "it"])
+            .args(["spawn", role, "--role", role, "--agent", "claude", "Do", "it"])
             .current_dir(&workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -251,32 +254,21 @@ fn role_selects_the_brief_and_gate_ownership() {
             .output()
             .unwrap();
         assert_command_success(&format!("spawn --role {role}"), &spawn);
-    }
 
-    let worker = fs::read_to_string(workspace.join(".niles/worker/impl/brief.md")).unwrap();
-    let reviewer = fs::read_to_string(workspace.join(".niles/worker/rev/brief.md")).unwrap();
-
-    // Exactly one role is told to run the project's checks. This is the whole point: three
-    // agents running the same test suite is what the split exists to stop.
-    assert!(worker.contains("You own the gate"), "{worker}");
-    assert!(reviewer.contains("Do not run the gate"), "{reviewer}");
-    assert!(!worker.contains("Do not run the gate"));
-    assert!(!reviewer.contains("You own the gate"));
-
-    // Security doctrine reaches the reviewer only, and demands a reachable attacker.
-    assert!(reviewer.contains("name the attacker"), "{reviewer}");
-    assert!(!worker.contains("name the attacker"));
-
-    // Both still carry the shared reporting contract.
-    for brief in [&worker, &reviewer] {
+        let brief =
+            fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
+                .unwrap();
+        assert!(brief.contains(&format!("You are the {role}")), "{brief}");
         assert!(brief.contains("## Reporting"), "{brief}");
         assert!(brief.contains("done: <short result>; report:"), "{brief}");
+        briefs.push(brief);
     }
 
-    // A role brief the agent will actually read.
-    for (label, brief) in [("worker", &worker), ("reviewer", &reviewer)] {
-        let lines = brief.lines().count();
-        assert!(lines < 60, "{label} brief is {lines} lines:\n{brief}");
+    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
+        assert_ne!(
+            briefs[left], briefs[right],
+            "each role must get a different brief"
+        );
     }
 }
 
