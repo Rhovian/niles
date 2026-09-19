@@ -71,9 +71,21 @@ for closed workers. Close a worker with `niles close <id>`, a group with
 reports each worker and continues past individual failures.
 
 `niles workers` lists only workers in the current workspace and includes a
-window-health column. `window-dead` means worker metadata remains but the
-recorded tmux window is gone — a stale directory that is a cleanup candidate,
-not a healthy warm pane.
+window-health column. `agent-exited` means the agent finished or died and its
+window is being kept so the pane stays readable — close it when you are done
+with it. `window-dead` means the window itself is gone while worker metadata
+remains: a stale directory that is a cleanup candidate.
+
+A worker's window runs the agent as a child rather than replacing the shell
+with it, so when the agent exits the script records it:
+
+```
+closed: agent exited (status 3)
+```
+
+That is an ordinary wake, so `niles wait` returns immediately rather than
+blocking on a log nothing can append to again, and the pane survives for
+`niles peek` — whatever killed the agent is still on it.
 
 ## Wake Contract
 

@@ -87,6 +87,9 @@ impl fmt::Display for WindowTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TargetState {
     Live,
+    /// The recorded window is still there, but its agent has exited. The pane is kept so its
+    /// output stays readable, so this is a window to clean up — not one that is already gone.
+    PaneExited,
     WindowDead,
     OrphanRecovered { actual: WindowTarget },
     OrphanGone,
@@ -98,6 +101,7 @@ impl fmt::Display for TargetState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Live => f.write_str("live"),
+            Self::PaneExited => f.write_str("agent-exited"),
             Self::WindowDead => f.write_str("window-dead"),
             Self::OrphanRecovered { actual } => write!(f, "orphan-recovered:{actual}"),
             Self::OrphanGone => f.write_str("orphan-gone"),
@@ -120,6 +124,7 @@ pub(crate) fn target_state(recorded: &WindowTarget, project: &Utf8Path, id: &str
     let recorded_query = recorded_window_state(recorded);
     match recorded_query {
         RecordedWindowState::Live => TargetState::Live,
+        RecordedWindowState::PaneExited => TargetState::PaneExited,
         // A missing window in a live session still runs tag-based recovery; a
         // matching project/id tag is a positive identity match and safe to kill.
         RecordedWindowState::WindowMissing => recover_missing_target(recorded, project, id, false),
@@ -134,7 +139,7 @@ fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
         "-t",
         &exact(recorded.session().as_str()),
         "-F",
-        "#{window_name}",
+        LIVE_WINDOW_FORMAT,
     ]) {
         Ok(output) => output,
         Err(err) => {
@@ -145,10 +150,10 @@ fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
     };
 
     if output.status.success() {
-        if window_list_contains(&output.stdout, recorded.window()) {
-            RecordedWindowState::Live
-        } else {
-            RecordedWindowState::WindowMissing
+        match window_presence(&output.stdout, recorded.window()) {
+            WindowPresence::Live => RecordedWindowState::Live,
+            WindowPresence::PaneExited => RecordedWindowState::PaneExited,
+            WindowPresence::Absent => RecordedWindowState::WindowMissing,
         }
     } else {
         let stderr = normalize_stderr(&output.stderr);
@@ -240,7 +245,7 @@ fn list_tagged_windows() -> Result<Vec<TaggedWindow>> {
         "list-windows",
         "-a",
         "-F",
-        "#{session_name}:#{window_name}\t#{@niles-project}\t#{@niles-worker-id}",
+        "#{session_name}:#{window_name}\t#{@niles-project}\t#{@niles-worker-id}\t#{pane_dead}",
     ])
     .context("failed to list tmux windows across sessions")?;
     if !output.status.success() {
@@ -260,12 +265,17 @@ fn parse_tagged_windows(stdout: &[u8]) -> Result<Vec<TaggedWindow>> {
             continue;
         }
         let fields = line.split('\t').collect::<Vec<_>>();
-        if fields.len() != 3 {
+        if fields.len() != 4 {
             bail!(
-                "malformed tmux tagged window line {}: expected 3 fields, got {}",
+                "malformed tmux tagged window line {}: expected 4 fields, got {}",
                 line_number + 1,
                 fields.len()
             );
+        }
+        // A window whose pane has exited is kept for its output, but it is not somewhere a
+        // worker can still be recovered to.
+        if is_dead_pane(fields[3]) {
+            continue;
         }
         rows.push(TaggedWindow {
             target: WindowTarget::parse(fields[0]).with_context(|| {
@@ -281,10 +291,40 @@ fn parse_tagged_windows(stdout: &[u8]) -> Result<Vec<TaggedWindow>> {
     Ok(rows)
 }
 
-fn window_list_contains(stdout: &[u8], window_name: &str) -> bool {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .any(|line| line == window_name)
+/// `name\tpane_dead`. Worker windows are kept after their agent exits so the pane stays
+/// readable, so presence in the listing is no longer the same question as being alive.
+const LIVE_WINDOW_FORMAT: &str = "#{window_name}\t#{pane_dead}";
+
+/// Whether the window is listed, and whether anything is still running in it. These are
+/// different questions: a window whose agent has exited is kept so its output stays readable,
+/// and it still occupies its name until the worker is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WindowPresence {
+    Live,
+    PaneExited,
+    Absent,
+}
+
+pub(super) fn window_presence(stdout: &[u8], window_name: &str) -> WindowPresence {
+    for line in String::from_utf8_lossy(stdout).lines() {
+        match line.split_once('\t') {
+            Some((name, dead)) if name == window_name => {
+                return if is_dead_pane(dead) {
+                    WindowPresence::PaneExited
+                } else {
+                    WindowPresence::Live
+                };
+            }
+            // A listing without the dead column predates this format; treat presence as live.
+            None if line == window_name => return WindowPresence::Live,
+            _ => {}
+        }
+    }
+    WindowPresence::Absent
+}
+
+fn is_dead_pane(field: &str) -> bool {
+    field.trim() == "1"
 }
 
 fn normalize_stderr(stderr: &[u8]) -> String {
@@ -304,6 +344,7 @@ fn nonempty(value: &str) -> Option<String> {
 
 enum RecordedWindowState {
     Live,
+    PaneExited,
     WindowMissing,
     SessionMissing,
     Unknown { error: String },
@@ -380,7 +421,7 @@ mod tests {
     #[test]
     fn parses_tagged_window_rows() {
         let rows = parse_tagged_windows(
-            b"home:niles-auth\t/Users/j/code/niles\tauth\nother:niles-docs\t\t\n",
+            b"home:niles-auth\t/Users/j/code/niles\tauth\t0\nother:niles-docs\t\t\t0\n",
         )
         .unwrap();
 
@@ -390,5 +431,30 @@ mod tests {
         assert_eq!(rows[0].worker_id.as_deref(), Some("auth"));
         assert_eq!(rows[1].project, None);
         assert_eq!(rows[1].worker_id, None);
+    }
+
+    /// Worker windows outlive their agent so the pane stays readable, so "listed" and "live"
+    /// are now different questions.
+    #[test]
+    fn a_dead_pane_is_present_but_not_live() {
+        assert_eq!(window_presence(b"niles-run\t0\n", "niles-run"), WindowPresence::Live);
+        // Present, so still to be cleaned up — not the same as absent.
+        assert_eq!(
+            window_presence(b"niles-run\t1\n", "niles-run"),
+            WindowPresence::PaneExited
+        );
+        assert_eq!(window_presence(b"niles-run\t0\n", "run"), WindowPresence::Absent);
+    }
+
+    /// A kept-but-dead pane is output to read, not a window a worker can be recovered to.
+    #[test]
+    fn dead_panes_are_not_recovery_candidates() {
+        let rows = parse_tagged_windows(
+            b"home:niles-auth\t/repo\tauth\t1\nhome:niles-docs\t/repo\tdocs\t0\n",
+        )
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].worker_id.as_deref(), Some("docs"));
     }
 }

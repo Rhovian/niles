@@ -124,7 +124,7 @@ pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) 
         );
     }
 
-    if window_list_contains(&output.stdout, window_name) {
+    if window_name_taken(&output.stdout, window_name) {
         bail!("tmux window {session}:{window_name} already exists");
     }
 
@@ -200,7 +200,10 @@ fn format_capture(stdout: &[u8]) -> String {
     }
 }
 
-fn window_list_contains(stdout: &[u8], window_name: &str) -> bool {
+/// Whether a window of this name exists at all, live or dead. A worker window is kept after its
+/// agent exits, and it still occupies the name until the worker is closed — which is why this is
+/// a different question from [`target::live_window_present`].
+fn window_name_taken(stdout: &[u8], window_name: &str) -> bool {
     String::from_utf8_lossy(stdout)
         .lines()
         .any(|line| line == window_name)
@@ -260,11 +263,11 @@ mod tests {
     }
 
     #[test]
-    fn window_list_contains_matches_exact_window_names() {
+    fn window_name_taken_matches_exact_window_names() {
         let output = b"niles-run\nniles-run-extra\n";
 
-        assert!(window_list_contains(output, "niles-run"));
-        assert!(!window_list_contains(output, "run"));
+        assert!(window_name_taken(output, "niles-run"));
+        assert!(!window_name_taken(output, "run"));
     }
 
     #[test]

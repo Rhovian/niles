@@ -96,6 +96,7 @@ pub fn spawn(
         &agent,
         &brief_path,
         &launch_path,
+        &status_path,
     ) {
         Ok(target) => target,
         Err(err) => {
@@ -165,6 +166,7 @@ fn spawn_worker_window(
     agent: &str,
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
+    status_path: &Utf8Path,
 ) -> Result<WindowTarget> {
     agent_window::spawn_agent_window_in_session(
         session,
@@ -172,14 +174,20 @@ fn spawn_worker_window(
         project,
         agent,
         project,
-        brief_path,
-        launch_path,
+        &agent_window::WorkerPaths {
+            brief: brief_path,
+            launch: launch_path,
+            status: status_path,
+        },
     )
 }
 
 fn tag_worker_window(target: &WindowTarget, project: &Utf8Path, id: &str) -> Result<()> {
     tmux::set_window_option(target, "@niles-project", project.as_str())?;
-    tmux::set_window_option(target, "@niles-worker-id", id)
+    tmux::set_window_option(target, "@niles-worker-id", id)?;
+    // Keep the pane after the agent exits. Whatever killed it — a trust prompt, a crash — is on
+    // that pane, and destroying the window destroys the only evidence of why.
+    tmux::set_window_option(target, "remain-on-exit", "on")
 }
 
 fn print_worker_tier(meta: &WorkerMeta) {
