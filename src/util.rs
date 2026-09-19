@@ -63,10 +63,6 @@ pub fn absolute_path_from(base: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {
     }
 }
 
-pub fn absolute_existing_dir(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
-    absolute_existing_path(path, description, "directory", Utf8Path::is_dir)
-}
-
 pub fn absolute_existing_file(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
     absolute_existing_path(path, description, "file", Utf8Path::is_file)
 }
@@ -211,29 +207,6 @@ mod tests {
         let dir = temp_test_path("read-dir-missing");
 
         assert!(read_dir_utf8_paths(&dir).unwrap().is_empty());
-    }
-
-    #[test]
-    fn absolute_existing_dir_accepts_existing_directories() {
-        let dir = temp_test_path("dir");
-        fs::create_dir_all(&dir).unwrap();
-
-        assert_eq!(absolute_existing_dir(&dir, "project").unwrap(), dir);
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn absolute_existing_dir_rejects_files() {
-        let dir = temp_test_path("dir-file");
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("brief.md");
-        fs::write(&file, "brief").unwrap();
-
-        let err = absolute_existing_dir(&file, "project").unwrap_err();
-        assert!(err.to_string().contains("project path is not a directory"));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -40,12 +40,11 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Spawn {
             id,
             task_label,
-            project,
             agent,
             brief,
             task,
-        }) => worker::spawn(id, task_label, project, agent, brief, task)?,
-        Some(CommandName::WorkerClose {
+        }) => worker::spawn(id, task_label, agent, brief, task)?,
+        Some(CommandName::Close {
             id,
             task_label,
             all,
@@ -53,7 +52,17 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
-        Some(CommandName::Send { target_and_message }) => worker::send(target_and_message)?,
+        Some(CommandName::Send {
+            wait,
+            target_and_message,
+        }) => {
+            let sent = worker::send(target_and_message)?;
+            if wait || sent.wait_requested {
+                return Ok(
+                    wait::wait(vec![sent.id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
+                );
+            }
+        }
         Some(CommandName::Wait {
             worker,
             task,

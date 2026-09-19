@@ -26,9 +26,6 @@ pub enum CommandName {
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,
-        /// Current workspace for the worker. Other paths are rejected.
-        #[arg(long, default_value = ".")]
-        project: Utf8PathBuf,
         /// Agent id to launch.
         #[arg(short, long, default_value = "codex")]
         agent: String,
@@ -40,8 +37,7 @@ pub enum CommandName {
         task: Vec<String>,
     },
     /// Close spawned worker windows and archive their metadata.
-    #[command(name = "worker-close")]
-    WorkerClose {
+    Close {
         /// Worker id to close.
         #[arg(
             required_unless_present_any = ["task_label", "all"],
@@ -72,25 +68,23 @@ pub enum CommandName {
     },
     /// Send a message to a worker tmux pane.
     Send {
+        /// Block for this worker's next actionable wake after sending.
+        #[arg(long)]
+        wait: bool,
         /// Worker task id followed by message.
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
         target_and_message: Vec<String>,
     },
     /// Wait for the next actionable status-log wake and print it.
     Wait {
-        /// Worker id to wait on; repeatable to wait on a fleet.
-        #[arg(
-            long,
-            action = ArgAction::Append,
-            required_unless_present = "task",
-            conflicts_with = "task"
-        )]
+        /// Worker ids to wait on. Pass several to wait on a fleet.
+        #[arg(required_unless_present = "task", conflicts_with = "task")]
         worker: Vec<String>,
         /// Wait on every live worker carrying this task label.
         #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
         task: Option<String>,
         /// Poll interval in seconds.
-        #[arg(long, default_value_t = 2.0)]
+        #[arg(long, default_value_t = crate::wait::DEFAULT_INTERVAL_SECS)]
         interval: f64,
         /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
         #[arg(long)]

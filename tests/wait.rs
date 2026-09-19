@@ -66,7 +66,7 @@ fn returns_unconsumed_wake_already_in_status() {
     let started = Instant::now();
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert!(
@@ -85,7 +85,7 @@ fn returns_unconsumed_wake_already_in_status() {
 fn does_not_redeliver_consumed_wake_and_delivers_next() {
     let workspace = temp_workspace("niles-wait-cursor");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
-    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"];
+    let args = ["auth-fix", "--interval", "0.05", "--timeout", "0"];
 
     let first = run_wait(&workspace, &args);
     assert_command_success("first wait", &first);
@@ -121,7 +121,7 @@ fn skips_non_actionable_lines_without_persisting_past_an_undelivered_wake() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("wait past working lines", &output);
@@ -137,7 +137,7 @@ fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
 
     let partial = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
     assert_eq!(partial.status.code(), Some(22));
     // The cursor file exists because it doubles as the lock, but holds no advanced position.
@@ -155,7 +155,7 @@ fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
 
     let whole = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
     assert_command_success("wait after line completed", &whole);
     assert_eq!(stdout_of(&whole), "done: complete\n");
@@ -172,7 +172,7 @@ fn escapes_control_characters_instead_of_emitting_them() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("wait with control characters", &output);
@@ -193,7 +193,7 @@ fn non_utf8_bytes_do_not_desynchronise_the_cursor() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("wait past non-utf8", &output);
@@ -206,7 +206,7 @@ fn non_utf8_bytes_do_not_desynchronise_the_cursor() {
 fn a_truncated_log_rescans_from_the_start() {
     let workspace = temp_workspace("niles-wait-truncated");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
-    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"];
+    let args = ["auth-fix", "--interval", "0.05", "--timeout", "0"];
 
     assert_command_success("first wait", &run_wait(&workspace, &args));
     assert_eq!(cursor(&worker_dir), "12\n");
@@ -224,7 +224,7 @@ fn a_truncated_log_rescans_from_the_start() {
 fn concurrent_waits_deliver_the_line_to_exactly_one() {
     let workspace = temp_workspace("niles-wait-concurrent");
     worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    let args = ["--worker", "auth-fix", "--interval", "0.05", "--timeout", "5"];
+    let args = ["auth-fix", "--interval", "0.05", "--timeout", "5"];
 
     let first = spawn_wait(&workspace, &args);
     let second = spawn_wait(&workspace, &args);
@@ -269,7 +269,7 @@ fn waiting_on_several_workers_prefixes_the_winning_id() {
     let output = run_wait(
         &workspace,
         &[
-            "--worker", "alpha", "--worker", "beta", "--interval", "0.05", "--timeout", "0",
+            "alpha", "beta", "--interval", "0.05", "--timeout", "0",
         ],
     );
 
@@ -285,7 +285,7 @@ fn corrupt_cursor_fails_loudly_and_names_the_file() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert!(!output.status.success());
@@ -302,7 +302,7 @@ fn unknown_id_errors_without_closed_backstop() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "missing", "--interval", "0.05", "--timeout", "0"],
+        &["missing", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert!(!output.status.success());
@@ -319,7 +319,7 @@ fn returns_closed_backstop_when_the_directory_is_removed_mid_wait() {
 
     let waiter = spawn_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "5"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
     );
     // The removal has to land after target resolution, or this is the unknown-id path instead.
     settle();
@@ -347,7 +347,7 @@ fn a_symlinked_cursor_path_is_refused_rather_than_followed() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert!(!output.status.success());
@@ -364,7 +364,7 @@ fn rejects_both_worker_and_task_selectors() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--task", "auth", "--timeout", "0"],
+        &["auth-fix", "--task", "auth", "--timeout", "0"],
     );
 
     assert!(!output.status.success());
@@ -385,7 +385,7 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
 
     let output = run_wait(
         &workspace,
-        &["--worker", "auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("wait with an enormous line", &output);
@@ -427,6 +427,138 @@ fn write_task_worker(workspace: &Path, id: &str, task_label: &str, status: &[u8]
   "brief": "{}",
   "launch": "{}",
   "task_label": "{task_label}"
+}}
+"#,
+            workspace.display(),
+            worker_dir.join("brief.md").display(),
+            worker_dir.join("launch.sh").display(),
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it() {
+    let workspace = temp_workspace("niles-send-cursor");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"working: starting\n");
+    write_worker_meta(&workspace, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_tmux(&bin, &workspace);
+
+    // The worker reports done, and the operator sends a follow-up without waiting first.
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(worker_dir.join("status.log"))
+        .unwrap();
+    writeln!(status, "done: first pass").unwrap();
+
+    let send = Command::new(env!("CARGO_BIN_EXE_niles"))
+        .args(["send", "auth-fix", "another", "pass", "please"])
+        .current_dir(&workspace)
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", workspace.join("tmux.log"))
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .output()
+        .unwrap();
+    assert_command_success("send", &send);
+    // The wake it stepped over is surfaced, not dropped silently.
+    assert!(
+        stderr_of(&send).contains("skipped unconsumed wake: done: first pass"),
+        "stderr: {}",
+        stderr_of(&send)
+    );
+
+    // The pre-send `done:` must not satisfy the wait that follows the send.
+    let waited = run_wait(
+        &workspace,
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+    assert_eq!(
+        waited.status.code(),
+        Some(22),
+        "stdout: {}",
+        stdout_of(&waited)
+    );
+}
+
+#[test]
+fn send_wait_blocks_for_the_reply_that_follows_the_message() {
+    let workspace = temp_workspace("niles-send-wait");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: stale pass\n");
+    write_worker_meta(&workspace, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_tmux(&bin, &workspace);
+
+    let child = Command::new(env!("CARGO_BIN_EXE_niles"))
+        // `--wait` written after the id, which is where clap's trailing var-arg would
+        // otherwise swallow it into the message and type it into the agent's pane.
+        .args(["send", "auth-fix", "--wait", "keep", "going"])
+        .current_dir(&workspace)
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", workspace.join("tmux.log"))
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    settle();
+
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .open(worker_dir.join("status.log"))
+        .unwrap();
+    writeln!(status, "done: second pass").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert_command_success("send --wait", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("sent: auth-fix"), "stdout: {stdout}");
+    // The reply, not the `done:` that was already sitting in the log before the send.
+    assert!(stdout.contains("done: second pass"), "stdout: {stdout}");
+    assert!(!stdout.contains("stale pass"), "stdout: {stdout}");
+}
+
+/// A tmux stub that accepts the window queries `send` makes.
+fn write_stub_tmux(bin: &Path, workspace: &Path) {
+    let tmux = bin.join("tmux");
+    fs::write(
+        &tmux,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$1" in
+  display-message) printf 'niles-test-session\n'; exit 0 ;;
+  has-session) exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&tmux, permissions).unwrap();
+    let _ = workspace;
+}
+
+fn write_worker_meta(workspace: &Path, id: &str, task_label: Option<&str>) {
+    let worker_dir = workspace.join(".niles/worker").join(id);
+    let label = task_label
+        .map(|l| format!(",\n  \"task_label\": \"{l}\""))
+        .unwrap_or_default();
+    fs::write(
+        worker_dir.join("meta.json"),
+        format!(
+            r#"{{
+  "niles_schema": 2,
+  "id": "{id}",
+  "agent": "codex",
+  "project": "{}",
+  "window": "niles-test-session:niles-{id}",
+  "brief": "{}",
+  "launch": "{}"{label}
 }}
 "#,
             workspace.display(),

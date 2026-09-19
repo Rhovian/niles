@@ -51,14 +51,14 @@ Spawn a worker agent into a tmux window:
 niles spawn auth-fix --task auth --agent codex "Fix the flaky login test"
 niles peek auth-fix
 niles send auth-fix "Rerun the failing test and report the result."
-niles wait --worker auth-fix
+niles wait auth-fix
+niles send auth-fix --wait "Rerun it and report."   # send, then block for the reply
 niles workers
-niles worker-close --task auth
+niles close --task auth
 ```
 
-Workers always belong to the current workspace; `--project .` is accepted for
-compatibility, but spawning for another path requires `cd` into that workspace
-first. Spawn writes a brief and launch script under `.niles/worker/<id>/`,
+Workers always belong to the workspace the spawn ran from; to work in another
+one, `cd` there first. Spawn writes a brief and launch script under `.niles/worker/<id>/`,
 records tmux metadata in `.niles/worker/<id>.json`, and starts a `niles-<id>`
 window in the tmux session the spawn was run from. `niles spawn` outside tmux
 fails before writing anything, rather than placing a worker in a session nobody
@@ -67,7 +67,7 @@ is attached to. The normal lifecycle is `spawn -> (wait <-> send)* -> cleanup`.
 `--task <label>` records a task label so a task or wave can be cleaned up as a
 group. Labels use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`,
 `_`, `-`) and reserve `archive`, which names the `.niles/worker/archive/` store
-for closed workers. Close a worker with `niles worker-close <id>`, a group with
+for closed workers. Close a worker with `niles close <id>`, a group with
 `--task <label>`, or everything in the workspace with `--all`; batch close
 reports each worker and continues past individual failures.
 
@@ -79,7 +79,7 @@ not a healthy warm pane.
 ## Wake Contract
 
 `niles wait` is the single wake-delivery mechanism: it prints the next
-actionable line from a worker status log. Use `niles wait --worker <id>` for
+actionable line from a worker status log. Use `niles wait <id>` for
 one worker or `niles wait --task <label>` for a live task group. The five
 actionable states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and
 `closed:`. Workers stay warm after `done:` — it tells the manager to inspect
@@ -137,15 +137,15 @@ manifest role bindings.
 ## Example Task
 
 ```sh
-niles spawn auth-plan --task auth --project . --agent claude:opus:high \
+niles spawn auth-plan --task auth --agent claude:opus:high \
   "Analyze the flaky auth test. Do not edit files; write findings to report.md."
-niles wait --worker auth-plan
+niles wait auth-plan
 niles report auth-plan
-niles spawn auth-impl --task auth --project . --agent codex:gpt-5.5:xhigh \
+niles spawn auth-impl --task auth --agent codex:gpt-5.5:xhigh \
   "Implement the auth test fix using the planner report, then run cargo test auth."
-niles wait --worker auth-impl
+niles wait auth-impl
 niles report auth-impl
-niles worker-close --task auth
+niles close --task auth
 ```
 
 ## Status

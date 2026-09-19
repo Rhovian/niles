@@ -62,8 +62,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     let wait = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
         .args([
             "wait",
-            "--worker",
-            "shared",
+                        "shared",
             "--interval",
             "0.01",
             "--timeout",
@@ -85,7 +84,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert!(String::from_utf8_lossy(&report.stdout).is_empty());
 
     let close = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["worker-close", "shared"])
+        .args(["close", "shared"])
         .output()
         .unwrap();
     assert_failure_contains("foreign close", &close, "no live worker 'shared'");
@@ -116,7 +115,7 @@ fn archived_reports_are_workspace_local() {
     fs::write(worker_dir.join("report.md"), "closed worker report\n").unwrap();
 
     let close = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
-        .args(["worker-close", "closed"])
+        .args(["close", "closed"])
         .output()
         .unwrap();
     assert_command_success("close worker in owner workspace", &close);
@@ -145,7 +144,7 @@ fn archived_reports_are_workspace_local() {
 
 fn spawn_worker(niles: &str, workspace: &Path, home: &Path, path: &str, tmux_log: &Path, id: &str) {
     let spawn = scoped_command(niles, workspace, home, path, tmux_log)
-        .args(["spawn", id, "--project", ".", "--agent", "claude", "Fix"])
+        .args(["spawn", id, "--agent", "claude", "Fix"])
         .output()
         .unwrap();
     assert_command_success("spawn scoped worker", &spawn);
