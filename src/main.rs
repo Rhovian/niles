@@ -4,7 +4,6 @@ mod analyze;
 mod build_info;
 mod cli;
 mod config;
-mod dashboard;
 mod doctor;
 mod schema;
 mod session;
