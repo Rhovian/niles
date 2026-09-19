@@ -104,7 +104,7 @@ mod tests {
     /// derived twice is the duplication #89 describes.
     #[test]
     fn lead_brief_keeps_the_plan_and_delegates_the_implementation() {
-        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and you own the plan"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and the plan"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
         // The undershoot half: dispatching a worker for a check it could finish itself (#121).

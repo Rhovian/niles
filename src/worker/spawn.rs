@@ -74,7 +74,6 @@ pub fn spawn(
                 role,
                 task_label: task_label.as_deref(),
                 project: &project,
-                agent: &agent,
                 task: &task.join(" "),
             })?;
             path
@@ -201,7 +200,6 @@ struct BriefInputs<'a> {
     role: WorkerRole,
     task_label: Option<&'a str>,
     project: &'a Utf8Path,
-    agent: &'a str,
     task: &'a str,
 }
 
@@ -213,7 +211,6 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
         role,
         task_label,
         project,
-        agent,
         task,
     } = inputs;
     let status_path = wake::status_log_path(dir);
@@ -231,7 +228,6 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
             ("{role}", role.as_str()),
             ("{task_label}", task_label),
             ("{project}", project.as_str()),
-            ("{agent}", agent),
             ("{status_path}", status_path.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
