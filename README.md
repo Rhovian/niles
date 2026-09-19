@@ -48,13 +48,12 @@ conversation and invokes explicit Niles commands as orchestration tools.
 Spawn a worker agent into a tmux window:
 
 ```sh
-niles spawn auth-fix --task auth --agent codex "Fix the flaky login test"
+niles spawn auth-fix --wait --agent codex "Fix the flaky login test"  # spawn, block for the report
+niles send auth-fix --wait "Rerun it and report."                     # steer, block for the reply
 niles peek auth-fix
-niles send auth-fix "Rerun the failing test and report the result."
-niles wait auth-fix
-niles send auth-fix --wait "Rerun it and report."   # send, then block for the reply
+niles report auth-fix
 niles workers
-niles close --task auth
+niles close auth-fix
 ```
 
 Workers always belong to the workspace the spawn ran from; to work in another
@@ -79,8 +78,11 @@ not a healthy warm pane.
 ## Wake Contract
 
 `niles wait` is the single wake-delivery mechanism: it prints the next
-actionable line from a worker status log. Use `niles wait <id>` for
-one worker or `niles wait --task <label>` for a live task group. The five
+actionable line from a worker status log. `spawn --wait` and `send --wait`
+are the same thing folded into the command that caused the work, so a
+single-worker turn never needs a bare `wait`; reach for `niles wait <id>`
+or `niles wait --task <label>` when blocking on a group you did not just
+act on, which is the one thing the folded forms cannot do. The five
 actionable states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and
 `closed:`. Workers stay warm after `done:` — it tells the lead to inspect
 and optionally send follow-up, not to terminate; cleanup happens explicitly at

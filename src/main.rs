@@ -38,13 +38,28 @@ fn run() -> Result<ExitCode> {
         None => session::run(cli.lead)?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
+            wait,
             id,
             role,
             task_label,
             agent,
             brief,
-            task,
-        }) => worker::spawn(id, role, task_label, agent, brief, task)?,
+            mut task,
+        }) => {
+            // `--wait` written after the worker id lands in the trailing task text.
+            let wait = wait || cli::take_leading_wait(&mut task);
+            let worker_id = id.clone();
+            worker::spawn(id, role, task_label, agent, brief, task)?;
+            if wait {
+                return Ok(wait::wait(
+                    vec![worker_id],
+                    None,
+                    wait::DEFAULT_INTERVAL_SECS,
+                    None,
+                )?
+                .emit());
+            }
+        }
         Some(CommandName::Close {
             id,
             task_label,

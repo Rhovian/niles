@@ -5,7 +5,6 @@ use crate::{agent_window, tmux::WindowTarget, wait};
 use super::meta::read_meta;
 
 pub(crate) const DEFAULT_PEEK_LINES: usize = 2000;
-const WAIT_FLAG: &str = "--wait";
 enum PaneTarget {
     Worker { id: String, target: WindowTarget },
 }
@@ -73,13 +72,7 @@ fn resolve_send_target(
     let id = parts.next().context("send requires a worker id")?;
     let mut message = parts.collect::<Vec<_>>();
 
-    // The message is a trailing var-arg, so clap hands `--wait` to us as message text when it is
-    // written after the worker id — the order most people reach for. Honor it there rather than
-    // typing `--wait` into the agent's pane.
-    let wait_requested = message.first().is_some_and(|first| first == WAIT_FLAG);
-    if wait_requested {
-        message.remove(0);
-    }
+    let wait_requested = crate::cli::take_leading_wait(&mut message);
 
     if message.is_empty() {
         bail!("send requires a message");
