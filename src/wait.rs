@@ -47,6 +47,12 @@ const MAX_LINE_BYTES: usize = 4096;
 
 const CURSOR_FILE: &str = "status.cursor";
 
+/// How often to ask tmux whether a worker's window still exists. This is a backstop against a
+/// wait that would otherwise block for its full timeout, so it does not need to be prompt — and
+/// asking on every poll would spend a subprocess per worker per interval for an answer that
+/// almost never changes.
+const WINDOW_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
 pub fn wait(
     worker_ids: Vec<String>,
     task: Option<String>,
@@ -105,6 +111,7 @@ struct Target {
     dir: Utf8PathBuf,
     status: Utf8PathBuf,
     scanned: u64,
+    window_checked_at: Option<Instant>,
 }
 
 impl Target {
@@ -119,6 +126,7 @@ impl Target {
             dir,
             status,
             scanned: 0,
+            window_checked_at: None,
         })
     }
 
@@ -139,7 +147,10 @@ impl Target {
         self.scanned = self.scanned.max(persisted);
 
         let Some((line, end)) = self.next_actionable()? else {
-            return Ok(None);
+            drop(guard);
+            // Only once the log holds nothing further to deliver. A worker can report `done:`
+            // and then exit, and that line must still be handed over.
+            return self.window_gone_if_confirmed();
         };
         write_cursor(&mut cursor, &path, end)?;
         self.scanned = end;
@@ -225,6 +236,26 @@ impl Target {
         Ok(skipped)
     }
 
+    /// Reports a worker whose tmux window has gone, so nothing can append to its log again.
+    /// Rate-limited, and silent about anything short of a confirmed absence.
+    fn window_gone_if_confirmed(&mut self) -> Result<Option<Outcome>> {
+        let now = Instant::now();
+        if let Some(checked_at) = self.window_checked_at
+            && now.duration_since(checked_at) < WINDOW_CHECK_INTERVAL
+        {
+            return Ok(None);
+        }
+        self.window_checked_at = Some(now);
+
+        if !worker::window_is_gone(&self.id)? {
+            return Ok(None);
+        }
+        Ok(Some(Outcome::WindowGone {
+            id: self.id.clone(),
+            status: self.status.clone(),
+        }))
+    }
+
     fn closed(&self, line: String) -> Outcome {
         Outcome::Closed {
             id: self.id.clone(),
@@ -243,6 +274,10 @@ enum Outcome {
         id: String,
         status: Utf8PathBuf,
         line: String,
+    },
+    WindowGone {
+        id: String,
+        status: Utf8PathBuf,
     },
     Timeout {
         subject: String,
@@ -272,6 +307,25 @@ impl WaitExit {
                     field(&id),
                     field(status.as_str()),
                     detail(&format!("worker '{id}' closed"))
+                )),
+            },
+            Outcome::WindowGone { id, status } => Self {
+                code: EXIT_WORKER_CLOSED,
+                stdout: Some(wake_line(
+                    &id,
+                    wake::line(
+                        WakeKind::Failed,
+                        &format!("worker '{id}' exited without reporting; its window is gone"),
+                    ),
+                    prefix_worker_id,
+                )),
+                stderr: Some(format!(
+                    "wait: window-gone worker={} status={} detail={}",
+                    field(&id),
+                    field(status.as_str()),
+                    detail(&format!(
+                        "worker '{id}' tmux window is gone and its status log ended without a final line"
+                    ))
                 )),
             },
             Outcome::Timeout { subject, timeout } => Self {
