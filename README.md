@@ -119,8 +119,11 @@ one worker or `niles wait --task <label>` for a live task group. The five
 actionable states are `done:`, `failed:`, `blocked:`, `needs-decision:`, and
 `closed:`. Workers stay warm after `done:` — it tells the manager to inspect
 and optionally send follow-up, not to terminate; cleanup happens explicitly at
-integration time. Waits are single-consumer and track what they have already
-delivered, so each actionable line is returned exactly once.
+integration time. Each wait records a byte offset into the status log in
+`.niles/worker/<id>/status.cursor` and advances it only when it delivers a
+line, so each actionable line is returned exactly once. Concurrent waits on one
+worker are serialised by an advisory lock on that cursor rather than rejected:
+one is handed the line, the other keeps waiting.
 
 ## Role Workflows
 

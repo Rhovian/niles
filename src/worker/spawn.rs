@@ -139,7 +139,6 @@ pub fn spawn(
         window: target.render(),
         brief: brief_path,
         launch: launch_path,
-        status: Some(status_path),
     };
     if let Err(err) =
         tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))

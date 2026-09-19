@@ -10,7 +10,8 @@ use crate::{
     usage::{self, UsageAgent, UsageDisplay, UsageRollup, UsageSnapshotInput, UsageSubject},
 };
 
-use super::meta::{WorkerMeta, meta_path, metadata_status_path, read_meta_if_exists};
+use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
+use crate::wake;
 
 pub(super) const UNLABELED_TASK_LABEL: &str = "-";
 const EMPTY_STATUS_PLACEHOLDER: &str = "-";
@@ -212,7 +213,7 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
 }
 
 fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
-    let status_path = metadata_status_path(&worker.meta, &worker.worker_dir);
+    let status_path = wake::status_log_path(&worker.worker_dir);
     let body = match fs::read_to_string(&status_path) {
         Ok(body) => body,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),

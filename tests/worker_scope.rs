@@ -93,9 +93,8 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert_eq!(fs::read_to_string(&tmux_log).unwrap(), tmux_before);
     let status_body = fs::read_to_string(&status).unwrap();
     assert!(!status_body.contains("closed: shared"));
-    assert!(!worker_dir.join("status.waiter").exists());
-    assert!(!worker_dir.join("status.ack").exists());
-    assert!(!worker_dir.join("status.ack.log").exists());
+    // A command run from another workspace must not have touched this worker's wake state.
+    assert!(!worker_dir.join("status.cursor").exists());
     assert!(!workspace_b.join(".niles/worker/archive").exists());
     assert!(worker_dir.exists());
 }
