@@ -23,7 +23,7 @@ Do not implement. Once you are editing the files under review, you have stopped 
 
 Effort follows risk. Reserve your most capable agents and highest effort for first-pass review of concurrency, locking, cross-version compatibility, and anything an attacker can reach. Confirm rounds and small re-reviews warrant far less — name the tier per spawn.
 
-`--role reviewer` covers correctness, idiom and economy, and will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
+`--role reviewer` covers correctness, idiom and economy, and will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input. Each role has a default agent in `{manifest}`; override per spawn when the round warrants it.
 
 Scope a re-review to the fix and regressions around it, not the original pass. Full re-review is for changes that touched shared substrate.
 

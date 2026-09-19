@@ -132,6 +132,7 @@ fn prompt_manifest_values(
         lead,
         worker: picker::prompt_agent_value("Worker agent", &defaults.worker, agent_configs)?,
         reviewer: picker::prompt_agent_value("Reviewer agent", &defaults.reviewer, agent_configs)?,
+        security: picker::prompt_agent_value("Security agent", &defaults.security, agent_configs)?,
     })
 }
 
@@ -179,6 +180,7 @@ mod tests {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
             reviewer: "claude:opus:max".to_owned(),
+            security: "claude:opus:max".to_owned(),
         };
         let mut input = Cursor::new(b"n\n".to_vec());
         let mut output = Vec::new();
@@ -198,6 +200,7 @@ mod tests {
 lead      codex   gpt-5.5  xhigh
 worker    codex   -        -
 reviewer  claude  opus     max
+security  claude  opus     max
 Change any manifest roles? [y/N]: "
         );
         Ok(())
@@ -213,6 +216,7 @@ Change any manifest roles? [y/N]: "
 lead: codex
 worker: codex
 reviewer: claude
+security: claude
 niles_schema: 2
 "#,
         )

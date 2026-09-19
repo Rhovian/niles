@@ -124,11 +124,13 @@ Workspace role bindings live in `.niles/manifest.yaml`:
 lead: claude
 worker: codex
 reviewer: claude
+security: claude
 ```
 
-That is the whole manifest: which agent plays each standing role. A security
-pass uses the `reviewer` binding unless the lead names an agent for it, since it
-is commissioned rarely and a fourth binding would mostly go stale.
+That is the whole manifest: which agent plays each role. Every role with its own
+brief has its own binding — a security pass is commissioned rarely, but the tier
+it runs at is a workspace decision rather than something the lead has to
+remember per spawn.
 
 Bindings accept built-in agent families and agents from project config; unknown
 bare agent names are rejected.

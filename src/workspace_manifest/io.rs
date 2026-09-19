@@ -59,6 +59,7 @@ mod tests {
 lead: claude
 worker: codex
 reviewer: claude
+security: claude
 niles_schema: 2
 "#,
         )
@@ -72,6 +73,7 @@ niles_schema: 2
                 lead: "claude".to_owned(),
                 worker: "codex".to_owned(),
                 reviewer: "claude".to_owned(),
+                security: "claude".to_owned(),
             }
         );
 
@@ -106,7 +108,7 @@ niles_schema: 2
         // Names the offending field, the fields that replaced it, and what to do about it.
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
-            err.contains("expected one of `lead`, `worker`, `reviewer`"),
+            err.contains("expected one of `lead`, `worker`, `reviewer`, `security`"),
             "{err}"
         );
         assert!(
@@ -124,6 +126,7 @@ niles_schema: 2
             lead: "claude".to_owned(),
             worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
+            security: "auditbot".to_owned(),
         };
 
         save(&root, &manifest).unwrap();
@@ -132,6 +135,7 @@ niles_schema: 2
         assert!(body.contains("lead: claude"), "{body}");
         assert!(body.contains("worker: codebot"), "{body}");
         assert!(body.contains("reviewer: reviewbot"), "{body}");
+        assert!(body.contains("security: auditbot"), "{body}");
         for gone in ["manager:", "planner:", "validation_command:", "flow:"] {
             assert!(!body.contains(gone), "{gone} should be gone:\n{body}");
         }

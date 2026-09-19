@@ -25,7 +25,6 @@ use super::{
     validation::{validate_id, validate_task_label},
 };
 
-const WORKER_CORE_TEMPLATE: &str = include_str!("../templates/worker_core.md");
 
 
 pub fn spawn(
@@ -225,9 +224,8 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
     };
     // Every worker gets the shared contract plus exactly one role fragment, so a worker is not
     // handed doctrine addressed to a role it is not playing.
-    let template = format!("{WORKER_CORE_TEMPLATE}\n{}", role.fragment());
     let body = render_template(
-        &template,
+        &role.brief(),
         &[
             ("{id}", id),
             ("{role}", role.as_str()),

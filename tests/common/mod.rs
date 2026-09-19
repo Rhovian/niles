@@ -41,11 +41,19 @@ pub fn write_executable(path: &Path, body: &str) {
 }
 
 #[allow(dead_code)]
-pub fn write_workspace_manifest(workspace: &Path, lead: &str, worker: &str, reviewer: &str) {
+pub fn write_workspace_manifest(
+    workspace: &Path,
+    lead: &str,
+    worker: &str,
+    reviewer: &str,
+    security: &str,
+) {
     fs::create_dir_all(workspace.join(".niles")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
-        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nniles_schema: 2\n"),
+        format!(
+            "lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\nniles_schema: 2\n"
+        ),
     )
     .unwrap();
 }

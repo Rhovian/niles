@@ -23,6 +23,7 @@ pub(super) fn print_manifest_roles<W: Write>(
         role_row("lead", &manifest.lead, agent_configs),
         role_row("worker", &manifest.worker, agent_configs),
         role_row("reviewer", &manifest.reviewer, agent_configs),
+        role_row("security", &manifest.security, agent_configs),
     ];
 
     let role_width = rows
@@ -122,6 +123,7 @@ mod tests {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
             reviewer: reviewer.to_owned(),
+            security: "claude:opus:max".to_owned(),
         }
     }
 
@@ -139,6 +141,7 @@ mod tests {
 lead      codex   gpt-5.5  xhigh
 worker    codex   -        -
 reviewer  claude  opus     max
+security  claude  opus     max
 "
         );
     }
@@ -148,7 +151,16 @@ reviewer  claude  opus     max
         // A bare `codex` must not be resolved into whatever it would launch as.
         let rendered = render(&manifest("codex"));
 
-        assert!(rendered.contains("reviewer  codex  -"), "{rendered}");
+        // Cells, not spacing: padding shifts whenever another binding gets wider.
+        let row = rendered
+            .lines()
+            .find(|line| line.starts_with("reviewer"))
+            .unwrap_or_default();
+        assert_eq!(
+            row.split_whitespace().collect::<Vec<_>>(),
+            ["reviewer", "codex", "-", "-"],
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -165,7 +177,7 @@ reviewer  claude  opus     max
 
         // Continuation lines are indented, so a role row is one that starts at column zero.
         let role_rows = rendered.lines().filter(|line| !line.starts_with(' ')).count();
-        assert_eq!(role_rows, 3, "{rendered}");
+        assert_eq!(role_rows, 4, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 
@@ -196,7 +208,7 @@ reviewer  claude  opus     max
         assert!(rendered.contains("claude-haiku-4-5-20251001"), "{rendered}");
         let effort_columns: Vec<Option<usize>> = rendered
             .lines()
-            .take(3)
+            .take(4)
             .map(|line| line.rfind("  "))
             .collect();
         assert!(

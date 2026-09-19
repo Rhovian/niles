@@ -1,5 +1,37 @@
 use clap::ValueEnum;
 
+/// The part of a worker brief that does not depend on the role: what it is, where its report
+/// goes, and how it wakes the lead. Kept here rather than in a fourth template so the three
+/// role files hold only what differs between roles, and the contract has one home.
+const SHARED_CONTRACT: &str = r#"# Niles {role} brief
+
+id: {id}
+task_label: {task_label}
+project: {project}
+agent: {agent}
+report_file: {report_path}
+
+## Task
+
+{task}
+
+## Reporting
+
+Appending a status line is the only thing that wakes the lead. Write one when you reach a state worth waking them for:
+
+```sh
+echo "done: <short result>; report: {report_path}" >> {status_path}
+```
+
+The states are `done:`, `blocked:`, `needs-decision:` and `failed:`, all in that form. `working:` lines are recorded but wake nobody — use them sparingly, for durable phase changes.
+
+Deliverables go in the report file, not in pane scrollback: the lead reads the report, not your terminal.
+
+Stay open after `done:`. It means "I have something to hand back", not "I am exiting". The lead decides what comes next and closes you with `niles close {id}`.
+
+Report uncertainty as uncertainty. `blocked:` and `needs-decision:` are far cheaper than a confident wrong answer.
+"#;
+
 const ROLE_WORKER_TEMPLATE: &str = include_str!("../templates/role_worker.md");
 const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../templates/role_reviewer.md");
 const ROLE_SECURITY_TEMPLATE: &str = include_str!("../templates/role_security.md");
@@ -26,6 +58,11 @@ impl WorkerRole {
             Self::Reviewer => "reviewer",
             Self::Security => "security",
         }
+    }
+
+    /// The full brief for this role: the shared contract, then the role's own fragment.
+    pub(crate) fn brief(self) -> String {
+        format!("{SHARED_CONTRACT}\n{}", self.fragment())
     }
 
     pub(crate) fn fragment(self) -> &'static str {
@@ -97,6 +134,23 @@ mod tests {
                 !worker.contains(foreign),
                 "worker fragment should not mention {foreign:?}"
             );
+        }
+    }
+
+    /// The contract is shared, so every role carries it exactly once.
+    #[test]
+    fn every_brief_carries_the_shared_contract_once() {
+        for role in ALL {
+            let brief = role.brief();
+            assert_eq!(
+                brief.matches("## Reporting").count(),
+                1,
+                "{} brief should carry the reporting contract once",
+                role.as_str()
+            );
+            // `{role}` is interpolated later, by `write_brief`.
+            assert!(brief.contains("# Niles {role} brief"), "{brief}");
+            assert!(brief.contains(&format!("You are the {}", role.as_str())));
         }
     }
 
