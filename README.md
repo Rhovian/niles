@@ -101,9 +101,9 @@ niles spawn impl --role worker   --agent codex  "Implement the fix"
 niles spawn rev  --role reviewer --agent claude "Review impl's change"
 ```
 
-- **lead** — the foreground agent. Owns the outcome: does work that is cheaper
-  to do than to delegate, and delegates what needs independent judgment,
-  parallelism, or a fresh context.
+- **lead** — the foreground agent. Owns the outcome *and the plan*: decides what
+  gets built and how, then delegates the implementation, independent judgment on
+  it, and anything needing parallelism or a fresh context. Does not implement.
 - **worker** — owns the change, and owns the gate. Runs the project's build,
   tests and linters before reporting `done:`, and says what they printed.
 - **reviewer** — owns judgment about the change. Does not re-run the gate, and

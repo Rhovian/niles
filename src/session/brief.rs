@@ -100,21 +100,28 @@ mod tests {
     use super::super::test_support::temp_test_path;
     use super::*;
 
-    /// The two opposite failure modes the lead framing exists to prevent (#121, #89).
+    /// Planning is the lead's, implementation is not. With no planner role left, a plan
+    /// derived twice is the duplication #89 describes.
     #[test]
-    fn lead_brief_names_both_overshoot_and_undershoot() {
+    fn lead_brief_keeps_the_plan_and_delegates_the_implementation() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and you own the plan"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
+    }
+
+    /// The undershoot half: dispatching a worker for a check it could finish itself (#121).
+    #[test]
+    fn lead_brief_keeps_cheap_checks_inline() {
         assert!(
-            LEAD_BRIEF_TEMPLATE.contains("Do the work that is cheaper to do than to delegate")
+            LEAD_BRIEF_TEMPLATE.contains("Do inline whatever is cheaper to do than to delegate")
         );
-        assert!(LEAD_BRIEF_TEMPLATE.contains("Do not do the worker's job while scoping it"));
-        assert!(LEAD_BRIEF_TEMPLATE.contains("\"It is work, therefore delegate\" is not one"));
     }
 
     /// The gate has exactly one owner, and it is not the lead (the token-burn fix).
     #[test]
     fn lead_brief_assigns_the_gate_to_the_worker() {
         assert!(LEAD_BRIEF_TEMPLATE.contains("The gate belongs to the worker"));
-        assert!(LEAD_BRIEF_TEMPLATE.contains("it is the same command a third time"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("the same command a third time, not verification"));
     }
 
     /// Naming model tiers in the brief dates it to a release (#90).
@@ -126,8 +133,15 @@ mod tests {
                 "lead brief should not hardcode the model ladder, found {model:?}"
             );
         }
-        assert!(LEAD_BRIEF_TEMPLATE.contains("Spend effort where the risk is"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Effort follows risk"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("Scope a re-review to the fix"));
+    }
+
+    /// The brief is read on every session start; length is a running cost.
+    #[test]
+    fn lead_brief_stays_short() {
+        let lines = LEAD_BRIEF_TEMPLATE.lines().count();
+        assert!(lines <= 50, "lead brief is {lines} lines; keep it tight");
     }
 
     #[test]
