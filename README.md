@@ -75,6 +75,13 @@ window in the tmux session the spawn was run from. `niles spawn` outside tmux
 fails before writing anything, rather than placing a worker in a session nobody
 is attached to. The normal lifecycle is `spawn -> (wait <-> send)* -> cleanup`.
 
+`niles send` types the message into the worker's pane and then presses the
+submit key, which are two separate tmux calls. It watches the pane across both:
+the paste has to render and go quiet before the submit is sent, and the pane has
+to change after it. A submit a busy TUI swallows leaves the message sitting
+unsent in the composer, and `send` reports that as a failure rather than
+printing `sent:` over it.
+
 `--task <label>` records a task label so a task or wave can be cleaned up as a
 group. Labels use the same ASCII grammar as worker ids (`A-Z`, `a-z`, `0-9`,
 `_`, `-`) and reserve `archive`, which names the `.niles/worker/archive/` store
@@ -83,7 +90,11 @@ for closed workers. Close a worker with `niles close <id>`, a group with
 reports each worker and continues past individual failures.
 
 `niles workers` lists only workers in the current workspace and includes a
-window-health column. `agent-exited` means the agent finished or died and its
+`wake` column and a window-health column. `wake` is `pending` when the worker's
+status log holds an actionable line no `niles wait` has collected yet — without
+it a worker that finished twenty minutes ago and one still working render the
+same `done:` and the listing hides the one thing the lead needs to notice.
+`agent-exited` means the agent finished or died and its
 window is being kept so the pane stays readable — close it when you are done
 with it. `window-dead` means the window itself is gone while worker metadata
 remains: a stale directory that is a cleanup candidate.

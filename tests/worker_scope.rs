@@ -35,7 +35,9 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
         .unwrap();
     assert_command_success("foreign workers", &foreign_workers);
     let foreign_workers_stdout = String::from_utf8_lossy(&foreign_workers.stdout);
-    assert!(foreign_workers_stdout.contains("workers[0]{id,agent,task,age,window,last_status}:"));
+    assert!(
+        foreign_workers_stdout.contains("workers[0]{id,agent,task,age,window,wake,last_status}:")
+    );
     assert!(!foreign_workers_stdout.contains("shared"));
 
     let owner_workers = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
@@ -44,7 +46,9 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
         .unwrap();
     assert_command_success("owner workers", &owner_workers);
     let owner_workers_stdout = String::from_utf8_lossy(&owner_workers.stdout);
-    assert!(owner_workers_stdout.contains("workers[1]{id,agent,task,age,window,last_status}:"));
+    assert!(
+        owner_workers_stdout.contains("workers[1]{id,agent,task,age,window,wake,last_status}:")
+    );
     assert!(owner_workers_stdout.contains("\n  shared,"));
     let tmux_before = fs::read_to_string(&tmux_log).unwrap();
 

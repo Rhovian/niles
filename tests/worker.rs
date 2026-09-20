@@ -47,6 +47,9 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     fs::create_dir_all(&bin).unwrap();
     let tmux_log = workspace.join("tmux.log");
     let tmux = bin.join("tmux");
+    // The pane is modelled rather than answered with a constant: `send` watches the pane to
+    // decide whether the submit key took, so a stub whose capture never moves is a stub that
+    // cannot tell a delivered message from a swallowed one.
     fs::write(
         &tmux,
         r#"#!/bin/sh
@@ -63,7 +66,21 @@ case "$1" in
     fi
     exit 0
     ;;
-  capture-pane) printf 'pane output\n'; exit 0 ;;
+  send-keys)
+    if [ "$4" = "-l" ]; then
+      printf 'composer: %s\n' "$5" >> "$TMUX_PANE_FILE"
+    else
+      printf 'submitted\n' >> "$TMUX_PANE_FILE"
+    fi
+    exit 0
+    ;;
+  capture-pane)
+    printf 'pane output\n'
+    if [ -f "$TMUX_PANE_FILE" ]; then
+      cat "$TMUX_PANE_FILE"
+    fi
+    exit 0
+    ;;
   *) exit 0 ;;
 esac
 "#,
@@ -84,6 +101,7 @@ exit 0
         bin.display(),
         std::env::var("PATH").expect("PATH must be set in the test environment")
     );
+    let pane_file = workspace.join("pane.txt");
 
     let spawn = Command::new(niles)
         .args([
@@ -93,6 +111,7 @@ exit 0
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_PANE_FILE", &pane_file)
         .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
@@ -148,6 +167,7 @@ exit 0
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_PANE_FILE", &pane_file)
         .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
@@ -160,11 +180,23 @@ exit 0
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
+        .env("TMUX_PANE_FILE", &pane_file)
         .env("TMUX", "/tmp/niles-test-tmux,0,0")
         .output()
         .unwrap();
     assert!(send.status.success());
-    assert!(String::from_utf8_lossy(&send.stdout).contains("sent: auth-fix"));
+    let send_stdout = String::from_utf8_lossy(&send.stdout);
+    assert!(send_stdout.contains("sent: auth-fix"));
+    // `wait` first, as spawn prints it: the send just armed a wake, and collecting it is the
+    // next move.
+    assert!(
+        send_stdout.contains("wait: niles wait auth-fix"),
+        "{send_stdout}"
+    );
+    assert!(
+        send_stdout.contains("peek: niles peek auth-fix"),
+        "{send_stdout}"
+    );
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(
@@ -182,6 +214,31 @@ exit 0
     assert!(log.contains(&format!("capture-pane -p -t {target} -S -7")));
     assert!(log.contains(&format!("send-keys -t {target} -l continue please")));
     assert!(log.contains(&format!("send-keys -t {target} C-m")));
+
+    // The pane is observed on both sides of the submit: settled after the paste, then checked for
+    // the change that proves the submit took. Timing the gap instead is what let a swallowed
+    // `C-m` be reported as `sent:`.
+    let calls = log.lines().collect::<Vec<_>>();
+    let paste = calls
+        .iter()
+        .position(|call| *call == format!("send-keys -t {target} -l continue please"))
+        .expect("the message paste");
+    let submit = calls
+        .iter()
+        .position(|call| *call == format!("send-keys -t {target} C-m"))
+        .expect("the submit key");
+    assert!(
+        calls[paste..submit]
+            .iter()
+            .any(|call| call.starts_with("capture-pane")),
+        "the pane must be watched between the paste and the submit:\n{log}"
+    );
+    assert!(
+        calls[submit..]
+            .iter()
+            .any(|call| call.starts_with("capture-pane")),
+        "the pane must be checked after the submit:\n{log}"
+    );
 }
 
 #[test]
@@ -656,7 +713,7 @@ fn leftover_worker_json_file_is_inert() {
         .unwrap();
     assert_command_success("workers ignores leftover json", &workers);
     let stdout = String::from_utf8_lossy(&workers.stdout);
-    assert!(stdout.contains("workers[0]{id,agent,task,age,window,last_status}:"));
+    assert!(stdout.contains("workers[0]{id,agent,task,age,window,wake,last_status}:"));
     assert!(!stdout.contains("auth-fix"));
 
     let peek = Command::new(niles)
@@ -1358,7 +1415,7 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
 
     assert_command_success("workers", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("workers[2]{id,agent,task,age,window,last_status}:"));
+    assert!(stdout.contains("workers[2]{id,agent,task,age,window,wake,last_status}:"));
     assert!(stdout.lines().any(|line| {
         line.contains("auth-fix,codex,auth,")
             && line.contains(",live,")
@@ -1370,6 +1427,67 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
             && line.contains("blocked: needs clarification")
     }));
     assert!(!stdout.contains("old-worker"));
+}
+
+/// Two workers reporting `done:` render identically unless the listing says which line the lead
+/// still owes itself a `niles wait` for. That is how a finished worker sat unnoticed for twenty
+/// minutes next to two that had already been collected.
+#[test]
+fn workers_marks_a_worker_whose_wake_has_not_been_collected() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-workers-pending-wake");
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+
+    // Collected: a wait consumed the `done:` and left its cursor past the end of the log.
+    let collected = write_worker_fixture(&workspace, "collected", "done: ready for review\n");
+    fs::write(collected.join("status.cursor"), "23\n").unwrap();
+    // Waiting: the same line, and no wait has ever run against it.
+    write_worker_fixture(&workspace, "waiting", "done: ready for review\n");
+    // Working: the only undelivered line wakes nobody, so nothing is owed.
+    let working = write_worker_fixture(
+        &workspace,
+        "working",
+        "done: first pass\nworking: second pass\n",
+    );
+    fs::write(working.join("status.cursor"), "17\n").unwrap();
+
+    let output = Command::new(niles)
+        .arg("workers")
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", niles_home(&workspace))
+        .env("TMUX_LOG", &tmux_log)
+        .env(
+            "TMUX_WINDOWS",
+            "niles-collected\nniles-waiting\nniles-working",
+        )
+        .output()
+        .unwrap();
+
+    assert_command_success("workers", &output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = |id: &str| {
+        stdout
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{id},")))
+            .unwrap_or_else(|| panic!("no row for {id}:\n{stdout}"))
+            .to_owned()
+    };
+
+    // The same `last_status` on both, and only the uncollected one is marked.
+    assert!(
+        row("collected").contains(",-,done: ready for review"),
+        "{stdout}"
+    );
+    assert!(
+        row("waiting").contains(",pending,done: ready for review"),
+        "{stdout}"
+    );
+    assert!(
+        row("working").contains(",-,working: second pass"),
+        "{stdout}"
+    );
 }
 
 #[test]

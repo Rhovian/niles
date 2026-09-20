@@ -24,12 +24,12 @@ pub struct SendOutcome {
 ///
 /// The wake cursor is advanced first, so the wait that follows this send cannot be satisfied by a
 /// status line the worker wrote before the message arrived.
-pub fn send(target_and_message: Vec<String>) -> Result<SendOutcome> {
+pub fn send(wait: bool, target_and_message: Vec<String>) -> Result<SendOutcome> {
     if target_and_message.is_empty() {
         bail!("send requires a message");
     }
 
-    let (target, message, wait_requested) = resolve_send_target(target_and_message)?;
+    let (target, message, wait_requested) = resolve_send_target(wait, target_and_message)?;
     let message = message.join(" ");
     let id = target.label();
 
@@ -39,6 +39,12 @@ pub fn send(target_and_message: Vec<String>) -> Result<SendOutcome> {
 
     target.send(&message)?;
     println!("sent: {id}");
+    if !wait_requested {
+        // wait first, as spawn prints it: the send has armed a wake, and collecting it is the
+        // next move. `--wait` is already doing that, so it needs no pointer to itself.
+        println!("wait: niles wait {id}");
+        println!("peek: niles peek {id}");
+    }
     Ok(SendOutcome { id, wait_requested })
 }
 
@@ -62,12 +68,16 @@ impl PaneTarget {
     }
 }
 
-fn resolve_send_target(target_and_message: Vec<String>) -> Result<(PaneTarget, Vec<String>, bool)> {
+fn resolve_send_target(
+    wait: bool,
+    target_and_message: Vec<String>,
+) -> Result<(PaneTarget, Vec<String>, bool)> {
     let mut parts = target_and_message.into_iter();
     let id = parts.next().context("send requires a worker id")?;
     let mut message = parts.collect::<Vec<_>>();
 
-    let wait_requested = crate::cli::take_leading_wait(&mut message);
+    // `--wait` written after the worker id lands in the trailing message text instead of the flag.
+    let wait_requested = wait | crate::cli::take_leading_wait(&mut message);
 
     if message.is_empty() {
         bail!("send requires a message");
