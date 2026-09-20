@@ -190,6 +190,27 @@ Niles has built-in profiles for common agents such as `codex` and `claude`, so
 `claude:opus:max`, or `claude:sonnet:med` — in `niles spawn --agent` and
 manifest role bindings.
 
+Each family carries a roster, and the roster is the whole of what it will
+launch:
+
+| family | models |
+| ------ | ------ |
+| `codex` | `gpt-5.5`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
+| `claude` | `opus`, `sonnet`, `fable`, `haiku` |
+| `hermes` | `tencent/hy3` |
+
+A model that is not on it — a full id like `claude-opus-5`, a sibling like
+`gpt-5.4`, a vendor path hermes could route — is rejected, not guessed at:
+
+    $ niles spawn x --agent codex:gpt-5.4 "..."
+    Error: unsupported codex model `gpt-5.4` in agent spec
+
+Adding one is a line in `src/agents/families.rs` carrying the efforts that model
+accepts, because effort belongs to the model rather than the family:
+`codex:gpt-6-astra:ultra` is accepted where `codex:gpt-5.5:ultra` is not, and
+`claude:haiku` takes no effort at all, so it rejects the qualifier outright
+rather than sending a level its model cannot answer.
+
 ## Example Task
 
 ```sh
