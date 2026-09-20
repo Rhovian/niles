@@ -6,11 +6,13 @@ use crate::config::spec::PromptMode;
 pub struct AgentProfile {
     pub id: &'static str,
     pub binary: &'static str,
+    pub foreground_args: &'static [&'static str],
     pub worker_args: &'static [&'static str],
     pub worker_prompt: PromptMode,
     pub model_aliases: &'static [&'static str],
     pub supported_efforts: &'static [&'static str],
     pub model_prefixes: &'static [&'static str],
+    model_shape: ModelShape,
     tier_args: TierArgs,
     model_group_label: ModelGroupLabel,
     manager_prompt: ManagerPrompt,
@@ -32,6 +34,16 @@ enum EffortArg {
     },
 }
 
+/// How a family spells the models it accepts.
+#[derive(Debug, Clone, Copy)]
+enum ModelShape {
+    /// Bare names, where a known prefix marks family membership: `gpt-5.5`, `claude-opus-5`.
+    Prefixed,
+    /// `vendor/name`, where the vendor set is open — hermes routes to whatever its provider
+    /// serves, so the shape is the only rule we can check without asking the provider.
+    VendorPath,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ModelGroupLabel {
     Alias,
@@ -42,17 +54,20 @@ enum ModelGroupLabel {
 enum ManagerPrompt {
     CombinedArg,
     AppendSystemPrompt,
+    QueryArg,
 }
 
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
+        foreground_args: &[],
         worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
         worker_prompt: PromptMode::Arg,
         model_aliases: &["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
         supported_efforts: &["minimal", "low", "medium", "high", "xhigh", "max"],
         model_prefixes: &["gpt-"],
+        model_shape: ModelShape::Prefixed,
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Config {
@@ -67,11 +82,13 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
+        foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         worker_prompt: PromptMode::Arg,
         model_aliases: &["opus", "sonnet", "fable", "haiku"],
         supported_efforts: &["low", "medium", "high", "xhigh", "max"],
         model_prefixes: &["claude-"],
+        model_shape: ModelShape::Prefixed,
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--effort"),
@@ -79,6 +96,31 @@ const PROFILES: &[AgentProfile] = &[
         model_group_label: ModelGroupLabel::HyphenatedAlias,
         manager_prompt: ManagerPrompt::AppendSystemPrompt,
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+    },
+    // hermes puts the session behind a `chat` subcommand, and takes its opening turn from a file
+    // rather than a positional argument. `--query-file` is what keeps the brief verbatim: nothing
+    // in it is shell-interpreted, and unlike redirecting the brief on stdin it leaves the pane a
+    // real TTY, which is the difference between seeding an interactive session and answering once
+    // and exiting.
+    AgentProfile {
+        id: "hermes",
+        binary: "hermes",
+        foreground_args: &["chat"],
+        worker_args: &["chat", "--yolo"],
+        worker_prompt: PromptMode::QueryFile,
+        model_aliases: &["tencent/hy3"],
+        supported_efforts: &[
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ],
+        model_prefixes: &[],
+        model_shape: ModelShape::VendorPath,
+        tier_args: TierArgs {
+            model_flag: "--model",
+            effort: EffortArg::Flag("--reasoning"),
+        },
+        model_group_label: ModelGroupLabel::Alias,
+        manager_prompt: ManagerPrompt::QueryArg,
+        launch_env: &[],
     },
 ];
 
@@ -116,7 +158,7 @@ pub fn normalize_model(profile: AgentProfile, model: &str) -> Result<String> {
     }
 
     bail!(
-        "invalid {} model `{model}` in agent spec; expected letters, digits, '.', '_', or '-'",
+        "invalid {} model `{model}` in agent spec; expected letters, digits, '.', '_', '-', or '/'",
         profile.id
     )
 }
@@ -135,11 +177,25 @@ pub fn normalize_effort(profile: AgentProfile, effort: &str) -> Result<String> {
 }
 
 pub fn supports_model(profile: AgentProfile, model: &str) -> bool {
-    profile.model_aliases.contains(&model)
-        || profile
+    if profile.model_aliases.contains(&model) {
+        return true;
+    }
+
+    match profile.model_shape {
+        ModelShape::Prefixed => profile
             .model_prefixes
             .iter()
-            .any(|prefix| model.starts_with(prefix))
+            .any(|prefix| model.starts_with(prefix)),
+        ModelShape::VendorPath => is_vendor_path(model),
+    }
+}
+
+/// `vendor/name`, both halves present and no second slash: `anthropic/claude-opus-5`, `tencent/hy3`.
+fn is_vendor_path(model: &str) -> bool {
+    match model.split_once('/') {
+        Some((vendor, name)) => !vendor.is_empty() && !name.is_empty() && !name.contains('/'),
+        None => false,
+    }
 }
 
 pub fn model_group_label(profile: AgentProfile, model: &str) -> String {
@@ -172,6 +228,9 @@ pub fn manager_prompt_args(
         Some(ManagerPrompt::AppendSystemPrompt) => {
             vec!["--append-system-prompt".to_owned(), brief, startup_prompt]
         }
+        Some(ManagerPrompt::QueryArg) => {
+            vec!["-q".to_owned(), format!("{brief}\n\n{startup_prompt}")]
+        }
         Some(ManagerPrompt::CombinedArg) | None => vec![format!("{brief}\n\n{startup_prompt}")],
     }
 }
@@ -179,5 +238,5 @@ pub fn manager_prompt_args(
 fn is_model_token(model: &str) -> bool {
     model
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/'))
 }

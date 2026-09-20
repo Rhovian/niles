@@ -99,6 +99,7 @@ fn write_launch_script(
     match invocation.prompt {
         PromptMode::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
         PromptMode::Stdin => body.push_str(" < \"$BRIEF\""),
+        PromptMode::QueryFile => body.push_str(" --query-file \"$BRIEF\""),
     }
     // `|| code=$?` rather than a bare call: `set -e` would otherwise abort the script on a failing
     // agent, which is precisely the case the report below exists for.
@@ -218,6 +219,19 @@ mod tests {
 
         assert!(script.contains(r#"< "$BRIEF" || code=$?"#), "{script}");
         assert!(script.contains(">> \"$STATUS\""), "{script}");
+    }
+
+    #[test]
+    fn a_query_file_prompt_hands_over_the_brief_path_not_its_contents() {
+        let script = script_for(PromptMode::QueryFile);
+
+        assert!(
+            script.contains(r#"--query-file "$BRIEF" || code=$?"#),
+            "{script}"
+        );
+        // The brief must not be expanded into the command line: hermes reads the file itself, so
+        // nothing in the brief can be taken for shell syntax.
+        assert!(!script.contains("$(cat"), "{script}");
     }
 
     #[test]
