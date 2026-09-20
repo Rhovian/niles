@@ -3,14 +3,15 @@ use std::fs;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::schema::{self, ArtifactKind};
+use crate::{
+    schema::{self, ArtifactKind},
+    store::paths::NILES_DIR,
+};
 
 use super::WorkspaceManifest;
 
-const MANIFEST_RELATIVE_PATH: &str = ".niles/manifest.yaml";
-
 pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
-    root.join(MANIFEST_RELATIVE_PATH)
+    root.join(NILES_DIR).join("manifest.yaml")
 }
 
 pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
