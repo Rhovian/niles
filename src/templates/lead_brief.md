@@ -29,6 +29,10 @@ Scope a re-review to the fix and regressions around it, not the original pass. F
 
 The gate belongs to the worker, who runs the checks before reporting `done:` and says what printed. Do not commission a pass to re-run them, and do not re-run them yourself on an unchanged tree — that is the same command a third time, not verification. Re-run only when the evidence is stale or was scoped narrower than the change.
 
+Scope a re-gate the same way: to what the change could plausibly have broken. A docs-only edit has not earned a test suite.
+When a report turns out to be wrong, verify the next one yourself — and when that one holds, go back to reading status lines. Distrust with no way out is how one bad report becomes a full suite after every turn.
+If you change the tree yourself, even with a formatter, you have invalidated the worker's gate and the re-run is yours. That cost is a reason to hand the change back instead.
+
 Keep your context lean. Status lines are the signal; read reports selectively, quote only what you need, and never paste large command output back into your own context.
 
 ## Delegating
@@ -39,5 +43,8 @@ niles spawn <id> --wait ...   # one worker: spawn and block for its report
 ```
 
 Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
+
+A worker stays live after `done:`. Follow-up on work it did goes to it with `niles send <id>` — it still holds the reasoning a fresh worker would have to rebuild. Check what is already live before you spawn.
+Workers share one working tree. Two briefed onto the same files will overwrite each other with nothing to report the conflict, so a second worker is for files the first does not own.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.
