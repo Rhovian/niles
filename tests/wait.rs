@@ -405,14 +405,34 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
 #[test]
 fn task_label_waits_on_every_live_worker_carrying_it() {
     let workspace = temp_workspace("niles-wait-task");
+    // The fabricated workers need real tmux windows, or `wait`'s window-gone check (commit
+    // 82c8795) would report them gone before their status logs are ever read.
+    let server = TmuxServer::start(&workspace, "niles");
+    server.new_window("niles-alpha");
+    server.new_window("niles-beta");
+    server.new_window("niles-gamma");
     write_task_worker(&workspace, "alpha", "auth", b"working: nothing yet\n");
     write_task_worker(&workspace, "beta", "auth", b"blocked: needs a decision\n");
     write_task_worker(&workspace, "gamma", "other", b"done: unrelated task\n");
 
-    let output = run_wait(
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let output = niles_in(
+        &server,
         &workspace,
-        &["--task", "auth", "--interval", "0.05", "--timeout", "0"],
-    );
+        &bin,
+        &[
+            "wait",
+            "--task",
+            "auth",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ],
+    )
+    .output()
+    .unwrap();
 
     assert_command_success("wait --task", &output);
     // gamma carries a different label, so its wake must not satisfy this wait.
@@ -754,7 +774,19 @@ impl TmuxServer {
     }
 
     fn new_window(&self, name: &str) {
-        self.run(&["new-window", "-d", "-t", &self.session, "-n", name]);
+        // Explicit index: tmux's auto-indexing collides when base-index != 0 and more than one
+        // window is created in a session (it keeps re-choosing the same index). Names are what
+        // `wait` matches on, so the index is arbitrary as long as it is unique.
+        static NEXT: AtomicU64 = AtomicU64::new(10);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.run(&[
+            "new-window",
+            "-d",
+            "-t",
+            &format!("{}:{}", self.session, index),
+            "-n",
+            name,
+        ]);
     }
 
     /// Whatever tmux says about this server right now, for failure messages.

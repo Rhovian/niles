@@ -8,6 +8,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -315,7 +316,14 @@ exit 0
     assert!(stderr.contains("tmux new -s niles"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
-    let log = fs::read_to_string(&tmux_log).expect("tmux.log should be readable");
+    // niles never invokes tmux here, so tmux.log is correctly absent — its absence is the proof
+    // that no tmux command was issued. A file that *does* exist only matters if it shows a
+    // session or window was created; any other read error is a real failure.
+    let log = match fs::read_to_string(&tmux_log) {
+        Ok(log) => log,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => panic!("tmux.log should be readable: {err}"),
+    };
     assert!(!log.contains("new-session"), "{log}");
     assert!(!log.contains("new-window"), "{log}");
 }
@@ -1852,25 +1860,10 @@ fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let workspace = temp_workspace("niles-close-wait");
     let home = niles_home(&workspace);
 
-    let bin = workspace.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let tmux_log = workspace.join("tmux.log");
-    let tmux = bin.join("tmux");
-    fs::write(
-        &tmux,
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
-  has-session) exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&tmux, permissions).unwrap();
+    // The waited-on worker needs a real tmux window, or `wait`'s window-gone check
+    // (commit 82c8795) would report it gone before the close ever lands.
+    let server = TmuxServer::start(&workspace, "niles");
+    server.new_window("niles-auth-fix");
 
     write_worker_fixture(&workspace, "auth-fix", "working: close requested");
 
@@ -1878,24 +1871,23 @@ esac
         .args(["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"])
         .current_dir(&workspace)
         .env("NILES_HOME", &home)
+        .env("TMUX", server.tmux_env())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(100));
 
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").expect("PATH must be set in the test environment")
-    );
+    // No stub tmux in PATH: `close` must reach the real tmux server so it can see and kill the
+    // worker's window.
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
     let close = Command::new(niles)
         .args(["close", "auth-fix"])
         .current_dir(&workspace)
-        .env("PATH", &path)
+        .env("PATH", path_with_bin(&bin))
         .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .env("TMUX", server.tmux_env())
         .output()
         .unwrap();
     assert_command_success("close", &close);
@@ -1928,6 +1920,92 @@ esac
         !stderr.contains("timeout"),
         "stdout:\n{stdout}\nstderr:\n{stderr}"
     );
+}
+
+/// A private tmux server on its own socket, torn down when the test ends.
+///
+/// `worker_close_wakes_waiters_with_nonzero_closed_status` waits on a worker that must have a
+/// real tmux window, or `wait`'s window-gone check reports it gone before the close lands. A stub
+/// tmux that answers window queries with comfortable lies would hide that, so this drives real
+/// tmux on a private socket the developer's own session never sees.
+struct TmuxServer {
+    socket: PathBuf,
+    session: String,
+}
+
+impl TmuxServer {
+    fn start(workspace: &Path, session: &str) -> Self {
+        // Not under the workspace: a unix socket path is capped near 104 bytes on macOS, and the
+        // temp workspace names are long enough on their own to blow it.
+        //
+        // Named from a counter, not a timestamp: two tests starting in the same microsecond got
+        // the same socket, and the second joined the first's server, whose `Drop` then killed it
+        // mid-test.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let socket = PathBuf::from(format!("/tmp/nt-{}-{unique}.sock", std::process::id()));
+        let server = Self {
+            socket,
+            session: session.to_owned(),
+        };
+        // A long-lived command rather than a shell: a shell that exits takes the last window with
+        // it and destroys the session, which is a different state from a worker whose window has.
+        server.run(&[
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            &workspace.display().to_string(),
+            "sleep 600",
+        ]);
+        server
+    }
+
+    /// The value niles reads from `$TMUX` to find this server.
+    fn tmux_env(&self) -> String {
+        format!("{},0,0", self.socket.display())
+    }
+
+    fn new_window(&self, name: &str) {
+        // Explicit index: tmux's auto-indexing collides when base-index != 0 and more than one
+        // window is created in a session (it keeps re-choosing the same index). Names are what
+        // `wait` matches on, so the index is arbitrary as long as it is unique.
+        static NEXT: AtomicU64 = AtomicU64::new(10);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.run(&[
+            "new-window",
+            "-d",
+            "-t",
+            &format!("{}:{}", self.session, index),
+            "-n",
+            name,
+        ]);
+    }
+
+    fn run(&self, args: &[&str]) {
+        let output = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+impl Drop for TmuxServer {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string(), "kill-server"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = fs::remove_file(&self.socket);
+    }
 }
 
 #[test]
