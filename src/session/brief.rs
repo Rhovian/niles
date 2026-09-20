@@ -117,12 +117,8 @@ mod tests {
     #[test]
     fn lead_brief_commissions_security_only_for_security_boundaries() {
         assert!(LEAD_BRIEF_TEMPLATE.contains("will not write hardening findings"));
-        assert!(
-            LEAD_BRIEF_TEMPLATE.contains("only when the change is itself a security boundary")
-        );
+        assert!(LEAD_BRIEF_TEMPLATE.contains("only when the change is itself a security boundary"));
     }
-
-
 
     /// The gate has exactly one owner, and it is not the lead (the token-burn fix).
     #[test]
@@ -157,7 +153,12 @@ mod tests {
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --role"));
         // The command surface is fetched, not carried: it costs tokens at every session start.
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles <command> --help"));
-        for fetchable in ["niles peek <id>", "niles workers", "niles close <id>", "niles wait <id>"] {
+        for fetchable in [
+            "niles peek <id>",
+            "niles workers",
+            "niles close <id>",
+            "niles wait <id>",
+        ] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(fetchable),
                 "{fetchable} is in spawn output and --help; do not carry it in the brief"
@@ -180,7 +181,10 @@ mod tests {
         assert!(body.contains("lead_agent: codex:gpt-5.5:xhigh"));
         assert!(body.contains("worker: none"));
         assert!(!body.contains("{manifest}"), "unfilled placeholder: {body}");
-        assert!(!body.contains("{workspace}"), "unfilled placeholder: {body}");
+        assert!(
+            !body.contains("{workspace}"),
+            "unfilled placeholder: {body}"
+        );
         assert!(!body.contains("{agent}"), "unfilled placeholder: {body}");
         assert!(!body.contains("{dir}"), "unfilled placeholder: {body}");
         assert!(

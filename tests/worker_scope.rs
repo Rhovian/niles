@@ -62,14 +62,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert_failure_contains("foreign send", &send, "unknown worker id 'shared'");
 
     let wait = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args([
-            "wait",
-                        "shared",
-            "--interval",
-            "0.01",
-            "--timeout",
-            "0",
-        ])
+        .args(["wait", "shared", "--interval", "0.01", "--timeout", "0"])
         .output()
         .unwrap();
     assert_failure_contains("foreign wait", &wait, "unknown worker id 'shared'");

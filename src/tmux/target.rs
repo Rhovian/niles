@@ -20,7 +20,6 @@ impl SessionName {
     }
 }
 
-
 impl fmt::Display for SessionName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -91,10 +90,16 @@ pub(crate) enum TargetState {
     /// output stays readable, so this is a window to clean up — not one that is already gone.
     PaneExited,
     WindowDead,
-    OrphanRecovered { actual: WindowTarget },
+    OrphanRecovered {
+        actual: WindowTarget,
+    },
     OrphanGone,
-    OrphanLegacyCandidate { candidate: WindowTarget },
-    Unknown { error: String },
+    OrphanLegacyCandidate {
+        candidate: WindowTarget,
+    },
+    Unknown {
+        error: String,
+    },
 }
 
 impl fmt::Display for TargetState {
@@ -437,13 +442,19 @@ mod tests {
     /// are now different questions.
     #[test]
     fn a_dead_pane_is_present_but_not_live() {
-        assert_eq!(window_presence(b"niles-run\t0\n", "niles-run"), WindowPresence::Live);
+        assert_eq!(
+            window_presence(b"niles-run\t0\n", "niles-run"),
+            WindowPresence::Live
+        );
         // Present, so still to be cleaned up — not the same as absent.
         assert_eq!(
             window_presence(b"niles-run\t1\n", "niles-run"),
             WindowPresence::PaneExited
         );
-        assert_eq!(window_presence(b"niles-run\t0\n", "run"), WindowPresence::Absent);
+        assert_eq!(
+            window_presence(b"niles-run\t0\n", "run"),
+            WindowPresence::Absent
+        );
     }
 
     /// A kept-but-dead pane is output to read, not a window a worker can be recovered to.

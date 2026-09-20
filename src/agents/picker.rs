@@ -235,7 +235,6 @@ struct MenuChoice<T> {
 mod tests {
     use super::*;
 
-    
     #[test]
     fn agent_choices_do_not_include_free_text_escape_hatch() {
         let default = agents::parse_spec("codex").unwrap();

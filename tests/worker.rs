@@ -12,7 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-
 /// The tmux `-t` form of a recorded `session:window`. Niles anchors both
 /// components with `=` so tmux cannot prefix-match a neighbouring window.
 fn exact_target(window: &str) -> String {
@@ -87,14 +86,7 @@ exit 0
 
     let spawn = Command::new(niles)
         .args([
-            "spawn",
-            "auth-fix",
-            "--task",
-            "auth",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
+            "spawn", "auth-fix", "--task", "auth", "--agent", "claude", "Fix", "auth",
         ])
         .current_dir(&workspace)
         .env("PATH", &path)
@@ -205,7 +197,15 @@ fn spawn_always_targets_the_invoking_workspace_and_rejects_a_project_flag() {
 
     // There is no longer a flag that can name a different workspace.
     let rejected = Command::new(niles)
-        .args(["spawn", "auth-fix", "--project", ".", "--agent", "claude", "Fix"])
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+        ])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -248,7 +248,9 @@ fn role_selects_which_fragment_the_brief_carries() {
     let mut briefs = Vec::new();
     for role in ["worker", "reviewer", "security"] {
         let spawn = Command::new(niles)
-            .args(["spawn", role, "--role", role, "--agent", "claude", "Do", "it"])
+            .args([
+                "spawn", role, "--role", role, "--agent", "claude", "Do", "it",
+            ])
             .current_dir(&workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -258,9 +260,8 @@ fn role_selects_which_fragment_the_brief_carries() {
             .unwrap();
         assert_command_success(&format!("spawn --role {role}"), &spawn);
 
-        let brief =
-            fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
-                .unwrap();
+        let brief = fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
+            .unwrap();
         assert!(brief.contains(&format!("You are the {role}")), "{brief}");
         assert!(brief.contains("## Reporting"), "{brief}");
         assert!(brief.contains("done: <short result>; report:"), "{brief}");
@@ -349,13 +350,7 @@ exit 0
 
     let path = path_with_bin(&bin);
     let spawn = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -368,11 +363,17 @@ exit 0
     // The session the operator is attached to is the session, so it is asked for by name
     // rather than resolved from a recorded pointer.
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
-    assert!(meta.contains(r#""window": "ambient:niles-auth-fix""#), "{meta}");
+    assert!(
+        meta.contains(r#""window": "ambient:niles-auth-fix""#),
+        "{meta}"
+    );
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("display-message -p #S"), "{log}");
-    assert!(log.contains("new-window -d -t =ambient: -n niles-auth-fix"), "{log}");
+    assert!(
+        log.contains("new-window -d -t =ambient: -n niles-auth-fix"),
+        "{log}"
+    );
     assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-project"));
     assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-worker-id auth-fix"));
     // No pointer file, no invented session.
@@ -547,7 +548,7 @@ exit 0
         .args([
             "spawn",
             "codex-hi",
-                        "--agent",
+            "--agent",
             "codex:gpt-5.5:xhigh",
             "Fix",
             "auth",
@@ -583,7 +584,7 @@ exit 0
         .args([
             "spawn",
             "claude-max",
-                        "--agent",
+            "--agent",
             "claude:opus:max",
             "Review",
             "auth",
@@ -702,14 +703,7 @@ exit 0
     );
 
     let failed = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -736,14 +730,7 @@ exit 0
     assert!(String::from_utf8_lossy(&peek.stderr).contains("unknown worker id 'auth-fix'"));
 
     let respawn = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -791,14 +778,7 @@ exit 0
     );
 
     let failed = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", path_with_bin(&bin))
         .env("NILES_HOME", &home)
@@ -1476,15 +1456,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         (&workspace_b, "bravo", "task-b"),
     ] {
         let spawn = Command::new(niles)
-            .args([
-                "spawn",
-                id,
-                "--task",
-                label,
-                "--agent",
-                "claude",
-                "Fix",
-            ])
+            .args(["spawn", id, "--task", label, "--agent", "claude", "Fix"])
             .current_dir(workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -1646,13 +1618,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let path = path_with_bin(&bin);
 
     let first = Command::new(niles)
-        .args([
-            "spawn",
-            "reviewer",
-                        "--agent",
-            "claude",
-            "FIRST",
-        ])
+        .args(["spawn", "reviewer", "--agent", "claude", "FIRST"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -1686,13 +1652,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     );
 
     let second = Command::new(niles)
-        .args([
-            "spawn",
-            "reviewer",
-                        "--agent",
-            "claude",
-            "SECOND",
-        ])
+        .args(["spawn", "reviewer", "--agent", "claude", "SECOND"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -1726,13 +1686,7 @@ fn report_falls_back_to_most_recent_local_archive() {
 
     for (task, report_body) in [("FIRST", "first report\n"), ("SECOND", "second report\n")] {
         let spawn = Command::new(niles)
-            .args([
-                "spawn",
-                "reviewer",
-                "--agent",
-                "claude",
-                task,
-            ])
+            .args(["spawn", "reviewer", "--agent", "claude", task])
             .current_dir(&workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -1921,14 +1875,7 @@ esac
     write_worker_fixture(&workspace, "auth-fix", "working: close requested");
 
     let waiter = Command::new(niles)
-        .args([
-            "wait",
-                        "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
+        .args(["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"])
         .current_dir(&workspace)
         .env("NILES_HOME", &home)
         .stdout(Stdio::piped())

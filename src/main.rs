@@ -53,13 +53,9 @@ fn run() -> Result<ExitCode> {
             let worker_id = id.clone();
             worker::spawn(id, role, task_label, agent, brief, task)?;
             if wait {
-                return Ok(wait::wait(
-                    vec![worker_id],
-                    None,
-                    wait::DEFAULT_INTERVAL_SECS,
-                    None,
-                )?
-                .emit());
+                return Ok(
+                    wait::wait(vec![worker_id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
+                );
             }
         }
         Some(CommandName::Close {

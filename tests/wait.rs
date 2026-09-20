@@ -6,9 +6,9 @@ use common::*;
 use std::{
     fs,
     io::Write,
-    sync::atomic::{AtomicU64, Ordering},
     path::Path,
     process::{Command, Output, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -180,8 +180,14 @@ fn escapes_control_characters_instead_of_emitting_them() {
 
     assert_command_success("wait with control characters", &output);
     let stdout = stdout_of(&output);
-    assert!(!stdout.contains('\x1b'), "raw escape reached stdout: {stdout:?}");
-    assert!(!stdout.contains('\x07'), "raw bell reached stdout: {stdout:?}");
+    assert!(
+        !stdout.contains('\x1b'),
+        "raw escape reached stdout: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains('\x07'),
+        "raw bell reached stdout: {stdout:?}"
+    );
     assert!(stdout.contains("shipped"));
     assert!(stdout.contains("and cleared your screen"));
 }
@@ -271,9 +277,7 @@ fn waiting_on_several_workers_prefixes_the_winning_id() {
 
     let output = run_wait(
         &workspace,
-        &[
-            "alpha", "beta", "--interval", "0.05", "--timeout", "0",
-        ],
+        &["alpha", "beta", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("fleet wait", &output);
@@ -650,8 +654,14 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
     wait_for_file(&workspace.join(".niles/worker/w1/meta.json"));
     let brief = fs::read_to_string(workspace.join(".niles/worker/w1/brief.md")).unwrap();
     assert!(brief.contains("fix the login bug"), "{brief}");
-    assert!(!brief.contains("--wait"), "the flag leaked into the task: {brief}");
-    assert!(server.windows().contains("niles-w1"), "spawn created no window");
+    assert!(
+        !brief.contains("--wait"),
+        "the flag leaked into the task: {brief}"
+    );
+    assert!(
+        server.windows().contains("niles-w1"),
+        "spawn created no window"
+    );
 
     let mut status = fs::OpenOptions::new()
         .append(true)
@@ -676,9 +686,14 @@ fn spawn_without_wait_returns_immediately() {
     write_stub_agent(&bin);
 
     let started = Instant::now();
-    let output = niles_in(&server, &workspace, &bin, &["spawn", "w1", "do", "the", "thing"])
-        .output()
-        .unwrap();
+    let output = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["spawn", "w1", "do", "the", "thing"],
+    )
+    .output()
+    .unwrap();
 
     assert_command_success("spawn", &output);
     assert!(
@@ -761,7 +776,13 @@ impl TmuxServer {
     fn windows(&self) -> String {
         let output = Command::new("tmux")
             .args(["-S", &self.socket.display().to_string()])
-            .args(["list-windows", "-t", &format!("={}", self.session), "-F", "#{window_name}"])
+            .args([
+                "list-windows",
+                "-t",
+                &format!("={}", self.session),
+                "-F",
+                "#{window_name}",
+            ])
             .output()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -798,7 +819,14 @@ fn niles_in(server: &TmuxServer, workspace: &Path, bin: &Path, args: &[&str]) ->
     command
         .args(args)
         .current_dir(workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH must be set in the test environment")))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").expect("PATH must be set in the test environment")
+            ),
+        )
         .env("NILES_HOME", niles_home(workspace))
         .env("TMUX", server.tmux_env());
     command

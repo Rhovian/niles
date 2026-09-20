@@ -11,11 +11,7 @@ use crate::{
     config::spec::{AgentConfig, load_project_config_from},
 };
 
-use super::{
-    WorkspaceManifest, load, manifest_path,
-    roles_table::print_manifest_roles,
-    save,
-};
+use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
 
 pub fn ensure_interactive(
     root: &Utf8Path,

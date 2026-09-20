@@ -77,7 +77,11 @@ impl WorkerRole {
 mod tests {
     use super::*;
 
-    const ALL: [WorkerRole; 3] = [WorkerRole::Worker, WorkerRole::Reviewer, WorkerRole::Security];
+    const ALL: [WorkerRole; 3] = [
+        WorkerRole::Worker,
+        WorkerRole::Reviewer,
+        WorkerRole::Security,
+    ];
 
     /// The whole point of the split: the gate belongs to exactly one role.
     #[test]
@@ -103,7 +107,11 @@ mod tests {
 
         let reviewer = WorkerRole::Reviewer.fragment();
         assert!(reviewer.contains("Do not do a security review"));
-        for audit_only in ["Name the attacker first", "amplification", "recursion depth"] {
+        for audit_only in [
+            "Name the attacker first",
+            "amplification",
+            "recursion depth",
+        ] {
             assert!(
                 !reviewer.contains(audit_only),
                 "reviewer fragment should leave {audit_only:?} to the security pass"
@@ -116,7 +124,12 @@ mod tests {
     fn reviewer_lens_is_correctness_idiom_and_economy() {
         let reviewer = WorkerRole::Reviewer.fragment();
 
-        for lens in ["**Correctness.**", "**Idiom.**", "**Economy.**", "**Tests.**"] {
+        for lens in [
+            "**Correctness.**",
+            "**Idiom.**",
+            "**Economy.**",
+            "**Tests.**",
+        ] {
             assert!(reviewer.contains(lens), "reviewer is missing {lens}");
         }
         assert!(reviewer.contains("Could this have been done in less code?"));

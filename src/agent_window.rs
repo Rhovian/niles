@@ -204,7 +204,10 @@ mod tests {
     fn the_launch_script_reports_the_agents_exit() {
         let script = script_for(PromptMode::Arg);
 
-        assert!(!script.contains("exec "), "agent must not replace the shell:\n{script}");
+        assert!(
+            !script.contains("exec "),
+            "agent must not replace the shell:\n{script}"
+        );
         // `|| code=$?` and not a bare call: `set -e` would abort before the report otherwise.
         assert!(script.contains("|| code=$?"), "{script}");
         assert!(

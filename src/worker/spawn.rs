@@ -9,23 +9,18 @@ use crate::{
     config::spec::load_project_config_from,
     store,
     tmux::{self, WindowTarget},
-    util::{
-        absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists,
-        render_template,
-    },
+    util::{absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists, render_template},
     wake,
 };
 
 use super::{
-    role::WorkerRole,
     archive::archive_worker_dir,
     list::UNLABELED_TASK_LABEL,
     meta::{WorkerMeta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
+    role::WorkerRole,
     validation::{validate_id, validate_task_label},
 };
-
-
 
 pub fn spawn(
     id: String,

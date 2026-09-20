@@ -31,10 +31,7 @@ pub fn run(lead: Option<String>) -> Result<()> {
     launch_foreground_agent(&workspace, &manifest)
 }
 
-fn launch_prelude(
-    workspace: &Utf8Path,
-    lead_override: Option<&str>,
-) -> Result<WorkspaceManifest> {
+fn launch_prelude(workspace: &Utf8Path, lead_override: Option<&str>) -> Result<WorkspaceManifest> {
     let worker_dir = workspace.join(".niles").join("worker");
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 

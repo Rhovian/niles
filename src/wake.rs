@@ -102,5 +102,4 @@ mod tests {
     fn formats_wake_lines() {
         assert_eq!(line(WakeKind::Closed, "auth-fix"), "closed: auth-fix");
     }
-
 }
