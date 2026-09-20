@@ -19,14 +19,16 @@ pub struct AgentConfig {
     pub prompt: PromptMode,
 }
 
+/// What a `niles.yaml` agent may say about how it takes its brief.
+///
+/// Deliberately narrower than `agents::BriefDelivery`: the by-path and system-prompt deliveries
+/// need a flag spelling, and an agent configured here has no way to give one.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMode {
     #[default]
     Arg,
     Stdin,
-    /// The brief is handed over by path rather than by value, leaving stdin a TTY.
-    QueryFile,
 }
 
 pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {

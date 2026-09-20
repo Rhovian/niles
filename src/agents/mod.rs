@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 
-use crate::config::spec::{AgentConfig, PromptMode};
+use crate::config::spec::AgentConfig;
 
 pub(crate) mod catalog;
 mod families;
@@ -10,12 +10,12 @@ pub(crate) mod picker;
 #[cfg(test)]
 mod tests;
 
-pub use families::AgentProfile;
+pub use families::{AgentProfile, BriefDelivery};
 
 const CUSTOM_AGENT_DEFAULT_ARGS: &[&str] = &[];
 const CUSTOM_AGENT_LAUNCH_ENV: &[(&str, &str)] = &[];
 const CUSTOM_AGENT_MODEL_ALIASES: &[&str] = &[];
-const CUSTOM_AGENT_PROMPT_MODE: PromptMode = PromptMode::Arg;
+const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;
 const CUSTOM_AGENT_SUPPORTED_EFFORTS: &[&str] = &[];
 
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +28,7 @@ pub enum InvocationDefaults {
 pub struct AgentInvocation {
     pub binary: String,
     pub args: Vec<String>,
-    pub prompt: PromptMode,
+    pub brief: BriefDelivery,
     pub spec: AgentSpec,
     pub env: Vec<(String, String)>,
 }
@@ -78,6 +78,9 @@ pub fn invocation(
     defaults: InvocationDefaults,
 ) -> Result<AgentInvocation> {
     let spec = AgentSpec::parse(agent)?;
+    // Both launch paths come through here, so the static model check cannot be skipped by one of
+    // them: no probe, no manifest, no subprocess, just the built-in family aliases.
+    validate_static_model(&spec)?;
     let default_invocation = default_invocation(&spec, defaults);
 
     let mut invocation = match config {
@@ -91,7 +94,7 @@ pub fn invocation(
             } else {
                 config.args.clone()
             },
-            prompt: config.prompt,
+            brief: config.prompt.into(),
             env: default_invocation.env,
             spec,
         },
@@ -113,14 +116,14 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
         InvocationDefaults::Foreground => AgentInvocation {
             binary: default_binary(spec.family()),
             args: args_for_foreground(profile),
-            prompt: prompt_for_profile(profile),
+            brief: brief_for_profile(profile, defaults),
             env: launch_env(profile),
             spec: spec.clone(),
         },
         InvocationDefaults::Worker => AgentInvocation {
             binary: default_binary(spec.family()),
             args: args_for_worker(profile),
-            prompt: prompt_for_profile(profile),
+            brief: brief_for_profile(profile, defaults),
             env: launch_env(profile),
             spec: spec.clone(),
         },
@@ -155,10 +158,13 @@ fn args_for_worker(profile: Option<AgentProfile>) -> Vec<String> {
     }
 }
 
-fn prompt_for_profile(profile: Option<AgentProfile>) -> PromptMode {
-    match profile {
-        Some(profile) => profile.worker_prompt,
-        None => CUSTOM_AGENT_PROMPT_MODE,
+fn brief_for_profile(profile: Option<AgentProfile>, defaults: InvocationDefaults) -> BriefDelivery {
+    let Some(profile) = profile else {
+        return CUSTOM_AGENT_BRIEF;
+    };
+    match defaults {
+        InvocationDefaults::Foreground => profile.lead_brief,
+        InvocationDefaults::Worker => profile.worker_brief,
     }
 }
 
@@ -326,20 +332,6 @@ pub(crate) fn model_group_label(family: &str, model: &str) -> String {
     profile_for(family)
         .map(|profile| families::model_group_label(profile, model))
         .unwrap_or_else(|| model.to_owned())
-}
-
-pub(crate) fn manager_prompt_args(
-    agent: &str,
-    brief: String,
-    startup_prompt: String,
-) -> Result<Vec<String>> {
-    let spec = AgentSpec::parse(agent)?;
-    let profile = profile_for(spec.family());
-    Ok(families::manager_prompt_args(
-        profile,
-        brief,
-        startup_prompt,
-    ))
 }
 
 pub(crate) fn canonical_manifest_agent(

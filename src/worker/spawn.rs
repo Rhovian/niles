@@ -40,11 +40,11 @@ pub fn spawn(
 
     let project = current_dir_utf8()?;
     let config = load_project_config_from(&project)?;
-    // Rejects unknown bare agent names before any worker state is written.
-    agents::config_for(&config.agents, &agent)?;
-    let agent_spec = agents::parse_spec(&agent)?;
-    // Static check against the built-in family aliases: no probe, no manifest, no subprocess.
-    agents::validate_static_model(&agent_spec)?;
+    // The one launch decision, resolved before any worker state is written: unknown agent names
+    // and models the family does not offer are rejected here, by the same resolver the lead uses.
+    let agent_config = agents::config_for(&config.agents, &agent)?;
+    let invocation = agents::invocation(&agent, agent_config, agents::InvocationDefaults::Worker)?;
+    let agent_spec = &invocation.spec;
     if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }
@@ -88,7 +88,7 @@ pub fn spawn(
         &session,
         &window_name,
         &project,
-        &agent,
+        &invocation,
         &brief_path,
         &launch_path,
         &status_path,
@@ -158,7 +158,7 @@ fn spawn_worker_window(
     session: &tmux::SessionName,
     window_name: &str,
     project: &Utf8Path,
-    agent: &str,
+    invocation: &agents::AgentInvocation,
     brief_path: &Utf8Path,
     launch_path: &Utf8Path,
     status_path: &Utf8Path,
@@ -167,8 +167,7 @@ fn spawn_worker_window(
         session,
         window_name,
         project,
-        agent,
-        project,
+        invocation,
         &agent_window::WorkerPaths {
             brief: brief_path,
             launch: launch_path,

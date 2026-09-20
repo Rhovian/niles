@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::spec::PromptMode;
 
 #[test]
 fn known_and_unknown_agents_resolve_a_binary_name() {
@@ -15,7 +16,7 @@ fn invocation_applies_worker_defaults() {
         invocation.args,
         ["--dangerously-bypass-approvals-and-sandbox"].map(str::to_owned)
     );
-    assert!(matches!(invocation.prompt, PromptMode::Arg));
+    assert!(matches!(invocation.brief, BriefDelivery::Arg));
 }
 
 #[test]
@@ -27,7 +28,12 @@ fn foreground_invocation_preserves_builtin_manager_defaults() {
         invocation.args,
         ["--model", "opus", "--effort", "max"].map(str::to_owned)
     );
-    assert!(matches!(invocation.prompt, PromptMode::Arg));
+    // The lead's dial, not the worker's: claude's brief is standing context for the session it
+    // drives, where a worker's brief is the turn.
+    assert!(matches!(
+        invocation.brief,
+        BriefDelivery::SystemPrompt("--append-system-prompt")
+    ));
 }
 
 #[test]
@@ -43,7 +49,7 @@ fn foreground_invocation_uses_configured_custom_manager_binary_and_args() {
     assert_eq!(invocation.binary, "/tmp/custom-manager");
     assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
     assert_eq!(invocation.spec.family(), "gemini");
-    assert!(matches!(invocation.prompt, PromptMode::Arg));
+    assert!(matches!(invocation.brief, BriefDelivery::Arg));
 }
 
 #[test]
@@ -157,7 +163,13 @@ fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
         ]
         .map(str::to_owned)
     );
-    assert!(matches!(invocation.prompt, PromptMode::QueryFile));
+    assert!(matches!(
+        invocation.brief,
+        BriefDelivery::Flag {
+            path: "--query-file",
+            ..
+        }
+    ));
 }
 
 #[test]
