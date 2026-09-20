@@ -177,4 +177,26 @@ mod tests {
             );
         }
     }
+
+    /// The shared contract is the only channel that tells a worker how to spell a status line, so
+    /// it must name every non-`Closed` wake state exactly as `wake.rs` parses it. `Closed` is
+    /// niles-owned and withheld from workers, so it is deliberately absent here.
+    #[test]
+    fn shared_contract_names_every_worker_wake_state() {
+        use crate::wake::WakeKind;
+
+        for kind in [
+            WakeKind::Done,
+            WakeKind::Failed,
+            WakeKind::Blocked,
+            WakeKind::NeedsDecision,
+            WakeKind::Working,
+        ] {
+            let token = format!("{kind}:");
+            assert!(
+                SHARED_CONTRACT.contains(&token),
+                "SHARED_CONTRACT must instruct workers to emit {token}"
+            );
+        }
+    }
 }
