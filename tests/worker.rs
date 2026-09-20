@@ -73,10 +73,7 @@ esac
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -295,10 +292,7 @@ exit 0
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -347,10 +341,7 @@ esac
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -534,19 +525,13 @@ esac
     write_executable(
         &bin.join("codex"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf 'codex-cli 0.144.1\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -704,10 +689,7 @@ esac
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -802,10 +784,7 @@ esac
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
 
@@ -2182,10 +2161,7 @@ esac
     write_executable(
         &bin.join("claude"),
         r#"#!/bin/sh
-case "$1" in
-  --version) printf '2.1.206 (Claude Code)\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
+exit 0
 "#,
     );
     (bin, tmux_log)

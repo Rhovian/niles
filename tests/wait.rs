@@ -816,11 +816,7 @@ fn wait_for_file(path: &Path) {
 
 fn write_stub_agent(bin: &Path) {
     let codex = bin.join("codex");
-    fs::write(
-        &codex,
-        "#!/bin/sh\ncase \"$1\" in --version) echo 'codex-cli 0.144.1'; exit 0 ;; esac\nsleep 30\n",
-    )
-    .unwrap();
+    fs::write(&codex, "#!/bin/sh\nsleep 30\n").unwrap();
     let mut permissions = fs::metadata(&codex).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     fs::set_permissions(&codex, permissions).unwrap();
