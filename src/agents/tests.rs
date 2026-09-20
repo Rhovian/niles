@@ -139,3 +139,66 @@ fn invocation_maps_claude_model_effort_flags() {
     );
 }
 
+#[test]
+fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
+    let invocation =
+        invocation("hermes:tencent/hy3:high", None, InvocationDefaults::Worker).unwrap();
+
+    assert_eq!(invocation.binary, "hermes");
+    assert_eq!(
+        invocation.args,
+        [
+            "chat",
+            "--yolo",
+            "--model",
+            "tencent/hy3",
+            "--reasoning",
+            "high"
+        ]
+        .map(str::to_owned)
+    );
+    assert!(matches!(invocation.prompt, PromptMode::QueryFile));
+}
+
+#[test]
+fn hermes_foreground_keeps_the_subcommand_without_the_approval_bypass() {
+    let invocation = foreground_invocation("hermes", None).unwrap();
+
+    assert_eq!(invocation.binary, "hermes");
+    assert_eq!(invocation.args, ["chat"].map(str::to_owned));
+}
+
+#[test]
+fn hermes_takes_any_vendor_path_model_but_not_a_bare_name() {
+    for model in ["tencent/hy3", "anthropic/claude-opus-5", "x-ai/grok-4.6"] {
+        validate_static_model(&AgentSpec::parse(&format!("hermes:{model}")).unwrap()).unwrap();
+    }
+
+    let bare = AgentSpec::parse("hermes:hy3").unwrap();
+    let error = validate_static_model(&bare).unwrap_err().to_string();
+    assert!(error.contains("unsupported hermes model"), "{error}");
+}
+
+#[test]
+fn a_vendor_slash_stays_out_of_the_prefixed_families() {
+    let claude = AgentSpec::parse("claude:anthropic/claude-opus-5").unwrap();
+    let error = validate_static_model(&claude).unwrap_err().to_string();
+    assert!(error.contains("unsupported claude model"), "{error}");
+}
+
+#[test]
+fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
+    for effort in [
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+    ] {
+        AgentSpec::parse(&format!("hermes:tencent/hy3:{effort}")).unwrap();
+    }
+
+    let unsupported = AgentSpec::parse("hermes:tencent/hy3:turbo").unwrap_err();
+    assert!(
+        unsupported
+            .to_string()
+            .contains("unsupported hermes effort"),
+        "{unsupported}"
+    );
+}

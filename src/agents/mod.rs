@@ -112,7 +112,7 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
     match defaults {
         InvocationDefaults::Foreground => AgentInvocation {
             binary: default_binary(spec.family()),
-            args: Vec::new(),
+            args: args_for_foreground(profile),
             prompt: prompt_for_profile(profile),
             env: launch_env(profile),
             spec: spec.clone(),
@@ -138,6 +138,13 @@ fn configured_or_default_binary(configured: Option<&str>, default: String) -> St
     match configured {
         Some(binary) => binary.to_owned(),
         None => default,
+    }
+}
+
+fn args_for_foreground(profile: Option<AgentProfile>) -> Vec<String> {
+    match profile {
+        Some(profile) => args(profile.foreground_args),
+        None => Vec::new(),
     }
 }
 

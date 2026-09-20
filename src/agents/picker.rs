@@ -245,7 +245,7 @@ mod tests {
             .map(|choice| choice.label.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels, ["codex", "claude"]);
+        assert_eq!(labels, ["codex", "claude", "hermes"]);
         assert_eq!(default_choice_index(&choices), 0);
     }
 

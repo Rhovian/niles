@@ -130,7 +130,9 @@ pub(super) fn manager_prompt_io(
     brief: String,
 ) -> Result<ForegroundPrompt> {
     match prompt {
-        PromptMode::Arg => Ok(ForegroundPrompt {
+        // The foreground brief only ever exists in memory here, so a file-fed family takes it the
+        // same way an arg-fed one does; `manager_prompt_args` picks the flag the family wants.
+        PromptMode::Arg | PromptMode::QueryFile => Ok(ForegroundPrompt {
             args: manager_prompt_args(agent, brief)?,
             stdin: None,
         }),
@@ -348,6 +350,15 @@ agents:
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manager_prompt_args_seed_a_hermes_query() {
+        let args = manager_prompt_args("hermes", "brief body".to_owned()).unwrap();
+
+        assert_eq!(args[0], "-q");
+        assert_eq!(args[1], format!("brief body\n\n{STARTUP_PROMPT}"));
+        assert_eq!(args.len(), 2);
     }
 
     #[test]

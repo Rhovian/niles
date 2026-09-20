@@ -25,6 +25,8 @@ pub enum PromptMode {
     #[default]
     Arg,
     Stdin,
+    /// The brief is handed over by path rather than by value, leaving stdin a TTY.
+    QueryFile,
 }
 
 pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
