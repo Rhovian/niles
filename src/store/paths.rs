@@ -3,8 +3,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::util::{absolute_path, current_dir_utf8};
 
-pub(super) const NILES_DIR: &str = ".niles";
-pub(super) const WORKERS_DIR: &str = "worker";
+pub(crate) const NILES_DIR: &str = ".niles";
+pub(crate) const WORKERS_DIR: &str = "worker";
 
 fn workspace_workers_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(absolute_path(workspace)?.join(NILES_DIR).join(WORKERS_DIR))

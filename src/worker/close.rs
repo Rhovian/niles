@@ -71,10 +71,15 @@ pub fn worker_close(id: Option<String>, task_label: Option<String>, all: bool) -
 fn close_workers_by_task(label: &str) -> Result<()> {
     validate_task_label(label)?;
     let selection = select_worker_ids_by_task(label)?;
-    if selection.ids.is_empty() && selection.failures.is_empty() {
+    if selection.ids.is_empty() && selection.failures.is_empty() && selection.unreadable.is_empty()
+    {
         bail!("no live workers with task label {label}");
     }
-    close_worker_group(format!("--task {label}"), selection.ids, selection.failures)
+    // A worker with unreadable metadata cannot be closed by niles and is reported as a failure so
+    // the lead sees it, matching the pre-existing degrade-on-broken-meta behaviour.
+    let mut reported = selection.failures;
+    reported.extend(selection.unreadable);
+    close_worker_group(format!("--task {label}"), selection.ids, reported)
 }
 
 fn close_all_workers() -> Result<()> {
@@ -89,6 +94,10 @@ fn close_all_workers() -> Result<()> {
 pub(crate) struct WorkerCloseSelection {
     pub(crate) ids: Vec<String>,
     pub(crate) failures: Vec<(String, String)>,
+    /// Workers whose `meta.json` could not be read at all. They cannot be matched or skipped by
+    /// label, and niles cannot reach them (the tmux target lives only in `meta.json`), so they are
+    /// surfaced for manual removal rather than folded into `failures`.
+    pub(crate) unreadable: Vec<(String, String)>,
 }
 
 fn close_worker_group(
@@ -131,7 +140,8 @@ fn close_worker_group(
 
 pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
-    let mut failures = Vec::new();
+    let mut failures: Vec<(String, String)> = Vec::new();
+    let mut unreadable = Vec::new();
     for entry in store::resolve_worker_locations()? {
         let meta_path = meta_path(&entry.worker_dir);
         if !meta_path.exists() {
@@ -140,13 +150,20 @@ pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelect
         match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) if meta.task_label.as_deref() == Some(label) => ids.push(entry.id),
             Ok(_) => {}
-            Err(err) => failures.push((entry.id, format!("{err:#}"))),
+            // An unreadable worker carries no label, so it can neither match nor be skipped by
+            // `label`; it is kept apart so `wait` can ignore it instead of refusing every label.
+            Err(err) => unreadable.push((entry.id, format!("{err:#}"))),
         }
     }
     ids.sort();
     ids.dedup();
     failures.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(WorkerCloseSelection { ids, failures })
+    unreadable.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(WorkerCloseSelection {
+        ids,
+        failures,
+        unreadable,
+    })
 }
 
 fn print_single_close_outcome(outcome: &WorkerCloseOutcome) {

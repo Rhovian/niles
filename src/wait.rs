@@ -381,6 +381,19 @@ fn task_worker_ids(label: &str) -> Result<Vec<String>> {
             .join("; ");
         bail!("failed to select workers with task label {label}: {failures}");
     }
+    // A worker with unreadable metadata carries no label, so it cannot be in scope for `label`;
+    // surface it but do not let it block a wait on a label it could never carry.
+    if !selection.unreadable.is_empty() {
+        let ids = selection
+            .unreadable
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "warning: worker(s) with unreadable metadata skipped (remove their directories to recover): {ids}"
+        );
+    }
     if selection.ids.is_empty() {
         bail!("no live workers with task label {label}");
     }

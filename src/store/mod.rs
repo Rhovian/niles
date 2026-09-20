@@ -1,5 +1,5 @@
 mod archive;
-mod paths;
+pub(crate) mod paths;
 #[cfg(test)]
 mod test_support;
 mod worker;

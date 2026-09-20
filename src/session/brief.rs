@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
+    store::paths::NILES_DIR,
     util::{timestamp_id, write_json_pretty},
     workspace_manifest,
 };
@@ -37,7 +38,7 @@ pub(super) fn write_manager_session(
 ) -> Result<SessionMeta> {
     let now = Utc::now();
     let id = timestamp_id(&now);
-    let dir = workspace.join(".niles").join("sessions").join(&id);
+    let dir = workspace.join(NILES_DIR).join("sessions").join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
@@ -81,14 +82,14 @@ fn render_lead_brief(
 
 fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
     workspace
-        .join(".niles")
+        .join(NILES_DIR)
         .join("sessions")
         .join(id)
         .join("session.json")
 }
 
 fn latest_session_path(workspace: &Utf8Path) -> Utf8PathBuf {
-    workspace.join(".niles").join("sessions").join("latest")
+    workspace.join(NILES_DIR).join("sessions").join("latest")
 }
 
 fn default_created_at() -> chrono::DateTime<Utc> {
