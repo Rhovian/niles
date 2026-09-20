@@ -23,7 +23,7 @@ Do not implement. Once you are editing the files under review, you have stopped 
 
 Effort follows risk. Reserve your most capable agents and highest effort for first-pass review of concurrency, locking, cross-version compatibility, and anything an attacker can reach; confirm rounds and small re-reviews warrant far less. `{manifest}` holds a default agent per role — name the tier per spawn when the round differs.
 
-`--role reviewer` covers correctness, idiom and economy and will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
+`--role reviewer` will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
 
 Scope a re-review to the fix and regressions around it, not the original pass. Full re-review is for changes that touched shared substrate.
 
@@ -39,12 +39,11 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 
 ```sh
 niles spawn <id> --role <worker|reviewer|security> --agent <agent[:model[:effort]]> "<task>"
-niles spawn <id> --wait ...   # one worker: spawn and block for its report
 ```
 
 Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
 
-A worker stays live after `done:`. Follow-up on work it did goes to it with `niles send <id>` — it still holds the reasoning a fresh worker would have to rebuild. Check what is already live before you spawn.
+`done:` is a handback, not an exit. Follow-up goes to the live worker with `niles send <id>` — it still holds the reasoning a fresh one would have to rebuild, so check what is live before you spawn.
 Workers share one working tree. Two briefed onto the same files will overwrite each other with nothing to report the conflict, so a second worker is for files the first does not own.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.

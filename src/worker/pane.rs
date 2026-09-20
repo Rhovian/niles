@@ -4,7 +4,12 @@ use crate::{agent_window, tmux::WindowTarget, wait};
 
 use super::meta::read_meta;
 
-pub(crate) const DEFAULT_PEEK_LINES: usize = 2000;
+/// How far back a bare `niles peek` reads.
+///
+/// A peek lands in the lead's context, so the default is a glance at the pane — a few screens of
+/// it — rather than a scrollback dump; `--lines 0` is there when the whole history is wanted. The
+/// deep capture belongs to `archive::FINAL_PANE_CAPTURE_LINES`, which writes to a file instead.
+pub(crate) const DEFAULT_PEEK_LINES: usize = 200;
 enum PaneTarget {
     Worker { id: String, target: WindowTarget },
 }
