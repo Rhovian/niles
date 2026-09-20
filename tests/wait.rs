@@ -724,6 +724,52 @@ fn spawn_without_wait_returns_immediately() {
     assert!(server.windows().contains("niles-w1"));
 }
 
+/// A submit that the pane swallows must fail the send, not be reported as `sent:`.
+///
+/// The pane runs `cat > /dev/null`: the terminal echoes the pasted text, and `C-m` adds a newline
+/// that tmux then trims back off the capture — so the message is visibly staged and the submit
+/// leaves the pane exactly as it was. That is the shape of the observed failure, where a TUI
+/// still ingesting a few KB of paste swallowed the submit and the message sat unsent while niles
+/// printed success.
+#[test]
+fn send_fails_when_the_submit_key_leaves_the_pane_unchanged() {
+    let workspace = temp_workspace("niles-send-swallowed");
+    let server = TmuxServer::start(&workspace, "send-swallowed");
+    server.new_window_running("niles-auth-fix", Some("cat > /dev/null"));
+    worker_with_status(&workspace, "auth-fix", b"");
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_agent(&bin);
+
+    let send = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["send", "auth-fix", "first", "line", "of", "the", "message"],
+    )
+    .output()
+    .unwrap();
+
+    assert!(
+        !send.status.success(),
+        "stdout: {}\nstderr: {}",
+        stdout_of(&send),
+        stderr_of(&send)
+    );
+    assert!(
+        !stdout_of(&send).contains("sent:"),
+        "a swallowed submit must not be reported as sent; stdout: {}",
+        stdout_of(&send)
+    );
+    let stderr = stderr_of(&send);
+    assert!(
+        stderr.contains("submit key did not take"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("niles peek"), "stderr: {stderr}");
+}
+
 /// A private tmux server on its own socket, torn down when the test ends.
 ///
 /// These tests assert on tmux window state, and a stub that answers window queries is a second
@@ -774,19 +820,23 @@ impl TmuxServer {
     }
 
     fn new_window(&self, name: &str) {
+        self.new_window_running(name, None);
+    }
+
+    /// `command` runs in the window instead of the default shell, for tests that need a pane
+    /// which reacts to keystrokes in a particular way.
+    fn new_window_running(&self, name: &str, command: Option<&str>) {
         // Explicit index: tmux's auto-indexing collides when base-index != 0 and more than one
         // window is created in a session (it keeps re-choosing the same index). Names are what
         // `wait` matches on, so the index is arbitrary as long as it is unique.
         static NEXT: AtomicU64 = AtomicU64::new(10);
         let index = NEXT.fetch_add(1, Ordering::Relaxed);
-        self.run(&[
-            "new-window",
-            "-d",
-            "-t",
-            &format!("{}:{}", self.session, index),
-            "-n",
-            name,
-        ]);
+        let target = format!("{}:{}", self.session, index);
+        let mut args = vec!["new-window", "-d", "-t", &target, "-n", name];
+        if let Some(command) = command {
+            args.push(command);
+        }
+        self.run(&args);
     }
 
     /// Whatever tmux says about this server right now, for failure messages.

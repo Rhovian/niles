@@ -11,10 +11,16 @@ use crate::wake;
 
 pub(super) const UNLABELED_TASK_LABEL: &str = "-";
 const EMPTY_STATUS_PLACEHOLDER: &str = "-";
+/// Shown for a worker holding an actionable line the lead has not collected with `niles wait`.
+/// Without it a worker that finished twenty minutes ago and one still working render identically,
+/// which is how a `done:` sat undelivered until a human asked about it.
+const PENDING_WAKE: &str = "pending";
+const NO_PENDING_WAKE: &str = "-";
 /// Shown for a worker whose `meta.json` could not be read; niles cannot reach it, so the lead must
 /// remove its directory by hand.
 const UNREADABLE_METADATA: &str = "unreadable";
 const UNKNOWN_AGE: &str = "?";
+const CURSOR_FILE: &str = "status.cursor";
 
 struct LiveWorker {
     id: String,
@@ -27,7 +33,7 @@ struct LiveWorker {
 pub fn workers() -> Result<()> {
     let workers = live_workers()?;
     println!(
-        "workers[{}]{{id,agent,task,age,window,last_status}}:",
+        "workers[{}]{{id,agent,task,age,window,wake,last_status}}:",
         workers.len()
     );
 
@@ -46,10 +52,12 @@ pub fn workers() -> Result<()> {
         let task = worker_task_label(&worker);
         let age = worker_age(&worker, now);
         let window = worker_window_state(&worker);
-        let status = worker_last_status(&worker)?;
+        let log = status_log(&worker)?;
+        let wake = worker_pending_wake(&worker, log.as_deref())?;
+        let status = worker_last_status(&worker, log.as_deref());
         println!(
-            "  {},{},{},{},{},{}",
-            worker.id, agent, task, age, window, status
+            "  {},{},{},{},{},{},{}",
+            worker.id, agent, task, age, window, wake, status
         );
     }
 
@@ -121,14 +129,57 @@ fn worker_window_state(worker: &LiveWorker) -> String {
     }
 }
 
-fn worker_last_status(worker: &LiveWorker) -> Result<String> {
+fn worker_last_status(worker: &LiveWorker, log: Option<&str>) -> String {
+    if worker.meta.is_none() {
+        return UNREADABLE_METADATA.to_owned();
+    }
+    match log.and_then(last_status_line) {
+        Some(status) => status.to_owned(),
+        None => EMPTY_STATUS_PLACEHOLDER.to_owned(),
+    }
+}
+
+/// Whether this worker is holding a wake the lead has not collected.
+///
+/// `niles wait` records how far into the status log it has delivered, so everything past that
+/// cursor is owed. Only actionable lines count: a trailing `working:` line wakes nobody, and
+/// reporting it as pending would send the lead into a `wait` that blocks.
+fn worker_pending_wake(worker: &LiveWorker, log: Option<&str>) -> Result<String> {
     if worker.meta.is_none() {
         return Ok(UNREADABLE_METADATA.to_owned());
     }
-    Ok(match last_status_line(worker)? {
-        Some(status) => status,
-        None => EMPTY_STATUS_PLACEHOLDER.to_owned(),
+    let Some(log) = log else {
+        return Ok(NO_PENDING_WAKE.to_owned());
+    };
+    let delivered = delivered_bytes(&worker.worker_dir)?;
+    // A cursor that cannot slice this log — past its end, or mid-character in one that has been
+    // rewritten — describes a log `wait` will rescan from the start, so nothing is delivered.
+    let undelivered = match log.get(delivered..) {
+        Some(undelivered) => undelivered,
+        None => log,
+    };
+    Ok(if undelivered.lines().any(wake::is_actionable_wake) {
+        PENDING_WAKE.to_owned()
+    } else {
+        NO_PENDING_WAKE.to_owned()
     })
+}
+
+/// How far `niles wait` has delivered into this worker's status log. No cursor means no wait has
+/// ever consumed a line from it, which is position zero.
+fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
+    let path = worker_dir.join(CURSOR_FILE);
+    let body = match fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    };
+    let body = body.trim();
+    if body.is_empty() {
+        return Ok(0);
+    }
+    body.parse()
+        .with_context(|| format!("invalid wake cursor in {path}; remove it to resume"))
 }
 
 #[expect(
@@ -142,16 +193,15 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
-fn last_status_line(worker: &LiveWorker) -> Result<Option<String>> {
+fn status_log(worker: &LiveWorker) -> Result<Option<String>> {
     let status_path = wake::status_log_path(&worker.worker_dir);
-    let body = match fs::read_to_string(&status_path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {status_path}")),
-    };
-    Ok(body
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .map(str::to_owned))
+    match fs::read_to_string(&status_path) {
+        Ok(body) => Ok(Some(body)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to read {status_path}")),
+    }
+}
+
+fn last_status_line(log: &str) -> Option<&str> {
+    log.lines().rev().find(|line| !line.trim().is_empty())
 }

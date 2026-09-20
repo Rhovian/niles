@@ -70,8 +70,8 @@ fn run() -> Result<ExitCode> {
             wait,
             target_and_message,
         }) => {
-            let sent = worker::send(target_and_message)?;
-            if wait || sent.wait_requested {
+            let sent = worker::send(wait, target_and_message)?;
+            if sent.wait_requested {
                 return Ok(
                     wait::wait(vec![sent.id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
                 );
