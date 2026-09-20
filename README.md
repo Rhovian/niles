@@ -21,6 +21,17 @@ cargo install --path .   # installs the `niles` binary on your PATH
 cargo build --release    # or a local build at target/release/niles
 ```
 
+## Checks
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Run these before reporting a change done: formatting, the clippy gate across all
+targets (tests included), and the test suite.
+
 ## Launch
 
 ```sh

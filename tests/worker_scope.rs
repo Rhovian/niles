@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::{assert_command_success, niles_home, temp_workspace, write_executable};
@@ -216,6 +218,6 @@ fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     )
 }

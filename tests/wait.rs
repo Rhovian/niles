@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::*;
@@ -796,7 +798,7 @@ fn niles_in(server: &TmuxServer, workspace: &Path, bin: &Path, args: &[&str]) ->
     command
         .args(args)
         .current_dir(workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH must be set in the test environment")))
         .env("NILES_HOME", niles_home(workspace))
         .env("TMUX", server.tmux_env());
     command
@@ -824,9 +826,11 @@ fn write_stub_agent(bin: &Path) {
 
 fn write_worker_meta(workspace: &Path, session: &str, id: &str, task_label: Option<&str>) {
     let worker_dir = workspace.join(".niles/worker").join(id);
-    let label = task_label
-        .map(|l| format!(",\n  \"task_label\": \"{l}\""))
-        .unwrap_or_default();
+    let label = match task_label {
+        Some(label) => format!(",\n  \"task_label\": \"{label}\""),
+        // No task label: the field is omitted from the manifest JSON.
+        None => String::new(),
+    };
     fs::write(
         worker_dir.join("meta.json"),
         format!(

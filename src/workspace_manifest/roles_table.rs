@@ -155,7 +155,7 @@ security  claude  opus     max
         let row = rendered
             .lines()
             .find(|line| line.starts_with("reviewer"))
-            .unwrap_or_default();
+            .expect("reviewer row missing from rendered manifest");
         assert_eq!(
             row.split_whitespace().collect::<Vec<_>>(),
             ["reviewer", "codex", "-", "-"],

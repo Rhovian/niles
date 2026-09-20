@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::*;
@@ -80,7 +82,7 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let spawn = Command::new(niles)
@@ -312,7 +314,7 @@ exit 0
     assert!(stderr.contains("tmux new -s niles"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
-    let log = fs::read_to_string(&tmux_log).unwrap_or_default();
+    let log = fs::read_to_string(&tmux_log).expect("tmux.log should be readable");
     assert!(!log.contains("new-session"), "{log}");
     assert!(!log.contains("new-window"), "{log}");
 }
@@ -467,7 +469,7 @@ esac
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let default_peek = Command::new(niles)
@@ -538,7 +540,7 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let codex_spawn = Command::new(niles)
@@ -696,7 +698,7 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let failed = Command::new(niles)
@@ -932,7 +934,7 @@ esac
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let close = Command::new(niles)
@@ -1938,7 +1940,7 @@ esac
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
     let close = Command::new(niles)
         .args(["close", "auth-fix"])
@@ -2046,9 +2048,11 @@ fn write_worker_fixture_with_task_and_window(
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, status_body).unwrap();
-    let task_label_field = task_label
-        .map(|label| format!(",\n  \"task_label\": \"{label}\""))
-        .unwrap_or_default();
+    let task_label_field = match task_label {
+        Some(label) => format!(",\n  \"task_label\": \"{label}\""),
+        // No task label: the field is omitted from the manifest JSON.
+        None => String::new(),
+    };
     fs::write(
         worker_dir.join("meta.json"),
         format!(
@@ -2171,7 +2175,7 @@ fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     )
 }
 
