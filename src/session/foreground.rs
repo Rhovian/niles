@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
-    agents,
-    config::spec::{PromptMode, load_project_config_from},
+    agents::{self, BriefDelivery},
+    config::spec::load_project_config_from,
     workspace_manifest::WorkspaceManifest,
 };
 
@@ -27,7 +27,7 @@ pub(super) fn launch_foreground_agent(
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    let command = prepare_manager_command(invocation, brief)?;
+    let command = prepare_manager_command(invocation, brief);
 
     let status = run_foreground_process(
         workspace,
@@ -56,14 +56,13 @@ pub(super) struct ManagerCommand {
 pub(super) fn prepare_manager_command(
     mut invocation: agents::AgentInvocation,
     brief: String,
-) -> Result<ManagerCommand> {
-    let family = invocation.spec.family().to_owned();
-    let prompt = manager_prompt_io(&family, invocation.prompt, brief)?;
+) -> ManagerCommand {
+    let prompt = manager_prompt_io(invocation.brief, brief);
     invocation.args.extend(prompt.args);
-    Ok(ManagerCommand {
+    ManagerCommand {
         invocation,
         stdin: prompt.stdin,
-    })
+    }
 }
 
 fn run_foreground_process(
@@ -124,30 +123,35 @@ pub(super) struct ForegroundPrompt {
     stdin: Option<String>,
 }
 
-pub(super) fn manager_prompt_io(
-    agent: &str,
-    prompt: PromptMode,
-    brief: String,
-) -> Result<ForegroundPrompt> {
-    match prompt {
-        // The foreground brief only ever exists in memory here, so a file-fed family takes it the
-        // same way an arg-fed one does; `manager_prompt_args` picks the flag the family wants.
-        PromptMode::Arg | PromptMode::QueryFile => Ok(ForegroundPrompt {
-            args: manager_prompt_args(agent, brief)?,
+/// Renders the lead's half of the one brief-delivery decision: the same dial the worker's launch
+/// script reads, spelled as argv for a process that inherits this pane.
+///
+/// The lead's brief is on disk — `write_manager_session` puts it at
+/// `.niles/sessions/<id>/lead.md` — but that file holds the brief alone, and the lead's opening
+/// turn is the brief *plus* the startup line. So a family that takes a worker's brief by path
+/// still takes the lead's by value: it is the turn that has no file, not the brief.
+pub(super) fn manager_prompt_io(delivery: BriefDelivery, brief: String) -> ForegroundPrompt {
+    match delivery {
+        BriefDelivery::Arg => ForegroundPrompt {
+            args: vec![opening_turn(&brief)],
             stdin: None,
-        }),
-        PromptMode::Stdin => Ok(ForegroundPrompt {
+        },
+        BriefDelivery::Stdin => ForegroundPrompt {
             args: Vec::new(),
-            stdin: Some(manager_stdin_prompt(brief)),
-        }),
+            stdin: Some(opening_turn(&brief)),
+        },
+        BriefDelivery::Flag { value, .. } => ForegroundPrompt {
+            args: vec![value.to_owned(), opening_turn(&brief)],
+            stdin: None,
+        },
+        BriefDelivery::SystemPrompt(flag) => ForegroundPrompt {
+            args: vec![flag.to_owned(), brief, STARTUP_PROMPT.to_owned()],
+            stdin: None,
+        },
     }
 }
 
-fn manager_prompt_args(agent: &str, brief: String) -> Result<Vec<String>> {
-    agents::manager_prompt_args(agent, brief, STARTUP_PROMPT.to_owned())
-}
-
-fn manager_stdin_prompt(brief: String) -> String {
+fn opening_turn(brief: &str) -> String {
     format!("{brief}\n\n{STARTUP_PROMPT}")
 }
 
@@ -229,16 +233,11 @@ agents:
         .unwrap();
 
         let invocation = foreground_invocation_for_project(&root, "gemini").unwrap();
-        let prompt = manager_prompt_io(
-            invocation.spec.family(),
-            invocation.prompt,
-            "brief body".to_owned(),
-        )
-        .unwrap();
+        let prompt = manager_prompt_io(invocation.brief, "brief body".to_owned());
         let mut args = invocation.args;
         args.extend(prompt.args);
 
-        assert!(matches!(invocation.prompt, PromptMode::Stdin));
+        assert!(matches!(invocation.brief, BriefDelivery::Stdin));
         assert_eq!(args, ["--mode", "manager"].map(str::to_owned));
         assert!(args.iter().all(|arg| !arg.contains("brief body")));
         assert_eq!(
@@ -354,7 +353,10 @@ agents:
 
     #[test]
     fn manager_prompt_args_seed_a_hermes_query() {
-        let args = manager_prompt_args("hermes", "brief body".to_owned()).unwrap();
+        let invocation =
+            foreground_invocation_for_project(&temp_test_path("hermes-lead"), "hermes").unwrap();
+
+        let args = manager_prompt_io(invocation.brief, "brief body".to_owned()).args;
 
         assert_eq!(args[0], "-q");
         assert_eq!(args[1], format!("brief body\n\n{STARTUP_PROMPT}"));
@@ -363,22 +365,14 @@ agents:
 
     #[test]
     fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
-        let args = manager_prompt_args("claude", "brief body".to_owned()).unwrap();
+        let invocation =
+            foreground_invocation_for_project(&temp_test_path("claude-lead"), "claude").unwrap();
+
+        let args = manager_prompt_io(invocation.brief, "brief body".to_owned()).args;
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--append-system-prompt");
         assert_eq!(args[1], "brief body");
         assert_eq!(args[2], "Start the Niles manager session.");
-    }
-
-    #[test]
-    fn manager_prompt_io_preserves_claude_arg_mode_system_prompt() {
-        let prompt = manager_prompt_io("claude", PromptMode::Arg, "brief body".to_owned()).unwrap();
-
-        assert_eq!(prompt.stdin, None);
-        assert_eq!(prompt.args.len(), 3);
-        assert_eq!(prompt.args[0], "--append-system-prompt");
-        assert_eq!(prompt.args[1], "brief body");
-        assert_eq!(prompt.args[2], "Start the Niles manager session.");
     }
 }

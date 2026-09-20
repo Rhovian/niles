@@ -4,8 +4,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
-    agents,
-    config::spec::{PromptMode, load_project_config_from},
+    agents::{self, BriefDelivery},
     tmux::{self, SessionName, WindowTarget},
     wake,
 };
@@ -25,8 +24,7 @@ pub(crate) fn spawn_agent_window_in_session(
     session: &SessionName,
     window_name: &str,
     cwd: &Utf8Path,
-    agent: &str,
-    project: &Utf8Path,
+    invocation: &agents::AgentInvocation,
     paths: &WorkerPaths<'_>,
 ) -> Result<WindowTarget> {
     let WorkerPaths {
@@ -38,29 +36,6 @@ pub(crate) fn spawn_agent_window_in_session(
         bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
     }
 
-    let config = load_project_config_from(project)?;
-    let config = agents::config_for(&config.agents, agent)?;
-    let invocation = agents::invocation(agent, config, agents::InvocationDefaults::Worker)?;
-    spawn_prepared_agent_window_in_session(
-        session,
-        window_name,
-        cwd,
-        &invocation,
-        launch_path,
-        brief_path,
-        status_path,
-    )
-}
-
-pub(crate) fn spawn_prepared_agent_window_in_session(
-    session: &SessionName,
-    window_name: &str,
-    cwd: &Utf8Path,
-    invocation: &agents::AgentInvocation,
-    launch_path: &Utf8Path,
-    brief_path: &Utf8Path,
-    status_path: &Utf8Path,
-) -> Result<WindowTarget> {
     write_launch_script(launch_path, invocation, brief_path, status_path)?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     open_window_in_session(session, window_name, cwd, &command)
@@ -96,10 +71,15 @@ fn write_launch_script(
     }
     body.push_str("code=0\n");
     write_agent_command(&mut body, invocation);
-    match invocation.prompt {
-        PromptMode::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
-        PromptMode::Stdin => body.push_str(" < \"$BRIEF\""),
-        PromptMode::QueryFile => body.push_str(" --query-file \"$BRIEF\""),
+    match invocation.brief {
+        BriefDelivery::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
+        BriefDelivery::Stdin => body.push_str(" < \"$BRIEF\""),
+        BriefDelivery::Flag { path, .. } => body.push_str(&format!(" {path} \"$BRIEF\"")),
+        // A worker's brief is the turn itself, with no second turn to follow it, so the flag
+        // carries the brief alone — the lead's `<flag> <brief> <turn>` minus the turn.
+        BriefDelivery::SystemPrompt(flag) => {
+            body.push_str(&format!(" {flag} \"$(cat \"$BRIEF\")\""));
+        }
     }
     // `|| code=$?` rather than a bare call: `set -e` would otherwise abort the script on a failing
     // agent, which is precisely the case the report below exists for.
@@ -170,7 +150,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn script_for(prompt: PromptMode) -> String {
+    fn script_for(brief: BriefDelivery) -> String {
         // A distinct path per call: these tests run in parallel and would otherwise delete the
         // file out from under each other. A process id plus a per-binary counter (not the clock)
         // guarantees uniqueness even when two calls land in the same nanosecond.
@@ -179,7 +159,7 @@ mod tests {
         let invocation = agents::AgentInvocation {
             binary: "codex".to_owned(),
             args: vec!["--flag".to_owned()],
-            prompt,
+            brief,
             env: Vec::new(),
             spec: agents::parse_spec("codex").unwrap(),
         };
@@ -203,7 +183,7 @@ mod tests {
     /// The agent is run, not `exec`ed, so something survives it to report the exit.
     #[test]
     fn the_launch_script_reports_the_agents_exit() {
-        let script = script_for(PromptMode::Arg);
+        let script = script_for(BriefDelivery::Arg);
 
         assert!(
             !script.contains("exec "),
@@ -219,7 +199,7 @@ mod tests {
 
     #[test]
     fn the_exit_report_follows_a_stdin_prompt_too() {
-        let script = script_for(PromptMode::Stdin);
+        let script = script_for(BriefDelivery::Stdin);
 
         assert!(script.contains(r#"< "$BRIEF" || code=$?"#), "{script}");
         assert!(script.contains(">> \"$STATUS\""), "{script}");
@@ -227,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_query_file_prompt_hands_over_the_brief_path_not_its_contents() {
-        let script = script_for(PromptMode::QueryFile);
+        let script = script_for(agents::profile_for("hermes").unwrap().worker_brief);
 
         assert!(
             script.contains(r#"--query-file "$BRIEF" || code=$?"#),

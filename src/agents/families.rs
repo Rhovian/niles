@@ -8,15 +8,47 @@ pub struct AgentProfile {
     pub binary: &'static str,
     pub foreground_args: &'static [&'static str],
     pub worker_args: &'static [&'static str],
-    pub worker_prompt: PromptMode,
+    pub worker_brief: BriefDelivery,
+    pub lead_brief: BriefDelivery,
     pub model_aliases: &'static [&'static str],
     pub supported_efforts: &'static [&'static str],
     pub model_prefixes: &'static [&'static str],
     model_shape: ModelShape,
     tier_args: TierArgs,
     model_group_label: ModelGroupLabel,
-    manager_prompt: ManagerPrompt,
     pub launch_env: &'static [(&'static str, &'static str)],
+}
+
+/// How an agent receives its brief.
+///
+/// One dial, answered per role on every profile, so both launch paths — the worker's generated
+/// script and the lead's argv — read the same decision and a family spells its flags here once.
+/// A new spelling is a new variant, which both launchers are then forced to answer.
+#[derive(Debug, Clone, Copy)]
+pub enum BriefDelivery {
+    /// The brief is one argument: the agent's opening turn.
+    Arg,
+    /// The brief arrives on stdin.
+    Stdin,
+    /// The brief behind a flag — `value` where the launcher has the text, `path` where it can
+    /// point at the file. Handing over the path keeps the brief verbatim (nothing in it is
+    /// shell-interpreted) and, unlike a stdin redirect, leaves the pane a real TTY.
+    Flag {
+        value: &'static str,
+        path: &'static str,
+    },
+    /// The brief as standing context behind a flag, with the opening turn following it as an
+    /// argument.
+    SystemPrompt(&'static str),
+}
+
+impl From<PromptMode> for BriefDelivery {
+    fn from(prompt: PromptMode) -> Self {
+        match prompt {
+            PromptMode::Arg => Self::Arg,
+            PromptMode::Stdin => Self::Stdin,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,12 +82,10 @@ enum ModelGroupLabel {
     HyphenatedAlias,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ManagerPrompt {
-    CombinedArg,
-    AppendSystemPrompt,
-    QueryArg,
-}
+const HERMES_QUERY: BriefDelivery = BriefDelivery::Flag {
+    value: "-q",
+    path: "--query-file",
+};
 
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {
@@ -63,7 +93,8 @@ const PROFILES: &[AgentProfile] = &[
         binary: "codex",
         foreground_args: &[],
         worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
-        worker_prompt: PromptMode::Arg,
+        worker_brief: BriefDelivery::Arg,
+        lead_brief: BriefDelivery::Arg,
         model_aliases: &["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
         supported_efforts: &["minimal", "low", "medium", "high", "xhigh", "max"],
         model_prefixes: &["gpt-"],
@@ -76,7 +107,6 @@ const PROFILES: &[AgentProfile] = &[
             },
         },
         model_group_label: ModelGroupLabel::Alias,
-        manager_prompt: ManagerPrompt::CombinedArg,
         launch_env: &[],
     },
     AgentProfile {
@@ -84,7 +114,8 @@ const PROFILES: &[AgentProfile] = &[
         binary: "claude",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
-        worker_prompt: PromptMode::Arg,
+        worker_brief: BriefDelivery::Arg,
+        lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
         model_aliases: &["opus", "sonnet", "fable", "haiku"],
         supported_efforts: &["low", "medium", "high", "xhigh", "max"],
         model_prefixes: &["claude-"],
@@ -94,20 +125,21 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--effort"),
         },
         model_group_label: ModelGroupLabel::HyphenatedAlias,
-        manager_prompt: ManagerPrompt::AppendSystemPrompt,
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
     },
-    // hermes puts the session behind a `chat` subcommand, and takes its opening turn from a file
-    // rather than a positional argument. `--query-file` is what keeps the brief verbatim: nothing
-    // in it is shell-interpreted, and unlike redirecting the brief on stdin it leaves the pane a
-    // real TTY, which is the difference between seeding an interactive session and answering once
-    // and exiting.
+    // hermes puts the session behind a `chat` subcommand, and takes its opening turn behind a flag
+    // rather than as a positional argument. A worker's brief is a file already, so it goes over as
+    // `--query-file`: the brief stays verbatim, nothing in it is shell-interpreted, and unlike
+    // redirecting it on stdin the pane stays a real TTY, which is the difference between seeding
+    // an interactive session and answering once and exiting. The lead's turn is its brief plus the
+    // startup line, which no one file holds, so that one goes by value as `-q`.
     AgentProfile {
         id: "hermes",
         binary: "hermes",
         foreground_args: &["chat"],
         worker_args: &["chat", "--yolo"],
-        worker_prompt: PromptMode::QueryFile,
+        worker_brief: HERMES_QUERY,
+        lead_brief: HERMES_QUERY,
         model_aliases: &["tencent/hy3"],
         supported_efforts: &[
             "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
@@ -119,7 +151,6 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--reasoning"),
         },
         model_group_label: ModelGroupLabel::Alias,
-        manager_prompt: ManagerPrompt::QueryArg,
         launch_env: &[],
     },
 ];
@@ -217,22 +248,6 @@ pub fn model_group_label(profile: AgentProfile, model: &str) -> String {
     }
 
     model.to_owned()
-}
-
-pub fn manager_prompt_args(
-    profile: Option<AgentProfile>,
-    brief: String,
-    startup_prompt: String,
-) -> Vec<String> {
-    match profile.map(|profile| profile.manager_prompt) {
-        Some(ManagerPrompt::AppendSystemPrompt) => {
-            vec!["--append-system-prompt".to_owned(), brief, startup_prompt]
-        }
-        Some(ManagerPrompt::QueryArg) => {
-            vec!["-q".to_owned(), format!("{brief}\n\n{startup_prompt}")]
-        }
-        Some(ManagerPrompt::CombinedArg) | None => vec![format!("{brief}\n\n{startup_prompt}")],
-    }
 }
 
 fn is_model_token(model: &str) -> bool {
