@@ -4,9 +4,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
-use crate::{
-    store,
-};
+use crate::store;
 
 use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
 use crate::wake;

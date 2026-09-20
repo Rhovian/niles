@@ -1,12 +1,14 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::*;
 use std::{
     fs,
     io::Write,
-    sync::atomic::{AtomicU64, Ordering},
     path::Path,
     process::{Command, Output, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -178,8 +180,14 @@ fn escapes_control_characters_instead_of_emitting_them() {
 
     assert_command_success("wait with control characters", &output);
     let stdout = stdout_of(&output);
-    assert!(!stdout.contains('\x1b'), "raw escape reached stdout: {stdout:?}");
-    assert!(!stdout.contains('\x07'), "raw bell reached stdout: {stdout:?}");
+    assert!(
+        !stdout.contains('\x1b'),
+        "raw escape reached stdout: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains('\x07'),
+        "raw bell reached stdout: {stdout:?}"
+    );
     assert!(stdout.contains("shipped"));
     assert!(stdout.contains("and cleared your screen"));
 }
@@ -269,9 +277,7 @@ fn waiting_on_several_workers_prefixes_the_winning_id() {
 
     let output = run_wait(
         &workspace,
-        &[
-            "alpha", "beta", "--interval", "0.05", "--timeout", "0",
-        ],
+        &["alpha", "beta", "--interval", "0.05", "--timeout", "0"],
     );
 
     assert_command_success("fleet wait", &output);
@@ -399,14 +405,34 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
 #[test]
 fn task_label_waits_on_every_live_worker_carrying_it() {
     let workspace = temp_workspace("niles-wait-task");
+    // The fabricated workers need real tmux windows, or `wait`'s window-gone check (commit
+    // 82c8795) would report them gone before their status logs are ever read.
+    let server = TmuxServer::start(&workspace, "niles");
+    server.new_window("niles-alpha");
+    server.new_window("niles-beta");
+    server.new_window("niles-gamma");
     write_task_worker(&workspace, "alpha", "auth", b"working: nothing yet\n");
     write_task_worker(&workspace, "beta", "auth", b"blocked: needs a decision\n");
     write_task_worker(&workspace, "gamma", "other", b"done: unrelated task\n");
 
-    let output = run_wait(
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let output = niles_in(
+        &server,
         &workspace,
-        &["--task", "auth", "--interval", "0.05", "--timeout", "0"],
-    );
+        &bin,
+        &[
+            "wait",
+            "--task",
+            "auth",
+            "--interval",
+            "0.05",
+            "--timeout",
+            "0",
+        ],
+    )
+    .output()
+    .unwrap();
 
     assert_command_success("wait --task", &output);
     // gamma carries a different label, so its wake must not satisfy this wait.
@@ -648,8 +674,14 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
     wait_for_file(&workspace.join(".niles/worker/w1/meta.json"));
     let brief = fs::read_to_string(workspace.join(".niles/worker/w1/brief.md")).unwrap();
     assert!(brief.contains("fix the login bug"), "{brief}");
-    assert!(!brief.contains("--wait"), "the flag leaked into the task: {brief}");
-    assert!(server.windows().contains("niles-w1"), "spawn created no window");
+    assert!(
+        !brief.contains("--wait"),
+        "the flag leaked into the task: {brief}"
+    );
+    assert!(
+        server.windows().contains("niles-w1"),
+        "spawn created no window"
+    );
 
     let mut status = fs::OpenOptions::new()
         .append(true)
@@ -674,9 +706,14 @@ fn spawn_without_wait_returns_immediately() {
     write_stub_agent(&bin);
 
     let started = Instant::now();
-    let output = niles_in(&server, &workspace, &bin, &["spawn", "w1", "do", "the", "thing"])
-        .output()
-        .unwrap();
+    let output = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["spawn", "w1", "do", "the", "thing"],
+    )
+    .output()
+    .unwrap();
 
     assert_command_success("spawn", &output);
     assert!(
@@ -737,7 +774,19 @@ impl TmuxServer {
     }
 
     fn new_window(&self, name: &str) {
-        self.run(&["new-window", "-d", "-t", &self.session, "-n", name]);
+        // Explicit index: tmux's auto-indexing collides when base-index != 0 and more than one
+        // window is created in a session (it keeps re-choosing the same index). Names are what
+        // `wait` matches on, so the index is arbitrary as long as it is unique.
+        static NEXT: AtomicU64 = AtomicU64::new(10);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.run(&[
+            "new-window",
+            "-d",
+            "-t",
+            &format!("{}:{}", self.session, index),
+            "-n",
+            name,
+        ]);
     }
 
     /// Whatever tmux says about this server right now, for failure messages.
@@ -759,7 +808,13 @@ impl TmuxServer {
     fn windows(&self) -> String {
         let output = Command::new("tmux")
             .args(["-S", &self.socket.display().to_string()])
-            .args(["list-windows", "-t", &format!("={}", self.session), "-F", "#{window_name}"])
+            .args([
+                "list-windows",
+                "-t",
+                &format!("={}", self.session),
+                "-F",
+                "#{window_name}",
+            ])
             .output()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -796,7 +851,14 @@ fn niles_in(server: &TmuxServer, workspace: &Path, bin: &Path, args: &[&str]) ->
     command
         .args(args)
         .current_dir(workspace)
-        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").expect("PATH must be set in the test environment")
+            ),
+        )
         .env("NILES_HOME", niles_home(workspace))
         .env("TMUX", server.tmux_env());
     command
@@ -824,9 +886,11 @@ fn write_stub_agent(bin: &Path) {
 
 fn write_worker_meta(workspace: &Path, session: &str, id: &str, task_label: Option<&str>) {
     let worker_dir = workspace.join(".niles/worker").join(id);
-    let label = task_label
-        .map(|l| format!(",\n  \"task_label\": \"{l}\""))
-        .unwrap_or_default();
+    let label = match task_label {
+        Some(label) => format!(",\n  \"task_label\": \"{label}\""),
+        // No task label: the field is omitted from the manifest JSON.
+        None => String::new(),
+    };
     fs::write(
         worker_dir.join("meta.json"),
         format!(

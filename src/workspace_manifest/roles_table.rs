@@ -26,10 +26,7 @@ pub(super) fn print_manifest_roles<W: Write>(
         role_row("security", &manifest.security, agent_configs),
     ];
 
-    let role_width = rows
-        .iter()
-        .map(|row| row.role.len())
-        .fold(0, usize::max);
+    let role_width = rows.iter().map(|row| row.role.len()).fold(0, usize::max);
     let family_width = rows
         .iter()
         .map(|row| cells(&row.family))
@@ -155,7 +152,7 @@ security  claude  opus     max
         let row = rendered
             .lines()
             .find(|line| line.starts_with("reviewer"))
-            .unwrap_or_default();
+            .expect("reviewer row missing from rendered manifest");
         assert_eq!(
             row.split_whitespace().collect::<Vec<_>>(),
             ["reviewer", "codex", "-", "-"],
@@ -176,14 +173,19 @@ security  claude  opus     max
         let rendered = render(&manifest("claude\nreviewer  totally  fake  max"));
 
         // Continuation lines are indented, so a role row is one that starts at column zero.
-        let role_rows = rendered.lines().filter(|line| !line.starts_with(' ')).count();
+        let role_rows = rendered
+            .lines()
+            .filter(|line| !line.starts_with(' '))
+            .count();
         assert_eq!(role_rows, 4, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 
     #[test]
     fn escape_sequences_cannot_rewrite_rows_already_printed() {
-        let rendered = render(&manifest("\u{1b}[1A\u{1b}[2Klead  claude  opus  max\u{1b}]0;pwned\u{7}"));
+        let rendered = render(&manifest(
+            "\u{1b}[1A\u{1b}[2Klead  claude  opus  max\u{1b}]0;pwned\u{7}",
+        ));
 
         assert!(!rendered.contains('\u{1b}'), "{rendered}");
         assert!(!rendered.contains('\u{7}'), "{rendered}");

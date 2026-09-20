@@ -39,10 +39,7 @@ pub fn send(target_and_message: Vec<String>) -> Result<SendOutcome> {
 
     target.send(&message)?;
     println!("sent: {id}");
-    Ok(SendOutcome {
-        id,
-        wait_requested,
-    })
+    Ok(SendOutcome { id, wait_requested })
 }
 
 impl PaneTarget {
@@ -65,9 +62,7 @@ impl PaneTarget {
     }
 }
 
-fn resolve_send_target(
-    target_and_message: Vec<String>,
-) -> Result<(PaneTarget, Vec<String>, bool)> {
+fn resolve_send_target(target_and_message: Vec<String>) -> Result<(PaneTarget, Vec<String>, bool)> {
     let mut parts = target_and_message.into_iter();
     let id = parts.next().context("send requires a worker id")?;
     let mut message = parts.collect::<Vec<_>>();

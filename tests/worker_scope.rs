@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::{assert_command_success, niles_home, temp_workspace, write_executable};
@@ -60,14 +62,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert_failure_contains("foreign send", &send, "unknown worker id 'shared'");
 
     let wait = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args([
-            "wait",
-                        "shared",
-            "--interval",
-            "0.01",
-            "--timeout",
-            "0",
-        ])
+        .args(["wait", "shared", "--interval", "0.01", "--timeout", "0"])
         .output()
         .unwrap();
     assert_failure_contains("foreign wait", &wait, "unknown worker id 'shared'");
@@ -216,6 +211,6 @@ fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     )
 }

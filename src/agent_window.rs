@@ -168,14 +168,14 @@ fn shell_assignment_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn script_for(prompt: PromptMode) -> String {
         // A distinct path per call: these tests run in parallel and would otherwise delete the
-        // file out from under each other.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        // file out from under each other. A process id plus a per-binary counter (not the clock)
+        // guarantees uniqueness even when two calls land in the same nanosecond.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
         let invocation = agents::AgentInvocation {
             binary: "codex".to_owned(),
             args: vec!["--flag".to_owned()],
@@ -184,9 +184,10 @@ mod tests {
             spec: agents::parse_spec("codex").unwrap(),
         };
         let dir = std::env::temp_dir();
-        let path = Utf8Path::from_path(&dir)
-            .unwrap()
-            .join(format!("niles-launch-test-{nanos}.sh"));
+        let path = Utf8Path::from_path(&dir).unwrap().join(format!(
+            "niles-launch-test-{}-{unique}.sh",
+            std::process::id()
+        ));
         write_launch_script(
             &path,
             &invocation,
@@ -204,7 +205,10 @@ mod tests {
     fn the_launch_script_reports_the_agents_exit() {
         let script = script_for(PromptMode::Arg);
 
-        assert!(!script.contains("exec "), "agent must not replace the shell:\n{script}");
+        assert!(
+            !script.contains("exec "),
+            "agent must not replace the shell:\n{script}"
+        );
         // `|| code=$?` and not a bare call: `set -e` would abort before the report otherwise.
         assert!(script.contains("|| code=$?"), "{script}");
         assert!(

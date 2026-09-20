@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::*;
@@ -6,10 +8,10 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
-
 
 /// The tmux `-t` form of a recorded `session:window`. Niles anchors both
 /// components with `=` so tmux cannot prefix-match a neighbouring window.
@@ -80,19 +82,12 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let spawn = Command::new(niles)
         .args([
-            "spawn",
-            "auth-fix",
-            "--task",
-            "auth",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
+            "spawn", "auth-fix", "--task", "auth", "--agent", "claude", "Fix", "auth",
         ])
         .current_dir(&workspace)
         .env("PATH", &path)
@@ -203,7 +198,15 @@ fn spawn_always_targets_the_invoking_workspace_and_rejects_a_project_flag() {
 
     // There is no longer a flag that can name a different workspace.
     let rejected = Command::new(niles)
-        .args(["spawn", "auth-fix", "--project", ".", "--agent", "claude", "Fix"])
+        .args([
+            "spawn",
+            "auth-fix",
+            "--project",
+            ".",
+            "--agent",
+            "claude",
+            "Fix",
+        ])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -246,7 +249,9 @@ fn role_selects_which_fragment_the_brief_carries() {
     let mut briefs = Vec::new();
     for role in ["worker", "reviewer", "security"] {
         let spawn = Command::new(niles)
-            .args(["spawn", role, "--role", role, "--agent", "claude", "Do", "it"])
+            .args([
+                "spawn", role, "--role", role, "--agent", "claude", "Do", "it",
+            ])
             .current_dir(&workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -256,9 +261,8 @@ fn role_selects_which_fragment_the_brief_carries() {
             .unwrap();
         assert_command_success(&format!("spawn --role {role}"), &spawn);
 
-        let brief =
-            fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
-                .unwrap();
+        let brief = fs::read_to_string(workspace.join(".niles/worker").join(role).join("brief.md"))
+            .unwrap();
         assert!(brief.contains(&format!("You are the {role}")), "{brief}");
         assert!(brief.contains("## Reporting"), "{brief}");
         assert!(brief.contains("done: <short result>; report:"), "{brief}");
@@ -312,7 +316,14 @@ exit 0
     assert!(stderr.contains("tmux new -s niles"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
     assert!(!workspace.join(".niles/worker/auth-fix").exists());
-    let log = fs::read_to_string(&tmux_log).unwrap_or_default();
+    // niles never invokes tmux here, so tmux.log is correctly absent — its absence is the proof
+    // that no tmux command was issued. A file that *does* exist only matters if it shows a
+    // session or window was created; any other read error is a real failure.
+    let log = match fs::read_to_string(&tmux_log) {
+        Ok(log) => log,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => panic!("tmux.log should be readable: {err}"),
+    };
     assert!(!log.contains("new-session"), "{log}");
     assert!(!log.contains("new-window"), "{log}");
 }
@@ -347,13 +358,7 @@ exit 0
 
     let path = path_with_bin(&bin);
     let spawn = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -366,11 +371,17 @@ exit 0
     // The session the operator is attached to is the session, so it is asked for by name
     // rather than resolved from a recorded pointer.
     let meta = fs::read_to_string(workspace.join(".niles/worker/auth-fix/meta.json")).unwrap();
-    assert!(meta.contains(r#""window": "ambient:niles-auth-fix""#), "{meta}");
+    assert!(
+        meta.contains(r#""window": "ambient:niles-auth-fix""#),
+        "{meta}"
+    );
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(log.contains("display-message -p #S"), "{log}");
-    assert!(log.contains("new-window -d -t =ambient: -n niles-auth-fix"), "{log}");
+    assert!(
+        log.contains("new-window -d -t =ambient: -n niles-auth-fix"),
+        "{log}"
+    );
     assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-project"));
     assert!(log.contains("set-option -w -t =ambient:=niles-auth-fix @niles-worker-id auth-fix"));
     // No pointer file, no invented session.
@@ -467,7 +478,7 @@ esac
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let default_peek = Command::new(niles)
@@ -538,14 +549,14 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let codex_spawn = Command::new(niles)
         .args([
             "spawn",
             "codex-hi",
-                        "--agent",
+            "--agent",
             "codex:gpt-5.5:xhigh",
             "Fix",
             "auth",
@@ -581,7 +592,7 @@ exit 0
         .args([
             "spawn",
             "claude-max",
-                        "--agent",
+            "--agent",
             "claude:opus:max",
             "Review",
             "auth",
@@ -696,18 +707,11 @@ exit 0
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let failed = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -734,14 +738,7 @@ exit 0
     assert!(String::from_utf8_lossy(&peek.stderr).contains("unknown worker id 'auth-fix'"));
 
     let respawn = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -789,14 +786,7 @@ exit 0
     );
 
     let failed = Command::new(niles)
-        .args([
-            "spawn",
-            "auth-fix",
-                        "--agent",
-            "claude",
-            "Fix",
-            "auth",
-        ])
+        .args(["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"])
         .current_dir(&workspace)
         .env("PATH", path_with_bin(&bin))
         .env("NILES_HOME", &home)
@@ -932,7 +922,7 @@ esac
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     );
 
     let close = Command::new(niles)
@@ -1474,15 +1464,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         (&workspace_b, "bravo", "task-b"),
     ] {
         let spawn = Command::new(niles)
-            .args([
-                "spawn",
-                id,
-                "--task",
-                label,
-                "--agent",
-                "claude",
-                "Fix",
-            ])
+            .args(["spawn", id, "--task", label, "--agent", "claude", "Fix"])
             .current_dir(workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -1644,13 +1626,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let path = path_with_bin(&bin);
 
     let first = Command::new(niles)
-        .args([
-            "spawn",
-            "reviewer",
-                        "--agent",
-            "claude",
-            "FIRST",
-        ])
+        .args(["spawn", "reviewer", "--agent", "claude", "FIRST"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -1684,13 +1660,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     );
 
     let second = Command::new(niles)
-        .args([
-            "spawn",
-            "reviewer",
-                        "--agent",
-            "claude",
-            "SECOND",
-        ])
+        .args(["spawn", "reviewer", "--agent", "claude", "SECOND"])
         .current_dir(&workspace)
         .env("PATH", &path)
         .env("NILES_HOME", &home)
@@ -1724,13 +1694,7 @@ fn report_falls_back_to_most_recent_local_archive() {
 
     for (task, report_body) in [("FIRST", "first report\n"), ("SECOND", "second report\n")] {
         let spawn = Command::new(niles)
-            .args([
-                "spawn",
-                "reviewer",
-                "--agent",
-                "claude",
-                task,
-            ])
+            .args(["spawn", "reviewer", "--agent", "claude", task])
             .current_dir(&workspace)
             .env("PATH", &path)
             .env("NILES_HOME", &home)
@@ -1896,57 +1860,34 @@ fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     let workspace = temp_workspace("niles-close-wait");
     let home = niles_home(&workspace);
 
-    let bin = workspace.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let tmux_log = workspace.join("tmux.log");
-    let tmux = bin.join("tmux");
-    fs::write(
-        &tmux,
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
-  has-session) exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&tmux).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&tmux, permissions).unwrap();
+    // The waited-on worker needs a real tmux window, or `wait`'s window-gone check
+    // (commit 82c8795) would report it gone before the close ever lands.
+    let server = TmuxServer::start(&workspace, "niles");
+    server.new_window("niles-auth-fix");
 
     write_worker_fixture(&workspace, "auth-fix", "working: close requested");
 
     let waiter = Command::new(niles)
-        .args([
-            "wait",
-                        "auth-fix",
-            "--interval",
-            "0.05",
-            "--timeout",
-            "5",
-        ])
+        .args(["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"])
         .current_dir(&workspace)
         .env("NILES_HOME", &home)
+        .env("TMUX", server.tmux_env())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     thread::sleep(Duration::from_millis(100));
 
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // No stub tmux in PATH: `close` must reach the real tmux server so it can see and kill the
+    // worker's window.
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
     let close = Command::new(niles)
         .args(["close", "auth-fix"])
         .current_dir(&workspace)
-        .env("PATH", &path)
+        .env("PATH", path_with_bin(&bin))
         .env("NILES_HOME", &home)
-        .env("TMUX_LOG", &tmux_log)
-        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .env("TMUX", server.tmux_env())
         .output()
         .unwrap();
     assert_command_success("close", &close);
@@ -1979,6 +1920,92 @@ esac
         !stderr.contains("timeout"),
         "stdout:\n{stdout}\nstderr:\n{stderr}"
     );
+}
+
+/// A private tmux server on its own socket, torn down when the test ends.
+///
+/// `worker_close_wakes_waiters_with_nonzero_closed_status` waits on a worker that must have a
+/// real tmux window, or `wait`'s window-gone check reports it gone before the close lands. A stub
+/// tmux that answers window queries with comfortable lies would hide that, so this drives real
+/// tmux on a private socket the developer's own session never sees.
+struct TmuxServer {
+    socket: PathBuf,
+    session: String,
+}
+
+impl TmuxServer {
+    fn start(workspace: &Path, session: &str) -> Self {
+        // Not under the workspace: a unix socket path is capped near 104 bytes on macOS, and the
+        // temp workspace names are long enough on their own to blow it.
+        //
+        // Named from a counter, not a timestamp: two tests starting in the same microsecond got
+        // the same socket, and the second joined the first's server, whose `Drop` then killed it
+        // mid-test.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let socket = PathBuf::from(format!("/tmp/nt-{}-{unique}.sock", std::process::id()));
+        let server = Self {
+            socket,
+            session: session.to_owned(),
+        };
+        // A long-lived command rather than a shell: a shell that exits takes the last window with
+        // it and destroys the session, which is a different state from a worker whose window has.
+        server.run(&[
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            &workspace.display().to_string(),
+            "sleep 600",
+        ]);
+        server
+    }
+
+    /// The value niles reads from `$TMUX` to find this server.
+    fn tmux_env(&self) -> String {
+        format!("{},0,0", self.socket.display())
+    }
+
+    fn new_window(&self, name: &str) {
+        // Explicit index: tmux's auto-indexing collides when base-index != 0 and more than one
+        // window is created in a session (it keeps re-choosing the same index). Names are what
+        // `wait` matches on, so the index is arbitrary as long as it is unique.
+        static NEXT: AtomicU64 = AtomicU64::new(10);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.run(&[
+            "new-window",
+            "-d",
+            "-t",
+            &format!("{}:{}", self.session, index),
+            "-n",
+            name,
+        ]);
+    }
+
+    fn run(&self, args: &[&str]) {
+        let output = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+impl Drop for TmuxServer {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string(), "kill-server"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = fs::remove_file(&self.socket);
+    }
 }
 
 #[test]
@@ -2046,9 +2073,11 @@ fn write_worker_fixture_with_task_and_window(
     fs::write(&brief, "brief").unwrap();
     fs::write(&launch, "launch").unwrap();
     fs::write(&status, status_body).unwrap();
-    let task_label_field = task_label
-        .map(|label| format!(",\n  \"task_label\": \"{label}\""))
-        .unwrap_or_default();
+    let task_label_field = match task_label {
+        Some(label) => format!(",\n  \"task_label\": \"{label}\""),
+        // No task label: the field is omitted from the manifest JSON.
+        None => String::new(),
+    };
     fs::write(
         worker_dir.join("meta.json"),
         format!(
@@ -2171,7 +2200,7 @@ fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var("PATH").expect("PATH must be set in the test environment")
     )
 }
 

@@ -10,9 +10,7 @@ use camino::Utf8Path;
 
 mod target;
 
-pub(crate) use target::{
-    SessionName, TargetState, WindowTarget, target_state,
-};
+pub(crate) use target::{SessionName, TargetState, WindowTarget, target_state};
 
 const SEND_LINE_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
@@ -305,5 +303,4 @@ mod tests {
             ]
         );
     }
-
 }
