@@ -8,9 +8,6 @@ use clap::{ArgAction, Parser, Subcommand};
     infer_subcommands = true
 )]
 pub struct Cli {
-    /// Override and persist the lead agent for bare `niles`.
-    #[arg(long)]
-    pub lead: Option<String>,
     #[command(subcommand)]
     pub command: Option<CommandName>,
 }
@@ -154,14 +151,6 @@ mod tests {
     fn bare_niles_runs_the_manager_with_no_subcommand() {
         let cli = Cli::try_parse_from(["niles"]).unwrap();
 
-        assert!(cli.command.is_none());
-    }
-
-    #[test]
-    fn lead_override_parses_without_a_session_mode_flag() {
-        let cli = Cli::try_parse_from(["niles", "--lead", "claude:opus:max"]).unwrap();
-
-        assert_eq!(cli.lead.as_deref(), Some("claude:opus:max"));
         assert!(cli.command.is_none());
     }
 

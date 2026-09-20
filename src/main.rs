@@ -37,7 +37,7 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => session::run(cli.lead)?,
+        None => session::run()?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
             wait,
