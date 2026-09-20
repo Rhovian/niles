@@ -4,7 +4,6 @@ use anyhow::{Result, bail};
 
 use crate::config::spec::AgentConfig;
 
-pub(crate) mod catalog;
 mod families;
 pub(crate) mod picker;
 #[cfg(test)]
@@ -14,7 +13,7 @@ pub use families::{AgentProfile, BriefDelivery};
 
 const CUSTOM_AGENT_DEFAULT_ARGS: &[&str] = &[];
 const CUSTOM_AGENT_LAUNCH_ENV: &[(&str, &str)] = &[];
-const CUSTOM_AGENT_MODEL_ALIASES: &[&str] = &[];
+const CUSTOM_AGENT_MODEL_NAMES: &[&str] = &[];
 const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;
 const CUSTOM_AGENT_SUPPORTED_EFFORTS: &[&str] = &[];
 
@@ -223,7 +222,7 @@ impl AgentSpec {
             .map(|value| normalize_model(&family, value))
             .transpose()?;
         let effort = effort
-            .map(|value| normalize_effort(&family, value))
+            .map(|value| normalize_effort(&family, model.as_deref(), value))
             .transpose()?;
         if effort.is_some() && model.is_none() {
             bail!("invalid agent spec; effort requires a model");
@@ -289,9 +288,9 @@ fn normalize_model(family: &str, model: &str) -> Result<String> {
         .unwrap_or_else(|| Ok(model.to_owned()))
 }
 
-fn normalize_effort(family: &str, effort: &str) -> Result<String> {
+fn normalize_effort(family: &str, model: Option<&str>, effort: &str) -> Result<String> {
     profile_for(family)
-        .map(|profile| families::normalize_effort(profile, effort))
+        .map(|profile| families::normalize_effort(profile, model, effort))
         .unwrap_or_else(|| Ok(effort.to_owned()))
 }
 
@@ -314,24 +313,18 @@ pub(crate) fn validate_static_model(spec: &AgentSpec) -> Result<()> {
     )
 }
 
-pub(crate) fn default_model_aliases(family: &str) -> &'static [&'static str] {
+pub(crate) fn model_names(family: &str) -> Vec<&'static str> {
     match profile_for(family) {
-        Some(profile) => profile.model_aliases,
-        None => CUSTOM_AGENT_MODEL_ALIASES,
+        Some(profile) => families::model_names(profile),
+        None => CUSTOM_AGENT_MODEL_NAMES.to_vec(),
     }
 }
 
-pub(crate) fn supported_efforts(family: &str) -> &'static [&'static str] {
+pub(crate) fn supported_efforts(family: &str, model: Option<&str>) -> &'static [&'static str] {
     match profile_for(family) {
-        Some(profile) => profile.supported_efforts,
+        Some(profile) => families::supported_efforts(profile, model),
         None => CUSTOM_AGENT_SUPPORTED_EFFORTS,
     }
-}
-
-pub(crate) fn model_group_label(family: &str, model: &str) -> String {
-    profile_for(family)
-        .map(|profile| families::model_group_label(profile, model))
-        .unwrap_or_else(|| model.to_owned())
 }
 
 pub(crate) fn canonical_manifest_agent(

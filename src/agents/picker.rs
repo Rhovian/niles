@@ -3,8 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use dialoguer::{Select, console::Term};
 
-use super::catalog::{ModelCatalog, ModelGroup, model_catalog};
-
 use crate::{agents, config::spec::AgentConfig};
 
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
@@ -45,9 +43,7 @@ fn prompt_builtin_agent(
         true => Some(default_spec),
         false => None,
     };
-    let catalog = model_catalog(family);
-    let model = prompt_model(term, family, default_spec, &catalog)?;
-
+    let model = prompt_model(term, family, default_spec)?;
     let effort = prompt_effort(term, family, &model, default_spec)?;
     let spec = agents::AgentSpec::from_parts(family, Some(&model), effort.as_deref())?;
     agents::canonical_manifest_agent(&spec, agent_configs)
@@ -57,73 +53,37 @@ fn prompt_model(
     term: &Term,
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
-    catalog: &ModelCatalog,
 ) -> Result<String> {
-    let choices = model_choices_from_catalog(family, default_spec, catalog);
+    let choices = model_choices(family, default_spec);
     if choices.is_empty() {
         bail!("no {family} model options available");
     }
     let default_index = default_choice_index(&choices);
     let index = select_choice(term, &format!("{family} model"), &choices, default_index)?;
-    choose_model_version(term, family, &choices[index].value, default_spec)
+    Ok(choices[index].value.clone())
 }
 
-fn model_choices_from_catalog(
+/// The roster, in order. It is the whole menu: a model off it cannot be launched, so offering one
+/// would be offering a spec that fails at spawn.
+fn model_choices(
     family: &str,
     default_spec: Option<&agents::AgentSpec>,
-    catalog: &ModelCatalog,
-) -> Vec<MenuChoice<ModelGroup>> {
+) -> Vec<MenuChoice<String>> {
     let default_model = default_spec.and_then(agents::AgentSpec::model);
-    let groups = catalog.groups_with_default(family, default_model);
-    let mut choices = groups
-        .iter()
-        .cloned()
-        .map(|group| {
-            let is_default = default_model
-                .is_some_and(|model| group.models.iter().any(|candidate| candidate == model));
-            MenuChoice {
-                label: group.label.clone(),
-                value: group,
-                is_default,
-            }
+    let mut choices = agents::model_names(family)
+        .into_iter()
+        .map(|model| MenuChoice {
+            label: model.to_owned(),
+            value: model.to_owned(),
+            is_default: default_model == Some(model),
         })
         .collect::<Vec<_>>();
-    if default_model.is_none()
+    if !choices.iter().any(|choice| choice.is_default)
         && let Some(first) = choices.first_mut()
     {
         first.is_default = true;
     }
     choices
-}
-
-fn choose_model_version(
-    term: &Term,
-    family: &str,
-    group: &ModelGroup,
-    default_spec: Option<&agents::AgentSpec>,
-) -> Result<String> {
-    if group.models.len() == 1 {
-        return Ok(group.models[0].clone());
-    }
-
-    let default_model = default_spec.and_then(agents::AgentSpec::model);
-    let choices = group
-        .models
-        .iter()
-        .map(|model| MenuChoice {
-            label: model.clone(),
-            value: model.clone(),
-            is_default: default_model == Some(model.as_str()),
-        })
-        .collect::<Vec<_>>();
-    let default_index = default_choice_index(&choices);
-    let index = select_choice(
-        term,
-        &format!("{family} {} version", group.label),
-        &choices,
-        default_index,
-    )?;
-    Ok(choices[index].value.clone())
 }
 
 fn prompt_effort(
@@ -132,7 +92,7 @@ fn prompt_effort(
     model: &str,
     default_spec: Option<&agents::AgentSpec>,
 ) -> Result<Option<String>> {
-    let efforts = ModelCatalog::effort_options(family);
+    let efforts = agents::supported_efforts(family, Some(model));
     if efforts.is_empty() {
         return Ok(None);
     }
@@ -145,13 +105,10 @@ fn prompt_effort(
         value: None,
         is_default: default_effort.is_none(),
     }];
-    choices.extend(efforts.into_iter().map(|effort| {
-        let is_default = default_effort == Some(effort.as_str());
-        MenuChoice {
-            label: effort.clone(),
-            value: Some(effort),
-            is_default,
-        }
+    choices.extend(efforts.iter().map(|effort| MenuChoice {
+        label: (*effort).to_owned(),
+        value: Some((*effort).to_owned()),
+        is_default: default_effort == Some(*effort),
     }));
 
     let default_index = default_choice_index(&choices);
@@ -249,33 +206,43 @@ mod tests {
     }
 
     #[test]
-    fn bare_family_defaults_to_first_catalog_model() {
-        let catalog = model_catalog("codex");
-        let choices = model_choices_from_catalog("codex", None, &catalog);
+    fn bare_family_defaults_to_the_first_rostered_model() {
+        let choices = model_choices("codex", None);
 
         assert_eq!(choices[0].label, "gpt-5.5");
         assert!(choices[0].is_default);
-        assert_eq!(choices[0].value.label, "gpt-5.5");
-        assert_eq!(choices[1].value.label, "gpt-5.6-sol");
+        assert_eq!(choices[1].value, "gpt-6-astra");
     }
 
     #[test]
     fn explicit_model_selection_stores_model_with_default_effort() {
-        let spec = agents::AgentSpec::from_parts("codex", Some("o3-pro"), None).unwrap();
-        assert_eq!(spec.canonical(), "codex:o3-pro");
-        let spec = agents::AgentSpec::from_parts("codex", Some("o3-pro"), Some("high")).unwrap();
-        assert_eq!(spec.canonical(), "codex:o3-pro:high");
+        let spec = agents::AgentSpec::from_parts("codex", Some("gpt-6-astra"), None).unwrap();
+        assert_eq!(spec.canonical(), "codex:gpt-6-astra");
+        let spec =
+            agents::AgentSpec::from_parts("codex", Some("gpt-6-astra"), Some("ultra")).unwrap();
+        assert_eq!(spec.canonical(), "codex:gpt-6-astra:ultra");
     }
 
     #[test]
-    fn existing_model_default_still_selects_matching_group() {
-        let default = agents::parse_spec("codex:o3-pro:xhigh").unwrap();
-        let catalog = model_catalog("codex");
-        let choices = model_choices_from_catalog("codex", Some(&default), &catalog);
+    fn the_manifests_model_is_the_default_choice() {
+        let default = agents::parse_spec("codex:gpt-5.6-luna:max").unwrap();
+        let choices = model_choices("codex", Some(&default));
 
         assert_eq!(
-            choices[default_choice_index(&choices)].value.label,
-            "o3-pro"
+            choices[default_choice_index(&choices)].value,
+            "gpt-5.6-luna"
         );
+    }
+
+    /// A manifest written before a model left the roster names one the menu no longer carries.
+    /// The menu is the roster, so the stale model is not offered — it falls back to the first
+    /// choice rather than smuggling an unlaunchable spec into the picker.
+    #[test]
+    fn a_model_off_the_roster_is_not_offered() {
+        let default = agents::parse_spec("codex:gpt-5.4:high").unwrap();
+        let choices = model_choices("codex", Some(&default));
+
+        assert!(choices.iter().all(|choice| choice.value != "gpt-5.4"));
+        assert_eq!(choices[default_choice_index(&choices)].value, "gpt-5.5");
     }
 }
