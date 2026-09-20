@@ -511,8 +511,10 @@ fn report_errors_helpfully_when_report_file_is_absent() {
     assert!(stderr.contains("final pane snapshot is available"));
 }
 
+/// A bare peek is read into the lead's context, so its default is bounded; the full scrollback is
+/// available but has to be asked for with `--lines 0`.
 #[test]
-fn peek_defaults_deep_and_zero_lines_captures_full_history() {
+fn peek_defaults_to_a_glance_and_zero_lines_captures_full_history() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-peek-deep");
     let home = niles_home(&workspace);
@@ -561,7 +563,7 @@ esac
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(
         log.lines()
-            .any(|line| line == "capture-pane -p -t =niles:=niles-auth-fix -S -2000")
+            .any(|line| line == "capture-pane -p -t =niles:=niles-auth-fix -S -200")
     );
     assert!(
         log.lines()
