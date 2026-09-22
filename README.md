@@ -197,7 +197,7 @@ launch:
 | ------ | ------ |
 | `codex` | `gpt-5.5`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
 | `claude` | `opus`, `sonnet`, `fable`, `haiku` |
-| `hermes` | `tencent/hy3` |
+| `hermes` | `tencent/hy3`, `deepseek/deepseek-v4.1-flash`, `z-ai/glm-5.3-flash` |
 
 A model that is not on it — a full id like `claude-opus-5`, a sibling like
 `gpt-5.4`, a vendor path hermes could route — is rejected, not guessed at:

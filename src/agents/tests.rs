@@ -270,7 +270,13 @@ fn hermes_foreground_keeps_the_subcommand_without_the_approval_bypass() {
 fn hermes_carries_a_roster_like_every_other_family() {
     // hermes routes to any provider its config knows, but Niles launches only what it carries:
     // another vendor path is a line in the roster, not a shape we wave through.
-    validate_static_model(&AgentSpec::parse("hermes:tencent/hy3").unwrap()).unwrap();
+    for model in [
+        "tencent/hy3",
+        "deepseek/deepseek-v4.1-flash",
+        "z-ai/glm-5.3-flash",
+    ] {
+        validate_static_model(&AgentSpec::parse(&format!("hermes:{model}")).unwrap()).unwrap();
+    }
 
     for model in ["anthropic/claude-opus-5", "x-ai/grok-4.6", "hy3"] {
         let spec = AgentSpec::parse(&format!("hermes:{model}")).unwrap();

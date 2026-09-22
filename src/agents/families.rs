@@ -181,10 +181,20 @@ const PROFILES: &[AgentProfile] = &[
         worker_args: &["chat", "--yolo"],
         worker_brief: HERMES_QUERY,
         lead_brief: HERMES_QUERY,
-        models: &[ModelEntry {
-            name: "tencent/hy3",
-            efforts: HERMES_EFFORTS,
-        }],
+        models: &[
+            ModelEntry {
+                name: "tencent/hy3",
+                efforts: HERMES_EFFORTS,
+            },
+            ModelEntry {
+                name: "deepseek/deepseek-v4.1-flash",
+                efforts: HERMES_EFFORTS,
+            },
+            ModelEntry {
+                name: "z-ai/glm-5.3-flash",
+                efforts: HERMES_EFFORTS,
+            },
+        ],
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--reasoning"),
