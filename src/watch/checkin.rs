@@ -65,9 +65,13 @@ impl Checkin {
         }
     }
 
-    /// Minutes since arming this check-in is due at, as the nudge words it.
-    pub(crate) fn minutes(&self) -> u64 {
-        self.step.div_ceil(60)
+    /// How long since arming this check-in is due at, as the nudge words it.
+    ///
+    /// Rendered by the same speller `--checkin` echoes back, so a check-in armed at `65s` is
+    /// reported as `65s` rather than rounded up to a minute it has not reached. The nudge's whole
+    /// job is to say how long it has been.
+    pub(crate) fn elapsed_label(&self) -> String {
+        describe_delay(Duration::from_secs(self.step))
     }
 
     /// Whether `wake` answers the assignment this check-in was armed for.
@@ -272,17 +276,26 @@ mod tests {
     }
 
     #[test]
+    fn a_delay_that_is_not_whole_minutes_is_reported_as_it_was_asked_for() {
+        // `--checkin 65s` used to nudge "no report ... in 2m" — a minute the check-in had not
+        // reached, in the one sentence whose job is to say how long it has been.
+        let armed = Checkin::armed(Duration::from_secs(65), 0, at(1_000));
+        assert_eq!(armed.elapsed_label(), "65s");
+        assert_eq!(armed.rearmed(at(1_065)).elapsed_label(), "245s");
+    }
+
+    #[test]
     fn arming_keeps_the_log_length_and_steps_three_minutes_each_fire() {
         let now = at(1_000);
         let armed = Checkin::armed(Duration::from_secs(300), 42, now);
 
         assert_eq!(armed.deadline, at(1_300));
-        assert_eq!(armed.minutes(), 5);
+        assert_eq!(armed.elapsed_label(), "5m");
         assert_eq!(armed.armed_len, 42);
 
         let refired = armed.rearmed(at(1_300));
         assert_eq!(refired.deadline, at(1_480));
-        assert_eq!(refired.minutes(), 8);
+        assert_eq!(refired.elapsed_label(), "8m");
         assert!(refired.answered_by(ActionableWake {
             end: 43,
             kind: crate::wake::WakeKind::Done

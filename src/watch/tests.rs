@@ -161,7 +161,7 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     // on the next tick.
     let rearmed = Checkin::read(&dir).unwrap().unwrap();
     assert_eq!(rearmed.deadline, at(1_480));
-    assert_eq!(rearmed.minutes(), 8);
+    assert_eq!(rearmed.elapsed_label(), "8m");
 
     let mut next = RecordingSink::default();
     tick(&root, at(1301), &mut memory, &mut next, &running());

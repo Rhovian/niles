@@ -115,7 +115,7 @@ impl WatchMemory {
                     _ if now >= checkin.deadline => plan.nudges.push(Nudge {
                         id: worker.id.clone(),
                         worker_dir: worker.worker_dir.clone(),
-                        text: no_report_text(&worker.id, checkin.minutes()),
+                        text: no_report_text(&worker.id, &checkin.elapsed_label()),
                         commit: Commit::Checkin {
                             planned: *checkin,
                             next: checkin.rearmed(now),
@@ -158,8 +158,8 @@ fn report_text(id: &str, kind: WakeKind) -> String {
 }
 
 /// `niles: no report from impl in 5m — check it`
-fn no_report_text(id: &str, minutes: u64) -> String {
-    format!("niles: no report from {id} in {minutes}m — check it")
+fn no_report_text(id: &str, elapsed: &str) -> String {
+    format!("niles: no report from {id} in {elapsed} — check it")
 }
 
 #[cfg(test)]
@@ -315,7 +315,7 @@ mod tests {
             let Commit::Checkin { next, .. } = nudge.commit else {
                 panic!("a check-in nudge must carry its re-arm");
             };
-            assert_eq!(next.minutes(), minutes + 3);
+            assert_eq!(next.elapsed_label(), format!("{}m", minutes + 3));
             armed = BTreeMap::from([("impl".to_owned(), next)]);
         }
     }
