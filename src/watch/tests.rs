@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
-use crate::worker::worker_snapshot;
+use crate::{test_support::temp_test_path, worker::worker_snapshot};
 
 use super::{Sink, WatchMemory, apply, arm_checkin, checkin::Checkin, quiet, read_checkins, tick};
 
@@ -37,16 +37,9 @@ impl Sink for RecordingSink {
     }
 }
 
+/// A throwaway directory: the crate's shared temp path, created.
 fn workspace(label: &str) -> Utf8PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-        "niles-watch-{label}-{}-{nanos}",
-        std::process::id()
-    )))
-    .unwrap();
+    let path = temp_test_path(label);
     fs::create_dir_all(&path).unwrap();
     path
 }

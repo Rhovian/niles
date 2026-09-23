@@ -17,6 +17,9 @@ mod watch;
 mod worker;
 mod workspace_manifest;
 
+#[cfg(test)]
+mod test_support;
+
 use std::process::ExitCode;
 
 use anyhow::Result;

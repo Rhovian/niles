@@ -227,18 +227,7 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     use super::*;
-
-    fn temp_dir(label: &str) -> camino::Utf8PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        camino::Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "niles-checkin-{label}-{}-{nanos}",
-            std::process::id()
-        )))
-        .unwrap()
-    }
+    use crate::test_support::temp_test_path;
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
@@ -317,7 +306,7 @@ mod tests {
 
     #[test]
     fn arm_state_round_trips_through_the_worker_directory() {
-        let dir = temp_dir("round-trip");
+        let dir = temp_test_path("round-trip");
         fs::create_dir_all(&dir).unwrap();
         let armed = Checkin::armed(Duration::from_secs(90), 7, at(1_000));
 
@@ -335,7 +324,7 @@ mod tests {
 
     #[test]
     fn a_write_replaces_the_file_whole_and_leaves_no_staging_file() {
-        let dir = temp_dir("staging");
+        let dir = temp_test_path("staging");
         fs::create_dir_all(&dir).unwrap();
         Checkin::armed(Duration::from_secs(300), 3, at(1_000))
             .write(&dir)
@@ -365,7 +354,7 @@ mod tests {
 
     #[test]
     fn an_incomplete_checkin_file_is_an_error_rather_than_a_default() {
-        let dir = temp_dir("incomplete");
+        let dir = temp_test_path("incomplete");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(CHECKIN_FILE),

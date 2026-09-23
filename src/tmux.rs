@@ -10,7 +10,7 @@ use camino::Utf8Path;
 
 mod target;
 
-pub(crate) use target::{PaneTarget, SessionName, TargetState, WindowTarget, target_state};
+pub(crate) use target::{SessionName, TargetState, TmuxTarget, WindowTarget, target_state};
 
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
 
@@ -86,7 +86,7 @@ where
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
 }
 
-pub(crate) fn capture_pane(target: &PaneTarget, lines: usize) -> Result<String> {
+pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.as_str();
     let output = output(["capture-pane", "-p", "-t", arg, "-S", &start])
@@ -118,7 +118,7 @@ fn capture_start(lines: usize) -> String {
 /// the pane is watched rather than timed. The paste is given until it renders and goes quiet
 /// before the submit is sent, and the pane must change after it — a submit that changes nothing
 /// is an error, not a `sent:`.
-pub(crate) fn send_line(target: &PaneTarget, line: &str) -> Result<()> {
+pub(crate) fn send_line(target: &TmuxTarget, line: &str) -> Result<()> {
     let arg = target.as_str();
     let before = capture_pane(target, SEND_WATCH_LINES)?;
     run(send_line_literal_args(arg, line))?;
@@ -132,7 +132,7 @@ pub(crate) fn send_line(target: &PaneTarget, line: &str) -> Result<()> {
 /// Neither way of giving up is an error. A pane that never changed may simply not echo what it is
 /// handed, and one that never goes quiet is an agent already doing something; in both cases the
 /// submit is still worth sending, and [`confirm_submit_took`] is the judge of whether it took.
-fn settle_pane(target: &PaneTarget, before: &str) -> Result<String> {
+fn settle_pane(target: &TmuxTarget, before: &str) -> Result<String> {
     let deadline = Instant::now() + SEND_SETTLE_TIMEOUT;
     let mut previous = before.to_owned();
     let mut rendered = false;
@@ -164,7 +164,7 @@ fn settle_pane(target: &PaneTarget, before: &str) -> Result<String> {
 /// the quiet `staged` was captured in — against a pane that was still moving when
 /// [`settle_pane`] gave up, the next redraw counts as a change and the check passes for the
 /// wrong reason.
-fn confirm_submit_took(target: &PaneTarget, staged: &str) -> Result<()> {
+fn confirm_submit_took(target: &TmuxTarget, staged: &str) -> Result<()> {
     let deadline = Instant::now() + SEND_SUBMIT_TIMEOUT;
     loop {
         thread::sleep(SEND_POLL_INTERVAL);

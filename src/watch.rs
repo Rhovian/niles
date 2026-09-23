@@ -32,7 +32,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::{
-    tmux::{self, PaneTarget},
+    tmux::{self, TmuxTarget},
     worker::{self, WorkerSnapshot, worker_snapshot},
 };
 
@@ -120,7 +120,7 @@ pub(crate) fn start(
         );
         return Watcher::idle();
     };
-    if let Err(err) = PaneTarget::pane(pane) {
+    if let Err(err) = TmuxTarget::pane(pane) {
         log.note(&format!("watcher not started: {err:#}"));
         return Watcher::idle();
     }
@@ -181,7 +181,7 @@ pub(crate) fn quiet(id: &str) -> Result<bool> {
 }
 
 fn watch(workspace: Utf8PathBuf, log: WatchLog, pane: String, stop: Arc<AtomicBool>) {
-    let Ok(target) = PaneTarget::pane(&pane) else {
+    let Ok(target) = TmuxTarget::pane(&pane) else {
         log.note(&format!("watcher not started: invalid pane id `{pane}`"));
         return;
     };
@@ -246,28 +246,21 @@ fn tick(
 /// Nothing here is worth losing — a lost nudge costs a look.
 fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &AtomicBool) {
     for disarm in &plan.disarms {
-        let planned = disarm.planned;
-        match Checkin::read(&disarm.worker_dir) {
-            Ok(Some(current)) if current == planned => match Checkin::disarm(&disarm.worker_dir) {
+        with_planned_checkin(
+            &disarm.id,
+            &disarm.worker_dir,
+            &disarm.planned,
+            sink,
+            |worker_dir, sink| match Checkin::disarm(worker_dir) {
                 Ok(true) => sink.note(&format!("check-in disarmed: {} answered it", disarm.id)),
-                // Already gone: `niles quiet` got there first, or the worker reported twice.
+                // Gone between the re-read and the remove.
                 Ok(false) => {}
                 Err(err) => sink.note(&format!(
                     "failed to disarm the check-in for {}: {err:#}",
                     disarm.id
                 )),
             },
-            Ok(Some(current)) => sink.note(&format!(
-                "left the check-in for {} alone: it was re-armed while this tick was delivering \
-                 (armed_len {} where this tick planned on {})",
-                disarm.id, current.armed_len, planned.armed_len
-            )),
-            Ok(None) => {}
-            Err(err) => sink.note(&format!(
-                "failed to re-read the check-in for {}: {err:#}",
-                disarm.id
-            )),
-        }
+        );
     }
 
     for nudge in &plan.nudges {
@@ -297,9 +290,12 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
 
 /// Writes the next check-in, but only over the state this tick planned on.
 fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) {
-    let worker_dir = &nudge.worker_dir;
-    match Checkin::read(worker_dir) {
-        Ok(Some(current)) if current == *planned => {
+    with_planned_checkin(
+        &nudge.id,
+        &nudge.worker_dir,
+        planned,
+        sink,
+        |worker_dir, sink| {
             if let Err(err) = next.write(worker_dir) {
                 sink.note(&format!(
                     "the check-in for {} is still armed at its old deadline, so it fires again: \
@@ -307,19 +303,35 @@ fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) 
                     nudge.id
                 ));
             }
-        }
-        // A check-in armed while the nudge was being typed is about work this tick has not seen:
-        // overwriting it would schedule the newer assignment by the older one's clock.
-        Ok(Some(current)) => sink.note(&format!(
-            "left the check-in for {} alone: it was re-armed while this tick was delivering \
-             (armed_len {} where this tick planned on {})",
-            nudge.id, current.armed_len, planned.armed_len
-        )),
+        },
+    );
+}
+
+/// Runs `action` on a check-in only when the file is still the state the plan was built from.
+///
+/// A tick spends seconds inside `send_line`, so an arm state written in that window is newer than
+/// the plan and belongs to work the tick has not seen: the action is skipped, and the reason is
+/// logged here once rather than in each caller.
+fn with_planned_checkin<S, F>(
+    id: &str,
+    worker_dir: &Utf8Path,
+    planned: &Checkin,
+    sink: &mut S,
+    action: F,
+) where
+    S: Sink + ?Sized,
+    F: FnOnce(&Utf8Path, &mut S),
+{
+    match Checkin::read(worker_dir) {
+        Ok(Some(current)) if current == *planned => action(worker_dir, sink),
+        // Nothing armed: `niles quiet` got there first, or the worker reported twice.
         Ok(None) => {}
-        Err(err) => sink.note(&format!(
-            "failed to re-read the check-in for {}: {err:#}",
-            nudge.id
+        Ok(Some(current)) => sink.note(&format!(
+            "left the check-in for {id} alone: it was re-armed while this tick was delivering \
+             (armed_len {} where this tick planned on {})",
+            current.armed_len, planned.armed_len
         )),
+        Err(err) => sink.note(&format!("failed to re-read the check-in for {id}: {err:#}")),
     }
 }
 
@@ -349,7 +361,7 @@ trait Sink {
 }
 
 struct WatchSink {
-    target: PaneTarget,
+    target: TmuxTarget,
     log: WatchLog,
 }
 

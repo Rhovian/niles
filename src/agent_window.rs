@@ -107,11 +107,11 @@ fn write_agent_command(body: &mut String, invocation: &agents::AgentInvocation) 
 }
 
 pub(crate) fn capture_target(target: &WindowTarget, lines: usize) -> Result<String> {
-    tmux::capture_pane(&tmux::PaneTarget::window(target), lines)
+    tmux::capture_pane(&tmux::TmuxTarget::window(target), lines)
 }
 
 pub(crate) fn send_target(target: &WindowTarget, message: &str) -> Result<()> {
-    tmux::send_line(&tmux::PaneTarget::window(target), message)
+    tmux::send_line(&tmux::TmuxTarget::window(target), message)
 }
 
 pub(crate) fn close_target(target: &WindowTarget) -> Result<()> {

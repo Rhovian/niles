@@ -69,16 +69,16 @@ impl WindowTarget {
     }
 }
 
-/// Where tmux is asked to act.
+/// A tmux `-t` target: where the commands in this module are pointed.
 ///
 /// A worker window is addressed as `session:window`, both halves anchored. The lead's own pane is
 /// a `%N` pane id, which tmux accepts as a complete target on its own: there is no session or
 /// window to spell, and inventing one would address a different thing — the lead is typed into
 /// through the pane it is running in, and that pane id is the only fact about it we have.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PaneTarget(String);
+pub(crate) struct TmuxTarget(String);
 
-impl PaneTarget {
+impl TmuxTarget {
     pub(crate) fn window(target: &WindowTarget) -> Self {
         Self(target.target_arg())
     }
@@ -97,7 +97,7 @@ impl PaneTarget {
     }
 }
 
-impl fmt::Display for PaneTarget {
+impl fmt::Display for TmuxTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
