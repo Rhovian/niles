@@ -10,7 +10,7 @@ use crate::{
     store,
     tmux::{self, WindowTarget},
     util::{absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists, render_template},
-    wake,
+    wake, watch,
 };
 
 use super::{
@@ -29,6 +29,7 @@ pub fn spawn(
     agent: String,
     brief: Option<Utf8PathBuf>,
     task: Vec<String>,
+    checkin: Option<String>,
 ) -> Result<()> {
     validate_id(&id)?;
     if let Some(label) = &task_label {
@@ -132,6 +133,10 @@ pub fn spawn(
         ));
     }
 
+    // The lead arms the check-in and is the only one who does: a worker can disarm it by
+    // reporting, never by staying quiet about it.
+    let armed = watch::arm_checkin(&dir, checkin.as_deref(), Utc::now())?;
+
     println!("spawned: {id}");
     println!("window: {window_name}");
     println!("agent: {}", meta.agent);
@@ -150,6 +155,13 @@ pub fn spawn(
         println!("close_task: niles close --task {label}");
     }
     println!("workers: niles workers");
+    match armed {
+        Some(delay) => {
+            println!("checkin: {}", watch::describe_delay(delay));
+            println!("quiet: niles quiet {id}");
+        }
+        None => println!("checkin: off"),
+    }
 
     Ok(())
 }

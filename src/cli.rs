@@ -26,6 +26,44 @@ pub(crate) fn take_leading_wait(args: &mut Vec<String>) -> bool {
 }
 
 const WAIT_FLAG: &str = "--wait";
+const CHECKIN_FLAG: &str = "--checkin";
+
+/// Pulls a leading `--checkin <delay>` pair out of a trailing var-arg list.
+///
+/// A `--checkin` with nothing after it is a typo rather than a message, so the flag is consumed
+/// and no delay is reported: either way the text must not reach the worker.
+pub(crate) fn take_leading_checkin(args: &mut Vec<String>) -> Option<String> {
+    let present = args.first().is_some_and(|first| first == CHECKIN_FLAG);
+    if !present {
+        return None;
+    }
+    args.remove(0);
+    if args.is_empty() {
+        return None;
+    }
+    Some(args.remove(0))
+}
+
+/// Pulls both dispatch flags out of a trailing var-arg list, in whatever order they were written.
+///
+/// One flag alone is easy — write it before the trailing text and clap parses it. Two of them next
+/// to each other after the worker id arrive as text, and pulling only the first would hand the
+/// worker the flag that was left behind.
+pub(crate) fn take_leading_dispatch_flags(args: &mut Vec<String>) -> (bool, Option<String>) {
+    let mut wait = false;
+    let mut checkin = None;
+    loop {
+        if take_leading_wait(args) {
+            wait = true;
+            continue;
+        }
+        match take_leading_checkin(args) {
+            Some(delay) => checkin = Some(delay),
+            None => break,
+        }
+    }
+    (wait, checkin)
+}
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
@@ -59,6 +97,9 @@ pub enum CommandName {
         /// Existing brief file to pass to the worker.
         #[arg(long)]
         brief: Option<Utf8PathBuf>,
+        /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. `0`/`off` arms none.
+        #[arg(long, value_name = "DELAY")]
+        checkin: Option<String>,
         /// Task text used to create a brief when --brief is omitted.
         #[arg(num_args = 0.., trailing_var_arg = true)]
         task: Vec<String>,
@@ -111,6 +152,9 @@ pub enum CommandName {
         /// Block for this worker's next actionable wake after sending.
         #[arg(long)]
         wait: bool,
+        /// Check-in delay for this worker's next report: `90s`, `5m`, `1h`, bare minutes, `0`/`off`.
+        #[arg(long, value_name = "DELAY")]
+        checkin: Option<String>,
         /// Worker task id followed by message.
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
         target_and_message: Vec<String>,
@@ -140,6 +184,15 @@ pub enum CommandName {
         /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
         #[arg(long)]
         timeout: Option<f64>,
+    },
+    /// Disarm a worker's check-in, so the watcher stops nudging about it.
+    ///
+    /// `spawn` and `send` arm one, and the watcher nudges when it comes due with no report since.
+    /// Quiet a worker that is idle on purpose, so its check-ins do not keep calling the lead back.
+    #[command(verbatim_doc_comment)]
+    Quiet {
+        /// Worker task id.
+        id: String,
     },
 }
 
@@ -173,5 +226,47 @@ mod tests {
         let cli = Cli::try_parse_from(["niles", "workers"]).unwrap();
 
         assert!(cli.command.is_some());
+    }
+
+    /// The lead writes these after the worker id, where the trailing var-arg positional hands them
+    /// over as text. In whatever order they come, the message that reaches the worker is the
+    /// message alone.
+    #[test]
+    fn trailing_dispatch_flags_are_taken_out_of_the_message() {
+        fn taken(written: &[&str]) -> (Vec<String>, bool, Option<String>) {
+            let mut args = written
+                .iter()
+                .map(|arg| (*arg).to_owned())
+                .collect::<Vec<_>>();
+            let (wait, checkin) = take_leading_dispatch_flags(&mut args);
+            (args, wait, checkin)
+        }
+        fn left(rest: &[&str]) -> Vec<String> {
+            rest.iter().map(|arg| (*arg).to_owned()).collect()
+        }
+
+        let both = |delay: &str| (left(&["carry on"]), true, Some(delay.to_owned()));
+        assert_eq!(
+            taken(&["--wait", "--checkin", "5m", "carry on"]),
+            both("5m")
+        );
+        assert_eq!(
+            taken(&["--checkin", "90s", "--wait", "carry on"]),
+            both("90s")
+        );
+
+        assert_eq!(
+            taken(&["--checkin", "1h"]),
+            (left(&[]), false, Some("1h".to_owned()))
+        );
+        assert_eq!(taken(&["--wait"]), (left(&[]), true, None));
+        // A `--checkin` with nothing after it is a typo: the flag goes, no delay is invented, and
+        // the text must not reach the worker either way.
+        assert_eq!(taken(&["--checkin"]), (left(&[]), false, None));
+        // Not leading: this is the message, and the flags in it are the worker's business.
+        assert_eq!(
+            taken(&["carry on", "--wait"]),
+            (left(&["carry on", "--wait"]), false, None)
+        );
     }
 }

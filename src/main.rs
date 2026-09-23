@@ -13,6 +13,7 @@ mod tmux;
 mod util;
 mod wait;
 mod wake;
+mod watch;
 mod worker;
 mod workspace_manifest;
 
@@ -46,12 +47,16 @@ fn run() -> Result<ExitCode> {
             task_label,
             agent,
             brief,
+            checkin,
             mut task,
         }) => {
-            // `--wait` written after the worker id lands in the trailing task text.
-            let wait = wait || cli::take_leading_wait(&mut task);
+            // `--wait` and `--checkin <delay>` written after the worker id land in the trailing
+            // task text.
+            let (trailing_wait, trailing_checkin) = cli::take_leading_dispatch_flags(&mut task);
+            let wait = wait || trailing_wait;
+            let checkin = checkin.or(trailing_checkin);
             let worker_id = id.clone();
-            worker::spawn(id, role, task_label, agent, brief, task)?;
+            worker::spawn(id, role, task_label, agent, brief, task, checkin)?;
             if wait {
                 return Ok(
                     wait::wait(vec![worker_id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
@@ -68,9 +73,10 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
         Some(CommandName::Send {
             wait,
+            checkin,
             target_and_message,
         }) => {
-            let sent = worker::send(wait, target_and_message)?;
+            let sent = worker::send(wait, checkin, target_and_message)?;
             if sent.wait_requested {
                 return Ok(
                     wait::wait(vec![sent.id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
@@ -83,6 +89,13 @@ fn run() -> Result<ExitCode> {
             interval,
             timeout,
         }) => return Ok(wait::wait(worker, task, interval, timeout)?.emit()),
+        Some(CommandName::Quiet { id }) => {
+            if watch::quiet(&id)? {
+                println!("quiet: {id}");
+            } else {
+                println!("quiet: {id} (no check-in armed)");
+            }
+        }
     }
 
     Ok(ExitCode::SUCCESS)

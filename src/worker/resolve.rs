@@ -50,7 +50,7 @@ pub(super) fn window_state(meta: &WorkerMeta) -> TargetState {
     }
 }
 
-pub(super) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
+pub(crate) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
     resolve_worker_if_exists(id)?.with_context(|| format!("unknown worker id '{id}'"))
 }
 

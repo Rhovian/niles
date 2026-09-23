@@ -1,4 +1,4 @@
-use std::fs;
+use std::{env, fs};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -16,6 +16,9 @@ use super::startup::startup_context;
 
 const LEAD_BRIEF_TEMPLATE: &str = include_str!("../templates/lead_brief.md");
 
+/// The environment variable tmux sets for the pane a process runs in.
+const LEAD_PANE_ENV: &str = "TMUX_PANE";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: String,
@@ -30,6 +33,14 @@ pub struct SessionMeta {
     pub created_at: chrono::DateTime<Utc>,
     pub workspace: Utf8PathBuf,
     pub brief: Utf8PathBuf,
+    /// The pane the lead is running in, as `$TMUX_PANE` reported it at session start.
+    ///
+    /// Recorded here rather than read from the environment later: the pane the lead occupies is a
+    /// fact about this session, and a watcher that rediscovered it every tick would be resolving
+    /// something it could have written down once. Additive — an older `session.json` has no pane
+    /// and still reads, and one written outside tmux omits the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_pane: Option<String>,
 }
 
 pub(super) fn write_manager_session(
@@ -53,6 +64,7 @@ pub(super) fn write_manager_session(
         created_at: now,
         workspace: workspace.to_path_buf(),
         brief: path,
+        lead_pane: recorded_lead_pane(),
     };
     write_session_meta(workspace, &meta)?;
     fs::write(latest_session_path(workspace), &id)
@@ -94,6 +106,16 @@ fn latest_session_path(workspace: &Utf8Path) -> Utf8PathBuf {
 
 fn default_created_at() -> chrono::DateTime<Utc> {
     Utc::now()
+}
+
+/// `$TMUX_PANE` as tmux set it for the pane this process is running in: a `%N` pane id, which is a
+/// complete tmux target on its own. Absent or empty outside tmux, which is how a session with no
+/// pane of its own is written.
+fn recorded_lead_pane() -> Option<String> {
+    match env::var(LEAD_PANE_ENV) {
+        Ok(pane) if !pane.trim().is_empty() => Some(pane),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -145,7 +167,16 @@ mod tests {
     #[test]
     fn lead_brief_stays_short() {
         let lines = LEAD_BRIEF_TEMPLATE.lines().count();
-        assert!(lines <= 50, "lead brief is {lines} lines; keep it tight");
+        assert!(lines <= 55, "lead brief is {lines} lines; keep it tight");
+    }
+
+    /// The watcher types into the lead's pane; a lead that does not know what that line is will
+    /// read it as a worker's report.
+    #[test]
+    fn lead_brief_says_what_a_nudge_means() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("## Nudges"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("from the workspace watcher, not from a worker"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Run `niles workers` and decide"));
     }
 
     #[test]
@@ -154,17 +185,64 @@ mod tests {
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --role"));
         // The command surface is fetched, not carried: it costs tokens at every session start.
         assert!(LEAD_BRIEF_TEMPLATE.contains("niles <command> --help"));
-        for fetchable in [
-            "niles peek <id>",
-            "niles workers",
-            "niles close <id>",
-            "niles wait <id>",
-        ] {
+        // `niles workers` is the one command named, because the nudge doctrine is what tells the
+        // lead which tool a `niles:` line is asking for.
+        for fetchable in ["niles peek <id>", "niles close <id>", "niles wait <id>"] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(fetchable),
                 "{fetchable} is in spawn output and --help; do not carry it in the brief"
             );
         }
+    }
+
+    /// The pane the lead runs in is recorded once, at session start, and the field is additive: a
+    /// `session.json` written before it existed still reads.
+    #[test]
+    fn session_meta_records_the_lead_pane_and_older_files_still_read() {
+        let workspace = temp_test_path("session-lead-pane");
+        fs::create_dir_all(&workspace).unwrap();
+        let mut meta = SessionMeta {
+            id: "session".to_owned(),
+            agent: "claude".to_owned(),
+            agent_family: None,
+            model: None,
+            effort: None,
+            created_at: Utc::now(),
+            workspace: workspace.clone(),
+            brief: workspace.join("lead.md"),
+            lead_pane: Some("%7".to_owned()),
+        };
+        let file = session_meta_path(&workspace, &meta.id);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        write_session_meta(&workspace, &meta).unwrap();
+
+        let body = fs::read_to_string(&file).unwrap();
+        assert!(body.contains("\"lead_pane\": \"%7\""), "{body}");
+        assert!(body.contains("\"niles_schema\": 2"), "{body}");
+        assert_eq!(read_session_meta(&file).lead_pane.as_deref(), Some("%7"));
+
+        // A session with no pane omits the field rather than writing a null nobody records.
+        meta.lead_pane = None;
+        write_session_meta(&workspace, &meta).unwrap();
+        let body = fs::read_to_string(&file).unwrap();
+        assert!(!body.contains("lead_pane"), "{body}");
+        assert_eq!(read_session_meta(&file).lead_pane, None);
+
+        // The shape written before this field existed.
+        fs::write(
+        &file,
+        r#"{"niles_schema":2,"id":"old","agent":"claude","created_at":"1970-01-01T00:00:00Z","workspace":"/w","brief":"/w/lead.md"}"#,
+    )
+    .unwrap();
+        assert_eq!(read_session_meta(&file).lead_pane, None);
+
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    fn read_session_meta(path: &Utf8Path) -> SessionMeta {
+        crate::schema::read_optional_json(path, crate::schema::ArtifactKind::ManagerSession)
+            .unwrap()
+            .unwrap()
     }
 
     #[test]

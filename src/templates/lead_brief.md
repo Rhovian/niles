@@ -19,6 +19,10 @@ Do inline whatever is cheaper to do than to delegate — reading a file, confirm
 
 Do not implement. Once you are editing the files under review, you have stopped leading and nobody is.
 
+## Nudges
+
+A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look.
+
 ## Spending
 
 Effort follows risk. Reserve your most capable agents and highest effort for first-pass review of concurrency, locking, cross-version compatibility, and anything an attacker can reach; confirm rounds and small re-reviews warrant far less. `{manifest}` holds a default agent per role — name the tier per spawn when the round differs.

@@ -1,13 +1,15 @@
-use std::{fs, io::ErrorKind};
+use std::fs;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
-use crate::store;
+use crate::{util::current_dir_utf8, wake};
 
-use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
-use crate::wake;
+use super::{
+    meta::meta_path,
+    snapshot::{WorkerSnapshot, worker_snapshot},
+};
 
 pub(super) const UNLABELED_TASK_LABEL: &str = "-";
 const EMPTY_STATUS_PLACEHOLDER: &str = "-";
@@ -22,23 +24,20 @@ const UNREADABLE_METADATA: &str = "unreadable";
 const UNKNOWN_AGE: &str = "?";
 const CURSOR_FILE: &str = "status.cursor";
 
-struct LiveWorker {
-    id: String,
-    worker_dir: camino::Utf8PathBuf,
-    meta: Option<WorkerMeta>,
-    /// Present when `meta.json` exists but could not be parsed; the worker is otherwise unreachable.
-    read_error: Option<String>,
-}
-
+/// Renders the workspace's live workers.
+///
+/// Every fact comes from [`worker_snapshot`], which is also what the watcher reads: a listing that
+/// enumerated workers its own way would be a second answer to "which workers are live", and the
+/// two would drift.
 pub fn workers() -> Result<()> {
-    let workers = live_workers()?;
+    let workers = worker_snapshot(&current_dir_utf8()?)?;
     println!(
         "workers[{}]{{id,agent,task,age,window,wake,last_status}}:",
         workers.len()
     );
 
     let now = Utc::now();
-    for worker in workers {
+    for worker in &workers {
         if let Some(error) = &worker.read_error {
             eprintln!(
                 "worker {} metadata is unreadable; remove its directory to recover: {error}",
@@ -49,12 +48,11 @@ pub fn workers() -> Result<()> {
             Some(meta) => meta.agent.as_str(),
             None => UNREADABLE_METADATA,
         };
-        let task = worker_task_label(&worker);
-        let age = worker_age(&worker, now);
-        let window = worker_window_state(&worker);
-        let log = status_log(&worker)?;
-        let wake = worker_pending_wake(&worker, log.as_deref())?;
-        let status = worker_last_status(&worker, log.as_deref());
+        let task = worker_task_label(worker);
+        let age = worker_age(worker, now);
+        let window = worker_window_state(worker);
+        let wake = worker_pending_wake(worker)?;
+        let status = worker_last_status(worker);
         println!(
             "  {},{},{},{},{},{},{}",
             worker.id, agent, task, age, window, wake, status
@@ -64,30 +62,7 @@ pub fn workers() -> Result<()> {
     Ok(())
 }
 
-fn live_workers() -> Result<Vec<LiveWorker>> {
-    let mut workers = Vec::new();
-    for entry in store::resolve_worker_locations()? {
-        let meta_path = meta_path(&entry.worker_dir);
-        if !meta_path.exists() {
-            continue;
-        }
-        let (meta, read_error) = match read_meta_if_exists(&entry.worker_dir) {
-            Ok(Some(meta)) => (Some(meta), None),
-            Ok(None) => continue,
-            Err(err) => (None, Some(format!("{err:#}"))),
-        };
-        workers.push(LiveWorker {
-            id: entry.id,
-            worker_dir: entry.worker_dir,
-            meta,
-            read_error,
-        });
-    }
-    workers.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(workers)
-}
-
-fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
+fn worker_age(worker: &WorkerSnapshot, now: DateTime<Utc>) -> String {
     let started_at = match worker_started_at(worker) {
         Some(started_at) => started_at,
         None => return UNKNOWN_AGE.to_owned(),
@@ -105,13 +80,13 @@ fn worker_age(worker: &LiveWorker, now: DateTime<Utc>) -> String {
     }
 }
 
-fn worker_started_at(worker: &LiveWorker) -> Option<DateTime<Utc>> {
+fn worker_started_at(worker: &WorkerSnapshot) -> Option<DateTime<Utc>> {
     let meta = worker.meta.as_ref()?;
     meta.created_at
         .or_else(|| path_time(&meta_path(&worker.worker_dir)))
 }
 
-fn worker_task_label(worker: &LiveWorker) -> &str {
+fn worker_task_label(worker: &WorkerSnapshot) -> &str {
     match worker
         .meta
         .as_ref()
@@ -122,19 +97,19 @@ fn worker_task_label(worker: &LiveWorker) -> &str {
     }
 }
 
-fn worker_window_state(worker: &LiveWorker) -> String {
+fn worker_window_state(worker: &WorkerSnapshot) -> String {
     match worker.meta.as_ref() {
         Some(meta) => super::resolve::window_state(meta).to_string(),
         None => UNREADABLE_METADATA.to_owned(),
     }
 }
 
-fn worker_last_status(worker: &LiveWorker, log: Option<&str>) -> String {
+fn worker_last_status(worker: &WorkerSnapshot) -> String {
     if worker.meta.is_none() {
         return UNREADABLE_METADATA.to_owned();
     }
-    match log.and_then(last_status_line) {
-        Some(status) => status.to_owned(),
+    match worker.last_status_line() {
+        Some(status) => status,
         None => EMPTY_STATUS_PLACEHOLDER.to_owned(),
     }
 }
@@ -144,25 +119,24 @@ fn worker_last_status(worker: &LiveWorker, log: Option<&str>) -> String {
 /// `niles wait` records how far into the status log it has delivered, so everything past that
 /// cursor is owed. Only actionable lines count: a trailing `working:` line wakes nobody, and
 /// reporting it as pending would send the lead into a `wait` that blocks.
-fn worker_pending_wake(worker: &LiveWorker, log: Option<&str>) -> Result<String> {
+fn worker_pending_wake(worker: &WorkerSnapshot) -> Result<String> {
     if worker.meta.is_none() {
         return Ok(UNREADABLE_METADATA.to_owned());
     }
-    let Some(log) = log else {
+    let delivered = delivered_bytes(&worker.worker_dir)?;
+    let Some(undelivered) = worker.undelivered(delivered) else {
         return Ok(NO_PENDING_WAKE.to_owned());
     };
-    let delivered = delivered_bytes(&worker.worker_dir)?;
-    // A cursor that cannot slice this log — past its end, or mid-character in one that has been
-    // rewritten — describes a log `wait` will rescan from the start, so nothing is delivered.
-    let undelivered = match log.get(delivered..) {
-        Some(undelivered) => undelivered,
-        None => log,
-    };
-    Ok(if undelivered.lines().any(wake::is_actionable_wake) {
-        PENDING_WAKE.to_owned()
-    } else {
-        NO_PENDING_WAKE.to_owned()
-    })
+    Ok(
+        if String::from_utf8_lossy(undelivered)
+            .lines()
+            .any(wake::is_actionable_wake)
+        {
+            PENDING_WAKE.to_owned()
+        } else {
+            NO_PENDING_WAKE.to_owned()
+        },
+    )
 }
 
 /// How far `niles wait` has delivered into this worker's status log. No cursor means no wait has
@@ -171,7 +145,7 @@ fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
     let path = worker_dir.join(CURSOR_FILE);
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
     let body = body.trim();
@@ -191,17 +165,4 @@ fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
         .and_then(|metadata| metadata.modified())
         .ok()
         .map(DateTime::<Utc>::from)
-}
-
-fn status_log(worker: &LiveWorker) -> Result<Option<String>> {
-    let status_path = wake::status_log_path(&worker.worker_dir);
-    match fs::read_to_string(&status_path) {
-        Ok(body) => Ok(Some(body)),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).with_context(|| format!("failed to read {status_path}")),
-    }
-}
-
-fn last_status_line(log: &str) -> Option<&str> {
-    log.lines().rev().find(|line| !line.trim().is_empty())
 }
