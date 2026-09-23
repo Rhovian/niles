@@ -233,12 +233,31 @@ mod tests {
         DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
     }
 
+    /// The `--checkin` spellings, both directions: what the lead can write, and what `spawn` prints
+    /// back for the delay it armed. A bare number is minutes, and describes back as minutes —
+    /// `7m` — since that is the delay `spawn` actually armed.
     #[test]
-    fn a_bare_number_is_minutes_and_suffixes_are_seconds_minutes_hours() {
-        assert_eq!(parse_delay("90s").unwrap(), Some(Duration::from_secs(90)));
-        assert_eq!(parse_delay("5m").unwrap(), Some(Duration::from_secs(300)));
-        assert_eq!(parse_delay("1h").unwrap(), Some(Duration::from_secs(3600)));
-        assert_eq!(parse_delay("7").unwrap(), Some(Duration::from_secs(420)));
+    fn the_checkin_spellings_parse_and_the_armed_delay_prints_back() {
+        for (written, delay) in [
+            ("90s", Duration::from_secs(90)),
+            ("5m", Duration::from_secs(300)),
+            ("1h", Duration::from_secs(3600)),
+            ("7", Duration::from_secs(420)),
+        ] {
+            assert_eq!(
+                parse_delay(written).unwrap(),
+                Some(delay),
+                "--checkin {written}"
+            );
+        }
+
+        for (delay, printed) in [
+            (Duration::from_secs(90), "90s"),
+            (Duration::from_secs(300), "5m"),
+            (Duration::from_secs(3600), "1h"),
+        ] {
+            assert_eq!(describe_delay(delay), printed, "{}s armed", delay.as_secs());
+        }
     }
 
     #[test]
@@ -255,13 +274,6 @@ mod tests {
         for value in ["", "5x", "m", "-5", "1.5m", "99999h"] {
             assert!(parse_delay(value).is_err(), "{value} should not parse");
         }
-    }
-
-    #[test]
-    fn describe_delay_round_trips_the_spellings_spawn_prints() {
-        assert_eq!(describe_delay(Duration::from_secs(300)), "5m");
-        assert_eq!(describe_delay(Duration::from_secs(3600)), "1h");
-        assert_eq!(describe_delay(Duration::from_secs(90)), "90s");
     }
 
     #[test]

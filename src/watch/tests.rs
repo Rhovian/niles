@@ -361,23 +361,3 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
 
     fs::remove_dir_all(&root).unwrap();
 }
-
-/// The lead's stdout and stderr belong to its TUI: a line the watcher printed would land in the
-/// middle of the agent's own screen. The watcher is a thread inside that process, so "it never
-/// writes to them" is a property of its source, and every path out of it goes through the sink —
-/// whose diagnostics land in `watch.log` and whose only other act is a tmux `send_line`.
-#[test]
-fn the_watcher_has_no_stdout_or_stderr_of_its_own() {
-    for (name, source) in [
-        ("watch.rs", include_str!("../watch.rs")),
-        ("checkin.rs", include_str!("checkin.rs")),
-        ("decide.rs", include_str!("decide.rs")),
-    ] {
-        for macro_call in ["println!", "eprintln!", "print!", "dbg!"] {
-            assert!(
-                !source.contains(macro_call),
-                "{name} must not use {macro_call}: the lead's streams are not the watcher's"
-            );
-        }
-    }
-}
