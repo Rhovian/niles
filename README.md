@@ -146,11 +146,13 @@ starts no thread and behaves exactly as it did before.
 
 Check-ins are armed by the lead, never by the worker. `niles spawn` and `niles send` arm one at 5
 minutes; `--checkin 90s`, `--checkin 5m`, `--checkin 1h` or a bare number of minutes sets another
-delay, and `--checkin 0`/`--checkin off` arms none. An actionable line written after the moment of
-arming disarms it, and `niles quiet <id>` disarms one by hand — for a worker that is idle on
-purpose. A check-in that comes due with no report nudges and re-arms three minutes later, repeating
-until someone looks. A `working:` line never disarms a check-in and never nudges: a worker looping
-on progress notes cannot buy itself silence.
+delay, and `--checkin 0`/`--checkin off` arms none and takes back one that is armed. The baseline
+each check-in measures against is the worker's status log as it stood *before* the dispatch, so a
+line written while the message is being typed still answers the assignment it belongs to. An
+actionable line written after the moment of arming disarms it, and `niles quiet <id>` disarms one by
+hand — for a worker that is idle on purpose. A check-in that comes due with no report nudges and
+re-arms three minutes later, repeating until someone looks. A `working:` line never disarms a
+check-in and never nudges: a worker looping on progress notes cannot buy itself silence.
 
 ## Roles
 

@@ -21,6 +21,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -41,7 +42,7 @@ mod decide;
 mod tests;
 
 use checkin::Checkin;
-use decide::{Commit, Plan, WatchMemory};
+use decide::{Commit, Nudge, Plan, WatchMemory};
 
 pub(crate) use checkin::{describe_delay, resolve_delay};
 
@@ -51,6 +52,14 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The tick is slept in slices so stopping the watcher does not wait out a whole one.
 const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How long dropping the watcher waits for the thread.
+///
+/// A tick can be inside a `send_line` that is waiting on the lead's pane to redraw — up to its
+/// settle plus submit timeouts — and the lead's exit must not queue behind tmux. One send in flight
+/// is given its full time to land, so a nudge is not abandoned half-typed; past that, an exit that
+/// waits is worse than a nudge that is collected from the state on disk next session.
+const EXIT_JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 const WATCH_LOG: &str = "watch.log";
 
@@ -73,9 +82,17 @@ impl Watcher {
 
     fn stop_and_join(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        // The wait is bounded by handing the join to a thread nobody keeps: `join` itself has no
+        // timeout, and a watcher wedged in tmux would otherwise hold the lead's exit forever.
+        let (joined, waiter) = mpsc::channel();
+        thread::spawn(move || {
             let _ = handle.join();
-        }
+            let _ = joined.send(());
+        });
+        let _ = waiter.recv_timeout(EXIT_JOIN_TIMEOUT);
     }
 }
 
@@ -135,16 +152,25 @@ pub(crate) fn start(
 
 /// Arms a worker's check-in, as `spawn` and `send` do: the lead is the only one who arms one.
 ///
+/// `armed_len` is the status log's length *before* the work was dispatched — the caller reads it
+/// before the message is typed or the window launched, because a line written while that happens is
+/// the worker answering this assignment, and a length read afterwards would fold it into the
+/// baseline and leave it unable to answer anything.
+///
 /// Returns the delay armed, or `None` when `--checkin 0`/`off` asked for no check-in at all.
 pub(crate) fn arm_checkin(
     worker_dir: &Utf8Path,
     flag: Option<&str>,
+    armed_len: u64,
     now: DateTime<Utc>,
 ) -> Result<Option<Duration>> {
     let Some(delay) = resolve_delay(flag)? else {
+        // `off`/`0` asks for no check-in and has to mean it: leaving the previous one armed would
+        // make the `checkin: off` the lead was just printed a lie.
+        Checkin::disarm(worker_dir)?;
         return Ok(None);
     };
-    Checkin::armed(delay, worker::status_log_len(worker_dir)?, now).write(worker_dir)?;
+    Checkin::armed(delay, armed_len, now).write(worker_dir)?;
     Ok(Some(delay))
 }
 
@@ -175,7 +201,7 @@ fn watch(workspace: Utf8PathBuf, log: WatchLog, pane: String, stop: Arc<AtomicBo
     ));
 
     while !stop.load(Ordering::Relaxed) {
-        tick(&workspace, Utc::now(), &mut memory, &mut sink);
+        tick(&workspace, Utc::now(), &mut memory, &mut sink, &stop);
         sleep_until_next_tick(&stop);
     }
     sink.note("watcher stopped: the foreground agent exited");
@@ -192,7 +218,13 @@ fn sleep_until_next_tick(stop: &AtomicBool) {
 }
 
 /// One pass: read the workspace, decide, deliver what the decision asked for.
-fn tick(workspace: &Utf8Path, now: DateTime<Utc>, memory: &mut WatchMemory, sink: &mut dyn Sink) {
+fn tick(
+    workspace: &Utf8Path,
+    now: DateTime<Utc>,
+    memory: &mut WatchMemory,
+    sink: &mut dyn Sink,
+    stop: &AtomicBool,
+) {
     let snapshot = match worker_snapshot(workspace) {
         Ok(snapshot) => snapshot,
         Err(err) => {
@@ -204,33 +236,54 @@ fn tick(workspace: &Utf8Path, now: DateTime<Utc>, memory: &mut WatchMemory, sink
     };
     let checkins = read_checkins(&snapshot, sink);
     let plan = memory.plan(&snapshot, &checkins, now);
-    apply(&plan, memory, sink);
+    apply(&plan, memory, sink, stop);
 }
 
-fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink) {
-    for (id, worker_dir) in &plan.disarms {
-        match Checkin::disarm(worker_dir) {
-            Ok(true) => sink.note(&format!("check-in disarmed: {id} answered it")),
-            // Already gone: `niles quiet` got there first, or the worker reported twice.
-            Ok(false) => {}
-            Err(err) => sink.note(&format!("failed to disarm the check-in for {id}: {err:#}")),
+/// Delivers a plan, one nudge at a time.
+///
+/// Every file this touches is re-read first: a tick spends seconds inside `send_line`, and anything
+/// armed or answered in that window is newer than the plan and is left for the next tick to judge.
+/// Nothing here is worth losing — a lost nudge costs a look.
+fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &AtomicBool) {
+    for disarm in &plan.disarms {
+        let planned = disarm.planned;
+        match Checkin::read(&disarm.worker_dir) {
+            Ok(Some(current)) if current == planned => match Checkin::disarm(&disarm.worker_dir) {
+                Ok(true) => sink.note(&format!("check-in disarmed: {} answered it", disarm.id)),
+                // Already gone: `niles quiet` got there first, or the worker reported twice.
+                Ok(false) => {}
+                Err(err) => sink.note(&format!(
+                    "failed to disarm the check-in for {}: {err:#}",
+                    disarm.id
+                )),
+            },
+            Ok(Some(current)) => sink.note(&format!(
+                "left the check-in for {} alone: it was re-armed while this tick was delivering \
+                 (armed_len {} where this tick planned on {})",
+                disarm.id, current.armed_len, planned.armed_len
+            )),
+            Ok(None) => {}
+            Err(err) => sink.note(&format!(
+                "failed to re-read the check-in for {}: {err:#}",
+                disarm.id
+            )),
         }
     }
 
     for nudge in &plan.nudges {
+        // The lead is exiting. What is left of the plan stays undelivered and uncommitted, and the
+        // state it described is still on disk for the next session.
+        if stop.load(Ordering::Relaxed) {
+            sink.note("the foreground agent is exiting: the rest of this plan waits for next time");
+            return;
+        }
         match sink.nudge(&nudge.text) {
             Ok(()) => {
                 // Only a delivered nudge moves the state forward: this is the whole retry
                 // mechanism, and it is why a failure here is not an error.
                 memory.commit(nudge);
-                if let Commit::Checkin(next) = &nudge.commit
-                    && let Err(err) = next.write(&nudge.worker_dir)
-                {
-                    sink.note(&format!(
-                        "the check-in for {} is still armed at its old deadline, so it fires \
-                         again: {err:#}",
-                        nudge.id
-                    ));
+                if let Commit::Checkin { planned, next } = &nudge.commit {
+                    rearm(nudge, planned, next, sink);
                 }
                 sink.note(&format!("nudged {}: {}", nudge.id, nudge.text));
             }
@@ -239,6 +292,34 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink) {
                 nudge.id
             )),
         }
+    }
+}
+
+/// Writes the next check-in, but only over the state this tick planned on.
+fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) {
+    let worker_dir = &nudge.worker_dir;
+    match Checkin::read(worker_dir) {
+        Ok(Some(current)) if current == *planned => {
+            if let Err(err) = next.write(worker_dir) {
+                sink.note(&format!(
+                    "the check-in for {} is still armed at its old deadline, so it fires again: \
+                     {err:#}",
+                    nudge.id
+                ));
+            }
+        }
+        // A check-in armed while the nudge was being typed is about work this tick has not seen:
+        // overwriting it would schedule the newer assignment by the older one's clock.
+        Ok(Some(current)) => sink.note(&format!(
+            "left the check-in for {} alone: it was re-armed while this tick was delivering \
+             (armed_len {} where this tick planned on {})",
+            nudge.id, current.armed_len, planned.armed_len
+        )),
+        Ok(None) => {}
+        Err(err) => sink.note(&format!(
+            "failed to re-read the check-in for {}: {err:#}",
+            nudge.id
+        )),
     }
 }
 

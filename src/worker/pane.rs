@@ -48,10 +48,14 @@ pub fn send(
         eprintln!("skipped unconsumed wake: {line}");
     }
 
+    let dir = worker_dir(&id)?;
+    // Read before the message is typed: a report that lands while the send is in flight is the
+    // worker answering this assignment, and a baseline taken afterwards would swallow it.
+    let armed_len = crate::worker::status_log_len(&dir)?;
     target.send(&message)?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
-    let armed = watch::arm_checkin(&worker_dir(&id)?, checkin.as_deref(), Utc::now())?;
+    let armed = watch::arm_checkin(&dir, checkin.as_deref(), armed_len, Utc::now())?;
 
     println!("sent: {id}");
     match armed {

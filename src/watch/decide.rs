@@ -24,7 +24,19 @@ use super::checkin::Checkin;
 pub(crate) struct Plan {
     pub(crate) nudges: Vec<Nudge>,
     /// Check-ins the worker has answered: the arm state goes, and a fresh assignment arms its own.
-    pub(crate) disarms: Vec<(String, Utf8PathBuf)>,
+    pub(crate) disarms: Vec<Disarm>,
+}
+
+/// A check-in the worker answered, and the state it was read from.
+///
+/// The planned state travels with the decision because the tick re-reads the file before deleting
+/// it: a tick spends seconds inside `send_line`, and an assignment armed in that window must not be
+/// thrown away along with the one it planned over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Disarm {
+    pub(crate) id: String,
+    pub(crate) worker_dir: Utf8PathBuf,
+    pub(crate) planned: Checkin,
 }
 
 /// One line to type into the lead's pane, and what to record once it has landed.
@@ -44,8 +56,8 @@ pub(crate) struct Nudge {
 pub(crate) enum Commit {
     /// Everything up to this log length has been reported; the next report is a later line.
     Seen(u64),
-    /// This check-in landed; here is the next one.
-    Checkin(Checkin),
+    /// This check-in landed: `next` replaces `planned`, if `planned` is still what is on disk.
+    Checkin { planned: Checkin, next: Checkin },
 }
 
 /// What the thread remembers between ticks.
@@ -95,14 +107,19 @@ impl WatchMemory {
 
             if let Some(checkin) = checkins.get(&worker.id) {
                 match worker.last_actionable {
-                    Some(wake) if checkin.answered_by(wake) => plan
-                        .disarms
-                        .push((worker.id.clone(), worker.worker_dir.clone())),
+                    Some(wake) if checkin.answered_by(wake) => plan.disarms.push(Disarm {
+                        id: worker.id.clone(),
+                        worker_dir: worker.worker_dir.clone(),
+                        planned: *checkin,
+                    }),
                     _ if now >= checkin.deadline => plan.nudges.push(Nudge {
                         id: worker.id.clone(),
                         worker_dir: worker.worker_dir.clone(),
                         text: no_report_text(&worker.id, checkin.minutes()),
-                        commit: Commit::Checkin(checkin.rearmed(now)),
+                        commit: Commit::Checkin {
+                            planned: *checkin,
+                            next: checkin.rearmed(now),
+                        },
                     }),
                     _ => {}
                 }
@@ -200,7 +217,7 @@ mod tests {
         );
         // The worker answered the assignment, so the check-in goes with it.
         assert_eq!(plan.disarms.len(), 1);
-        assert_eq!(plan.disarms[0].0, "impl");
+        assert_eq!(plan.disarms[0].id, "impl");
 
         // Nothing has changed since: the same state is not nudged again.
         memory.commit(&plan.nudges[0]);
@@ -295,7 +312,7 @@ mod tests {
             // from firing the same check-in again.
             let nudge = plan.nudges[0].clone();
             memory.commit(&nudge);
-            let Commit::Checkin(next) = nudge.commit else {
+            let Commit::Checkin { next, .. } = nudge.commit else {
                 panic!("a check-in nudge must carry its re-arm");
             };
             assert_eq!(next.minutes(), minutes + 3);

@@ -31,6 +31,10 @@ const MAX_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 const CHECKIN_FILE: &str = "checkin";
 
+/// Where a check-in is written before it is renamed into place. Never read: a leftover one is a
+/// write that never landed, and the next write overwrites it.
+const STAGING_FILE: &str = "checkin.tmp";
+
 /// One worker's check-in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Checkin {
@@ -123,6 +127,9 @@ impl Checkin {
         }
     }
 
+    /// Written beside the target and renamed over it, rather than truncated in place: a crash
+    /// mid-write would otherwise leave a file that no longer parses, and an unreadable check-in is
+    /// silently skipped by every later tick — the feature would be off for this worker for good.
     pub(crate) fn write(&self, worker_dir: &Utf8Path) -> Result<()> {
         let path = worker_dir.join(CHECKIN_FILE);
         let body = format!(
@@ -131,7 +138,9 @@ impl Checkin {
             self.step,
             self.armed_len
         );
-        fs::write(&path, body).with_context(|| format!("failed to write {path}"))
+        let staging = worker_dir.join(STAGING_FILE);
+        fs::write(&staging, body).with_context(|| format!("failed to write {staging}"))?;
+        fs::rename(&staging, &path).with_context(|| format!("failed to replace {path}"))
     }
 
     /// Deletes the arm state. `Ok(false)` when there was none — a worker that disarms twice (it
@@ -211,6 +220,8 @@ fn parse_delay(value: &str) -> Result<Option<Duration>> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
     use super::*;
 
     fn temp_dir(label: &str) -> camino::Utf8PathBuf {
@@ -305,6 +316,36 @@ mod tests {
         assert_eq!(Checkin::read(&dir).unwrap(), None);
         // Nothing to delete is a disarm that already happened, not a failure.
         assert!(!Checkin::disarm(&dir).unwrap());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_write_replaces_the_file_whole_and_leaves_no_staging_file() {
+        let dir = temp_dir("staging");
+        fs::create_dir_all(&dir).unwrap();
+        Checkin::armed(Duration::from_secs(300), 3, at(1_000))
+            .write(&dir)
+            .unwrap();
+        let replacement = Checkin::armed(Duration::from_secs(90), 7, at(2_000));
+        let path = dir.join(CHECKIN_FILE);
+        let before = fs::metadata(&path).unwrap().ino();
+
+        replacement.write(&dir).unwrap();
+
+        // Written beside the file and renamed over it, so a reader never sees half of either check-in.
+        // The inode moving is what says it was replaced rather than truncated in place.
+        assert_ne!(
+            fs::metadata(&path).unwrap().ino(),
+            before,
+            "the check-in must be replaced, not truncated in place"
+        );
+        assert_eq!(Checkin::read(&dir).unwrap(), Some(replacement));
+        assert!(!dir.join(STAGING_FILE).exists());
+
+        // A staging file a crashed write left behind is not arm state, and the real file still reads.
+        fs::write(dir.join(STAGING_FILE), "deadline=half-a-write").unwrap();
+        assert_eq!(Checkin::read(&dir).unwrap(), Some(replacement));
 
         fs::remove_dir_all(&dir).unwrap();
     }

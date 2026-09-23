@@ -1,4 +1,4 @@
-use std::{fs, time::Duration};
+use std::{fs, sync::atomic::AtomicBool, time::Duration};
 
 use anyhow::{Result, bail};
 use camino::Utf8PathBuf;
@@ -6,7 +6,12 @@ use chrono::{DateTime, Utc};
 
 use crate::worker::worker_snapshot;
 
-use super::{Sink, WatchMemory, arm_checkin, checkin::Checkin, quiet, tick};
+use super::{Sink, WatchMemory, apply, arm_checkin, checkin::Checkin, quiet, read_checkins, tick};
+
+/// A watcher that is still running: what every tick test but the stopping one wants.
+fn running() -> AtomicBool {
+    AtomicBool::new(false)
+}
 
 /// A sink that records what the watcher asked of it, so a tick can be driven without tmux.
 #[derive(Debug, Default)]
@@ -91,12 +96,12 @@ fn a_failed_nudge_is_retried_on_the_next_tick() {
         fail: true,
         ..RecordingSink::default()
     };
-    tick(&root, now, &mut memory, &mut failing);
+    tick(&root, now, &mut memory, &mut failing, &running());
     assert_eq!(failing.attempts.len(), 1);
     assert!(failing.sent.is_empty(), "a failed nudge is not a nudge");
 
     let mut working = RecordingSink::default();
-    tick(&root, at(1001), &mut memory, &mut working);
+    tick(&root, at(1001), &mut memory, &mut working, &running());
     assert_eq!(
         working.sent,
         vec!["niles: impl reported (done) — check workers"]
@@ -104,7 +109,7 @@ fn a_failed_nudge_is_retried_on_the_next_tick() {
 
     // The report has been handed over, so the third tick has nothing to say about it.
     let mut quiet_tick = RecordingSink::default();
-    tick(&root, at(1002), &mut memory, &mut quiet_tick);
+    tick(&root, at(1002), &mut memory, &mut quiet_tick, &running());
     assert!(quiet_tick.attempts.is_empty(), "{quiet_tick:?}");
 
     fs::remove_dir_all(&root).unwrap();
@@ -123,7 +128,7 @@ fn the_tick_deletes_the_arm_state_when_the_worker_answers() {
     append_log(&root, "impl", DONE);
 
     let mut sink = RecordingSink::default();
-    tick(&root, at(1060), &mut memory, &mut sink);
+    tick(&root, at(1060), &mut memory, &mut sink, &running());
 
     assert!(!dir.join("checkin").exists(), "the arm state must go");
     assert_eq!(
@@ -146,7 +151,7 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
 
     let mut sink = RecordingSink::default();
-    tick(&root, at(1300), &mut memory, &mut sink);
+    tick(&root, at(1300), &mut memory, &mut sink, &running());
 
     assert_eq!(
         sink.sent,
@@ -159,7 +164,7 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     assert_eq!(rearmed.minutes(), 8);
 
     let mut next = RecordingSink::default();
-    tick(&root, at(1301), &mut memory, &mut next);
+    tick(&root, at(1301), &mut memory, &mut next, &running());
     assert!(next.attempts.is_empty(), "{next:?}");
 
     fs::remove_dir_all(&root).unwrap();
@@ -180,7 +185,7 @@ fn a_failed_check_in_nudge_leaves_the_check_in_armed_and_overdue() {
         fail: true,
         ..RecordingSink::default()
     };
-    tick(&root, at(1300), &mut memory, &mut failing);
+    tick(&root, at(1300), &mut memory, &mut failing, &running());
 
     assert_eq!(Checkin::read(&dir).unwrap().unwrap().deadline, at(1_300));
 
@@ -192,17 +197,24 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     let root = workspace("arm-quiet");
     write_worker(&root, "impl", &format!("{WINDOW}{DONE}"));
     let dir = worker_dir(&root, "impl");
+    let baseline = (WINDOW.len() + DONE.len()) as u64;
 
-    let armed = arm_checkin(&dir, Some("90s"), at(1_000)).unwrap();
+    let armed = arm_checkin(&dir, Some("90s"), baseline, at(1_000)).unwrap();
 
-    assert_eq!(armed, Some(std::time::Duration::from_secs(90)));
+    assert_eq!(armed, Some(Duration::from_secs(90)));
     let checkin = Checkin::read(&dir).unwrap().unwrap();
-    assert_eq!(checkin.armed_len, (WINDOW.len() + DONE.len()) as u64);
+    // The length the caller read before dispatching, not one read here: that is what lets a report
+    // landing in the meantime answer the assignment it belongs to.
+    assert_eq!(checkin.armed_len, baseline);
     assert_eq!(checkin.deadline, at(1_090));
 
-    // `--checkin 0`/`off` is no check-in: nothing is armed, and nothing already armed is touched.
-    assert_eq!(arm_checkin(&dir, Some("off"), at(1_000)).unwrap(), None);
-    assert_eq!(Checkin::read(&dir).unwrap().unwrap().deadline, at(1_090));
+    // `--checkin off` is no check-in, and it takes an armed one with it rather than leaving the
+    // lead with a printed `checkin: off` over a live deadline.
+    assert_eq!(
+        arm_checkin(&dir, Some("off"), baseline, at(1_000)).unwrap(),
+        None
+    );
+    assert_eq!(Checkin::read(&dir).unwrap(), None);
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -251,6 +263,110 @@ fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
 
     fs::remove_dir_all(&root).unwrap();
     fs::remove_dir_all(&session).unwrap();
+}
+
+/// A lead that is exiting does not wait for the plan: anything not yet typed stays untyped and
+/// uncommitted, and the state it described is still on disk for next time.
+#[test]
+fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
+    let root = workspace("stopping");
+    write_worker(&root, "impl", WINDOW);
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    append_log(&root, "impl", DONE);
+
+    let stop = AtomicBool::new(true);
+    let mut stopping = RecordingSink::default();
+    tick(&root, at(1_000), &mut memory, &mut stopping, &stop);
+    assert!(stopping.attempts.is_empty(), "{stopping:?}");
+
+    // Nothing was recorded as delivered, so the next watcher picks the report up.
+    let mut later = RecordingSink::default();
+    tick(&root, at(1_001), &mut memory, &mut later, &running());
+    assert_eq!(
+        later.sent,
+        vec!["niles: impl reported (done) — check workers"]
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A tick reads the check-in it judges, spends seconds typing the nudge, and only then touches the
+/// file. An assignment armed in that window belongs to work the tick has not seen: deleting it
+/// would leave the fresh assignment with no check-in at all, silently.
+#[test]
+fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
+    let root = workspace("re-read-disarm");
+    write_worker(&root, "impl", WINDOW);
+    let dir = worker_dir(&root, "impl");
+    Checkin::armed(Duration::from_secs(300), 0, at(1_000))
+        .write(&dir)
+        .unwrap();
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    append_log(&root, "impl", DONE);
+
+    let snapshot = worker_snapshot(&root).unwrap();
+    let mut sink = RecordingSink::default();
+    let checkins = read_checkins(&snapshot, &mut sink);
+    let plan = memory.plan(&snapshot, &checkins, at(1_060));
+    assert_eq!(
+        plan.disarms.len(),
+        1,
+        "the report answers the armed check-in"
+    );
+
+    // The lead dispatches again while the tick is still delivering.
+    let fresh = Checkin::armed(
+        Duration::from_secs(300),
+        (WINDOW.len() + DONE.len()) as u64,
+        at(1_060),
+    );
+    fresh.write(&dir).unwrap();
+
+    apply(&plan, &mut memory, &mut sink, &running());
+
+    assert_eq!(
+        Checkin::read(&dir).unwrap(),
+        Some(fresh),
+        "the newer assignment must keep its check-in"
+    );
+    assert!(
+        sink.notes
+            .iter()
+            .any(|note| note.contains("left the check-in for impl alone")),
+        "{sink:?}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// The same window, on the re-arm path: a fired check-in is rewritten at +3 minutes only if it is
+/// still the one this tick planned over, or the newer assignment would be scheduled by the older
+/// one's clock.
+#[test]
+fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
+    let root = workspace("re-read-rearm");
+    write_worker(&root, "impl", WINDOW);
+    let dir = worker_dir(&root, "impl");
+    Checkin::armed(Duration::from_secs(300), 0, at(1_000))
+        .write(&dir)
+        .unwrap();
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+
+    let snapshot = worker_snapshot(&root).unwrap();
+    let mut sink = RecordingSink::default();
+    let checkins = read_checkins(&snapshot, &mut sink);
+    let plan = memory.plan(&snapshot, &checkins, at(1_300));
+    assert_eq!(plan.nudges.len(), 1, "the check-in is due");
+
+    // Re-armed in the middle of the nudge, because the worker reported and was dispatched again.
+    let fresh = Checkin::armed(Duration::from_secs(300), WINDOW.len() as u64, at(1_300));
+    fresh.write(&dir).unwrap();
+
+    apply(&plan, &mut memory, &mut sink, &running());
+
+    assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
+
+    fs::remove_dir_all(&root).unwrap();
 }
 
 /// The lead's stdout and stderr belong to its TUI: a line the watcher printed would land in the

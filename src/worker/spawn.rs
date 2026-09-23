@@ -19,6 +19,7 @@ use super::{
     meta::{WorkerMeta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
     role::WorkerRole,
+    snapshot::status_log_len,
     validation::{validate_id, validate_task_label},
 };
 
@@ -85,6 +86,9 @@ pub fn spawn(
         .with_context(|| format!("failed to create {status_path}"))?;
 
     let window_name = agent_window::worker_window_name(&id);
+    // The status log exists and is empty; read it as the check-in baseline *before* the window is
+    // launched, so a line the worker writes on its way up can still answer this dispatch.
+    let armed_len = status_log_len(&dir)?;
     let target = match spawn_worker_window(
         &session,
         &window_name,
@@ -135,7 +139,7 @@ pub fn spawn(
 
     // The lead arms the check-in and is the only one who does: a worker can disarm it by
     // reporting, never by staying quiet about it.
-    let armed = watch::arm_checkin(&dir, checkin.as_deref(), Utc::now())?;
+    let armed = watch::arm_checkin(&dir, checkin.as_deref(), armed_len, Utc::now())?;
 
     println!("spawned: {id}");
     println!("window: {window_name}");

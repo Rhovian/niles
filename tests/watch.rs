@@ -33,6 +33,11 @@ case "$1" in
     printf 'tmux chatter on a call nobody reads\n'
     if [ "$4" = "-l" ]; then
       printf 'composer: %s\n' "$5" >> "$TMUX_PANE_FILE"
+      # A worker that reports while the message is still being typed, which is the window between
+      # reading the check-in baseline and arming it.
+      if [ -n "${TMUX_WORKER_STATUS:-}" ]; then
+        printf 'done: reported while the send was in flight\n' >> "$TMUX_WORKER_STATUS"
+      fi
     else
       printf 'submitted\n' >> "$TMUX_PANE_FILE"
     fi
@@ -91,6 +96,8 @@ impl Fixture {
             .env("TMUX_PANE_FILE", &self.pane_file)
             .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .env("TMUX_PANE", "%9")
+            // Where the stub tmux writes the report that lands mid-send.
+            .env("TMUX_WORKER_STATUS", self.status_log("impl"))
             .output()
             .unwrap()
     }
@@ -104,6 +111,13 @@ impl Fixture {
 
     fn checkin(&self, id: &str) -> String {
         fs::read_to_string(self.checkin_path(id)).unwrap()
+    }
+
+    fn status_log(&self, id: &str) -> PathBuf {
+        self.workspace
+            .join(".niles/worker")
+            .join(id)
+            .join("status.log")
     }
 }
 
@@ -223,6 +237,62 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     assert_command_success("spawn --checkin off", &off);
     assert!(stdout(&off).contains("checkin: off"), "{}", stdout(&off));
     assert!(!fixture.checkin_path("docs").exists());
+
+    fs::remove_dir_all(&fixture.workspace).unwrap();
+}
+
+/// The baseline a check-in is armed with has to be read *before* the message is typed. A report
+/// that lands in the send is the worker answering this assignment; a baseline taken afterwards
+/// would fold that line into the arithmetic and leave nothing able to answer it.
+///
+/// The stub tmux writes that report on the paste, which is exactly the window in question.
+#[test]
+fn a_report_during_the_send_still_answers_the_assignment_it_belongs_to() {
+    let fixture = fixture("niles-watch-race");
+    let spawn = fixture.niles(&["spawn", "impl", "--agent", "claude", "Fix", "auth"]);
+    assert_command_success("spawn", &spawn);
+    let status = fixture.status_log("impl");
+    fs::write(&status, "working: launch\n").unwrap();
+    let baseline = fs::read_to_string(&status).unwrap().len();
+
+    let send = fixture.niles(&["send", "impl", "carry on"]);
+    assert_command_success("send", &send);
+
+    // The report did land while the send was in flight, and it is past the baseline.
+    let body = fs::read_to_string(&status).unwrap();
+    assert!(
+        body.contains("done: reported while the send was in flight"),
+        "{body}"
+    );
+    assert!(body.len() > baseline, "{body}");
+
+    // So the armed length is the pre-send one, and that line can answer the assignment that caused
+    // it. Read after the send it would be the longer length, and the report would answer nothing.
+    let checkin = fixture.checkin("impl");
+    assert!(
+        checkin.contains(&format!("armed_len={baseline}")),
+        "armed_len must be the length read before the send ({baseline} bytes): {checkin}"
+    );
+
+    fs::remove_dir_all(&fixture.workspace).unwrap();
+}
+
+/// `--checkin off` has to mean off: a printed `checkin: off` over a check-in that is still armed
+/// and due would be a lie the lead acts on.
+#[test]
+fn asking_for_no_check_in_takes_an_armed_one_with_it() {
+    let fixture = fixture("niles-watch-off");
+    let spawn = fixture.niles(&["spawn", "impl", "--agent", "claude", "Fix", "auth"]);
+    assert_command_success("spawn", &spawn);
+    assert!(fixture.checkin_path("impl").exists());
+
+    let off = fixture.niles(&["send", "impl", "--checkin", "off", "never mind"]);
+    assert_command_success("send --checkin off", &off);
+    assert!(stdout(&off).contains("checkin: off"), "{}", stdout(&off));
+    assert!(
+        !fixture.checkin_path("impl").exists(),
+        "the armed deadline must go with the printed `checkin: off`"
+    );
 
     fs::remove_dir_all(&fixture.workspace).unwrap();
 }
