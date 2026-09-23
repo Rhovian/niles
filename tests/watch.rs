@@ -140,8 +140,9 @@ impl Fixture {
     }
 }
 
-/// Each test gets its own workspace, and the fixture takes it away again: a run that passes leaves
-/// nothing in the temp directory, and the label names whatever a failing one left behind.
+/// Each test gets its own workspace, and the fixture takes it away again when it goes out of
+/// scope. That is every run, a failing one included: the drop runs while the test unwinds, so the
+/// temp directory keeps nothing but what a killed process left behind.
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.workspace);
