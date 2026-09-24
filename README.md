@@ -196,6 +196,10 @@ brief has its own binding — a security pass is commissioned rarely, but the ti
 it runs at is a workspace decision rather than something the lead has to
 remember per spawn.
 
+`niles spawn` uses the binding for `--role` (default: `worker`). An explicit
+`--agent` overrides it. Without `--agent`, a missing manifest or role binding is
+an error.
+
 Bindings accept built-in agent families and agents from project config; unknown
 bare agent names are rejected.
 

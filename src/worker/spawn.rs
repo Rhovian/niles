@@ -10,7 +10,7 @@ use crate::{
     store,
     tmux::{self, WindowTarget},
     util::{absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists, render_template},
-    wake, watch,
+    wake, watch, workspace_manifest,
 };
 
 use super::{
@@ -27,7 +27,7 @@ pub fn spawn(
     id: String,
     role: WorkerRole,
     task_label: Option<String>,
-    agent: String,
+    agent: Option<String>,
     brief: Option<Utf8PathBuf>,
     task: Vec<String>,
     checkin: Option<String>,
@@ -41,6 +41,7 @@ pub fn spawn(
     }
 
     let project = current_dir_utf8()?;
+    let agent = resolve_agent(&project, role, agent)?;
     let config = load_project_config_from(&project)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
@@ -169,6 +170,35 @@ pub fn spawn(
 
     Ok(())
 }
+
+fn resolve_agent(project: &Utf8Path, role: WorkerRole, agent: Option<String>) -> Result<String> {
+    if let Some(agent) = agent {
+        return Ok(agent);
+    }
+
+    let path = workspace_manifest::manifest_path(project);
+    let role_name = role.as_str();
+    let manifest = workspace_manifest::load(project)
+        .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?
+        .with_context(|| {
+            format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest")
+        })?;
+    let agent = match role {
+        WorkerRole::Worker => manifest.worker,
+        WorkerRole::Reviewer => manifest.reviewer,
+        WorkerRole::Security => manifest.security,
+    };
+    if agent.trim().is_empty() {
+        bail!(
+            "no agent configured for role '{role_name}' in manifest {path}; specify --agent or configure the role"
+        );
+    }
+    Ok(agent)
+}
+
+#[cfg(test)]
+#[path = "spawn_tests.rs"]
+mod tests;
 
 fn spawn_worker_window(
     session: &tmux::SessionName,

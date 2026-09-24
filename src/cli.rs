@@ -91,9 +91,9 @@ pub enum CommandName {
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,
-        /// Agent id to launch.
-        #[arg(short, long, default_value = "codex")]
-        agent: String,
+        /// Agent id to launch; defaults to this role's workspace manifest binding.
+        #[arg(short, long)]
+        agent: Option<String>,
         /// Existing brief file to pass to the worker.
         #[arg(long)]
         brief: Option<Utf8PathBuf>,
