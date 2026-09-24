@@ -127,6 +127,33 @@ line, so each actionable line is returned exactly once. Concurrent waits on one
 worker are serialised by an advisory lock on that cursor rather than rejected:
 one is handed the line, the other keeps waiting.
 
+## Nudges and Check-ins
+
+Niles is what moves an idle lead. The foreground `niles` process runs a watcher thread for as long
+as the lead does, and it types one line into the lead's own pane when there is something to look at:
+
+```
+niles: impl reported (done) — check workers
+niles: no report from impl in 5m — check it
+```
+
+A nudge is state, not an event: it says where things stand and carries no status-line content, so
+`niles wait` stays the only consumer of the wake cursor and a nudge that is lost, doubled or read
+twice costs a look. The thread never writes to the lead's stdout or stderr — they belong to the
+lead's TUI — and records what it did in `.niles/sessions/<id>/watch.log`. The pane it types into is
+the one recorded in `session.json` at startup: a session with no pane (niles run outside tmux)
+starts no thread and behaves exactly as it did before.
+
+Check-ins are armed by the lead, never by the worker. `niles spawn` and `niles send` arm one at 5
+minutes; `--checkin 90s`, `--checkin 5m`, `--checkin 1h` or a bare number of minutes sets another
+delay, and `--checkin 0`/`--checkin off` arms none and takes back one that is armed. The baseline
+each check-in measures against is the worker's status log as it stood *before* the dispatch, so a
+line written while the message is being typed still answers the assignment it belongs to. An
+actionable line written after the moment of arming disarms it, and `niles quiet <id>` disarms one by
+hand — for a worker that is idle on purpose. A check-in that comes due with no report nudges and
+re-arms three minutes later, repeating until someone looks. A `working:` line never disarms a
+check-in and never nudges: a worker looping on progress notes cannot buy itself silence.
+
 ## Roles
 
 Niles composes a brief per role rather than handing every agent the same one.
@@ -168,6 +195,10 @@ That is the whole manifest: which agent plays each role. Every role with its own
 brief has its own binding — a security pass is commissioned rarely, but the tier
 it runs at is a workspace decision rather than something the lead has to
 remember per spawn.
+
+`niles spawn` uses the binding for `--role` (default: `worker`). An explicit
+`--agent` overrides it. Without `--agent`, a missing manifest or role binding is
+an error.
 
 Bindings accept built-in agent families and agents from project config; unknown
 bare agent names are rejected.

@@ -662,7 +662,9 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
         &server,
         &workspace,
         &bin,
-        &["spawn", "w1", "--wait", "fix", "the", "login", "bug"],
+        &[
+            "spawn", "w1", "--wait", "--agent", "codex", "fix", "the", "login", "bug",
+        ],
     )
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
@@ -710,7 +712,7 @@ fn spawn_without_wait_returns_immediately() {
         &server,
         &workspace,
         &bin,
-        &["spawn", "w1", "do", "the", "thing"],
+        &["spawn", "w1", "--agent", "codex", "do", "the", "thing"],
     )
     .output()
     .unwrap();

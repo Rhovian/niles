@@ -10,6 +10,7 @@ use camino::Utf8Path;
 use crate::{
     agents::{self, BriefDelivery},
     config::spec::load_project_config_from,
+    watch,
     workspace_manifest::WorkspaceManifest,
 };
 
@@ -27,7 +28,15 @@ pub(super) fn launch_foreground_agent(
     let meta: SessionMeta = write_manager_session(workspace, &invocation.spec)?;
     let brief = fs::read_to_string(&meta.brief)
         .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
+    let session_dir = meta
+        .brief
+        .parent()
+        .with_context(|| format!("manager brief has no session directory: {}", meta.brief))?;
     let command = prepare_manager_command(invocation, brief);
+
+    // The watcher is held for exactly as long as the foreground agent runs, on the failing path
+    // too: dropping it stops and joins the thread.
+    let _watcher = watch::start(session_dir, workspace, meta.lead_pane.as_deref());
 
     let status = run_foreground_process(
         workspace,

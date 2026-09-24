@@ -69,6 +69,40 @@ impl WindowTarget {
     }
 }
 
+/// A tmux `-t` target: where the commands in this module are pointed.
+///
+/// A worker window is addressed as `session:window`, both halves anchored. The lead's own pane is
+/// a `%N` pane id, which tmux accepts as a complete target on its own: there is no session or
+/// window to spell, and inventing one would address a different thing — the lead is typed into
+/// through the pane it is running in, and that pane id is the only fact about it we have.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TmuxTarget(String);
+
+impl TmuxTarget {
+    pub(crate) fn window(target: &WindowTarget) -> Self {
+        Self(target.target_arg())
+    }
+
+    /// A `%N` pane id, as tmux reports it in `$TMUX_PANE`.
+    pub(crate) fn pane(id: &str) -> Result<Self> {
+        let id = id.trim();
+        if id.is_empty() {
+            bail!("tmux pane id cannot be empty");
+        }
+        Ok(Self(id.to_owned()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TmuxTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// tmux resolves a `-t` component exact, then by glob, then by *prefix*, and
 /// it does so independently for the session and window halves. Unanchored,
 /// `-t niles:niles-auth` reaches `niles-auth-fix` once `niles-auth` is gone —
@@ -332,7 +366,7 @@ fn is_dead_pane(field: &str) -> bool {
     field.trim() == "1"
 }
 
-fn normalize_stderr(stderr: &[u8]) -> String {
+pub(super) fn normalize_stderr(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr)
         .split_whitespace()
         .collect::<Vec<_>>()

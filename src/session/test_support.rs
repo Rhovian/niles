@@ -1,22 +1,8 @@
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, os::unix::fs::PermissionsExt};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 
-pub(super) fn temp_test_path(label: &str) -> Utf8PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-        "niles-session-{label}-{}-{nanos}",
-        std::process::id()
-    )))
-    .unwrap()
-}
+pub(super) use crate::test_support::temp_test_path;
 
 pub(super) fn write_executable_script(path: &Utf8Path, body: &str) {
     fs::write(path, body).unwrap();
