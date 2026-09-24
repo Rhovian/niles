@@ -27,13 +27,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::{
     tmux::{self, TmuxTarget},
     worker::{self, WorkerSnapshot, worker_snapshot},
+    workspace_manifest,
 };
 
 mod checkin;
@@ -44,7 +45,7 @@ mod tests;
 use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory};
 
-pub(crate) use checkin::{describe_delay, resolve_delay};
+pub(crate) use checkin::{Cadence, describe_delay};
 
 /// How often the workspace is re-read. Report detection is a log-length comparison, so this only
 /// has to be prompt enough that a lead who is idle does not stay idle for long.
@@ -150,6 +151,18 @@ pub(crate) fn start(
     }
 }
 
+/// The check-in a dispatch arms, resolved from the `--checkin` flag and the workspace manifest.
+///
+/// Read here rather than at the arming edge because the two moments differ: this is resolved
+/// before anything is dispatched, and armed after. A workspace without a manifest has no
+/// defaults to apply, which is not an error — `niles spawn --agent` works without one.
+pub(crate) fn checkin_cadence(project: &Utf8Path, flag: Option<&str>) -> Result<Cadence> {
+    let path = workspace_manifest::manifest_path(project);
+    let manifest = workspace_manifest::load(project)
+        .with_context(|| format!("cannot resolve the check-in from {path}"))?;
+    checkin::resolve_cadence(flag, manifest.as_ref(), &path)
+}
+
 /// Arms a worker's check-in, as `spawn` and `send` do: the lead is the only one who arms one.
 ///
 /// `armed_len` is the status log's length *before* the work was dispatched — the caller reads it
@@ -157,20 +170,20 @@ pub(crate) fn start(
 /// the worker answering this assignment, and a length read afterwards would fold it into the
 /// baseline and leave it unable to answer anything.
 ///
-/// Returns the delay armed, or `None` when `--checkin 0`/`off` asked for no check-in at all.
+/// Returns the delay armed, or `None` when the cadence asked for no check-in at all.
 pub(crate) fn arm_checkin(
     worker_dir: &Utf8Path,
-    flag: Option<&str>,
+    cadence: Cadence,
     armed_len: u64,
     now: DateTime<Utc>,
 ) -> Result<Option<Duration>> {
-    let Some(delay) = resolve_delay(flag)? else {
+    let Some(delay) = cadence.delay else {
         // `off`/`0` asks for no check-in and has to mean it: leaving the previous one armed would
         // make the `checkin: off` the lead was just printed a lie.
         Checkin::disarm(worker_dir)?;
         return Ok(None);
     };
-    Checkin::armed(delay, armed_len, now).write(worker_dir)?;
+    Checkin::armed(delay, cadence.recheck, armed_len, now).write(worker_dir)?;
     Ok(Some(delay))
 }
 

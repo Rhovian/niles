@@ -121,6 +121,7 @@ mod tests {
             worker: "codex".to_owned(),
             reviewer: reviewer.to_owned(),
             security: "claude:opus:max".to_owned(),
+            ..WorkspaceManifest::default()
         }
     }
 

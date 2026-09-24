@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{agent_window, tmux::WindowTarget, wait, watch};
@@ -12,7 +13,13 @@ use super::{meta::read_meta, worker_dir};
 /// deep capture belongs to `archive::FINAL_PANE_CAPTURE_LINES`, which writes to a file instead.
 pub(crate) const DEFAULT_PEEK_LINES: usize = 200;
 enum PaneTarget {
-    Worker { id: String, target: WindowTarget },
+    Worker {
+        id: String,
+        target: WindowTarget,
+        /// The workspace the worker belongs to — where its check-in defaults are read from, which
+        /// is the workspace the worker was spawned in and not necessarily the one niles runs in.
+        project: Utf8PathBuf,
+    },
 }
 pub fn peek(id: String, lines: usize) -> Result<()> {
     let target = worker_target(id)?;
@@ -41,6 +48,9 @@ pub fn send(
 
     let (target, message, wait_requested, checkin) =
         resolve_send_target(wait, checkin, target_and_message)?;
+    // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
+    // fails a dispatch that has not happened yet rather than one already typed into the pane.
+    let cadence = watch::checkin_cadence(target.project(), checkin.as_deref())?;
     let message = message.join(" ");
     let id = target.label();
 
@@ -55,7 +65,7 @@ pub fn send(
     target.send(&message)?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
-    let armed = watch::arm_checkin(&dir, checkin.as_deref(), armed_len, Utc::now())?;
+    let armed = watch::arm_checkin(&dir, cadence, armed_len, Utc::now())?;
 
     println!("sent: {id}");
     match armed {
@@ -89,6 +99,12 @@ impl PaneTarget {
             PaneTarget::Worker { id, .. } => id.clone(),
         }
     }
+
+    fn project(&self) -> &Utf8Path {
+        match self {
+            PaneTarget::Worker { project, .. } => project,
+        }
+    }
 }
 
 fn resolve_send_target(
@@ -116,5 +132,9 @@ fn worker_target(id: String) -> Result<PaneTarget> {
     let meta = read_meta(&id)?;
     let target = WindowTarget::parse(&meta.window)
         .with_context(|| format!("worker {id} metadata has invalid tmux window target"))?;
-    Ok(PaneTarget::Worker { id, target })
+    Ok(PaneTarget::Worker {
+        id,
+        target,
+        project: meta.project,
+    })
 }

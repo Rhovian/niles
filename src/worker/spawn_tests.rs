@@ -21,6 +21,7 @@ fn manifest() -> WorkspaceManifest {
         worker: "codex:gpt-5.5:xhigh".into(),
         reviewer: "claude:opus:high".into(),
         security: "auditbot".into(),
+        ..WorkspaceManifest::default()
     }
 }
 

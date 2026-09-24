@@ -75,10 +75,56 @@ niles_schema: 2
                 worker: "codex".to_owned(),
                 reviewer: "claude".to_owned(),
                 security: "claude".to_owned(),
+                ..WorkspaceManifest::default()
             }
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The two check-in keys are read from the manifest as written, and a manifest that says
+    /// nothing about them carries no default of its own: the cadence resolver owns that decision.
+    #[test]
+    fn manifest_check_in_keys_load_and_absent_ones_stay_absent() {
+        let root = temp_test_path("manifest-checkin");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+lead: claude
+worker: codex
+reviewer: claude
+security: claude
+checkin: 15m
+recheck: backoff
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+        let anonymous = temp_test_path("manifest-no-checkin");
+        fs::create_dir_all(anonymous.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&anonymous),
+            r#"
+lead: claude
+worker: codex
+reviewer: claude
+security: claude
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+        let bare = load(&anonymous).unwrap().unwrap();
+
+        assert_eq!(manifest.checkin.as_deref(), Some("15m"));
+        assert_eq!(manifest.recheck.as_deref(), Some("backoff"));
+        assert_eq!(bare.checkin, None);
+        assert_eq!(bare.recheck, None);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(anonymous).unwrap();
     }
 
     /// The manifest carries role bindings and nothing else, so a manifest written before the
@@ -109,7 +155,9 @@ niles_schema: 2
         // Names the offending field, the fields that replaced it, and what to do about it.
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
-            err.contains("expected one of `lead`, `worker`, `reviewer`, `security`"),
+            err.contains(
+                "expected one of `lead`, `worker`, `reviewer`, `security`, `checkin`, `recheck`"
+            ),
             "{err}"
         );
         assert!(
@@ -128,6 +176,7 @@ niles_schema: 2
             worker: "codebot".to_owned(),
             reviewer: "reviewbot".to_owned(),
             security: "auditbot".to_owned(),
+            ..WorkspaceManifest::default()
         };
 
         save(&root, &manifest).unwrap();
@@ -137,9 +186,28 @@ niles_schema: 2
         assert!(body.contains("worker: codebot"), "{body}");
         assert!(body.contains("reviewer: reviewbot"), "{body}");
         assert!(body.contains("security: auditbot"), "{body}");
-        for gone in ["manager:", "planner:", "validation_command:", "flow:"] {
+        for gone in [
+            "manager:",
+            "planner:",
+            "validation_command:",
+            "flow:",
+            // A manifest that says nothing about the check-in cadence is written back saying
+            // nothing: `checkin: null` would be a value the next reader has to interpret.
+            "checkin:",
+            "recheck:",
+        ] {
             assert!(!body.contains(gone), "{gone} should be gone:\n{body}");
         }
+
+        // And one that does carry them keeps them, so a round trip through `save` is not a
+        // silent reset to the built-in cadence.
+        let configured = WorkspaceManifest {
+            checkin: Some("15m".to_owned()),
+            recheck: Some("backoff".to_owned()),
+            ..manifest
+        };
+        save(&root, &configured).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(configured));
 
         fs::remove_dir_all(root).unwrap();
     }

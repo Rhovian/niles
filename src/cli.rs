@@ -97,7 +97,8 @@ pub enum CommandName {
         /// Existing brief file to pass to the worker.
         #[arg(long)]
         brief: Option<Utf8PathBuf>,
-        /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. `0`/`off` arms none.
+        /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. Defaults to this
+        /// workspace's manifest `checkin`, then 5 minutes. `0`/`off` arms none.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
         /// Task text used to create a brief when --brief is omitted.
@@ -153,6 +154,7 @@ pub enum CommandName {
         #[arg(long)]
         wait: bool,
         /// Check-in delay for this worker's next report: `90s`, `5m`, `1h`, bare minutes, `0`/`off`.
+        /// Defaults to the manifest `checkin`, then 5 minutes.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
         /// Worker task id followed by message.
