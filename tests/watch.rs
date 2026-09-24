@@ -131,6 +131,18 @@ impl Fixture {
         fs::read_to_string(self.checkin_path(id)).unwrap()
     }
 
+    /// The workspace manifest with extra keys under the role bindings: the `checkin`/`recheck`
+    /// cadence a test is about, and nothing else changed.
+    fn write_manifest(&self, keys: &str) {
+        fs::write(
+            self.workspace.join(".niles/manifest.yaml"),
+            format!(
+                "lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\n{keys}niles_schema: 2\n"
+            ),
+        )
+        .unwrap();
+    }
+
     fn status_log(&self, id: &str) -> PathBuf {
         self.worker_file(id, "status.log")
     }
@@ -169,6 +181,10 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
     // A worker that has not written a line yet: nothing in its log can answer this check-in.
     assert!(body.contains("armed_len=0"), "{body}");
     assert!(body.contains("deadline="), "{body}");
+    // The cadence is in the state, not re-read from a manifest on every tick: what this dispatch
+    // waits, and what a fire does next.
+    assert!(body.contains("delay=300"), "{body}");
+    assert!(body.contains("recheck=backoff"), "{body}");
 
     let quiet = fixture.niles(&["quiet", "impl"]);
     assert_command_success("quiet", &quiet);
@@ -340,4 +356,68 @@ fn a_malformed_checkin_flag_fails_the_dispatch() {
     let stderr = String::from_utf8_lossy(&spawn.stderr);
     assert!(stderr.contains("is not a duration"), "{stderr}");
     assert!(!fixture.checkin_path("impl").exists());
+}
+
+/// The manifest's `checkin:` is the workspace's default first delay. A dispatch that names no
+/// `--checkin` arms it, `recheck:` travels with the arm state, and the flag still wins over it.
+#[test]
+fn an_omitted_checkin_flag_arms_the_manifests_default() {
+    let fixture = fixture("niles-watch-manifest-checkin");
+    fixture.write_manifest("checkin: 15m\nrecheck: 30m\n");
+
+    let spawn = fixture.spawn("impl");
+    assert_command_success("spawn", &spawn);
+    let printed = stdout(&spawn);
+    assert!(printed.contains("checkin: 15m"), "{printed}");
+
+    let body = fixture.checkin("impl");
+    assert!(body.contains("delay=900"), "{body}");
+    assert!(body.contains("step=900"), "{body}");
+    assert!(body.contains("recheck=30m"), "{body}");
+
+    // The flag decides the delay and the manifest still decides the policy behind it.
+    let flagged = fixture.niles(&["send", "impl", "--checkin", "90s", "carry on"]);
+    assert_command_success("send --checkin 90s", &flagged);
+    assert!(
+        stdout(&flagged).contains("checkin: 90s"),
+        "{}",
+        stdout(&flagged)
+    );
+    let body = fixture.checkin("impl");
+    assert!(body.contains("delay=90"), "{body}");
+    assert!(body.contains("step=90"), "{body}");
+    assert!(body.contains("recheck=30m"), "{body}");
+}
+
+/// A malformed value in either check-in key fails the dispatch, naming the file to fix, rather than
+/// quietly arming the built-in cadence the workspace just tried to change — and it fails before a
+/// window is launched or a worker directory is written.
+#[test]
+fn a_malformed_manifest_checkin_key_fails_the_dispatch() {
+    for (key, manifest) in [
+        ("checkin", "checkin: soon\n"),
+        ("recheck", "recheck: soon\n"),
+    ] {
+        let fixture = fixture(&format!("niles-watch-manifest-bad-{key}"));
+        fixture.write_manifest(manifest);
+
+        let spawn = fixture.spawn("impl");
+
+        assert!(!spawn.status.success(), "{key} was accepted");
+        let stderr = String::from_utf8_lossy(&spawn.stderr);
+        assert!(stderr.contains(key), "{stderr}");
+        assert!(
+            stderr.contains(".niles/manifest.yaml"),
+            "the error must name the file: {stderr}"
+        );
+        assert!(
+            !fixture.workspace.join(".niles/worker/impl").exists(),
+            "nothing was dispatched, so nothing was written"
+        );
+        // Nothing reached tmux either: a spawn that never got as far as launching a window leaves
+        // no tmux log at all.
+        if let Ok(log) = fs::read_to_string(&fixture.tmux_log) {
+            assert!(!log.contains("new-window"), "{log}");
+        }
+    }
 }

@@ -1,16 +1,37 @@
 use std::{fs, sync::atomic::AtomicBool, time::Duration};
 
 use anyhow::{Result, bail};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 use crate::{test_support::temp_test_path, worker::worker_snapshot};
 
-use super::{Sink, WatchMemory, apply, arm_checkin, checkin::Checkin, quiet, read_checkins, tick};
+use super::{
+    Sink, WatchMemory, apply, arm_checkin,
+    checkin::{Cadence, Checkin, Recheck, resolve_cadence},
+    quiet, read_checkins, tick,
+};
 
 /// A watcher that is still running: what every tick test but the stopping one wants.
 fn running() -> AtomicBool {
     AtomicBool::new(false)
+}
+
+/// A check-in armed the way `spawn` arms one: the delay it was asked for, doubling after that.
+fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin {
+    Checkin::armed(
+        Duration::from_secs(delay_secs),
+        Recheck::Backoff,
+        armed_len,
+        now,
+    )
+}
+
+/// The cadence a dispatch arms with, resolved the way `spawn` resolves it: the flag, then a
+/// manifest, then the default. There is no manifest in these tests, so the flag or the default
+/// decides the delay and the policy is the backoff.
+fn cadence(flag: Option<&str>) -> Cadence {
+    resolve_cadence(flag, None, Utf8Path::new("/w/.niles/manifest.yaml")).unwrap()
 }
 
 /// A sink that records what the watcher asked of it, so a tick can be driven without tmux.
@@ -114,7 +135,7 @@ fn the_tick_deletes_the_arm_state_when_the_worker_answers() {
     write_worker(&root, "impl", WINDOW);
     let now = at(1_000);
     let dir = worker_dir(&root, "impl");
-    Checkin::armed(Duration::from_secs(300), WINDOW.len() as u64, now)
+    armed_checkin(300, WINDOW.len() as u64, now)
         .write(&dir)
         .unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
@@ -138,7 +159,7 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     write_worker(&root, "impl", WINDOW);
     let now = at(1_000);
     let dir = worker_dir(&root, "impl");
-    Checkin::armed(Duration::from_secs(300), WINDOW.len() as u64, now)
+    armed_checkin(300, WINDOW.len() as u64, now)
         .write(&dir)
         .unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
@@ -150,15 +171,47 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
         sink.sent,
         vec!["niles: no report from impl in 5m — check it"]
     );
-    // Written back at +3 minutes with the step advanced, so the same check-in does not fire again
-    // on the next tick.
+    // Written back with the delay doubled and the step advanced, so the same check-in does not
+    // fire again on the next tick — and does not fire every 3 minutes either.
     let rearmed = Checkin::read(&dir).unwrap().unwrap();
-    assert_eq!(rearmed.deadline, at(1_480));
-    assert_eq!(rearmed.elapsed_label(), "8m");
+    assert_eq!(rearmed.deadline, at(1_900));
+    assert_eq!(rearmed.delay, 600);
+    assert_eq!(rearmed.elapsed_label(), "15m");
 
     let mut next = RecordingSink::default();
     tick(&root, at(1301), &mut memory, &mut next, &running());
     assert!(next.attempts.is_empty(), "{next:?}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A workspace that asked for a flat re-check (`recheck: 10m`) re-arms at that delay. The policy
+/// is in the state the watcher read, so it did not have to go back to the manifest for it.
+#[test]
+fn a_fixed_recheck_re_arms_at_its_delay_on_disk() {
+    let root = workspace("rearm-fixed");
+    write_worker(&root, "impl", WINDOW);
+    let dir = worker_dir(&root, "impl");
+    Checkin::armed(
+        Duration::from_secs(300),
+        Recheck::Fixed(Duration::from_secs(600)),
+        WINDOW.len() as u64,
+        at(1_000),
+    )
+    .write(&dir)
+    .unwrap();
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+
+    let mut sink = RecordingSink::default();
+    tick(&root, at(1300), &mut memory, &mut sink, &running());
+
+    assert_eq!(
+        sink.sent,
+        vec!["niles: no report from impl in 5m — check it"]
+    );
+    let rearmed = Checkin::read(&dir).unwrap().unwrap();
+    assert_eq!(rearmed.delay, 600);
+    assert_eq!(rearmed.deadline, at(1_900));
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -169,7 +222,7 @@ fn a_failed_check_in_nudge_leaves_the_check_in_armed_and_overdue() {
     write_worker(&root, "impl", WINDOW);
     let now = at(1_000);
     let dir = worker_dir(&root, "impl");
-    Checkin::armed(Duration::from_secs(300), WINDOW.len() as u64, now)
+    armed_checkin(300, WINDOW.len() as u64, now)
         .write(&dir)
         .unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
@@ -192,7 +245,7 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     let dir = worker_dir(&root, "impl");
     let baseline = (WINDOW.len() + DONE.len()) as u64;
 
-    let armed = arm_checkin(&dir, Some("90s"), baseline, at(1_000)).unwrap();
+    let armed = arm_checkin(&dir, cadence(Some("90s")), baseline, at(1_000)).unwrap();
 
     assert_eq!(armed, Some(Duration::from_secs(90)));
     let checkin = Checkin::read(&dir).unwrap().unwrap();
@@ -204,7 +257,7 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     // `--checkin off` is no check-in, and it takes an armed one with it rather than leaving the
     // lead with a printed `checkin: off` over a live deadline.
     assert_eq!(
-        arm_checkin(&dir, Some("off"), baseline, at(1_000)).unwrap(),
+        arm_checkin(&dir, cadence(Some("off")), baseline, at(1_000)).unwrap(),
         None
     );
     assert_eq!(Checkin::read(&dir).unwrap(), None);
@@ -291,9 +344,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     let root = workspace("re-read-disarm");
     write_worker(&root, "impl", WINDOW);
     let dir = worker_dir(&root, "impl");
-    Checkin::armed(Duration::from_secs(300), 0, at(1_000))
-        .write(&dir)
-        .unwrap();
+    armed_checkin(300, 0, at(1_000)).write(&dir).unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
     append_log(&root, "impl", DONE);
 
@@ -308,11 +359,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     );
 
     // The lead dispatches again while the tick is still delivering.
-    let fresh = Checkin::armed(
-        Duration::from_secs(300),
-        (WINDOW.len() + DONE.len()) as u64,
-        at(1_060),
-    );
+    let fresh = armed_checkin(300, (WINDOW.len() + DONE.len()) as u64, at(1_060));
     fresh.write(&dir).unwrap();
 
     apply(&plan, &mut memory, &mut sink, &running());
@@ -332,7 +379,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     fs::remove_dir_all(&root).unwrap();
 }
 
-/// The same window, on the re-arm path: a fired check-in is rewritten at +3 minutes only if it is
+/// The same window, on the re-arm path: a fired check-in is rewritten at its next delay only if it is
 /// still the one this tick planned over, or the newer assignment would be scheduled by the older
 /// one's clock.
 #[test]
@@ -340,9 +387,7 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
     let root = workspace("re-read-rearm");
     write_worker(&root, "impl", WINDOW);
     let dir = worker_dir(&root, "impl");
-    Checkin::armed(Duration::from_secs(300), 0, at(1_000))
-        .write(&dir)
-        .unwrap();
+    armed_checkin(300, 0, at(1_000)).write(&dir).unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
 
     let snapshot = worker_snapshot(&root).unwrap();
@@ -352,7 +397,7 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
     assert_eq!(plan.nudges.len(), 1, "the check-in is due");
 
     // Re-armed in the middle of the nudge, because the worker reported and was dispatched again.
-    let fresh = Checkin::armed(Duration::from_secs(300), WINDOW.len() as u64, at(1_300));
+    let fresh = armed_checkin(300, WINDOW.len() as u64, at(1_300));
     fresh.write(&dir).unwrap();
 
     apply(&plan, &mut memory, &mut sink, &running());

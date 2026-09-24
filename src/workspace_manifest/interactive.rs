@@ -129,6 +129,10 @@ fn prompt_manifest_values(
         worker: picker::prompt_agent_value("Worker agent", &defaults.worker, agent_configs)?,
         reviewer: picker::prompt_agent_value("Reviewer agent", &defaults.reviewer, agent_configs)?,
         security: picker::prompt_agent_value("Security agent", &defaults.security, agent_configs)?,
+        // Not prompted for: the check-in cadence is a hand-edited line, and changing a role must
+        // not quietly drop the one the workspace already carries.
+        checkin: defaults.checkin.clone(),
+        recheck: defaults.recheck.clone(),
     })
 }
 
@@ -177,6 +181,7 @@ mod tests {
             worker: "codex".to_owned(),
             reviewer: "claude:opus:max".to_owned(),
             security: "claude:opus:max".to_owned(),
+            ..WorkspaceManifest::default()
         };
         let mut input = Cursor::new(b"n\n".to_vec());
         let mut output = Vec::new();

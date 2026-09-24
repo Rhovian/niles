@@ -166,6 +166,7 @@ fn no_report_text(id: &str, elapsed: &str) -> String {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
+    use super::super::checkin::Recheck;
     use super::*;
 
     const WINDOW: &str = "working: launch\n";
@@ -183,12 +184,13 @@ mod tests {
         )
     }
 
-    /// A check-in armed the way `spawn` arms one over `log`.
+    /// A check-in armed the way `spawn` arms one over `log`: the delay asked for, doubling after.
     fn armed_over(log: &str, delay_secs: u64, now: DateTime<Utc>) -> BTreeMap<String, Checkin> {
         BTreeMap::from([(
             "impl".to_owned(),
             Checkin::armed(
                 Duration::from_secs(delay_secs),
+                Recheck::Backoff,
                 worker("impl", log).log_len,
                 now,
             ),
@@ -284,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn check_ins_fire_at_five_eight_and_eleven_minutes_with_no_report() {
+    fn check_ins_fire_at_five_fifteen_and_thirty_five_minutes_with_no_report() {
         let now = at(1_000);
         let mut memory = WatchMemory::at_start(&[worker("impl", WINDOW)]);
         let mut armed = armed_over(WINDOW, 300, now);
@@ -294,7 +296,9 @@ mod tests {
         let early = memory.plan(&[busy()], &armed, at(1299));
         assert!(early.nudges.is_empty(), "{early:?}");
 
-        for (offset, minutes) in [(300, 5), (480, 8), (660, 11)] {
+        // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
+        // nudge every three minutes at a worker nobody has heard from.
+        for (offset, minutes, next_minutes) in [(300, 5, 15), (900, 15, 35), (2_100, 35, 75)] {
             let plan = memory.plan(&[busy()], &armed, at(1_000 + offset));
             assert_eq!(
                 plan.nudges
@@ -315,7 +319,7 @@ mod tests {
             let Commit::Checkin { next, .. } = nudge.commit else {
                 panic!("a check-in nudge must carry its re-arm");
             };
-            assert_eq!(next.elapsed_label(), format!("{}m", minutes + 3));
+            assert_eq!(next.elapsed_label(), format!("{next_minutes}m"));
             armed = BTreeMap::from([("impl".to_owned(), next)]);
         }
     }
@@ -353,7 +357,12 @@ mod tests {
         let mut stale_checkins = checkins.clone();
         stale_checkins.insert(
             "impl".to_owned(),
-            Checkin::armed(Duration::from_secs(300), stale.log_len + 10, now),
+            Checkin::armed(
+                Duration::from_secs(300),
+                Recheck::Backoff,
+                stale.log_len + 10,
+                now,
+            ),
         );
         let plan = memory.plan(&[stale], &stale_checkins, at(1300));
         assert!(plan.disarms.is_empty(), "{plan:?}");

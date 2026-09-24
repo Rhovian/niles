@@ -151,8 +151,23 @@ each check-in measures against is the worker's status log as it stood *before* t
 line written while the message is being typed still answers the assignment it belongs to. An
 actionable line written after the moment of arming disarms it, and `niles quiet <id>` disarms one by
 hand — for a worker that is idle on purpose. A check-in that comes due with no report nudges and
-re-arms three minutes later, repeating until someone looks. A `working:` line never disarms a
-check-in and never nudges: a worker looping on progress notes cannot buy itself silence.
+re-arms with the gap doubled — 5m, then 10m, 20m, 40m and an hour, and an hour after that — because
+a worker still silent an hour in wants a look, not a nudge every three minutes. A `working:` line
+never disarms a check-in and never nudges: a worker looping on progress notes cannot buy itself
+silence.
+
+A workspace can set that cadence for every dispatch, in `.niles/manifest.yaml`:
+
+```yaml
+checkin: 15m     # the first delay when --checkin is not given
+recheck: backoff # what each fire does next: backoff, or a fixed delay like `10m`
+```
+
+`--checkin` wins over `checkin:`, which wins over the built-in 5 minutes; `off` in either place arms
+none. `recheck` is `backoff` (each fire doubles the delay, up to an hour) unless it names a fixed
+delay, which every fire then re-arms at. Both keys are workspace-wide — a role does not carry its
+own cadence. A value that is neither a delay nor the literal `backoff` fails the dispatch and names
+the manifest, rather than quietly arming the cadence the workspace just tried to change.
 
 ## Roles
 
@@ -189,11 +204,14 @@ lead: claude
 worker: codex
 reviewer: claude
 security: claude
+# optional: the check-in cadence every dispatch arms (see Nudges and Check-ins)
+# checkin: 15m
+# recheck: backoff
 ```
 
-That is the whole manifest: which agent plays each role. Every role with its own
-brief has its own binding — a security pass is commissioned rarely, but the tier
-it runs at is a workspace decision rather than something the lead has to
+Role bindings are the whole manifest apart from the two optional check-in keys. Every
+role with its own brief has its own binding — a security pass is commissioned rarely,
+but the tier it runs at is a workspace decision rather than something the lead has to
 remember per spawn.
 
 `niles spawn` uses the binding for `--role` (default: `worker`). An explicit

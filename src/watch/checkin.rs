@@ -2,9 +2,14 @@
 //!
 //! Only the lead arms a check-in (`spawn`, `send`); anything else can only disarm it by reporting.
 //! The file outlives nothing but the worker's own directory, so it carries everything a later
-//! tick needs: when the check-in is due, which step of the backoff that is, and — the one that
-//! matters — how long the status log was at the moment it was armed. That last number is what
-//! stops a worker's stale previous `done:` from satisfying a fresh assignment.
+//! tick needs: when the check-in is due, how long this arm waits, which policy a fire follows,
+//! which step of the schedule that is, and — the one that matters — how long the status log was at
+//! the moment it was armed. That last number is what stops a worker's stale previous `done:` from
+//! satisfying a fresh assignment.
+//!
+//! The policy travels in the state rather than in the manifest the watcher would have to re-read:
+//! the watcher's job is to fire what is armed, and a workspace whose manifest changed mid-flight
+//! would otherwise re-time a check-in that was armed under the old one.
 //!
 //! No lock guards it and none is wanted: the stake is one extra look. A tick that reads the file
 //! mid-write treats it as unreadable and tries again a second later.
@@ -15,16 +20,56 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
-use crate::worker::ActionableWake;
+use crate::{worker::ActionableWake, workspace_manifest::WorkspaceManifest};
 
 /// The delay `spawn` and `send` arm when nothing else is asked for.
 pub(crate) const DEFAULT_DELAY: Duration = Duration::from_secs(5 * 60);
 
-/// How much later a check-in re-arms once it has fired.
+/// How far a doubling re-check backs off.
 ///
-/// Check-ins continue until someone looks, which is the point: a worker that reported and then
-/// went quiet is still a worker the lead has stopped hearing from.
-pub(crate) const RECHECK_DELAY: Duration = Duration::from_secs(3 * 60);
+/// A worker still silent after an hour is worth a look, but it is not worth a nudge every three
+/// minutes to surface: past this the gap stops growing rather than the nudge stopping.
+pub(crate) const BACKOFF_CAP: Duration = Duration::from_secs(60 * 60);
+
+/// How a check-in that has fired picks the delay it re-arms at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Recheck {
+    /// Double the delay after each fire, up to [`BACKOFF_CAP`]: 5m, 10m, 20m, 40m, 60m, 60m…
+    Backoff,
+    /// The same delay after every fire, because the manifest asked for a fixed one.
+    Fixed(Duration),
+}
+
+impl Recheck {
+    /// The delay the next check-in waits, given the one that just fired.
+    fn next_delay(self, fired: Duration) -> Duration {
+        match self {
+            Self::Backoff => {
+                // Doubled, bounded by the cap, and never below the delay that just fired: an
+                // explicit `--checkin 2h` is past the cap already, and the cap is a ceiling on
+                // growth rather than a re-write of the delay the lead asked for.
+                fired.saturating_mul(2).min(BACKOFF_CAP).max(fired)
+            }
+            Self::Fixed(delay) => delay,
+        }
+    }
+
+    /// How the arm state spells this policy: `backoff`, or the delay as `--checkin` spells it.
+    fn spelling(self) -> String {
+        match self {
+            Self::Backoff => "backoff".to_owned(),
+            Self::Fixed(delay) => describe_delay(delay),
+        }
+    }
+}
+
+/// The check-in a dispatch arms with: how long it waits, and what a fire does next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Cadence {
+    /// `None` is no check-in at all: `--checkin off`, or `checkin: off` in the manifest.
+    pub(crate) delay: Option<Duration>,
+    pub(crate) recheck: Recheck,
+}
 
 /// Longest accepted `--checkin`. A check-in further out than a day is always a typo.
 const MAX_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -39,28 +84,46 @@ const STAGING_FILE: &str = "checkin.tmp";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Checkin {
     pub(crate) deadline: DateTime<Utc>,
-    /// Seconds since arming at which this check-in is due: 300, then 480, then 660…
+    /// The delay this arm waits, in seconds: the one `--checkin` asked for, or the one the last
+    /// fire re-armed at. Carried because a re-arm doubles *it*, not the schedule's first step.
+    pub(crate) delay: u64,
+    /// Seconds since arming at which this check-in is due: 300, then 900, then 2100…
     pub(crate) step: u64,
+    /// The policy this arm follows, so the watcher re-arms from the state alone.
+    pub(crate) recheck: Recheck,
     /// Status-log byte length at the moment of arming. An actionable line past it is the worker
     /// answering *this* assignment; anything at or before it is history.
     pub(crate) armed_len: u64,
 }
 
 impl Checkin {
-    pub(crate) fn armed(delay: Duration, armed_len: u64, now: DateTime<Utc>) -> Self {
-        let step = delay.as_secs();
+    pub(crate) fn armed(
+        delay: Duration,
+        recheck: Recheck,
+        armed_len: u64,
+        now: DateTime<Utc>,
+    ) -> Self {
+        let delay = delay.as_secs();
         Self {
-            deadline: fire_at(now, step),
-            step,
+            deadline: fire_at(now, delay),
+            delay,
+            step: delay,
+            recheck,
             armed_len,
         }
     }
 
     /// The check-in that follows this one, once it has fired.
     pub(crate) fn rearmed(&self, now: DateTime<Utc>) -> Self {
+        let delay = self
+            .recheck
+            .next_delay(Duration::from_secs(self.delay))
+            .as_secs();
         Self {
-            deadline: fire_at(now, RECHECK_DELAY.as_secs()),
-            step: self.step + RECHECK_DELAY.as_secs(),
+            deadline: fire_at(now, delay),
+            delay,
+            step: self.step + delay,
+            recheck: self.recheck,
             armed_len: self.armed_len,
         }
     }
@@ -88,7 +151,9 @@ impl Checkin {
         };
 
         let mut deadline = None;
+        let mut delay = None;
         let mut step = None;
+        let mut recheck = None;
         let mut armed_len = None;
         for line in body.lines() {
             let Some((key, value)) = line.trim().split_once('=') else {
@@ -103,11 +168,24 @@ impl Checkin {
                             .with_timezone(&Utc),
                     );
                 }
+                "delay" => {
+                    delay = Some(
+                        value
+                            .parse::<u64>()
+                            .with_context(|| format!("invalid check-in delay in {path}"))?,
+                    );
+                }
                 "step" => {
                     step = Some(
                         value
                             .parse::<u64>()
                             .with_context(|| format!("invalid check-in step in {path}"))?,
+                    );
+                }
+                "recheck" => {
+                    recheck = Some(
+                        parse_recheck(value)
+                            .with_context(|| format!("invalid check-in re-check in {path}"))?,
                     );
                 }
                 "armed_len" => {
@@ -121,12 +199,16 @@ impl Checkin {
             }
         }
 
-        match (deadline, step, armed_len) {
-            (Some(deadline), Some(step), Some(armed_len)) => Ok(Some(Self {
-                deadline,
-                step,
-                armed_len,
-            })),
+        match (deadline, delay, step, recheck, armed_len) {
+            (Some(deadline), Some(delay), Some(step), Some(recheck), Some(armed_len)) => {
+                Ok(Some(Self {
+                    deadline,
+                    delay,
+                    step,
+                    recheck,
+                    armed_len,
+                }))
+            }
             _ => bail!("check-in file {path} is incomplete; `niles quiet` clears it"),
         }
     }
@@ -137,9 +219,11 @@ impl Checkin {
     pub(crate) fn write(&self, worker_dir: &Utf8Path) -> Result<()> {
         let path = worker_dir.join(CHECKIN_FILE);
         let body = format!(
-            "deadline={}\nstep={}\narmed_len={}\n",
+            "deadline={}\ndelay={}\nstep={}\nrecheck={}\narmed_len={}\n",
             self.deadline.to_rfc3339_opts(SecondsFormat::Secs, true),
+            self.delay,
             self.step,
+            self.recheck.spelling(),
             self.armed_len
         );
         let staging = worker_dir.join(STAGING_FILE);
@@ -164,12 +248,48 @@ fn fire_at(now: DateTime<Utc>, seconds: u64) -> DateTime<Utc> {
     now + TimeDelta::seconds(seconds as i64)
 }
 
-/// Resolves the `--checkin` value: `90s`, `5m`, `1h`, a bare integer as minutes, or `0`/`off` to
-/// arm nothing at all. No flag is the five-minute default.
-pub(crate) fn resolve_delay(flag: Option<&str>) -> Result<Option<Duration>> {
-    match flag {
-        Some(value) => parse_delay(value),
-        None => Ok(Some(DEFAULT_DELAY)),
+/// The cadence a dispatch arms with, from the `--checkin` flag and the workspace manifest.
+///
+/// Precedence is the flag, then the manifest's `checkin`, then [`DEFAULT_DELAY`]. The re-check
+/// policy is the manifest's `recheck`, and backoff when it says nothing. A malformed value in
+/// either key is refused here rather than defaulted over: the lead would otherwise be printed a
+/// cadence they never asked for.
+pub(crate) fn resolve_cadence(
+    flag: Option<&str>,
+    manifest: Option<&WorkspaceManifest>,
+    manifest_path: &Utf8Path,
+) -> Result<Cadence> {
+    let delay = match flag {
+        Some(value) => parse_delay(value)?,
+        None => match manifest.and_then(|manifest| manifest.checkin.as_deref()) {
+            Some(value) => parse_delay(value).with_context(|| {
+                format!("invalid `checkin` in workspace manifest {manifest_path}")
+            })?,
+            None => Some(DEFAULT_DELAY),
+        },
+    };
+    let recheck = match manifest.and_then(|manifest| manifest.recheck.as_deref()) {
+        Some(value) => parse_recheck(value)
+            .with_context(|| format!("invalid `recheck` in workspace manifest {manifest_path}"))?,
+        None => Recheck::Backoff,
+    };
+
+    Ok(Cadence { delay, recheck })
+}
+
+/// The `recheck` spelling: the literal `backoff`, or a delay like `10m` to re-arm flat.
+fn parse_recheck(value: &str) -> Result<Recheck> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("backoff") {
+        return Ok(Recheck::Backoff);
+    }
+
+    match parse_delay(value)? {
+        Some(delay) => Ok(Recheck::Fixed(delay)),
+        None => bail!(
+            "re-check policy `{value}` is not `backoff` or a delay; use backoff, 10m, 1h, or a \
+             bare number of minutes"
+        ),
     }
 }
 
@@ -226,11 +346,30 @@ fn parse_delay(value: &str) -> Result<Option<Duration>> {
 mod tests {
     use std::os::unix::fs::MetadataExt;
 
+    use camino::Utf8PathBuf;
+
     use super::*;
     use crate::test_support::temp_test_path;
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
+    }
+
+    fn manifest_file() -> Utf8PathBuf {
+        Utf8PathBuf::from("/w/.niles/manifest.yaml")
+    }
+
+    /// A workspace manifest carrying the two check-in keys under test.
+    fn manifest(checkin: Option<&str>, recheck: Option<&str>) -> WorkspaceManifest {
+        WorkspaceManifest {
+            checkin: checkin.map(str::to_owned),
+            recheck: recheck.map(str::to_owned),
+            ..WorkspaceManifest::default()
+        }
+    }
+
+    fn cadence(flag: Option<&str>, manifest: Option<&WorkspaceManifest>) -> Result<Cadence> {
+        resolve_cadence(flag, manifest, &manifest_file())
     }
 
     /// The `--checkin` spellings, both directions: what the lead can write, and what `spawn` prints
@@ -266,7 +405,73 @@ mod tests {
         assert_eq!(parse_delay("0s").unwrap(), None);
         assert_eq!(parse_delay("off").unwrap(), None);
         assert_eq!(parse_delay("OFF").unwrap(), None);
-        assert_eq!(resolve_delay(None).unwrap(), Some(DEFAULT_DELAY));
+        assert_eq!(cadence(None, None).unwrap().delay, Some(DEFAULT_DELAY));
+    }
+
+    /// The precedence chain: the flag wins over the manifest, the manifest over the default. The
+    /// re-check policy is the manifest's either way, since it says what a *fire* does and not what
+    /// this dispatch waits.
+    #[test]
+    fn the_flag_beats_the_manifest_which_beats_the_default() {
+        let configured = manifest(Some("15m"), Some("30m"));
+
+        assert_eq!(
+            cadence(None, Some(&configured)).unwrap(),
+            Cadence {
+                delay: Some(Duration::from_secs(900)),
+                recheck: Recheck::Fixed(Duration::from_secs(1800)),
+            }
+        );
+        assert_eq!(
+            cadence(Some("90s"), Some(&configured)).unwrap(),
+            Cadence {
+                delay: Some(Duration::from_secs(90)),
+                recheck: Recheck::Fixed(Duration::from_secs(1800)),
+            }
+        );
+        // No flag and no manifest key is the five-minute default; a manifest that says nothing
+        // about re-checks gets the backoff.
+        assert_eq!(
+            cadence(None, Some(&manifest(None, None))).unwrap(),
+            Cadence {
+                delay: Some(DEFAULT_DELAY),
+                recheck: Recheck::Backoff,
+            }
+        );
+        // `--checkin off` is a decision about this dispatch and is not overridden by the manifest.
+        assert_eq!(cadence(Some("off"), Some(&configured)).unwrap().delay, None);
+    }
+
+    #[test]
+    fn a_malformed_manifest_value_is_refused_rather_than_defaulted_over() {
+        for (manifest, key) in [
+            (manifest(Some("soon"), None), "checkin"),
+            (manifest(None, Some("fast")), "recheck"),
+            (manifest(None, Some("off")), "recheck"),
+            (manifest(None, Some("daily")), "recheck"),
+        ] {
+            let err = format!("{:#}", cadence(None, Some(&manifest)).unwrap_err());
+            assert!(err.contains(key), "{err}");
+        }
+
+        for value in ["backoff", "BACKOFF", "10m", "1h", "7"] {
+            assert!(
+                cadence(None, Some(&manifest(None, Some(value)))).is_ok(),
+                "{value}"
+            );
+        }
+    }
+
+    /// A manifest typo names the file it is in, so the lead can go and fix it.
+    #[test]
+    fn a_manifest_typo_names_the_manifest() {
+        let err = format!(
+            "{:#}",
+            cadence(None, Some(&manifest(Some("soon"), None))).unwrap_err()
+        );
+
+        assert!(err.contains(manifest_file().as_str()), "{err}");
+        assert!(err.contains("is not a duration"), "{err}");
     }
 
     #[test]
@@ -280,32 +485,86 @@ mod tests {
     fn a_delay_that_is_not_whole_minutes_is_reported_as_it_was_asked_for() {
         // `--checkin 65s` used to nudge "no report ... in 2m" — a minute the check-in had not
         // reached, in the one sentence whose job is to say how long it has been.
-        let armed = Checkin::armed(Duration::from_secs(65), 0, at(1_000));
+        let armed = Checkin::armed(Duration::from_secs(65), Recheck::Backoff, 0, at(1_000));
         assert_eq!(armed.elapsed_label(), "65s");
-        assert_eq!(armed.rearmed(at(1_065)).elapsed_label(), "245s");
+        assert_eq!(armed.rearmed(at(1_065)).elapsed_label(), "195s");
     }
 
+    /// The re-check schedule: each fire arms at twice the delay that just fired, so the gap grows
+    /// instead of the nudge repeating. The step is what the nudge words, and it stays the silence
+    /// since the assignment — 5m, then 15m, then 35m — so a slower cadence does not make the lead
+    /// read a smaller number than the worker has been quiet for.
     #[test]
-    fn arming_keeps_the_log_length_and_steps_three_minutes_each_fire() {
+    fn arming_keeps_the_log_length_and_doubles_each_fire_up_to_the_cap() {
         let now = at(1_000);
-        let armed = Checkin::armed(Duration::from_secs(300), 42, now);
+        let mut armed = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 42, now);
 
         assert_eq!(armed.deadline, at(1_300));
+        assert_eq!(armed.delay, 300);
         assert_eq!(armed.elapsed_label(), "5m");
         assert_eq!(armed.armed_len, 42);
 
-        let refired = armed.rearmed(at(1_300));
-        assert_eq!(refired.deadline, at(1_480));
-        assert_eq!(refired.elapsed_label(), "8m");
-        assert!(refired.answered_by(ActionableWake {
+        // deadline, delay, silence so far: 5m -> 10m -> 20m -> 40m -> 60m, then 60m forever.
+        for (deadline, delay, step) in [
+            (1_900, 600, 900),
+            (3_100, 1_200, 2_100),
+            (5_500, 2_400, 4_500),
+            (9_100, 3_600, 8_100),
+            (12_700, 3_600, 11_700),
+        ] {
+            let fired = armed;
+            armed = fired.rearmed(fired.deadline);
+
+            assert_eq!(armed.deadline, at(deadline), "{delay}s arm");
+            assert_eq!(armed.delay, delay);
+            assert_eq!(armed.step, step);
+            assert_eq!(
+                armed.elapsed_label(),
+                describe_delay(Duration::from_secs(step))
+            );
+        }
+
+        assert!(armed.answered_by(ActionableWake {
             end: 43,
             kind: crate::wake::WakeKind::Done
         }));
     }
 
+    /// A first delay already past the cap — an explicit `--checkin 2h` — is not shortened by it.
+    /// The cap bounds how far the gap grows; it does not re-write the delay the lead asked for.
+    #[test]
+    fn the_cap_never_shortens_a_delay_longer_than_it() {
+        let armed = Checkin::armed(
+            Duration::from_secs(2 * 60 * 60),
+            Recheck::Backoff,
+            0,
+            at(1_000),
+        );
+
+        assert_eq!(armed.rearmed(at(8_200)).delay, 2 * 60 * 60);
+    }
+
+    /// `recheck: 10m` in the manifest: the same delay after every fire, so only the silence the
+    /// nudge reports keeps growing.
+    #[test]
+    fn a_fixed_recheck_arms_the_same_delay_every_fire() {
+        let armed = Checkin::armed(
+            Duration::from_secs(300),
+            Recheck::Fixed(Duration::from_secs(600)),
+            0,
+            at(1_000),
+        );
+
+        let fired = armed.rearmed(at(1_300));
+        assert_eq!(fired.deadline, at(1_900));
+        assert_eq!(fired.delay, 600);
+        assert_eq!(fired.elapsed_label(), "15m");
+        assert_eq!(fired.rearmed(at(1_900)).deadline, at(2_500));
+    }
+
     #[test]
     fn only_a_line_past_the_armed_length_answers_a_check_in() {
-        let checkin = Checkin::armed(Duration::from_secs(300), 10, at(1_000));
+        let checkin = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 10, at(1_000));
         let wake = |end| ActionableWake {
             end,
             kind: crate::wake::WakeKind::Done,
@@ -320,11 +579,26 @@ mod tests {
     fn arm_state_round_trips_through_the_worker_directory() {
         let dir = temp_test_path("round-trip");
         fs::create_dir_all(&dir).unwrap();
-        let armed = Checkin::armed(Duration::from_secs(90), 7, at(1_000));
+        let armed = Checkin::armed(
+            Duration::from_secs(90),
+            Recheck::Fixed(Duration::from_secs(600)),
+            7,
+            at(1_000),
+        );
 
         assert_eq!(Checkin::read(&dir).unwrap(), None);
         armed.write(&dir).unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), Some(armed));
+
+        // The policy and the delay a re-arm doubles are on disk, so the watcher re-arms from the
+        // state alone: it never needs the manifest the check-in was armed under.
+        let body = fs::read_to_string(dir.join(CHECKIN_FILE)).unwrap();
+        assert!(body.contains("delay=90"), "{body}");
+        assert!(body.contains("recheck=10m"), "{body}");
+        let next = armed.rearmed(at(1_090));
+        next.write(&dir).unwrap();
+        assert_eq!(Checkin::read(&dir).unwrap(), Some(next));
+        assert_eq!(next.delay, 600);
 
         assert!(Checkin::disarm(&dir).unwrap());
         assert_eq!(Checkin::read(&dir).unwrap(), None);
@@ -338,10 +612,10 @@ mod tests {
     fn a_write_replaces_the_file_whole_and_leaves_no_staging_file() {
         let dir = temp_test_path("staging");
         fs::create_dir_all(&dir).unwrap();
-        Checkin::armed(Duration::from_secs(300), 3, at(1_000))
+        Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 3, at(1_000))
             .write(&dir)
             .unwrap();
-        let replacement = Checkin::armed(Duration::from_secs(90), 7, at(2_000));
+        let replacement = Checkin::armed(Duration::from_secs(90), Recheck::Backoff, 7, at(2_000));
         let path = dir.join(CHECKIN_FILE);
         let before = fs::metadata(&path).unwrap().ino();
 
@@ -377,6 +651,24 @@ mod tests {
         let err = Checkin::read(&dir).unwrap_err();
 
         assert!(err.to_string().contains("incomplete"), "{err}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A policy the state file cannot express is unreadable arm state rather than a policy to
+    /// guess at: the watcher fires what is armed and nothing else.
+    #[test]
+    fn an_unreadable_recheck_policy_is_an_error_rather_than_a_default() {
+        let dir = temp_test_path("bad-recheck");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(CHECKIN_FILE),
+            "deadline=1970-01-01T00:16:40Z\ndelay=300\nstep=300\nrecheck=soon\narmed_len=0\n",
+        )
+        .unwrap();
+
+        let err = Checkin::read(&dir).unwrap_err();
+
+        assert!(err.to_string().contains("re-check"), "{err}");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

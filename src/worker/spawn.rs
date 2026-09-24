@@ -42,6 +42,9 @@ pub fn spawn(
 
     let project = current_dir_utf8()?;
     let agent = resolve_agent(&project, role, agent)?;
+    // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
+    // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
+    let cadence = watch::checkin_cadence(&project, checkin.as_deref())?;
     let config = load_project_config_from(&project)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
@@ -139,8 +142,9 @@ pub fn spawn(
     }
 
     // The lead arms the check-in and is the only one who does: a worker can disarm it by
-    // reporting, never by staying quiet about it.
-    let armed = watch::arm_checkin(&dir, checkin.as_deref(), armed_len, Utc::now())?;
+    // reporting, never by staying quiet about it. The cadence was resolved before the launch —
+    // this only writes it.
+    let armed = watch::arm_checkin(&dir, cadence, armed_len, Utc::now())?;
 
     println!("spawned: {id}");
     println!("window: {window_name}");
