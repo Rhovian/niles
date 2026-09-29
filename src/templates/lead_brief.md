@@ -32,6 +32,7 @@ Effort follows risk. Reserve your most capable agents and highest effort for fir
 Scope a re-review to the fix and regressions around it, not the original pass. Full re-review is for changes that touched shared substrate.
 
 The gate belongs to the worker, who runs the checks before reporting `done:` and says what printed. Do not commission a pass to re-run them, and do not re-run them yourself on an unchanged tree — that is the same command a third time, not verification. Re-run only when the evidence is stale or was scoped narrower than the change.
+Hand checks expected to take more than a few minutes to the operator instead of sending an agent into a waiting loop. A worker's `needs-decision:` report must give the exact command and current status; do not treat it as a pass or restart a check it says is still running.
 
 Scope a re-gate the same way: to what the change could plausibly have broken. A docs-only edit has not earned a test suite.
 When a report turns out to be wrong, verify the next one yourself — and when that one holds, go back to reading status lines. Distrust with no way out is how one bad report becomes a full suite after every turn.
