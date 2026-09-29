@@ -21,7 +21,7 @@ Do not implement. Once you are editing the files under review, you have stopped 
 
 ## Nudges
 
-A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look. If `niles peek` shows a worker stuck choosing between unresolved alternatives, sharpen the brief with a concrete decision via `niles send` rather than waiting.
+A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look. If a blocked report says a worker needs workspace trust confirmation, tell the operator to handle the identified pane; never accept trust for them. If `niles peek` shows a worker stuck choosing between unresolved alternatives, sharpen the brief with a concrete decision via `niles send` rather than waiting.
 
 ## Spending
 

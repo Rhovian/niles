@@ -169,6 +169,11 @@ delay, which every fire then re-arms at. Both keys are workspace-wide — a role
 own cadence. A value that is neither a delay nor the literal `backoff` fails the dispatch and names
 the manifest, rather than quietly arming the cadence the workspace just tried to change.
 
+For a newly spawned, still-silent worker, the watcher also inspects the visible pane during the
+first 30 seconds for a workspace-trust prompt naming that workspace. It appends one `blocked:`
+report identifying the pane so the lead can ask the operator to decide there; Niles never answers
+the prompt or sends keys to the worker. Any worker report ends this startup inspection.
+
 ## Roles
 
 Niles composes a brief per role rather than handing every agent the same one.

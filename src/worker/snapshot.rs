@@ -2,6 +2,7 @@ use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::{
     store,
@@ -72,6 +73,21 @@ impl WorkerSnapshot {
             Some(undelivered) => undelivered,
             None => log,
         })
+    }
+
+    /// The recorded pane and workspace while an otherwise-silent worker is still starting.
+    pub(crate) fn startup_target(
+        &self,
+        now: DateTime<Utc>,
+        window: TimeDelta,
+    ) -> Option<(&str, &Utf8Path)> {
+        if self.log_len != 0 {
+            return None;
+        }
+        let meta = self.meta.as_ref()?;
+        let created_at = meta.created_at?;
+        let age = now.signed_duration_since(created_at);
+        (age >= TimeDelta::zero() && age <= window).then_some((&meta.window, &meta.project))
     }
 }
 

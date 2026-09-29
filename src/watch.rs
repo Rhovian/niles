@@ -41,6 +41,7 @@ mod checkin;
 mod decide;
 #[cfg(test)]
 mod tests;
+mod trust;
 
 use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory};
@@ -247,6 +248,7 @@ fn tick(
             return;
         }
     };
+    trust::inspect_starting_workers(&snapshot, now, sink);
     let checkins = read_checkins(&snapshot, sink);
     let plan = memory.plan(&snapshot, &checkins, now);
     apply(&plan, memory, sink, stop);
@@ -367,9 +369,10 @@ fn read_checkins(snapshot: &[WorkerSnapshot], sink: &mut dyn Sink) -> BTreeMap<S
     checkins
 }
 
-/// The edge: how a nudge leaves this process, and where a diagnostic goes.
+/// The edge: read worker panes, send lead nudges, and record diagnostics without using stdout.
 trait Sink {
     fn nudge(&mut self, text: &str) -> Result<()>;
+    fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String>;
     fn note(&mut self, line: &str);
 }
 
@@ -384,6 +387,10 @@ impl Sink for WatchSink {
         // that knows how to confirm a submit took, and a nudge that silently sat in the lead's
         // composer is the failure this whole feature exists to avoid.
         tmux::send_line(&self.target, text)
+    }
+
+    fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String> {
+        tmux::capture_visible_pane(target)
     }
 
     fn note(&mut self, line: &str) {
