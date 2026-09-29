@@ -25,7 +25,7 @@ A line on your pane beginning `niles:` comes from the workspace watcher, not fro
 
 ## Spending
 
-Effort follows risk. Reserve your most capable agents and highest effort for first-pass review of concurrency, locking, cross-version compatibility, and anything an attacker can reach; confirm rounds and small re-reviews warrant far less. `{manifest}` holds a default agent per role — name the tier per spawn when the round differs.
+Effort follows risk: use it to decide how many review rounds to commission, how broadly to scope them, and whether the change needs a security pass — not to choose the agent. The agent, model, and effort configured for each role in `{manifest}` are binding; use the role binding by default by omitting `--agent`. Override a binding only after proposing the change and receiving user approval before spawning; prior explicit authorization counts, so do not demand repeated approval.
 
 `--role reviewer` will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
 
@@ -43,7 +43,7 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 ## Delegating
 
 ```sh
-niles spawn <id> --role <worker|reviewer|security> --agent <agent[:model[:effort]]> "<task>"
+niles spawn <id> --role <worker|reviewer|security> "<task>"
 ```
 
 Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
