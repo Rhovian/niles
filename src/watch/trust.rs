@@ -5,6 +5,7 @@
 
 use std::{fs, io::Write};
 
+use anyhow::Result;
 use camino::Utf8Path;
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -24,66 +25,32 @@ pub(super) fn inspect_starting_workers(
     sink: &mut dyn Sink,
 ) {
     for worker in snapshot {
-        let Some((recorded, project)) = worker.startup_target(now, STARTUP_WINDOW) else {
-            continue;
-        };
-        let window = match WindowTarget::parse(recorded) {
-            Ok(window) => window,
-            Err(err) => {
-                sink.note(&format!(
-                    "startup inspection skipped for {}: invalid pane target: {err:#}",
-                    worker.id
-                ));
-                continue;
-            }
-        };
-        // Hold the existing inode across capture: a closed worker is never recreated, and a
-        // replacement under the same id is not the destination of this inspection.
-        let status_path = wake::status_log_path(&worker.worker_dir);
-        let mut status = match fs::OpenOptions::new().append(true).open(&status_path) {
-            Ok(status) if status.metadata().is_ok_and(|metadata| metadata.len() == 0) => status,
-            Ok(_) => continue,
-            Err(err) => {
-                sink.note(&format!(
-                    "startup inspection skipped for {}: failed to open its status log: {err:#}",
-                    worker.id
-                ));
-                continue;
-            }
-        };
-        let target = TmuxTarget::window(&window);
-        let screen = match sink.capture_visible(&target) {
-            Ok(screen) => screen,
-            Err(err) => {
-                sink.note(&format!(
-                    "startup inspection failed for {}: {err:#}",
-                    worker.id
-                ));
-                continue;
-            }
-        };
-        if !is_workspace_trust_prompt(&screen, project) {
-            continue;
-        }
-
-        match append_blocked_if_empty(&mut status, &worker.worker_dir, &window) {
-            Ok(_) => {}
-            Err(err) => sink.note(&format!(
-                "failed to report the workspace-trust prompt for {}: {err:#}",
-                worker.id
-            )),
+        if let Err(err) = inspect_worker(worker, now, sink) {
+            sink.note(&format!("failed to inspect {} startup: {err:#}", worker.id));
         }
     }
 }
 
-fn append_blocked_if_empty(
-    status: &mut fs::File,
-    worker_dir: &Utf8Path,
-    window: &WindowTarget,
-) -> anyhow::Result<bool> {
+fn inspect_worker(worker: &WorkerSnapshot, now: DateTime<Utc>, sink: &mut dyn Sink) -> Result<()> {
+    let Some((recorded, project)) = worker.startup_target(now, STARTUP_WINDOW) else {
+        return Ok(());
+    };
+    let window = WindowTarget::parse(recorded)?;
+    // Hold the existing inode across capture: a closed worker is never recreated, and a
+    // replacement under the same id is not the destination of this inspection.
+    let status_path = wake::status_log_path(&worker.worker_dir);
+    let mut status = fs::OpenOptions::new().append(true).open(status_path)?;
+    if status.metadata()?.len() != 0 {
+        return Ok(());
+    }
+    let screen = sink.capture_visible(&TmuxTarget::window(&window))?;
+    if !is_workspace_trust_prompt(&screen, project) {
+        return Ok(());
+    }
+
     // Re-check after capture so a worker report that arrived while tmux was read wins.
     if status.metadata()?.len() != 0 {
-        return Ok(false);
+        return Ok(());
     }
 
     let line = wake::line(
@@ -95,11 +62,11 @@ fn append_blocked_if_empty(
     // This line came from the watcher, not the worker. Keep any existing check-in armed at the
     // same deadline and cadence, but move its baseline past the synthetic report so only a later
     // worker report answers it. A worker with no check-in remains unarmed.
-    if let Some(mut checkin) = Checkin::read(worker_dir)? {
+    if let Some(mut checkin) = Checkin::read(&worker.worker_dir)? {
         checkin.armed_len = line.len() as u64 + 1;
-        checkin.write(worker_dir)?;
+        checkin.write(&worker.worker_dir)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 fn is_workspace_trust_prompt(screen: &str, project: &Utf8Path) -> bool {
@@ -131,59 +98,48 @@ fn has_displayed_project(screen: &str, project: &Utf8Path) -> bool {
 }
 
 #[cfg(test)]
+pub(super) fn claude_prompt(project: &Utf8Path) -> String {
+    format!(
+        "Accessing workspace: {project}\n\
+         Quick safety check: Is this a project you created or one you trust?\n\
+         ❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n"
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     const PROJECT: &str = "/private/tmp/niles-trust-probe/claude";
-    const CLAUDE: &str = "Accessing workspace: /private/tmp/niles-trust-probe/claude\n\
-        Quick safety check: Is this a project you created or one you trust?\n\
-        ❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n";
-    const CODEX: &str = "Folder access\n/private/tmp/niles-trust-probe/claude\n\
-        Trust this folder? Codex can read, edit, and run files here.\n\
-        › 1. Trust and continue\n  2. Quit\n";
-
     #[test]
-    fn recognizes_verified_claude_default_no_and_reported_codex_prompts() {
+    fn matches_only_workspace_trust_prompts_for_the_exact_project() {
         let project = Utf8Path::new(PROJECT);
-        assert!(is_workspace_trust_prompt(CLAUDE, project));
-        assert!(is_workspace_trust_prompt(
-            &CLAUDE
+        let claude = claude_prompt(project);
+        let codex =
+            format!("Folder access\n{PROJECT}\nTrust this folder?\nTrust and continue\nQuit");
+        let positives = [
+            claude.clone(),
+            claude
                 .replace("❯ No, exit", "  No, exit")
                 .replace("  Yes, I trust this folder", "❯ Yes, I trust this folder"),
-            project
-        ));
-        assert!(is_workspace_trust_prompt(CODEX, project));
-        assert!(is_workspace_trust_prompt(
-            &CODEX.replace(
+            codex.clone(),
+            codex.replace(
                 "Trust this folder?",
-                "Do you trust the contents of this directory?"
+                "Do you trust the contents of this directory?",
             ),
-            project
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_path_plain_prose_and_nonworkspace_approval() {
-        let project = Utf8Path::new(PROJECT);
-        assert!(!is_workspace_trust_prompt(
-            &CLAUDE.replace(PROJECT, "/private/tmp/somewhere-else"),
-            project
-        ));
-        assert!(!is_workspace_trust_prompt(
-            &CLAUDE.replace(PROJECT, &format!("{PROJECT}-suffix")),
-            project
-        ));
-        assert!(!is_workspace_trust_prompt(
-            &format!("Notes for {PROJECT}: users may mention workspace trust in normal output"),
-            project
-        ));
-        assert!(!is_workspace_trust_prompt(
-            &format!("Command approval\n{PROJECT}\nRun this command?\n› 1. Yes\n  2. Quit\n"),
-            project
-        ));
-        assert!(!is_workspace_trust_prompt(
-            &format!("Login required\n{PROJECT}\nTrust this device?\n"),
-            project
-        ));
+        ];
+        let negatives = [
+            claude.replace(PROJECT, "/private/tmp/somewhere-else"),
+            claude_prompt(Utf8Path::new(&format!("{PROJECT}-suffix"))),
+            format!("Notes for {PROJECT}: workspace trust in normal output"),
+            format!("Command approval\n{PROJECT}\nRun this command?\n› 1. Yes\n  2. Quit"),
+            format!("Login required\n{PROJECT}\nTrust this device?"),
+        ];
+        for screen in positives {
+            assert!(is_workspace_trust_prompt(&screen, project), "{screen}");
+        }
+        for screen in negatives {
+            assert!(!is_workspace_trust_prompt(&screen, project), "{screen}");
+        }
     }
 }
