@@ -122,6 +122,7 @@ niles_schema: 2
         assert_eq!(manifest.recheck.as_deref(), Some("backoff"));
         assert_eq!(bare.checkin, None);
         assert_eq!(bare.recheck, None);
+        assert!(bare.worker_planning.is_empty());
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(anonymous).unwrap();
@@ -156,7 +157,7 @@ niles_schema: 2
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "expected one of `lead`, `worker`, `reviewer`, `security`, `checkin`, `recheck`"
+                "expected one of `lead`, `worker`, `reviewer`, `security`, `worker_planning`, `checkin`, `recheck`"
             ),
             "{err}"
         );
@@ -195,6 +196,7 @@ niles_schema: 2
             // nothing: `checkin: null` would be a value the next reader has to interpret.
             "checkin:",
             "recheck:",
+            "worker_planning:",
         ] {
             assert!(!body.contains(gone), "{gone} should be gone:\n{body}");
         }
@@ -204,11 +206,68 @@ niles_schema: 2
         let configured = WorkspaceManifest {
             checkin: Some("15m".to_owned()),
             recheck: Some("backoff".to_owned()),
+            worker_planning: [(
+                "codex:gpt-6-astra".to_owned(),
+                "Include the API invariants in the handoff.".to_owned(),
+            )]
+            .into(),
             ..manifest
         };
         save(&root, &configured).unwrap();
         assert_eq!(load(&root).unwrap(), Some(configured));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn worker_planning_loads_as_a_string_mapping() {
+        let root = temp_test_path("manifest-worker-planning");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+lead: claude
+worker: codex:gpt-6-astra:high
+reviewer: claude
+security: claude
+worker_planning:
+  codex:gpt-6-astra: Include the API invariants in the handoff.
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let manifest = load(&root).unwrap().unwrap();
+
+        assert_eq!(
+            manifest.worker_planning.get("codex:gpt-6-astra"),
+            Some(&"Include the API invariants in the handoff.".to_owned())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn worker_planning_rejects_non_string_values() {
+        let root = temp_test_path("manifest-worker-planning-shape");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"
+lead: claude
+worker: codex
+reviewer: claude
+security: claude
+worker_planning:
+  codex:gpt-6-astra:
+    steps: 2
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+
+        let err = format!("{:#}", load(&root).unwrap_err());
+
+        assert!(err.contains("invalid type"), "{err}");
         fs::remove_dir_all(root).unwrap();
     }
 }

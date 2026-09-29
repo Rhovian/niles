@@ -204,15 +204,38 @@ lead: claude
 worker: codex
 reviewer: claude
 security: claude
+# optional: operator-authored implementation planning guidance by exact family:model
+worker_planning:
+  codex:gpt-5.5: &detailed |
+    Settle the implementation approach and edge cases. Decompose the work into
+    concrete changes, supply explicit acceptance criteria for each, and dispatch
+    each change individually.
+  codex:gpt-6-astra: &frontier |
+    Supply the objective, constraints, and explicit acceptance criteria with
+    minimal implementation granularity. Leave decomposition and implementation
+    details to the worker.
+  codex:gpt-5.6-sol: *frontier
+  codex:gpt-5.6-terra: *detailed
+  codex:gpt-5.6-luna: *detailed
+  claude:opus: *frontier
+  claude:sonnet: *detailed
+  claude:fable: *frontier
+  claude:haiku: *detailed
+  hermes:tencent/hy3: *detailed
+  hermes:deepseek/deepseek-v4.1-flash: *detailed
+  hermes:z-ai/glm-5.3-flash: *detailed
 # optional: the check-in cadence every dispatch arms (see Nudges and Check-ins)
 # checkin: 15m
 # recheck: backoff
 ```
 
-Role bindings are the whole manifest apart from the two optional check-in keys. Every
-role with its own brief has its own binding — a security pass is commissioned rarely,
+Every role with its own brief has its own binding — a security pass is commissioned rarely,
 but the tier it runs at is a workspace decision rather than something the lead has to
-remember per spawn.
+remember per spawn. `worker_planning` is an optional mapping from exact `family:model` keys
+to freeform instructions for planning implementation assignments; effort is ignored. The
+example is operator-written guidance, not a built-in judgment about that model. A missing
+match, or a worker binding without a model, adds no special planning policy. Reviewer and
+security assignments are unaffected.
 
 `niles spawn` uses the binding for `--role` (default: `worker`). An explicit
 `--agent` overrides it. Without `--agent`, a missing manifest or role binding is

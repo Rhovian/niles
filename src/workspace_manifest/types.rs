@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-/// Which agent plays each role in this workspace, and the check-in cadence a dispatch arms.
+/// Which agent plays each role, plus operator-authored planning and check-in settings.
 ///
 /// Every role that has its own brief has its own binding, `security` included: it is
 /// commissioned rarely, but when it is, the tier it runs at is a workspace decision rather
@@ -15,6 +17,10 @@ pub struct WorkspaceManifest {
     pub worker: String,
     pub reviewer: String,
     pub security: String,
+    /// Planning guidance keyed by an exact `family:model` pair. The lead consults this only for
+    /// implementation assignments; Niles does not interpret models or infer capabilities.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub worker_planning: BTreeMap<String, String>,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: `15m`, `90s`,
     /// a bare number of minutes, or `off` for none. Absent is the built-in five-minute default.
     ///
@@ -37,6 +43,8 @@ struct WorkspaceManifestWire {
     reviewer: String,
     security: String,
     #[serde(default)]
+    worker_planning: BTreeMap<String, String>,
+    #[serde(default)]
     checkin: Option<String>,
     #[serde(default)]
     recheck: Option<String>,
@@ -51,6 +59,7 @@ impl From<WorkspaceManifestWire> for WorkspaceManifest {
             worker: wire.worker,
             reviewer: wire.reviewer,
             security: wire.security,
+            worker_planning: wire.worker_planning,
             checkin: wire.checkin,
             recheck: wire.recheck,
         }
@@ -64,6 +73,7 @@ impl Default for WorkspaceManifest {
             worker: "codex".to_owned(),
             reviewer: "claude".to_owned(),
             security: "claude".to_owned(),
+            worker_planning: BTreeMap::new(),
             checkin: None,
             recheck: None,
         }
