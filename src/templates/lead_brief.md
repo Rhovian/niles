@@ -46,7 +46,7 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 niles spawn <id> --role <worker|reviewer|security> "<task>"
 ```
 
-Explain the plan to the user before spawning. Size each handoff to the configured worker's capability: give a less capable worker one bounded step, inspect its handback, then send the next; give a capable worker a coherent multi-step task. Include only the decisions and constraints needed for that assignment. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
+Before delegating an implementation assignment, resolve the selected worker family and model, then consult `worker_planning` in `{manifest}`. Its keys are exact `family:model` pairs (effort is ignored); apply matching operator instructions to planning and handoff detail. A missing match or unspecified model adds no special policy — do not invent capability assumptions. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
 
 `done:` is a handback, not an exit. Follow-up goes to the live worker with `niles send <id>` — it still holds the reasoning a fresh one would have to rebuild, so check what is live before you spawn.
 Workers share one working tree. Two briefed onto the same files will overwrite each other with nothing to report the conflict, so a second worker is for files the first does not own.
