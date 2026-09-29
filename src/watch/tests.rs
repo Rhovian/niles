@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
-use crate::{test_support::temp_test_path, worker::worker_snapshot};
+use crate::{test_support::temp_test_path, tmux::TmuxTarget, worker::worker_snapshot};
 
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
@@ -39,8 +39,11 @@ fn cadence(flag: Option<&str>) -> Cadence {
 struct RecordingSink {
     attempts: Vec<String>,
     sent: Vec<String>,
+    captures: Vec<String>,
     notes: Vec<String>,
     fail: bool,
+    capture_failure: bool,
+    screen: String,
 }
 
 impl Sink for RecordingSink {
@@ -51,6 +54,14 @@ impl Sink for RecordingSink {
         }
         self.sent.push(text.to_owned());
         Ok(())
+    }
+
+    fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String> {
+        self.captures.push(target.as_str().to_owned());
+        if self.capture_failure {
+            bail!("stub worker pane vanished");
+        }
+        Ok(self.screen.clone())
     }
 
     fn note(&mut self, line: &str) {
@@ -89,6 +100,30 @@ fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
     .unwrap();
 }
 
+fn write_starting_worker(workspace: &Utf8PathBuf, id: &str, log: &str, now: DateTime<Utc>) {
+    write_worker(workspace, id, log);
+    let dir = worker_dir(workspace, id);
+    fs::write(dir.join("meta.json"), starting_meta(workspace, id, now)).unwrap();
+}
+
+fn starting_meta(workspace: &Utf8Path, id: &str, now: DateTime<Utc>) -> String {
+    format!(
+        "{{\"niles_schema\":2,\"id\":\"{id}\",\"agent\":\"claude\",\
+         \"created_at\":\"{}\",\"project\":\"{workspace}\",\
+         \"window\":\"ambient:niles-{id}\",\"brief\":\"{workspace}/brief.md\",\
+         \"launch\":\"{workspace}/launch.sh\"}}",
+        now.to_rfc3339()
+    )
+}
+
+fn claude_trust_screen(workspace: &Utf8Path) -> String {
+    format!(
+        "Accessing workspace: {workspace}\n\
+         Quick safety check: Is this a project you created or one you trust?\n\
+         ❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n"
+    )
+}
+
 fn append_log(workspace: &Utf8PathBuf, id: &str, line: &str) {
     let path = worker_dir(workspace, id).join("status.log");
     let body = fs::read_to_string(&path).unwrap();
@@ -97,6 +132,180 @@ fn append_log(workspace: &Utf8PathBuf, id: &str, line: &str) {
 
 const WINDOW: &str = "working: launch\n";
 const DONE: &str = "done: shipped\n";
+
+#[test]
+fn workspace_trust_appends_one_blocked_report_and_nudges_without_moving_the_cursor() {
+    let root = workspace("trust-blocked");
+    let now = at(1_000);
+    write_starting_worker(&root, "impl", "", now);
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let mut sink = RecordingSink {
+        screen: claude_trust_screen(&root),
+        ..RecordingSink::default()
+    };
+
+    tick(&root, now, &mut memory, &mut sink, &running());
+
+    let dir = worker_dir(&root, "impl");
+    assert_eq!(
+        fs::read_to_string(dir.join("status.log")).unwrap(),
+        "blocked: workspace trust confirmation needs operator action in worker pane \
+         ambient:niles-impl\n"
+    );
+    assert_eq!(
+        sink.sent,
+        Vec::<String>::new(),
+        "the existing planner sees the append on its next snapshot"
+    );
+    assert_eq!(sink.captures, vec!["=ambient:=niles-impl"]);
+    assert!(!dir.join("status.cursor").exists());
+    assert!(
+        !dir.join("checkin").exists(),
+        "an absent check-in stays absent"
+    );
+
+    let mut next = RecordingSink {
+        screen: claude_trust_screen(&root),
+        ..RecordingSink::default()
+    };
+    tick(&root, at(1_001), &mut memory, &mut next, &running());
+    assert_eq!(
+        next.sent,
+        vec!["niles: impl reported (blocked) — check workers"]
+    );
+    assert!(next.captures.is_empty());
+
+    // A restarted watcher seeds report memory from disk, while startup eligibility independently
+    // stops at the non-empty log. Neither the capture nor the blocked record repeats.
+    let mut restarted = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let mut after_restart = RecordingSink::default();
+    tick(
+        &root,
+        at(1_002),
+        &mut restarted,
+        &mut after_restart,
+        &running(),
+    );
+    assert!(
+        after_restart.captures.is_empty(),
+        "blocked workers are no longer inspected"
+    );
+    assert!(
+        after_restart.sent.is_empty(),
+        "the blocked report is not repeated"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("status.log"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn startup_inspection_skips_expired_and_already_reporting_workers() {
+    let root = workspace("trust-ineligible");
+    let now = at(1_000);
+    write_starting_worker(&root, "expired", "", at(969));
+    write_starting_worker(&root, "reporting", WINDOW, now);
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let mut sink = RecordingSink {
+        screen: claude_trust_screen(&root),
+        ..RecordingSink::default()
+    };
+
+    tick(&root, now, &mut memory, &mut sink, &running());
+
+    assert!(sink.captures.is_empty());
+    assert_eq!(
+        fs::read_to_string(worker_dir(&root, "expired").join("status.log")).unwrap(),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(worker_dir(&root, "reporting").join("status.log")).unwrap(),
+        WINDOW
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn failed_startup_capture_leaves_worker_state_alone() {
+    let root = workspace("trust-capture-failure");
+    let now = at(1_000);
+    write_starting_worker(&root, "impl", "", now);
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let mut sink = RecordingSink {
+        capture_failure: true,
+        ..RecordingSink::default()
+    };
+
+    tick(&root, now, &mut memory, &mut sink, &running());
+
+    assert_eq!(sink.captures, vec!["=ambient:=niles-impl"]);
+    assert!(sink.sent.is_empty());
+    assert_eq!(
+        fs::read_to_string(worker_dir(&root, "impl").join("status.log")).unwrap(),
+        ""
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn workspace_trust_preserves_checkin_until_silence_or_a_real_report() {
+    let root = workspace("trust-checkin-lifecycle");
+    let now = at(1_000);
+    write_starting_worker(&root, "impl", "", now);
+    let dir = worker_dir(&root, "impl");
+    let armed = armed_checkin(90, 0, now);
+    armed.write(&dir).unwrap();
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let mut sink = RecordingSink {
+        screen: claude_trust_screen(&root),
+        ..RecordingSink::default()
+    };
+
+    tick(&root, now, &mut memory, &mut sink, &running());
+
+    assert!(sink.sent.is_empty());
+    let blocked_len = fs::metadata(dir.join("status.log")).unwrap().len();
+    let preserved = Checkin::read(&dir).unwrap().unwrap();
+    assert_eq!(preserved.deadline, armed.deadline);
+    assert_eq!(preserved.delay, armed.delay);
+    assert_eq!(preserved.step, armed.step);
+    assert_eq!(preserved.recheck, armed.recheck);
+    assert_eq!(preserved.armed_len, blocked_len);
+
+    let mut report = RecordingSink::default();
+    tick(&root, at(1_001), &mut memory, &mut report, &running());
+    assert_eq!(
+        report.sent,
+        vec!["niles: impl reported (blocked) — check workers"]
+    );
+    assert_eq!(Checkin::read(&dir).unwrap().unwrap(), preserved);
+
+    let mut overdue = RecordingSink::default();
+    tick(&root, at(1_090), &mut memory, &mut overdue, &running());
+    assert_eq!(
+        overdue.sent,
+        vec!["niles: no report from impl in 90s — check it"]
+    );
+    assert!(Checkin::read(&dir).unwrap().is_some());
+
+    append_log(&root, "impl", DONE);
+    let mut answered = RecordingSink::default();
+    tick(&root, at(1_091), &mut memory, &mut answered, &running());
+    assert_eq!(
+        answered.sent,
+        vec!["niles: impl reported (done) — check workers"]
+    );
+    assert_eq!(Checkin::read(&dir).unwrap(), None);
+
+    fs::remove_dir_all(&root).unwrap();
+}
 
 #[test]
 fn a_failed_nudge_is_retried_on_the_next_tick() {

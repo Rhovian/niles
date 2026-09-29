@@ -89,8 +89,21 @@ where
 pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.as_str();
-    let output = output(["capture-pane", "-p", "-t", arg, "-S", &start])
-        .with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
+    capture(target, ["capture-pane", "-p", "-t", arg, "-S", &start])
+}
+
+/// Captures only the pane's currently visible screen, excluding scrollback.
+pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
+    capture(target, ["capture-pane", "-p", "-J", "-t", target.as_str()])
+}
+
+fn capture<I, S>(target: &TmuxTarget, args: I) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let output =
+        output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
     if !output.status.success() {
         bail!(
