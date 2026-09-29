@@ -555,6 +555,47 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
     assert!(!stdout.contains("stale pass"), "stdout: {stdout}");
 }
 
+#[test]
+fn send_exits_copy_mode_and_delivers_the_message_once() {
+    let workspace = temp_workspace("niles-send-copy-mode");
+    let server = TmuxServer::start(&workspace, "send-copy-mode");
+    let delivered = workspace.join("delivered");
+    let ready = workspace.join("ready");
+    let complete = workspace.join("complete");
+    let command = format!(
+        "touch {}; IFS= read -r line; printf '%s\\n' \"$line\" >> {}; touch {}; printf \
+         'complete\\n'; exec sleep 600",
+        ready.display(),
+        delivered.display(),
+        complete.display()
+    );
+    server.new_window_running("niles-auth-fix", Some(&command));
+    wait_for_file(&ready);
+    worker_with_status(&workspace, "auth-fix", b"");
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_agent(&bin);
+    let target = format!("{}:niles-auth-fix", server.session);
+
+    server.run(&["set-option", "-w", "-t", &target, "mode-keys", "vi"]);
+    server.run(&["copy-mode", "-t", &target]);
+    assert_eq!(server.pane_in_mode(&target), "1");
+
+    let send = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["send", "auth-fix", "delivered"],
+    )
+    .output()
+    .unwrap();
+
+    assert_command_success("send from copy mode", &send);
+    wait_for_file(&complete);
+    assert_eq!(fs::read_to_string(delivered).unwrap(), "delivered\n");
+}
+
 /// A worker whose window is gone can never append again, so waiting out the timeout on it is
 /// pure delay — with the default timeout, an hour of it.
 #[test]
@@ -772,6 +813,43 @@ fn send_fails_when_the_submit_key_leaves_the_pane_unchanged() {
     assert!(stderr.contains("niles peek"), "stderr: {stderr}");
 }
 
+#[test]
+fn send_does_not_submit_when_the_message_never_renders() {
+    let workspace = temp_workspace("niles-send-no-render");
+    let server = TmuxServer::start(&workspace, "send-no-render");
+    let received = workspace.join("received");
+    let ready = workspace.join("ready");
+    let command = format!(
+        "stty -echo; touch {}; cat > {}",
+        ready.display(),
+        received.display()
+    );
+    server.new_window_running("niles-auth-fix", Some(&command));
+    wait_for_file(&ready);
+    worker_with_status(&workspace, "auth-fix", b"");
+    write_worker_meta(&workspace, &server.session, "auth-fix", None);
+    let bin = workspace.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_stub_agent(&bin);
+
+    let send = niles_in(
+        &server,
+        &workspace,
+        &bin,
+        &["send", "auth-fix", "message-without-submit"],
+    )
+    .output()
+    .unwrap();
+
+    assert!(!send.status.success(), "stdout: {}", stdout_of(&send));
+    assert!(!stdout_of(&send).contains("sent:"));
+    let stderr = stderr_of(&send);
+    assert!(stderr.contains("message text never appeared"), "{stderr}");
+    // With canonical terminal input, `cat` receives the staged line only after Enter. An empty
+    // file therefore proves the failure path did not send the submit key.
+    assert_eq!(fs::read_to_string(received).unwrap(), "");
+}
+
 /// A private tmux server on its own socket, torn down when the test ends.
 ///
 /// These tests assert on tmux window state, and a stub that answers window queries is a second
@@ -870,6 +948,16 @@ impl TmuxServer {
             .output()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn pane_in_mode(&self, target: &str) -> String {
+        let output = Command::new("tmux")
+            .args(["-S", &self.socket.display().to_string()])
+            .args(["display-message", "-p", "-t", target, "#{pane_in_mode}"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", self.diagnostics());
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
     fn run(&self, args: &[&str]) {

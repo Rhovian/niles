@@ -120,6 +120,8 @@ fn capture_start(lines: usize) -> String {
 /// is an error, not a `sent:`.
 pub(crate) fn send_line(target: &TmuxTarget, line: &str) -> Result<()> {
     let arg = target.as_str();
+    // A mode would interpret the paste as key bindings, so exit it before taking the baseline.
+    run(["copy-mode", "-q", "-t", arg])?;
     let before = capture_pane(target, SEND_WATCH_LINES)?;
     run(send_line_literal_args(arg, line))?;
     let staged = settle_pane(target, &before)?;
@@ -129,9 +131,9 @@ pub(crate) fn send_line(target: &TmuxTarget, line: &str) -> Result<()> {
 
 /// Waits for the paste to render and the pane to go quiet, and returns what it settled on.
 ///
-/// Neither way of giving up is an error. A pane that never changed may simply not echo what it is
-/// handed, and one that never goes quiet is an agent already doing something; in both cases the
-/// submit is still worth sending, and [`confirm_submit_took`] is the judge of whether it took.
+/// A pane that never goes quiet may be an agent already doing something, so the submit is still
+/// worth sending and [`confirm_submit_took`] judges whether it took. If the text never renders,
+/// the pane may not be accepting input and the submit must not be sent blindly.
 fn settle_pane(target: &TmuxTarget, before: &str) -> Result<String> {
     let deadline = Instant::now() + SEND_SETTLE_TIMEOUT;
     let mut previous = before.to_owned();
@@ -151,6 +153,12 @@ fn settle_pane(target: &TmuxTarget, before: &str) -> Result<String> {
             previous = current;
         }
         if Instant::now() >= deadline {
+            if !rendered {
+                bail!(
+                    "message text never appeared in {target}: the pane may not be accepting input; \
+                     the submit key was not sent"
+                );
+            }
             return Ok(previous);
         }
     }
