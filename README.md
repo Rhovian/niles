@@ -205,8 +205,25 @@ worker: codex
 reviewer: claude
 security: claude
 # optional: operator-authored implementation planning guidance by exact family:model
-# worker_planning:
-#   codex:gpt-6-astra: Settle the approach and edge cases, then hand off one concrete change at a time.
+worker_planning:
+  codex:gpt-5.5: &detailed |
+    Settle the implementation approach and edge cases. Decompose the work into
+    concrete changes, supply explicit acceptance criteria for each, and dispatch
+    each change individually.
+  codex:gpt-6-astra: &frontier |
+    Supply the objective, constraints, and explicit acceptance criteria with
+    minimal implementation granularity. Leave decomposition and implementation
+    details to the worker.
+  codex:gpt-5.6-sol: *frontier
+  codex:gpt-5.6-terra: *detailed
+  codex:gpt-5.6-luna: *detailed
+  claude:opus: *frontier
+  claude:sonnet: *detailed
+  claude:fable: *frontier
+  claude:haiku: *detailed
+  hermes:tencent/hy3: *detailed
+  hermes:deepseek/deepseek-v4.1-flash: *detailed
+  hermes:z-ai/glm-5.3-flash: *detailed
 # optional: the check-in cadence every dispatch arms (see Nudges and Check-ins)
 # checkin: 15m
 # recheck: backoff
