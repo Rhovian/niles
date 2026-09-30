@@ -161,7 +161,7 @@ mod tests {
             args: vec!["--flag".to_owned()],
             brief,
             env: Vec::new(),
-            spec: agents::parse_spec("codex").unwrap(),
+            spec: agents::parse_spec("codex", &agents::ModelRoster::builtin().unwrap()).unwrap(),
         };
         let dir = std::env::temp_dir();
         let path = Utf8Path::from_path(&dir).unwrap().join(format!(

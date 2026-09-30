@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
-use crate::{util::current_dir_utf8, wake};
+use crate::{
+    util::{current_dir_utf8, print_structured_rows},
+    wake,
+};
 
 use super::{
     meta::meta_path,
@@ -31,12 +34,8 @@ const CURSOR_FILE: &str = "status.cursor";
 /// two would drift.
 pub fn workers() -> Result<()> {
     let workers = worker_snapshot(&current_dir_utf8()?)?;
-    println!(
-        "workers[{}]{{id,agent,task,age,window,wake,last_status}}:",
-        workers.len()
-    );
-
     let now = Utc::now();
+    let mut rows = Vec::with_capacity(workers.len());
     for worker in &workers {
         if let Some(error) = &worker.read_error {
             eprintln!(
@@ -53,11 +52,29 @@ pub fn workers() -> Result<()> {
         let window = worker_window_state(worker);
         let wake = worker_pending_wake(worker)?;
         let status = worker_last_status(worker);
-        println!(
-            "  {},{},{},{},{},{},{}",
-            worker.id, agent, task, age, window, wake, status
-        );
+        rows.push([
+            worker.id.clone(),
+            agent.to_owned(),
+            task.to_owned(),
+            age,
+            window,
+            wake,
+            status,
+        ]);
     }
+    print_structured_rows(
+        "workers",
+        [
+            "id",
+            "agent",
+            "task",
+            "age",
+            "window",
+            "wake",
+            "last_status",
+        ],
+        &rows,
+    );
 
     Ok(())
 }

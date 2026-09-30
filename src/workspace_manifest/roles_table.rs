@@ -2,7 +2,10 @@ use std::{collections::BTreeMap, io::Write};
 
 use anyhow::Result;
 
-use crate::{agents, config::spec::AgentConfig};
+use crate::{
+    agents::{self, ModelRoster},
+    config::spec::AgentConfig,
+};
 
 use super::WorkspaceManifest;
 
@@ -18,12 +21,13 @@ pub(super) fn print_manifest_roles<W: Write>(
     output: &mut W,
     manifest: &WorkspaceManifest,
     agent_configs: &BTreeMap<String, AgentConfig>,
+    models: &ModelRoster,
 ) -> Result<()> {
     let rows = [
-        role_row("lead", &manifest.lead, agent_configs),
-        role_row("worker", &manifest.worker, agent_configs),
-        role_row("reviewer", &manifest.reviewer, agent_configs),
-        role_row("security", &manifest.security, agent_configs),
+        role_row("lead", &manifest.lead, agent_configs, models),
+        role_row("worker", &manifest.worker, agent_configs, models),
+        role_row("reviewer", &manifest.reviewer, agent_configs, models),
+        role_row("security", &manifest.security, agent_configs, models),
     ];
 
     let role_width = rows.iter().map(|row| row.role.len()).fold(0, usize::max);
@@ -59,11 +63,13 @@ fn role_row(
     role: &'static str,
     value: &str,
     agent_configs: &BTreeMap<String, AgentConfig>,
+    models: &ModelRoster,
 ) -> RoleRow {
     // Validate through the same contract the picker writes with, so a binding
     // niles would refuse to launch is flagged here, where it can be fixed.
-    let spec = agents::parse_spec(value)
-        .and_then(|spec| agents::canonical_manifest_agent(&spec, agent_configs).map(|_| spec));
+    let spec = agents::parse_spec(value, models).and_then(|spec| {
+        agents::canonical_manifest_agent(&spec, agent_configs, models).map(|_| spec)
+    });
 
     match spec {
         Ok(spec) => RoleRow {
@@ -127,7 +133,8 @@ mod tests {
 
     fn render(manifest: &WorkspaceManifest) -> String {
         let mut output = Vec::new();
-        print_manifest_roles(&mut output, manifest, &BTreeMap::new()).unwrap();
+        let models = ModelRoster::builtin().unwrap();
+        print_manifest_roles(&mut output, manifest, &BTreeMap::new(), &models).unwrap();
         String::from_utf8(output).unwrap()
     }
 
@@ -206,9 +213,12 @@ security  claude  opus     max
 
     #[test]
     fn a_long_model_name_widens_every_row_together() {
-        let rendered = render(&manifest("claude:claude-haiku-4-5-20251001:medium"));
+        let rendered = render(&manifest("hermes:deepseek/deepseek-v4.1-flash:medium"));
 
-        assert!(rendered.contains("claude-haiku-4-5-20251001"), "{rendered}");
+        assert!(
+            rendered.contains("deepseek/deepseek-v4.1-flash"),
+            "{rendered}"
+        );
         let effort_columns: Vec<Option<usize>> = rendered
             .lines()
             .take(4)

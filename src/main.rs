@@ -6,6 +6,7 @@ mod build_info;
 mod cli;
 mod config;
 mod doctor;
+mod models;
 mod schema;
 mod session;
 mod store;
@@ -49,7 +50,7 @@ fn run() -> Result<ExitCode> {
             role,
             task_label,
             agent,
-            brief,
+            task_file,
             checkin,
             mut task,
         }) => {
@@ -59,7 +60,7 @@ fn run() -> Result<ExitCode> {
             let wait = wait || trailing_wait;
             let checkin = checkin.or(trailing_checkin);
             let worker_id = id.clone();
-            worker::spawn(id, role, task_label, agent, brief, task, checkin)?;
+            worker::spawn(id, role, task_label, agent, task_file, task, checkin)?;
             if wait {
                 return Ok(
                     wait::wait(vec![worker_id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
@@ -72,6 +73,7 @@ fn run() -> Result<ExitCode> {
             all,
         }) => worker::worker_close(id, task_label, all)?,
         Some(CommandName::Workers) => worker::workers()?,
+        Some(CommandName::Models) => models::models()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
         Some(CommandName::Send {

@@ -29,6 +29,17 @@ pub fn current_dir_utf8() -> Result<Utf8PathBuf> {
     )
 }
 
+pub(crate) fn print_structured_rows<const COLUMNS: usize>(
+    name: &str,
+    fields: [&str; COLUMNS],
+    rows: &[[String; COLUMNS]],
+) {
+    println!("{name}[{}]{{{}}}:", rows.len(), fields.join(","));
+    for row in rows {
+        println!("  {}", row.join(","));
+    }
+}
+
 pub(crate) fn read_dir_utf8_paths(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,

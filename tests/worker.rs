@@ -335,6 +335,42 @@ fn role_selects_which_fragment_the_brief_carries() {
 }
 
 #[test]
+fn task_file_is_composed_with_the_role_and_reporting_contract() {
+    let niles = env!("CARGO_BIN_EXE_niles");
+    let workspace = temp_workspace("niles-worker-task-file");
+    let home = niles_home(&workspace);
+    let (bin, tmux_log) = write_worker_test_bins(&workspace);
+    let path = path_with_bin(&bin);
+    let task_file = workspace.join("review-task.txt");
+    fs::write(&task_file, "Inspect the parser edge cases.").unwrap();
+
+    let spawn = Command::new(niles)
+        .args([
+            "spawn",
+            "review-file",
+            "--role",
+            "reviewer",
+            "--agent",
+            "claude",
+            "--task-file",
+        ])
+        .arg(&task_file)
+        .current_dir(&workspace)
+        .env("PATH", &path)
+        .env("NILES_HOME", &home)
+        .env("TMUX_LOG", &tmux_log)
+        .env("TMUX", "/tmp/niles-test-tmux,0,0")
+        .output()
+        .unwrap();
+    assert_command_success("spawn --task-file", &spawn);
+
+    let brief = fs::read_to_string(workspace.join(".niles/worker/review-file/brief.md")).unwrap();
+    assert!(brief.contains("## Reporting"), "{brief}");
+    assert!(brief.contains("You are the reviewer"), "{brief}");
+    assert!(brief.contains("Inspect the parser edge cases."), "{brief}");
+}
+
+#[test]
 fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-no-tmux");
@@ -576,6 +612,11 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-worker-tier-test");
     let home = niles_home(&workspace);
+    fs::write(
+        workspace.join("niles.yaml"),
+        "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }\n",
+    )
+    .unwrap();
 
     let bin = workspace.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -616,7 +657,7 @@ exit 0
             "spawn",
             "codex-hi",
             "--agent",
-            "codex:gpt-5.5:xhigh",
+            "codex:gpt-5.7:xhigh",
             "Fix",
             "auth",
         ])
@@ -629,22 +670,22 @@ exit 0
         .unwrap();
     assert_command_success("codex tiered spawn", &codex_spawn);
     let codex_stdout = String::from_utf8_lossy(&codex_spawn.stdout);
-    assert!(codex_stdout.contains("agent: codex:gpt-5.5:xhigh"));
+    assert!(codex_stdout.contains("agent: codex:gpt-5.7:xhigh"));
     assert!(codex_stdout.contains("agent_family: codex"));
-    assert!(codex_stdout.contains("model: gpt-5.5"));
+    assert!(codex_stdout.contains("model: gpt-5.7"));
     assert!(codex_stdout.contains("effort: xhigh"));
 
     let codex_meta =
         fs::read_to_string(workspace.join(".niles/worker/codex-hi/meta.json")).unwrap();
-    assert!(codex_meta.contains(r#""agent": "codex:gpt-5.5:xhigh""#));
+    assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
     assert!(codex_meta.contains(r#""agent_family": "codex""#));
-    assert!(codex_meta.contains(r#""model": "gpt-5.5""#));
+    assert!(codex_meta.contains(r#""model": "gpt-5.7""#));
     assert!(codex_meta.contains(r#""effort": "xhigh""#));
 
     let codex_launch =
         fs::read_to_string(workspace.join(".niles/worker/codex-hi/launch.sh")).unwrap();
     assert!(codex_launch.contains("'--dangerously-bypass-approvals-and-sandbox'"));
-    assert!(codex_launch.contains("'--model' 'gpt-5.5'"));
+    assert!(codex_launch.contains("'--model' 'gpt-5.7'"));
     assert!(codex_launch.contains("'--config' 'model_reasoning_effort=\"xhigh\"'"));
 
     let claude_spawn = Command::new(niles)
@@ -693,6 +734,24 @@ fn spawn_rejects_invalid_model_effort_specs() {
     assert!(!spawn.status.success());
     assert!(String::from_utf8_lossy(&spawn.stderr).contains("unsupported claude effort `turbo`"));
     assert!(!workspace.join(".niles/worker/bad-worker").exists());
+
+    let off_roster = Command::new(niles)
+        .args([
+            "spawn",
+            "future-worker",
+            "--agent",
+            "codex:gpt-5.7:xhigh",
+            "Fix",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert!(!off_roster.status.success());
+    assert!(
+        String::from_utf8_lossy(&off_roster.stderr).contains("unsupported codex model `gpt-5.7`")
+    );
+    assert!(!workspace.join(".niles/worker/future-worker").exists());
 }
 
 #[test]

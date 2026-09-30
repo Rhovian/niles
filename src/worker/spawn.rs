@@ -28,7 +28,7 @@ pub fn spawn(
     role: WorkerRole,
     task_label: Option<String>,
     agent: Option<String>,
-    brief: Option<Utf8PathBuf>,
+    task_file: Option<Utf8PathBuf>,
     task: Vec<String>,
     checkin: Option<String>,
 ) -> Result<()> {
@@ -36,9 +36,17 @@ pub fn spawn(
     if let Some(label) = &task_label {
         validate_task_label(label)?;
     }
-    if brief.is_none() && task.is_empty() {
-        bail!("spawn requires either --brief or task text");
+    if task_file.is_none() && task.is_empty() {
+        bail!("spawn requires either --task-file or task text");
     }
+
+    let task = match task_file {
+        Some(path) => {
+            let path = absolute_existing_file(&path, "task file")?;
+            fs::read_to_string(&path).with_context(|| format!("failed to read task file {path}"))?
+        }
+        None => task.join(" "),
+    };
 
     let project = current_dir_utf8()?;
     let agent = resolve_agent(&project, role, agent)?;
@@ -48,8 +56,13 @@ pub fn spawn(
     let config = load_project_config_from(&project)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
-    let agent_config = agents::config_for(&config.agents, &agent)?;
-    let invocation = agents::invocation(&agent, agent_config, agents::InvocationDefaults::Worker)?;
+    let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
+    let invocation = agents::invocation(
+        &agent,
+        agent_config,
+        agents::InvocationDefaults::Worker,
+        &config.models,
+    )?;
     let agent_spec = &invocation.spec;
     if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
@@ -64,22 +77,16 @@ pub fn spawn(
     }
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
-    let brief_path = match brief {
-        Some(path) => absolute_existing_file(&path, "brief")?,
-        None => {
-            let path = dir.join("brief.md");
-            write_brief(&BriefInputs {
-                dir: &dir,
-                path: &path,
-                id: &id,
-                role,
-                task_label: task_label.as_deref(),
-                project: &project,
-                task: &task.join(" "),
-            })?;
-            path
-        }
-    };
+    let brief_path = dir.join("brief.md");
+    write_brief(&BriefInputs {
+        dir: &dir,
+        path: &brief_path,
+        id: &id,
+        role,
+        task_label: task_label.as_deref(),
+        project: &project,
+        task: &task,
+    })?;
 
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);

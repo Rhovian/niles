@@ -129,6 +129,8 @@ mod tests {
     fn lead_brief_keeps_the_plan_and_delegates_the_implementation() {
         assert!(LEAD_BRIEF_TEMPLATE.contains("You own the outcome and the plan"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("hand a worker a plan rather than a puzzle"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("Design the leanest implementation"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("compare the diff with the shape you planned"));
         assert!(LEAD_BRIEF_TEMPLATE.contains("Do not implement."));
         // The undershoot half: dispatching a worker for a check it could finish itself (#121).
         assert!(
@@ -167,7 +169,7 @@ mod tests {
     #[test]
     fn lead_brief_stays_short() {
         let lines = LEAD_BRIEF_TEMPLATE.lines().count();
-        assert!(lines <= 55, "lead brief is {lines} lines; keep it tight");
+        assert!(lines <= 60, "lead brief is {lines} lines; keep it tight");
     }
 
     /// The watcher types into the lead's pane; a lead that does not know what that line is will
@@ -249,7 +251,8 @@ mod tests {
     fn lead_brief_render_fills_every_placeholder() {
         let workspace = temp_test_path("brief-render");
         let dir = workspace.join(".niles/sessions/test-session");
-        let agent = agents::parse_spec("codex:gpt-5.5:xhigh").unwrap();
+        let models = agents::ModelRoster::builtin().unwrap();
+        let agent = agents::parse_spec("codex:gpt-5.5:xhigh", &models).unwrap();
 
         let body = render_lead_brief(&agent, &workspace, &dir, "worker: none");
 
