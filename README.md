@@ -3,8 +3,6 @@
 Niles coordinates coding agents from different model families in tmux, keeping work moving and
 bringing worker reports back to the lead.
 
-Named for the butler in *The Nanny*, it answers the door when a worker reports.
-
 ## Why Niles?
 
 Using one model family for implementation and another for review can add independent judgment.
@@ -32,15 +30,6 @@ cd /path/to/your/project
 tmux new-session -s niles # skip if already in tmux
 niles
 ```
-
-Ask the lead to run this fifth command, or run it from a second tmux pane in the same project:
-
-```sh
-niles spawn first-task "Inspect this project and propose one useful improvement"
-```
-
-Workers stay open after reporting so the lead can inspect and steer them; close them explicitly
-after integration with `niles close <id>` or `niles close --task <label>`.
 
 ## Roles
 
