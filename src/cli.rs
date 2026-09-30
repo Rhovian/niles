@@ -94,14 +94,14 @@ pub enum CommandName {
         /// Agent id to launch; defaults to this role's workspace manifest binding.
         #[arg(short, long)]
         agent: Option<String>,
-        /// Existing brief file to pass to the worker.
-        #[arg(long)]
-        brief: Option<Utf8PathBuf>,
+        /// Read the task text from a file instead of arguments.
+        #[arg(long, value_name = "PATH", conflicts_with = "task")]
+        task_file: Option<Utf8PathBuf>,
         /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. Defaults to this
         /// workspace's manifest `checkin`, then 5 minutes. `0`/`off` arms none.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
-        /// Task text used to create a brief when --brief is omitted.
+        /// Task text used to create the worker brief.
         #[arg(num_args = 0.., trailing_var_arg = true)]
         task: Vec<String>,
     },
@@ -127,6 +127,8 @@ pub enum CommandName {
     },
     /// List live spawned workers.
     Workers,
+    /// List effective built-in and workspace model rosters.
+    Models,
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.
@@ -228,6 +230,21 @@ mod tests {
         let cli = Cli::try_parse_from(["niles", "workers"]).unwrap();
 
         assert!(cli.command.is_some());
+    }
+
+    #[test]
+    fn task_file_conflicts_with_task_arguments() {
+        let error = Cli::try_parse_from([
+            "niles",
+            "spawn",
+            "worker",
+            "--task-file",
+            "task.md",
+            "inline task",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     /// The lead writes these after the worker id, where the trailing var-arg positional hands them

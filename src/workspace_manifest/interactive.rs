@@ -1,14 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    io::{self, BufRead, IsTerminal, Write},
-};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::{
     agents::picker,
-    config::spec::{AgentConfig, load_project_config_from},
+    config::spec::{ProjectConfig, load_project_config_from},
 };
 
 use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
@@ -30,7 +27,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
 ) -> Result<WorkspaceManifest> {
-    let agent_configs = load_project_config_from(root)?.agents;
+    let config = load_project_config_from(root)?;
     let path = manifest_path(root);
     let mut recreating = false;
     let existing = match load(root) {
@@ -65,7 +62,12 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground lead agent. Press Enter to accept the default."
         )?;
-        let lead = picker::prompt_agent_value("Lead agent", &manifest.lead, &agent_configs)?;
+        let lead = picker::prompt_agent_value(
+            "Lead agent",
+            &manifest.lead,
+            &config.agents,
+            &config.models,
+        )?;
         let lead_changed = lead != manifest.lead;
         manifest.lead = lead;
         if lead_changed {
@@ -73,7 +75,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             writeln!(output, "manifest: {path} (updated lead)")?;
         }
 
-        maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &agent_configs)?;
+        maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &config)?;
 
         return Ok(manifest);
     }
@@ -87,8 +89,9 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let lead = picker::prompt_agent_value("Lead agent", &defaults.lead, &agent_configs)?;
-    let manifest = prompt_manifest_values(lead, defaults, &agent_configs)?;
+    let lead =
+        picker::prompt_agent_value("Lead agent", &defaults.lead, &config.agents, &config.models)?;
+    let manifest = prompt_manifest_values(lead, defaults, &config)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -101,19 +104,19 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
     output: &mut W,
     path: &Utf8Path,
     manifest: &mut WorkspaceManifest,
-    agent_configs: &BTreeMap<String, AgentConfig>,
+    config: &ProjectConfig,
 ) -> Result<()> {
-    print_manifest_roles(output, manifest, agent_configs)?;
+    print_manifest_roles(output, manifest, &config.agents, &config.models)?;
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
             "Choose persistent agents for this workspace. Press Enter to accept a default."
         )?;
         let lead = manifest.lead.clone();
-        *manifest = prompt_manifest_values(lead, manifest, agent_configs)?;
+        *manifest = prompt_manifest_values(lead, manifest, config)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
-        print_manifest_roles(output, manifest, agent_configs)?;
+        print_manifest_roles(output, manifest, &config.agents, &config.models)?;
     }
 
     Ok(())
@@ -122,13 +125,28 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
 fn prompt_manifest_values(
     lead: String,
     defaults: &WorkspaceManifest,
-    agent_configs: &BTreeMap<String, AgentConfig>,
+    config: &ProjectConfig,
 ) -> Result<WorkspaceManifest> {
     Ok(WorkspaceManifest {
         lead,
-        worker: picker::prompt_agent_value("Worker agent", &defaults.worker, agent_configs)?,
-        reviewer: picker::prompt_agent_value("Reviewer agent", &defaults.reviewer, agent_configs)?,
-        security: picker::prompt_agent_value("Security agent", &defaults.security, agent_configs)?,
+        worker: picker::prompt_agent_value(
+            "Worker agent",
+            &defaults.worker,
+            &config.agents,
+            &config.models,
+        )?,
+        reviewer: picker::prompt_agent_value(
+            "Reviewer agent",
+            &defaults.reviewer,
+            &config.agents,
+            &config.models,
+        )?,
+        security: picker::prompt_agent_value(
+            "Security agent",
+            &defaults.security,
+            &config.agents,
+            &config.models,
+        )?,
         // Hand-edited settings are not prompted for, so changing roles must preserve them.
         ..defaults.clone()
     })
@@ -190,7 +208,7 @@ mod tests {
             &mut output,
             &path,
             &mut manifest,
-            &BTreeMap::new(),
+            &load_project_config_from(&root)?,
         )?;
 
         assert_eq!(

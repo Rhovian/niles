@@ -62,6 +62,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | `niles spawn [options] <id> <task...>` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
 | `niles workers` | List this workspace's live workers, window health, and pending wakes |
+| `niles models` | List the effective model and effort roster for this workspace |
 | `niles report <id>` | Print a live or most recently archived worker report |
 | `niles peek <id>` | Print recent pane output; `--lines 0` captures all history |
 | `niles send [options] <id> <message...>` | Steer a worker; add `--wait` to await its next wake |
@@ -90,11 +91,19 @@ agents:
   local-reviewer:
     binary: review-agent
     args: ["--format", "plain"]
+
+models:
+  codex:
+    gpt-5.7:
+      efforts: [low, med, high, xhigh]
 ```
+
+Model entries extend the built-in roster; listing an existing model replaces its effort list.
+An empty `efforts: []` marks a model that takes no effort qualifier.
 
 Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
 `--agent` overrides a role binding. Built-in families are `codex`, `claude`, and `hermes`.
-Supported models and effort levels are listed in [the agent profiles](src/agents/families.rs).
+Run `niles models` to list the effective models and effort levels for the current workspace.
 
 Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
 planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default

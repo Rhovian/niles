@@ -122,8 +122,8 @@ pub(super) fn foreground_invocation_for_project(
     agent: &str,
 ) -> Result<agents::AgentInvocation> {
     let config = load_project_config_from(root)?;
-    let agent_config = agents::config_for(&config.agents, agent)?;
-    agents::foreground_invocation(agent, agent_config)
+    let agent_config = agents::config_for(&config.agents, agent, &config.models)?;
+    agents::foreground_invocation(agent, agent_config, &config.models)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +187,32 @@ mod tests {
             invocation.args,
             ["--model", "opus", "--effort", "max"].map(str::to_owned)
         );
+    }
+
+    #[test]
+    fn foreground_invocation_accepts_a_project_model_override() {
+        let root = temp_test_path("foreground-model-override");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("niles.yaml"),
+            "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }",
+        )
+        .unwrap();
+
+        let invocation = foreground_invocation_for_project(&root, "codex:gpt-5.7:xhigh").unwrap();
+
+        assert!(
+            invocation
+                .args
+                .windows(2)
+                .any(|args| args == ["--model", "gpt-5.7"])
+        );
+        assert!(
+            invocation
+                .args
+                .contains(&"model_reasoning_effort=\"xhigh\"".to_owned())
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
