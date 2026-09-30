@@ -3,14 +3,14 @@ use std::fs;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value as JsonValue;
-use serde_yaml::Value as YamlValue;
 
 use crate::util::read_dir_utf8_paths;
 
 use super::{
     kind::ArtifactKind,
     status::{SchemaObservation, SchemaStatus},
-    version::{schema_from_json, schema_from_yaml},
+    version::schema_from_json,
+    yaml::probe_schema,
 };
 use crate::store::paths::{NILES_DIR, WORKERS_DIR};
 
@@ -31,8 +31,8 @@ pub(crate) fn inspect_json(path: &Utf8Path, kind: ArtifactKind) -> SchemaObserva
 
 pub(crate) fn inspect_yaml(path: &Utf8Path, kind: ArtifactKind) -> SchemaObservation {
     let status = match fs::read_to_string(path) {
-        Ok(body) => match serde_yaml::from_str::<YamlValue>(&body) {
-            Ok(value) => schema_from_yaml(&value).into_status(),
+        Ok(body) => match probe_schema(&body) {
+            Ok(probe) => probe.into_status(),
             Err(_) => SchemaStatus::Malformed,
         },
         Err(_) => SchemaStatus::Unreadable,
@@ -185,6 +185,48 @@ mod tests {
                 && observation.path == workers
                 && observation.status == SchemaStatus::Unreadable
         }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn yaml_probe_distinguishes_shape_stamp_and_syntax() {
+        let root = temp_test_path("yaml-probe-cases");
+        fs::create_dir_all(&root).unwrap();
+        let cases = [
+            ("sequence.yaml", "- item\n", SchemaStatus::Invalid),
+            ("legacy.yaml", "lead: claude\n", SchemaStatus::Older(1)),
+            (
+                "current.yaml",
+                "unknown:\n  nested: value\nniles_schema: 2\n",
+                SchemaStatus::Current(2),
+            ),
+            (
+                "invalid-stamp.yaml",
+                "niles_schema: current\n",
+                SchemaStatus::Invalid,
+            ),
+            (
+                "quoted-stamp.yaml",
+                "niles_schema: \"2\"\n",
+                SchemaStatus::Invalid,
+            ),
+            (
+                "malformed.yaml",
+                "worker_planning: [\n",
+                SchemaStatus::Malformed,
+            ),
+        ];
+
+        for (name, body, expected) in cases {
+            let path = root.join(name);
+            fs::write(&path, body).unwrap();
+            assert_eq!(
+                inspect_yaml(&path, ArtifactKind::WorkspaceManifest).status,
+                expected,
+                "{name}"
+            );
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

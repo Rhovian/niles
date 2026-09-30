@@ -1,30 +1,18 @@
 use anyhow::{Result, bail};
 use camino::Utf8Path;
 use serde_json::Value as JsonValue;
-use serde_yaml::Value as YamlValue;
 
 use super::{kind::ArtifactKind, status::SchemaStatus};
 
 pub(crate) const CURRENT_SCHEMA: u64 = 2;
 const LEGACY_SCHEMA: u64 = 1;
-const FIELD: &str = "niles_schema";
+pub(in crate::schema) const FIELD: &str = "niles_schema";
 
 pub(in crate::schema) fn stamp_json_value(value: &mut JsonValue) -> Result<()> {
     let Some(object) = value.as_object_mut() else {
         bail!("schema-stamped JSON artifacts must serialize as an object");
     };
     object.insert(FIELD.to_owned(), JsonValue::from(CURRENT_SCHEMA));
-    Ok(())
-}
-
-pub(in crate::schema) fn stamp_yaml_value(value: &mut YamlValue) -> Result<()> {
-    let YamlValue::Mapping(object) = value else {
-        bail!("schema-stamped YAML artifacts must serialize as a mapping");
-    };
-    object.insert(
-        YamlValue::String(FIELD.to_owned()),
-        YamlValue::from(CURRENT_SCHEMA),
-    );
     Ok(())
 }
 
@@ -40,20 +28,7 @@ pub(in crate::schema) fn schema_from_json(value: &JsonValue) -> SchemaProbe {
     }
 }
 
-pub(in crate::schema) fn schema_from_yaml(value: &YamlValue) -> SchemaProbe {
-    let YamlValue::Mapping(object) = value else {
-        return SchemaProbe::Invalid;
-    };
-    let key = YamlValue::String(FIELD.to_owned());
-    match object.get(&key) {
-        None => SchemaProbe::Schema(LEGACY_SCHEMA),
-        Some(value) => value
-            .as_u64()
-            .map_or(SchemaProbe::Invalid, SchemaProbe::Schema),
-    }
-}
-
-pub(in crate::schema) fn reject_newer_schema(
+pub(in crate::schema) fn reject_incompatible_schema(
     path: &Utf8Path,
     kind: ArtifactKind,
     probe: SchemaProbe,
@@ -67,7 +42,7 @@ pub(in crate::schema) fn reject_newer_schema(
                 CURRENT_SCHEMA
             )
         }
-        SchemaProbe::Invalid => Ok(()),
+        SchemaProbe::Invalid => bail!("{}", deserialize_failure_message(path, kind, probe)),
     }
 }
 

@@ -157,7 +157,7 @@ niles_schema: 2
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "expected one of `lead`, `worker`, `reviewer`, `security`, `worker_planning`, `checkin`, `recheck`"
+                "unknown field `manager`, expected one of lead, worker, reviewer, security, worker_planning, checkin, recheck, niles_schema"
             ),
             "{err}"
         );
@@ -214,9 +214,114 @@ niles_schema: 2
             ..manifest
         };
         save(&root, &configured).unwrap();
+        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert!(body.ends_with("niles_schema: 2\n"), "{body}");
         assert_eq!(load(&root).unwrap(), Some(configured));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_yaml_formatted_manifest_still_round_trips() {
+        let root = temp_test_path("manifest-serde-yaml-format");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            r#"lead: claude:opus:medium
+worker: codex:gpt-5.6-sol:medium
+reviewer: claude:opus:medium
+security: hermes:tencent/hy3:high
+worker_planning:
+  claude:haiku: |
+    Settle the implementation approach and edge cases. Decompose the work into
+    concrete changes and dispatch each change individually.
+  codex:gpt-5.6-sol: |
+    Supply the objective, constraints, and explicit acceptance criteria with
+    minimal implementation granularity.
+niles_schema: 2
+"#,
+        )
+        .unwrap();
+        let expected = WorkspaceManifest {
+            lead: "claude:opus:medium".to_owned(),
+            worker: "codex:gpt-5.6-sol:medium".to_owned(),
+            reviewer: "claude:opus:medium".to_owned(),
+            security: "hermes:tencent/hy3:high".to_owned(),
+            worker_planning: [
+                (
+                    "claude:haiku".to_owned(),
+                    "Settle the implementation approach and edge cases. Decompose the work into\nconcrete changes and dispatch each change individually.\n".to_owned(),
+                ),
+                (
+                    "codex:gpt-5.6-sol".to_owned(),
+                    "Supply the objective, constraints, and explicit acceptance criteria with\nminimal implementation granularity.\n".to_owned(),
+                ),
+            ]
+            .into(),
+            checkin: None,
+            recheck: None,
+        };
+
+        let loaded = load(&root).unwrap().unwrap();
+
+        assert_eq!(loaded, expected);
+        save(&root, &loaded).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(expected));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_manifest_keeps_saphyr_line_and_column() {
+        let root = temp_test_path("manifest-malformed-location");
+        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::write(
+            manifest_path(&root),
+            "lead: claude\nworker_planning: [\nniles_schema: 2\n",
+        )
+        .unwrap();
+
+        let err = load(&root).unwrap_err();
+        let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
+
+        assert!(chain[0].contains("malformed YAML"), "{chain:?}");
+        assert!(
+            chain
+                .iter()
+                .any(|message| message.contains("line 2") && message.contains("column")),
+            "{chain:?}"
+        );
+        assert!(
+            chain
+                .iter()
+                .all(|message| !message.contains("worker_planning: [")),
+            "{chain:?}"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_schema_stamps_are_rejected_before_deserialization() {
+        for (label, stamp) in [("quoted", "\"2\""), ("null", "~")] {
+            let root = temp_test_path(&format!("manifest-{label}-schema"));
+            fs::create_dir_all(root.join(".niles")).unwrap();
+            fs::write(
+                manifest_path(&root),
+                format!(
+                    "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\nniles_schema: {stamp}\n"
+                ),
+            )
+            .unwrap();
+
+            let err = load(&root).unwrap_err();
+
+            assert!(
+                err.to_string().contains("invalid niles_schema stamp"),
+                "{label}: {err:#}"
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -267,7 +372,7 @@ niles_schema: 2
 
         let err = format!("{:#}", load(&root).unwrap_err());
 
-        assert!(err.contains("invalid type"), "{err}");
+        assert!(err.contains("expected string"), "{err}");
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -3,23 +3,45 @@ use std::{fs, io::ErrorKind};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_yaml::Value as YamlValue;
+use serde_json::Value as JsonValue;
 
 use super::{
     kind::ArtifactKind,
     version::{
-        deserialize_failure, malformed_artifact, reject_newer_schema, schema_from_yaml,
-        stamp_yaml_value,
+        CURRENT_SCHEMA, SchemaProbe, deserialize_failure, malformed_artifact,
+        reject_incompatible_schema, schema_from_json,
     },
 };
 
+/// A schema-stamped YAML artifact.
+///
+/// Implement this only for structs with named fields: the writer flattens the artifact so it can
+/// append the schema stamp as the final top-level mapping key.
+pub(crate) trait YamlArtifact: Serialize {}
+
+#[derive(Serialize)]
+struct StampedArtifact<'a, T: ?Sized> {
+    #[serde(flatten)]
+    artifact: &'a T,
+    niles_schema: u64,
+}
+
+pub(crate) fn parse_yaml<T>(body: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    deserialize_yaml(body).map_err(anyhow::Error::new)
+}
+
 pub(crate) fn write_yaml<T>(path: &Utf8Path, value: &T) -> Result<()>
 where
-    T: Serialize + ?Sized,
+    T: YamlArtifact + ?Sized,
 {
-    let mut value = serde_yaml::to_value(value).context("failed to serialize YAML artifact")?;
-    stamp_yaml_value(&mut value)?;
-    let body = serde_yaml::to_string(&value).context("failed to serialize YAML artifact")?;
+    let stamped = StampedArtifact {
+        artifact: value,
+        niles_schema: CURRENT_SCHEMA,
+    };
+    let body = serde_saphyr::to_string(&stamped).context("failed to serialize YAML artifact")?;
     fs::write(path, body).with_context(|| format!("failed to write {path}"))
 }
 
@@ -39,13 +61,51 @@ fn read_yaml_body<T>(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<
 where
     T: DeserializeOwned,
 {
-    let value = parse_yaml_value(path, kind, body)?;
-    let probe = schema_from_yaml(&value);
-    reject_newer_schema(path, kind, probe)?;
-    serde_yaml::from_str(body).map_err(|err| deserialize_failure(path, kind, probe, err))
+    let probe = probe_schema(body)
+        .map_err(|err| anyhow::Error::new(err).context(malformed_artifact(path, kind, "YAML")))?;
+    reject_incompatible_schema(path, kind, probe)?;
+    deserialize_yaml(body).map_err(|err| deserialize_failure(path, kind, probe, err))
 }
 
-fn parse_yaml_value(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<YamlValue> {
-    serde_yaml::from_str(body)
-        .map_err(|err| anyhow::Error::new(err).context(malformed_artifact(path, kind, "YAML")))
+pub(in crate::schema) fn probe_schema(
+    body: &str,
+) -> std::result::Result<SchemaProbe, serde_saphyr::Error> {
+    deserialize_yaml::<JsonValue>(body).map(|value| schema_from_json(&value))
+}
+
+fn deserialize_yaml<T>(body: &str) -> std::result::Result<T, serde_saphyr::Error>
+where
+    T: DeserializeOwned,
+{
+    let options = serde_saphyr::options! {
+        with_snippet: false,
+    };
+    serde_saphyr::from_str_with_options(body, options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{test_support::temp_test_path, version::FIELD};
+
+    #[derive(Serialize)]
+    struct ExampleMapping {
+        value: u8,
+    }
+
+    impl YamlArtifact for ExampleMapping {}
+
+    #[test]
+    fn written_stamp_key_matches_the_schema_field() {
+        let root = temp_test_path("yaml-stamp-key");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("artifact.yaml");
+        write_yaml(&path, &ExampleMapping { value: 1 }).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        let expected = format!("{FIELD}: {CURRENT_SCHEMA}");
+
+        assert_eq!(body.lines().last(), Some(expected.as_str()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }
