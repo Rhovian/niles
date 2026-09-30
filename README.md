@@ -1,30 +1,33 @@
-# Niles
+```text
+███╗   ██╗██╗██╗     ███████╗███████╗
+████╗  ██║██║██║     ██╔════╝██╔════╝
+██╔██╗ ██║██║██║     █████╗  ███████╗
+██║╚██╗██║██║██║     ██╔══╝  ╚════██║
+██║ ╚████║██║███████╗███████╗███████║
+╚═╝  ╚═══╝╚═╝╚══════╝╚══════╝╚══════╝
+```
 
 Niles coordinates coding agents from different model families in tmux, keeping work moving and
 bringing worker reports back to the lead.
 
-Named for the butler in *The Nanny*, it answers the door when a worker reports.
-
 ## Why Niles?
 
 Using one model family for implementation and another for review can add independent judgment.
-Pairing a frontier lead with a cheaper worker may also reduce cost. Those are motivations from
-project experience, not benchmark results or guarantees of quality or cost.
+Pairing a frontier lead with a cheaper worker may also reduce cost.
 
 ## Requirements
 
 - Rust 1.85+ and `tmux`.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
-- Unix only: Niles has been tested on macOS and Linux. Windows is unsupported; the implementation
-  uses `flock`, `O_NOFOLLOW`, and `std::os::unix`.
+- Unix only.
 
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
 
 ## Quickstart
 
-Run these four commands in a shell. Bare `niles` interactively creates or updates
-`.niles/manifest.yaml`, lets you select the lead, and starts it in the current tmux pane.
+Bare `niles` interactively creates or updates `.niles/manifest.yaml`, lets you select the lead,
+and starts it in the current tmux pane.
 
 ```sh
 cargo install --git https://github.com/Rhovian/niles
@@ -33,26 +36,18 @@ tmux new-session -s niles # skip if already in tmux
 niles
 ```
 
-Ask the lead to run this fifth command, or run it from a second tmux pane in the same project:
-
-```sh
-niles spawn first-task "Inspect this project and propose one useful improvement"
-```
-
-Workers stay open after reporting so the lead can inspect and steer them; close them explicitly
-after integration with `niles close <id>` or `niles close --task <label>`.
-
 ## Roles
 
-| Role | Owns | Must not do |
-| --- | --- | --- |
-| Lead | Outcome, plan, delegation, integration | Implement the delegated change |
-| Worker | Implementation and the project gate | Report `done:` without running the documented checks |
-| Reviewer | Correctness, idiom, economy, test quality | Run the gate or perform the security pass |
-| Security | Attacker-focused review of security boundaries | Run the gate or redo correctness/style review |
+The lead is the agent you talk to. It owns the outcome: it reads the code, settles the plan, and
+decides who does what. Anything cheaper to do than to delegate, it does itself, including reviewing
+a diff. The rest it hands to other roles, commissioning as much review as the risk warrants.
 
-Only workers run the gate, avoiding duplicated test runs. Security is separate so ordinary review
-does not turn every change into hardening against an unnamed attacker.
+- **Worker** implements the change and owns the gate: it runs the project's checks before reporting
+  `done:` and says what printed, so nobody else re-runs them.
+- **Reviewer** gives an independent read on correctness, idiom, economy, and test quality. It never
+  does security review; it flags anything security-relevant in one line.
+- **Security** asks what an attacker can do with the change. The lead commissions it only when the
+  change is itself a security boundary, so ordinary work is not hardened against an unnamed attacker.
 
 ## Command reference
 
@@ -68,15 +63,13 @@ does not turn every change into hardening against an unnamed attacker.
 | `niles send [options] <id> <message...>` | Steer a worker; add `--wait` to await its next wake |
 | `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` |
 | `niles quiet <id>` | Disarm an intentionally idle worker's check-in |
-| `niles help [command]` | Show general or command-specific help |
 
 `spawn` and `send` accept `--checkin 90s`, `5m`, `1h`, bare minutes, or `off`. For one worker,
 their `--wait` forms fold in `wait`; for a fleet, dispatch first and use `niles wait --task LABEL`.
 
 ## Configuration
 
-The workspace manifest binds roles. Bare `niles` creates it interactively; this is the minimal
-valid `.niles/manifest.yaml`:
+The workspace manifest binds roles. This is the minimal valid `.niles/manifest.yaml`:
 
 ```yaml
 lead: codex
@@ -124,14 +117,13 @@ cargo clippy --all-targets -- -D warnings
 cargo test --no-fail-fast
 ```
 
-Run these before reporting a change done: formatting, the clippy gate across all targets (tests
-included), and the test suite. Keep `--no-fail-fast`: plain `cargo test` stops at the first failing
-binary, so a failure in one test file hides every later one.
+Keep `--no-fail-fast`: plain `cargo test` stops at the first failing binary, so a failure in one
+test file hides every later one.
 
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute. Report suspected vulnerabilities privately
-according to the [security policy](SECURITY.md), and consult the [threat model](docs/security.md).
+according to the [security policy](SECURITY.md).
 
 ## License
 
