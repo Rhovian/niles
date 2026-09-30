@@ -56,19 +56,19 @@ does not turn every change into hardening against an unnamed attacker.
 
 ## Command reference
 
-| Command | Purpose | Detailed help |
-| --- | --- | --- |
-| `niles` | Configure the manifest and start the foreground lead | `niles --help` |
-| `niles doctor` | Show binary identity, schema state, and dev-build staleness | `niles doctor --help` |
-| `niles spawn [options] <id> <task...>` | Start a worker window; add `--wait` to await its first wake | `niles spawn --help` |
-| `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` | `niles close --help` |
-| `niles workers` | List this workspace's live workers, window health, and pending wakes | `niles workers --help` |
-| `niles report <id>` | Print a live or most recently archived worker report | `niles report --help` |
-| `niles peek <id>` | Print recent pane output; `--lines 0` captures all history | `niles peek --help` |
-| `niles send [options] <id> <message...>` | Steer a worker; add `--wait` to await its next wake | `niles send --help` |
-| `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` | `niles wait --help` |
-| `niles quiet <id>` | Disarm an intentionally idle worker's check-in | `niles quiet --help` |
-| `niles help [command]` | Show general or command-specific help | `niles --help` |
+| Command | Purpose |
+| --- | --- |
+| `niles` | Configure the manifest and start the foreground lead |
+| `niles doctor` | Show binary identity, schema state, and dev-build staleness |
+| `niles spawn [options] <id> <task...>` | Start a worker window; add `--wait` to await its first wake |
+| `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
+| `niles workers` | List this workspace's live workers, window health, and pending wakes |
+| `niles report <id>` | Print a live or most recently archived worker report |
+| `niles peek <id>` | Print recent pane output; `--lines 0` captures all history |
+| `niles send [options] <id> <message...>` | Steer a worker; add `--wait` to await its next wake |
+| `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` |
+| `niles quiet <id>` | Disarm an intentionally idle worker's check-in |
+| `niles help [command]` | Show general or command-specific help |
 
 `spawn` and `send` accept `--checkin 90s`, `5m`, `1h`, bare minutes, or `off`. For one worker,
 their `--wait` forms fold in `wait`; for a fleet, dispatch first and use `niles wait --task LABEL`.
