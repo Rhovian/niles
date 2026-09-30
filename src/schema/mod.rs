@@ -11,4 +11,4 @@ pub(crate) use inspect::scan_workspace;
 pub(crate) use json::{read_optional_json, write_json};
 pub(crate) use kind::ArtifactKind;
 pub(crate) use version::CURRENT_SCHEMA;
-pub(crate) use yaml::{read_optional_yaml, write_yaml};
+pub(crate) use yaml::{YamlArtifact, parse_yaml, read_optional_yaml, write_yaml};

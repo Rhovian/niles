@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 
+use crate::schema;
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ProjectConfig {
     #[serde(default)]
@@ -37,7 +39,7 @@ pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
         if path.exists() {
             let body =
                 fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-            return serde_yaml::from_str(&body).with_context(|| format!("failed to parse {path}"));
+            return schema::parse_yaml(&body).with_context(|| format!("failed to parse {path}"));
         }
     }
 

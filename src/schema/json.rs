@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use super::{
     kind::ArtifactKind,
     version::{
-        deserialize_failure, malformed_artifact, reject_newer_schema, schema_from_json,
+        deserialize_failure, malformed_artifact, reject_incompatible_schema, schema_from_json,
         stamp_json_value,
     },
 };
@@ -50,7 +50,7 @@ where
 {
     let value = parse_json_value(path, kind, body)?;
     let probe = schema_from_json(&value);
-    reject_newer_schema(path, kind, probe)?;
+    reject_incompatible_schema(path, kind, probe)?;
     serde_json::from_value(value).map_err(|err| deserialize_failure(path, kind, probe, err))
 }
 
@@ -144,6 +144,19 @@ mod tests {
         assert!(chain[0].contains("declares schema 2"));
         assert!(chain.iter().any(|err| err.contains("missing field")));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn null_schema_stamp_is_rejected_before_deserialization() {
+        let root = temp_test_path("json-null-schema");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, r#"{"value":"ok","niles_schema":null}"#).unwrap();
+
+        let err = read_json::<Example>(&path, ArtifactKind::WorkerMetadata).unwrap_err();
+
+        assert!(err.to_string().contains("invalid niles_schema stamp"));
         fs::remove_dir_all(root).unwrap();
     }
 }

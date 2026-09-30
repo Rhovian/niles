@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::schema::YamlArtifact;
+
 /// Which agent plays each role, plus operator-authored planning and check-in settings.
 ///
 /// Every role that has its own brief has its own binding, `security` included: it is
@@ -34,6 +36,8 @@ pub struct WorkspaceManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recheck: Option<String>,
 }
+
+impl YamlArtifact for WorkspaceManifest {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

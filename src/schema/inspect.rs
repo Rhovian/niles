@@ -3,14 +3,14 @@ use std::fs;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value as JsonValue;
-use serde_yaml::Value as YamlValue;
 
 use crate::util::read_dir_utf8_paths;
 
 use super::{
     kind::ArtifactKind,
     status::{SchemaObservation, SchemaStatus},
-    version::{schema_from_json, schema_from_yaml},
+    version::schema_from_json,
+    yaml::probe_schema,
 };
 use crate::store::paths::{NILES_DIR, WORKERS_DIR};
 
@@ -31,8 +31,8 @@ pub(crate) fn inspect_json(path: &Utf8Path, kind: ArtifactKind) -> SchemaObserva
 
 pub(crate) fn inspect_yaml(path: &Utf8Path, kind: ArtifactKind) -> SchemaObservation {
     let status = match fs::read_to_string(path) {
-        Ok(body) => match serde_yaml::from_str::<YamlValue>(&body) {
-            Ok(value) => schema_from_yaml(&value).into_status(),
+        Ok(body) => match probe_schema(&body) {
+            Ok(probe) => probe.into_status(),
             Err(_) => SchemaStatus::Malformed,
         },
         Err(_) => SchemaStatus::Unreadable,
