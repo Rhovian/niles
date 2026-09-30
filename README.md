@@ -1,4 +1,11 @@
-# Niles
+```text
+███╗   ██╗██╗██╗     ███████╗███████╗
+████╗  ██║██║██║     ██╔════╝██╔════╝
+██╔██╗ ██║██║██║     █████╗  ███████╗
+██║╚██╗██║██║██║     ██╔══╝  ╚════██║
+██║ ╚████║██║███████╗███████╗███████║
+╚═╝  ╚═══╝╚═╝╚══════╝╚══════╝╚══════╝
+```
 
 Niles coordinates coding agents from different model families in tmux, keeping work moving and
 bringing worker reports back to the lead.
