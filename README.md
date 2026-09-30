@@ -3,7 +3,7 @@
 Niles coordinates coding agents from different model families in tmux, keeping work moving and
 bringing worker reports back to the lead.
 
-Named for the butler in *The Nanny*, it keeps an attentive eye on the household.
+Named for the butler in *The Nanny*, it answers the door when a worker reports.
 
 ## Why Niles?
 
@@ -40,8 +40,7 @@ niles spawn first-task "Inspect this project and propose one useful improvement"
 ```
 
 Workers stay open after reporting so the lead can inspect and steer them; close them explicitly
-after integration. See the [architecture](docs/architecture.md) for the lifecycle and local state
-layout.
+after integration with `niles close <id>` or `niles close --task <label>`.
 
 ## Roles
 
@@ -53,8 +52,7 @@ layout.
 | Security | Attacker-focused review of security boundaries | Run the gate or redo correctness/style review |
 
 Only workers run the gate, avoiding duplicated test runs. Security is separate so ordinary review
-does not turn every change into hardening against an unnamed attacker. Read the full
-[role model and planning rules](docs/roles.md).
+does not turn every change into hardening against an unnamed attacker.
 
 ## Command reference
 
@@ -97,9 +95,14 @@ agents:
     args: ["--format", "plain"]
 ```
 
-Bindings accept `family:model[:effort]`; `--agent` overrides a role binding. See
-[configuration](docs/configuration.md) for complete rosters, planning guidance, custom-agent prompt
-modes, and check-in cadence.
+Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
+`--agent` overrides a role binding. Built-in families are `codex`, `claude`, and `hermes`.
+Supported models and effort levels are listed in [the agent profiles](src/agents/families.rs).
+
+Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
+planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
+to five minutes, then back off to hourly reminders; `recheck: 10m` selects a fixed gap instead.
+Per-command `--checkin` overrides the manifest, and `off` disables the check-in.
 
 ## Exit status
 
