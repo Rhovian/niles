@@ -101,17 +101,6 @@ planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence.
 to five minutes, then back off to hourly reminders; `recheck: 10m` selects a fixed gap instead.
 Per-command `--checkin` overrides the manifest, and `off` disables the check-in.
 
-## Checks
-
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --no-fail-fast
-```
-
-Keep `--no-fail-fast`: plain `cargo test` stops at the first failing binary, so a failure in one
-test file hides every later one.
-
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute. Report suspected vulnerabilities privately
