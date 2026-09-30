@@ -16,8 +16,6 @@
 Niles coordinates coding agents from different model families, keeping work moving and allowing
 for workflows where each model does what it does best.
 
-## Why Niles?
-
 Using one model family for implementation and another for review can add independent judgment.
 Pairing a frontier lead with a cheaper worker may also reduce cost.
 
@@ -102,18 +100,6 @@ Optional manifest keys include `worker_planning`, a mapping from exact `family:m
 planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders; `recheck: 10m` selects a fixed gap instead.
 Per-command `--checkin` overrides the manifest, and `off` disables the check-in.
-
-## Exit status
-
-| Code | Meaning |
-| ---: | --- |
-| `0` | Success, or an actionable wake (`done:`, `failed:`, `blocked:`, or `needs-decision:`); a wake is not proof the task succeeded |
-| `1` | Operational failure |
-| `2` | Command-line argument parse failure |
-| `10` | Worker closed or disappeared, after any queued wake was delivered |
-| `22` | Wait timed out (default: 1 hour) |
-
-The wait-specific codes also apply to `niles spawn --wait` and `niles send --wait`.
 
 ## Checks
 
