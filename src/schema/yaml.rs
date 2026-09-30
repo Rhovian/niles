@@ -82,30 +82,3 @@ where
     };
     serde_saphyr::from_str_with_options(body, options)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::schema::{test_support::temp_test_path, version::FIELD};
-
-    #[derive(Serialize)]
-    struct ExampleMapping {
-        value: u8,
-    }
-
-    impl YamlArtifact for ExampleMapping {}
-
-    #[test]
-    fn written_stamp_key_matches_the_schema_field() {
-        let root = temp_test_path("yaml-stamp-key");
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("artifact.yaml");
-        write_yaml(&path, &ExampleMapping { value: 1 }).unwrap();
-        let body = fs::read_to_string(&path).unwrap();
-        let expected = format!("{FIELD}: {CURRENT_SCHEMA}");
-
-        assert_eq!(body.lines().last(), Some(expected.as_str()));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-}

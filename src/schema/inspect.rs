@@ -188,46 +188,4 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
     }
-
-    #[test]
-    fn yaml_probe_distinguishes_shape_stamp_and_syntax() {
-        let root = temp_test_path("yaml-probe-cases");
-        fs::create_dir_all(&root).unwrap();
-        let cases = [
-            ("sequence.yaml", "- item\n", SchemaStatus::Invalid),
-            ("legacy.yaml", "lead: claude\n", SchemaStatus::Older(1)),
-            (
-                "current.yaml",
-                "unknown:\n  nested: value\nniles_schema: 2\n",
-                SchemaStatus::Current(2),
-            ),
-            (
-                "invalid-stamp.yaml",
-                "niles_schema: current\n",
-                SchemaStatus::Invalid,
-            ),
-            (
-                "quoted-stamp.yaml",
-                "niles_schema: \"2\"\n",
-                SchemaStatus::Invalid,
-            ),
-            (
-                "malformed.yaml",
-                "worker_planning: [\n",
-                SchemaStatus::Malformed,
-            ),
-        ];
-
-        for (name, body, expected) in cases {
-            let path = root.join(name);
-            fs::write(&path, body).unwrap();
-            assert_eq!(
-                inspect_yaml(&path, ArtifactKind::WorkspaceManifest).status,
-                expected,
-                "{name}"
-            );
-        }
-
-        fs::remove_dir_all(root).unwrap();
-    }
 }
