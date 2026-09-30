@@ -308,6 +308,12 @@ Niles currently supports lead sessions in the current tmux pane, tmux worker
 windows, workspace role manifests, worker reports, worker archives, and
 worker status-log wake delivery.
 
+## Security
+
+Report suspected vulnerabilities privately according to the [security policy](SECURITY.md). See
+the [threat model](docs/security.md) for Niles's trust assumptions, current safeguards, and known
+gaps when launching agents in a workspace.
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
