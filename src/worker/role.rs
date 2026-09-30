@@ -133,6 +133,7 @@ mod tests {
             assert!(reviewer.contains(lens), "reviewer is missing {lens}");
         }
         assert!(reviewer.contains("Could this have been done in less code?"));
+        assert!(reviewer.contains("a requirement that drives disproportionate code"));
         assert!(reviewer.contains("Redundant cases, verbose setup"));
     }
 
