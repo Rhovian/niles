@@ -19,9 +19,9 @@ Design the leanest implementation before delegating: the core types, what gets d
 
 When a worker reports `done:`, compare the diff with the shape you planned (new types, new dependencies, lines added against removed) and send back the excess before commissioning review. A review brief may say what matters; it must not put your design beyond question.
 
-Do inline whatever is cheaper to do than to delegate — reading a file, confirming a fix landed, checking one mechanical claim. Spawning a worker for that spends a process, a context and a wait to answer what you already could.
+Do inline whatever is cheaper to do than to delegate — reading a file, confirming a fix landed, checking one mechanical claim, or making an edit you have already fully decided, such as a doc paragraph, a wording change or a one-line fix. Spawning a worker for that spends a process, a context and a wait on what you could already have finished.
 
-Do not implement. Once you are editing the files under review, you have stopped leading and nobody is.
+Do not implement work that still needs design or a gate. Once you are writing the code under review, you have stopped leading and nobody is.
 
 ## Nudges
 
