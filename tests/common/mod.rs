@@ -232,7 +232,9 @@ pub fn write_worker(
             r#"{{
   "niles_schema": 2,
   "id": "{id}",
+  "role": "worker",
   "agent": "codex",
+  "created_at": "2026-01-02T03:04:05Z",
   "project": "{}",
   "window": "{window}",
   "brief": "{}",

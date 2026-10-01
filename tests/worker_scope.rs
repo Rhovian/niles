@@ -26,19 +26,16 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
 
     let foreign_workers = env.niles(&workspace_a, &["workers"]).output().unwrap();
     assert_command_success("foreign workers", &foreign_workers);
-    let foreign_workers_stdout = String::from_utf8_lossy(&foreign_workers.stdout);
-    assert!(
-        foreign_workers_stdout.contains("workers[0]{id,agent,task,age,window,wake,last_status}:")
-    );
-    assert!(!foreign_workers_stdout.contains("shared"));
+    let foreign_workers_stdout = stdout_of(&foreign_workers);
+    assert_eq!(foreign_workers_stdout, "{\"workers\":[]}\n");
 
     let owner_workers = env.niles(&workspace_b, &["workers"]).output().unwrap();
     assert_command_success("owner workers", &owner_workers);
-    let owner_workers_stdout = String::from_utf8_lossy(&owner_workers.stdout);
-    assert!(
-        owner_workers_stdout.contains("workers[1]{id,agent,task,age,window,wake,last_status}:")
-    );
-    assert!(owner_workers_stdout.contains("\n  shared,"));
+    let owner_workers_json: serde_json::Value =
+        serde_json::from_slice(&owner_workers.stdout).unwrap();
+    let owner_workers = owner_workers_json["workers"].as_array().unwrap();
+    assert_eq!(owner_workers.len(), 1);
+    assert_eq!(owner_workers[0]["id"], "shared");
     let tmux_before = env.tmux_log();
 
     let peek = env

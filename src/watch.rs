@@ -46,7 +46,7 @@ mod tests;
 mod trust;
 
 use cadence::Cadence;
-use checkin::Checkin;
+pub(crate) use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory};
 
 pub(crate) use cadence::describe_delay;

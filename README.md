@@ -61,7 +61,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | `niles doctor` | Show binary identity, schema state, and dev-build staleness |
 | `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
-| `niles workers` | List this workspace's live workers, window health, and pending wakes |
+| `niles workers` | Print this workspace's live workers, window health, and pending wakes as JSON |
 | `niles models` | List the effective model and effort roster for this workspace |
 | `niles report <id>` | Print a live or most recently archived worker report |
 | `niles peek <id>` | Print recent pane output; `--lines 0` captures all history |

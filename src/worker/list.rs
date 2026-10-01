@@ -1,133 +1,104 @@
-use std::fs;
+use std::{fs, io::Write};
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 use crate::{
-    util::{current_dir_utf8, print_structured_rows},
+    tmux::TargetState,
+    util::current_dir_utf8,
     wait::cursor::{cursor_path, parse_cursor},
-    wake,
+    wake, watch,
 };
 
-use super::{
-    meta::meta_path,
-    snapshot::{WorkerSnapshot, worker_snapshot},
-};
+use super::snapshot::{WorkerSnapshot, worker_snapshot};
 
-pub(super) const UNLABELED_TASK_LABEL: &str = "-";
-const EMPTY_STATUS_PLACEHOLDER: &str = "-";
-/// Shown for a worker holding an actionable line the lead has not collected with `niles wait`.
-/// Without it a finished worker and one still working render identically.
-const PENDING_WAKE: &str = "pending";
-const NO_PENDING_WAKE: &str = "-";
-/// Shown for a worker whose `meta.json` could not be read; niles cannot reach it, so the lead must
-/// remove its directory by hand.
-const UNREADABLE_METADATA: &str = "unreadable";
-const UNKNOWN_AGE: &str = "?";
-
-/// Renders the workspace's live workers.
+/// Renders the workspace's live workers as one compact JSON object.
 ///
 /// Every fact comes from [`worker_snapshot`], which is also what the watcher reads: a listing that
 /// enumerated workers its own way would be a second answer to "which workers are live", and the
 /// two would drift.
 pub fn workers() -> Result<()> {
-    let workers = worker_snapshot(&current_dir_utf8()?)?;
-    let now = Utc::now();
-    let mut rows = Vec::with_capacity(workers.len());
-    for worker in &workers {
+    let snapshots = worker_snapshot(&current_dir_utf8()?)?;
+    for worker in &snapshots {
         if let Some(error) = &worker.read_error {
             eprintln!(
                 "worker {} metadata is unreadable; remove its directory to recover: {error}",
                 worker.id
             );
         }
-        let agent = match worker.meta.as_ref() {
-            Some(meta) => meta.agent.as_str(),
-            None => UNREADABLE_METADATA,
+    }
+    let workers = snapshots
+        .iter()
+        .map(WorkerOutput::read)
+        .collect::<Result<Vec<_>>>()?;
+    print_json(&WorkersOutput { workers })
+}
+
+fn print_json(value: &WorkersOutput) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    serde_json::to_writer(&mut output, value).context("failed to serialize workers JSON")?;
+    writeln!(output).context("failed to write workers JSON")
+}
+
+#[derive(Serialize)]
+struct WorkersOutput {
+    workers: Vec<WorkerOutput>,
+}
+
+#[derive(Serialize)]
+struct WorkerOutput {
+    id: String,
+    role: Option<super::WorkerRole>,
+    agent: Option<String>,
+    task_label: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    window: Option<TargetState>,
+    wake: Option<WakeState>,
+    last_status: Option<String>,
+    checkin: Option<CheckinOutput>,
+    error: Option<String>,
+}
+
+impl WorkerOutput {
+    fn read(worker: &WorkerSnapshot) -> Result<Self> {
+        let meta = worker.meta.as_ref();
+        let wake = match meta {
+            Some(_) if has_pending_wake(worker)? => Some(WakeState::Pending),
+            Some(_) => Some(WakeState::Clear),
+            None => None,
         };
-        let task = worker_task_label(worker);
-        let age = worker_age(worker, now);
-        let window = worker_window_state(worker);
-        let wake = worker_pending_wake(worker)?;
-        let status = worker_last_status(worker);
-        rows.push([
-            worker.id.clone(),
-            agent.to_owned(),
-            task.to_owned(),
-            age,
-            window,
+        let checkin = watch::Checkin::read(&worker.worker_dir)?.map(|checkin| CheckinOutput {
+            deadline: checkin.deadline,
+        });
+
+        Ok(Self {
+            id: worker.id.clone(),
+            role: meta.map(|meta| meta.role),
+            agent: meta.map(|meta| meta.agent.clone()),
+            task_label: meta.and_then(|meta| meta.task_label.clone()),
+            started_at: meta.map(|meta| meta.created_at),
+            window: meta.map(super::resolve::window_state),
             wake,
-            status,
-        ]);
-    }
-    print_structured_rows(
-        "workers",
-        [
-            "id",
-            "agent",
-            "task",
-            "age",
-            "window",
-            "wake",
-            "last_status",
-        ],
-        &rows,
-    );
-
-    Ok(())
-}
-
-fn worker_age(worker: &WorkerSnapshot, now: DateTime<Utc>) -> String {
-    let started_at = match worker_started_at(worker) {
-        Some(started_at) => started_at,
-        None => return UNKNOWN_AGE.to_owned(),
-    };
-    let seconds = now.signed_duration_since(started_at).num_seconds().max(0);
-
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else if seconds < 60 * 60 {
-        format!("{}m", seconds / 60)
-    } else if seconds < 60 * 60 * 24 {
-        format!("{}h", seconds / (60 * 60))
-    } else {
-        format!("{}d", seconds / (60 * 60 * 24))
+            last_status: meta.and(worker.last_status_line()),
+            checkin,
+            error: worker.read_error.clone(),
+        })
     }
 }
 
-fn worker_started_at(worker: &WorkerSnapshot) -> Option<DateTime<Utc>> {
-    let meta = worker.meta.as_ref()?;
-    meta.created_at
-        .or_else(|| path_time(&meta_path(&worker.worker_dir)))
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum WakeState {
+    Pending,
+    Clear,
 }
 
-fn worker_task_label(worker: &WorkerSnapshot) -> &str {
-    match worker
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.task_label.as_deref())
-    {
-        Some(task) => task,
-        None => UNLABELED_TASK_LABEL,
-    }
-}
-
-fn worker_window_state(worker: &WorkerSnapshot) -> String {
-    match worker.meta.as_ref() {
-        Some(meta) => super::resolve::window_state(meta).to_string(),
-        None => UNREADABLE_METADATA.to_owned(),
-    }
-}
-
-fn worker_last_status(worker: &WorkerSnapshot) -> String {
-    if worker.meta.is_none() {
-        return UNREADABLE_METADATA.to_owned();
-    }
-    match worker.last_status_line() {
-        Some(status) => status,
-        None => EMPTY_STATUS_PLACEHOLDER.to_owned(),
-    }
+#[derive(Serialize)]
+struct CheckinOutput {
+    deadline: DateTime<Utc>,
 }
 
 /// Whether this worker is holding a wake the lead has not collected.
@@ -135,24 +106,14 @@ fn worker_last_status(worker: &WorkerSnapshot) -> String {
 /// `niles wait` records how far into the status log it has delivered, so everything past that
 /// cursor is owed. Only actionable lines count: a trailing `working:` line wakes nobody, and
 /// reporting it as pending would send the lead into a `wait` that blocks.
-fn worker_pending_wake(worker: &WorkerSnapshot) -> Result<String> {
-    if worker.meta.is_none() {
-        return Ok(UNREADABLE_METADATA.to_owned());
-    }
+fn has_pending_wake(worker: &WorkerSnapshot) -> Result<bool> {
     let delivered = delivered_bytes(&worker.worker_dir)?;
     let Some(undelivered) = worker.undelivered(delivered) else {
-        return Ok(NO_PENDING_WAKE.to_owned());
+        return Ok(false);
     };
-    Ok(
-        if String::from_utf8_lossy(undelivered)
-            .lines()
-            .any(wake::is_actionable_wake)
-        {
-            PENDING_WAKE.to_owned()
-        } else {
-            NO_PENDING_WAKE.to_owned()
-        },
-    )
+    Ok(String::from_utf8_lossy(undelivered)
+        .lines()
+        .any(wake::is_actionable_wake))
 }
 
 /// How far `niles wait` has delivered into this worker's status log. No cursor means no wait has
@@ -166,15 +127,4 @@ fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
     };
     usize::try_from(parse_cursor(&body, &path)?)
         .with_context(|| format!("wake cursor in {path} exceeds this platform's address space"))
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "worker age is advisory; unreadable metadata mtime falls back to the current listing time"
-)]
-fn path_time(path: &Utf8Path) -> Option<DateTime<Utc>> {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .map(DateTime::<Utc>::from)
 }

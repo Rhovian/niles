@@ -112,7 +112,7 @@ pub enum CommandName {
         #[arg(long, action = ArgAction::SetTrue)]
         all: bool,
     },
-    /// List live spawned workers.
+    /// Print live spawned workers as JSON.
     Workers,
     /// List effective built-in and workspace model rosters.
     Models,

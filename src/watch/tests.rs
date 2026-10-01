@@ -76,28 +76,27 @@ pub(super) fn worker_dir(workspace: &Utf8PathBuf, id: &str) -> Utf8PathBuf {
 }
 
 fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
-    write_meta(workspace, id, None);
+    write_meta(
+        workspace,
+        id,
+        DateTime::from_timestamp(0, 0).unwrap(),
+        "niles-test",
+    );
     let dir = worker_dir(workspace, id);
     fs::write(dir.join("status.log"), log).unwrap();
 }
 
-fn write_meta(workspace: &Utf8PathBuf, id: &str, created_at: Option<DateTime<Utc>>) {
+fn write_meta(workspace: &Utf8PathBuf, id: &str, created_at: DateTime<Utc>, session: &str) {
     let dir = worker_dir(workspace, id);
     fs::create_dir_all(&dir).unwrap();
-    let (created_at, session) = match created_at {
-        Some(time) => (
-            format!(",\"created_at\":\"{}\"", time.to_rfc3339()),
-            "ambient",
-        ),
-        None => (String::new(), "niles-test"),
-    };
     fs::write(
         dir.join("meta.json"),
         format!(
-            "{{\"niles_schema\":2,\"id\":\"{id}\",\"agent\":\"claude\"{created_at},\
+            "{{\"niles_schema\":2,\"id\":\"{id}\",\"role\":\"worker\",\"agent\":\"claude\",\"created_at\":\"{}\",\
              \"project\":\"{workspace}\",\"window\":\"{session}:niles-{id}\",\
              \"brief\":\"{workspace}/brief.md\",\
-             \"launch\":\"{workspace}/launch.sh\"}}"
+             \"launch\":\"{workspace}/launch.sh\"}}",
+            created_at.to_rfc3339()
         ),
     )
     .unwrap();
@@ -109,7 +108,7 @@ pub(super) fn write_starting_worker(
     log: &str,
     now: DateTime<Utc>,
 ) {
-    write_meta(workspace, id, Some(now));
+    write_meta(workspace, id, now, "ambient");
     fs::write(worker_dir(workspace, id).join("status.log"), log).unwrap();
 }
 
