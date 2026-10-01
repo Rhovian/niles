@@ -25,102 +25,50 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
 ) -> Result<WorkspaceManifest> {
     let config = load_project_config_from(root)?;
     let path = manifest_path(root);
-    let mut recreating = false;
-    let existing = match load(root) {
-        Ok(existing) => existing,
-        Err(err) if interactive && path.exists() => {
-            writeln!(output, "Niles workspace manifest could not be read: {path}")?;
-            writeln!(output, "{err}")?;
-            if prompt_yes_no(input, output, "Recreate workspace manifest?", false)? {
-                recreating = true;
-                None
-            } else {
+    let defaults = match load(root) {
+        Ok(Some(manifest)) => {
+            print_manifest_roles(output, &manifest, &config)?;
+            if !interactive || !prompt_yes_no(input, output, "Change any manifest roles?", false)? {
+                return Ok(manifest);
+            }
+            manifest
+        }
+        Ok(None) => {
+            if !interactive {
+                bail!(
+                    "workspace manifest {path} does not exist; run `niles` from an interactive terminal"
+                );
+            }
+            writeln!(output, "Niles workspace manifest not found: {path}")?;
+            WorkspaceManifest::default()
+        }
+        Err(err) => {
+            if !interactive {
                 return Err(err);
             }
+            writeln!(output, "Niles workspace manifest could not be read: {path}")?;
+            writeln!(output, "{err}")?;
+            WorkspaceManifest::default()
         }
-        Err(err) => return Err(err),
     };
-    if !interactive {
-        if existing.is_some() {
-            bail!(
-                "workspace manifest {path} exists but stdin is not interactive; start or attach a tmux session and run `niles` interactively to choose the lead agent"
-            );
-        } else {
-            bail!(
-                "workspace manifest {path} does not exist and stdin is not interactive; start or attach a tmux session and run `niles` interactively to configure workspace roles"
-            );
-        }
-    }
-
-    if let Some(mut manifest) = existing {
-        writeln!(output, "Niles workspace manifest: {path}")?;
-        writeln!(
-            output,
-            "Choose the foreground lead agent. Press Enter to accept the default."
-        )?;
-        let lead = picker::prompt_agent_value("Lead agent", &manifest.lead, &config)?;
-        let lead_changed = lead != manifest.lead;
-        manifest.lead = lead;
-        if lead_changed {
-            save(root, &manifest)?;
-            writeln!(output, "manifest: {path} (updated lead)")?;
-        }
-
-        maybe_update_manifest_roles(root, input, output, &path, &mut manifest, &config)?;
-
-        return Ok(manifest);
-    }
-
-    if recreating {
-        writeln!(output, "Recreating Niles workspace manifest: {path}")?;
-    } else {
-        writeln!(output, "Niles workspace manifest not found: {path}")?;
-    }
     writeln!(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let defaults = WorkspaceManifest::default();
-    let lead = picker::prompt_agent_value("Lead agent", &defaults.lead, &config)?;
-    let manifest = prompt_manifest_values(lead, &defaults, &config)?;
+    let manifest = prompt_manifest_values(&defaults, &config)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
     Ok(manifest)
 }
 
-fn maybe_update_manifest_roles<R: BufRead, W: Write>(
-    root: &Utf8Path,
-    input: &mut R,
-    output: &mut W,
-    path: &Utf8Path,
-    manifest: &mut WorkspaceManifest,
-    config: &ProjectConfig,
-) -> Result<()> {
-    print_manifest_roles(output, manifest, config)?;
-    if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
-        writeln!(
-            output,
-            "Choose persistent agents for this workspace. Press Enter to accept a default."
-        )?;
-        let lead = manifest.lead.clone();
-        *manifest = prompt_manifest_values(lead, manifest, config)?;
-        save(root, manifest)?;
-        writeln!(output, "manifest: {path} (updated roles)")?;
-        print_manifest_roles(output, manifest, config)?;
-    }
-
-    Ok(())
-}
-
 fn prompt_manifest_values(
-    lead: String,
     defaults: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<WorkspaceManifest> {
     let pick = |label, default| picker::prompt_agent_value(label, default, config);
     Ok(WorkspaceManifest {
-        lead,
+        lead: pick("Lead agent", &defaults.lead)?,
         worker: pick("Worker agent", &defaults.worker)?,
         reviewer: pick("Reviewer agent", &defaults.reviewer)?,
         security: pick("Security agent", &defaults.security)?,
@@ -163,68 +111,66 @@ mod tests {
 
     use std::{fs, io::Cursor};
 
-    use super::super::io::manifest_path;
     use crate::test_support::temp_test_path;
 
-    #[test]
-    fn manifest_roles_are_printed_before_change_prompt() -> Result<()> {
-        let root = temp_test_path("roles-table-before-prompt");
-        let path = manifest_path(&root);
-        let mut manifest = WorkspaceManifest {
+    fn existing_manifest(root: &Utf8Path) -> Result<WorkspaceManifest> {
+        let manifest = WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
             reviewer: "claude:opus:max".to_owned(),
             security: "claude:opus:max".to_owned(),
+            worker_planning: [("codex".to_owned(), "Plan carefully.".to_owned())].into(),
             ..WorkspaceManifest::default()
         };
-        let mut input = Cursor::new(b"n\n".to_vec());
-        let mut output = Vec::new();
+        save(root, &manifest)?;
+        Ok(manifest)
+    }
 
-        maybe_update_manifest_roles(
-            &root,
-            &mut input,
-            &mut output,
-            &path,
-            &mut manifest,
-            &load_project_config_from(&root)?,
-        )?;
-
-        assert_eq!(
-            String::from_utf8(output)?,
-            "\
+    const ROLES_TABLE: &str = "\
 lead      codex   gpt-5.5  xhigh
 worker    codex   -        -
 reviewer  claude  opus     max
 security  claude  opus     max
-Change any manifest roles? [y/N]: "
-        );
+";
+
+    #[test]
+    fn existing_manifest_prints_roles_without_terminal() -> Result<()> {
+        let root = temp_test_path("existing-noninteractive");
+        let manifest = existing_manifest(&root)?;
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+
+        let result = ensure_interactive_with_io(&root, false, &mut input, &mut output)?;
+
+        assert_eq!(result, manifest);
+        assert_eq!(String::from_utf8(output)?, ROLES_TABLE);
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 
     #[test]
-    fn existing_workspace_manifest_errors_when_stdin_is_not_interactive() {
-        let root = temp_test_path("existing-noninteractive");
-        fs::create_dir_all(root.join(".niles")).unwrap();
+    fn existing_manifest_no_keeps_roles_without_saving() -> Result<()> {
+        let root = temp_test_path("existing-no");
+        let manifest = existing_manifest(&root)?;
+        let path = manifest_path(&root);
         fs::write(
-            manifest_path(&root),
-            r#"
-lead: codex
-worker: codex
-reviewer: claude
-security: claude
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let mut input = Cursor::new(Vec::<u8>::new());
+            &path,
+            format!("{}# keep this comment\n", fs::read_to_string(&path)?),
+        )?;
+        let before = fs::read(manifest_path(&root))?;
+        let mut input = Cursor::new(b"n\n".to_vec());
         let mut output = Vec::new();
-        let err = ensure_interactive_with_io(&root, false, &mut input, &mut output).unwrap_err();
 
-        assert!(err.to_string().contains("stdin is not interactive"));
-        assert!(err.to_string().contains("choose the lead agent"));
+        let result = ensure_interactive_with_io(&root, true, &mut input, &mut output)?;
 
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(result, manifest);
+        assert_eq!(fs::read(manifest_path(&root))?, before);
+        assert_eq!(
+            String::from_utf8(output)?,
+            format!("{ROLES_TABLE}Change any manifest roles? [y/N]: ")
+        );
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 
     #[test]
@@ -235,7 +181,29 @@ niles_schema: 2
 
         let err = ensure_interactive_with_io(&root, false, &mut input, &mut output).unwrap_err();
 
-        assert!(err.to_string().contains("stdin is not interactive"));
+        assert!(
+            err.to_string()
+                .contains("run `niles` from an interactive terminal")
+        );
+        assert!(err.to_string().contains(manifest_path(&root).as_str()));
+        assert!(output.is_empty());
         assert!(!manifest_path(&root).exists());
+    }
+
+    #[test]
+    fn unreadable_manifest_returns_load_error_without_terminal() -> Result<()> {
+        let root = temp_test_path("unreadable-noninteractive");
+        fs::create_dir_all(root.join(".niles"))?;
+        fs::write(manifest_path(&root), "lead: [\n")?;
+        let expected = load(&root).unwrap_err().to_string();
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+
+        let err = ensure_interactive_with_io(&root, false, &mut input, &mut output).unwrap_err();
+
+        assert_eq!(err.to_string(), expected);
+        assert!(output.is_empty());
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

@@ -30,8 +30,8 @@ Pairing a frontier lead with a cheaper worker may also reduce cost.
 
 ## Quickstart
 
-Bare `niles` interactively creates or updates `.niles/manifest.yaml`, lets you select the lead,
-and starts it in the current tmux pane.
+Bare `niles` prompts for all four roles when creating `.niles/manifest.yaml`. On later launches it
+shows the current roles and lets you change them before starting the lead in the current tmux pane.
 
 ```sh
 cargo install --git https://github.com/Rhovian/niles
@@ -57,7 +57,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 
 | Command | Purpose |
 | --- | --- |
-| `niles` | Configure the manifest and start the foreground lead |
+| `niles` | Show or configure workspace roles, then start the foreground lead |
 | `niles doctor` | Show binary identity, schema state, and dev-build staleness |
 | `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
