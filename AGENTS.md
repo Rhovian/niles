@@ -13,7 +13,7 @@ Machine-specific or private notes go in `AGENTS.local.md` (gitignored); read it 
 
 ## Checks
 
-Run the checks in [CONTRIBUTING.md](CONTRIBUTING.md#checks) before reporting a change done, and
+Run the checks in [CI](.github/workflows/ci.yml) before reporting a change done, and
 say what they printed. Never mark done without that proof.
 
 ## Standards
