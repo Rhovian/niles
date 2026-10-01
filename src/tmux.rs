@@ -63,41 +63,29 @@ pub(crate) struct CursorPosition {
 }
 
 pub(crate) fn cursor_position(target: &TmuxTarget) -> Result<CursorPosition> {
-    let args = &[
-        "display",
-        "-p",
-        "-t",
-        target.as_str(),
-        "#{cursor_x} #{cursor_y} #{cursor_flag}",
-    ];
-    let output = output(args)?;
+    let format = "#{cursor_x} #{cursor_y} #{cursor_flag}";
+    let output = output(&["display", "-p", "-t", target.as_str(), format])?;
     if !output.status.success() {
         bail!(
             "tmux display failed for {target}: {}",
             normalize_stderr(&output.stderr)
         );
     }
-    let value = String::from_utf8(output.stdout).context("tmux cursor position was not UTF-8")?;
-    let mut parts = value.split_whitespace();
-    let x = parts
-        .next()
-        .context("tmux cursor x missing")?
-        .parse()
-        .context("invalid tmux cursor x")?;
-    let y = parts
-        .next()
-        .context("tmux cursor y missing")?
-        .parse()
-        .context("invalid tmux cursor y")?;
-    let visible = match parts.next() {
-        Some("1") => true,
-        Some("0") => false,
-        _ => bail!("invalid tmux cursor flag: {value:?}"),
+    let value = String::from_utf8_lossy(&output.stdout);
+    let invalid = || format!("unexpected tmux cursor position {value:?}");
+    let [x, y, flag] = value.split_whitespace().collect::<Vec<_>>()[..] else {
+        bail!(invalid());
     };
-    if parts.next().is_some() {
-        bail!("unexpected tmux cursor fields: {value:?}");
-    }
-    Ok(CursorPosition { x, y, visible })
+    let visible = match flag {
+        "1" => true,
+        "0" => false,
+        _ => bail!(invalid()),
+    };
+    Ok(CursorPosition {
+        x: x.parse().with_context(invalid)?,
+        y: y.parse().with_context(invalid)?,
+        visible,
+    })
 }
 
 fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {

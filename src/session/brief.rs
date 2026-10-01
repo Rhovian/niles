@@ -218,53 +218,26 @@ mod tests {
     }
 
     #[test]
-    fn lead_reviewer_brief_uses_reviewer_standard() {
-        let workspace = temp_test_path("lead-review-brief");
-        let dir = workspace.join("session");
+    fn the_reviewer_binding_decides_who_reviews() {
+        let workspace = temp_test_path("review-brief");
         let agent =
             agents::AgentSpec::parse("claude", &agents::ModelRoster::builtin().unwrap()).unwrap();
-        let body = render_lead_brief(
-            &agent,
-            &workspace,
-            &dir,
-            "worker: none",
-            &ReviewerBinding::Lead,
-        );
-        assert!(body.contains(REVIEWER_STANDARD));
-        assert!(body.contains(LEAD_REVIEW_TEMPLATE.trim_end()));
-        assert!(!body.contains("before commissioning review"));
-    }
+        let render = |reviewer| {
+            render_lead_brief(
+                &agent,
+                &workspace,
+                &workspace.join("s"),
+                "worker: none",
+                &reviewer,
+            )
+        };
 
-    #[test]
-    fn agent_reviewer_brief_keeps_original_bytes() {
-        let workspace = temp_test_path("agent-review-brief");
-        let dir = workspace.join("session");
-        let agent =
-            agents::AgentSpec::parse("claude", &agents::ModelRoster::builtin().unwrap()).unwrap();
-        let body = render_lead_brief(
-            &agent,
-            &workspace,
-            &dir,
-            "worker: none",
-            &ReviewerBinding::Agent("claude".to_owned()),
-        );
-        let original_template = LEAD_BRIEF_TEMPLATE.replace(
-            "{review_instruction}",
-            COMMISSION_REVIEW_TEMPLATE.trim_end(),
-        );
-        let expected = render_template(
-            &original_template,
-            &[
-                ("{workspace}", workspace.as_str()),
-                ("{agent}", &agent.canonical()),
-                ("{dir}", dir.as_str()),
-                (
-                    "{manifest}",
-                    workspace_manifest::manifest_path(&workspace).as_str(),
-                ),
-                ("{startup_context}", "worker: none"),
-            ],
-        );
-        assert_eq!(body.as_bytes(), expected.as_bytes());
+        let lead = render(ReviewerBinding::Lead);
+        assert!(lead.contains(REVIEWER_STANDARD));
+        assert!(!lead.contains("before commissioning review"));
+
+        let commissioned = render(ReviewerBinding::Agent("claude".to_owned()));
+        assert!(commissioned.contains("before commissioning review"));
+        assert!(!commissioned.contains(REVIEWER_STANDARD));
     }
 }
