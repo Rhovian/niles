@@ -85,8 +85,8 @@ pub enum CommandName {
         /// Agent id to launch; defaults to this role's workspace manifest binding.
         #[arg(short, long)]
         agent: Option<String>,
-        /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. Defaults to this
-        /// workspace's manifest `checkin`, then 5 minutes. `0`/`off` arms none.
+        /// Check-in delay for this worker: a duration such as 1s, 90s, 5m or 1h. Defaults to
+        /// this workspace's manifest `checkin`, then 5m. `0` or `off` arms none.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
         #[command(flatten)]
@@ -142,8 +142,8 @@ pub enum CommandName {
         /// Block for this worker's next actionable wake after sending.
         #[arg(long)]
         wait: bool,
-        /// Check-in delay for this worker's next report: `90s`, `5m`, `1h`, bare minutes, `0`/`off`.
-        /// Defaults to the manifest `checkin`, then 5 minutes.
+        /// Check-in delay for this worker's next report: a duration such as 1s, 90s, 5m or 1h.
+        /// Defaults to the manifest `checkin`, then 5m. `0` or `off` arms none.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
         /// Worker task id.
@@ -170,17 +170,18 @@ pub enum CommandName {
         /// Wait on every live worker carrying this task label.
         #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
         task: Option<String>,
-        /// Poll interval in seconds.
+        /// Poll interval: a duration such as 500ms, 90s, 5m or 1h. Must be greater than zero.
         #[arg(
             long,
-            default_value = "2",
+            default_value = "2s",
             value_parser = crate::wait::parse_interval
         )]
         interval: Duration,
-        /// Maximum seconds to wait before exiting non-zero.
+        /// Maximum time to wait: a duration such as 500ms, 90s, 5m or 1h. `0` checks once without
+        /// waiting.
         #[arg(
             long,
-            default_value = "3600",
+            default_value = "1h",
             value_parser = crate::wait::parse_timeout
         )]
         timeout: Duration,
@@ -248,5 +249,19 @@ mod tests {
         };
         assert!(wait);
         assert_eq!(message.resolve().unwrap(), "- item\nb");
+    }
+
+    #[test]
+    fn wait_default_spellings_parse_to_the_runtime_defaults() {
+        let cli = Cli::try_parse_from(["niles", "wait", "worker"]).unwrap();
+        let Some(CommandName::Wait {
+            interval, timeout, ..
+        }) = cli.command
+        else {
+            panic!("expected wait command");
+        };
+
+        assert_eq!(interval, crate::wait::DEFAULT_INTERVAL);
+        assert_eq!(timeout, crate::wait::DEFAULT_TIMEOUT);
     }
 }

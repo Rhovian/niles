@@ -8,7 +8,7 @@ fn waiting_on_several_workers_prefixes_the_winning_id() {
 
     let output = run_wait(
         &workspace,
-        &["alpha", "beta", "--interval", "0.05", "--timeout", "0"],
+        &["alpha", "beta", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_command_success("fleet wait", &output);
@@ -23,7 +23,7 @@ fn corrupt_cursor_fails_loudly_and_names_the_file() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_failure_contains("wait with corrupt cursor", &output, "invalid wake cursor");
@@ -39,7 +39,7 @@ fn unknown_id_errors_without_closed_backstop() {
 
     let output = run_wait(
         &workspace,
-        &["missing", "--interval", "0.05", "--timeout", "0"],
+        &["missing", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_failure_contains(
@@ -59,7 +59,7 @@ fn returns_closed_backstop_when_the_directory_is_removed_mid_wait() {
 
     let waiter = spawn_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "5"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "5s"],
     );
     // The removal has to land after target resolution, or this is the unknown-id path instead.
     settle();
@@ -87,7 +87,7 @@ fn a_symlinked_cursor_path_is_refused_rather_than_followed() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert!(!output.status.success());
@@ -125,7 +125,7 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_command_success("wait with an enormous line", &output);
@@ -154,7 +154,7 @@ fn task_label_waits_on_every_live_worker_carrying_it() {
             "--task",
             "auth",
             "--interval",
-            "0.05",
+            "50ms",
             "--timeout",
             "0",
         ])
@@ -172,7 +172,7 @@ fn worker_close_wakes_waiters_with_nonzero_closed_status() {
     lab.worker_window("auth-fix", b"working: close requested");
 
     let waiter = lab
-        .niles(&["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"])
+        .niles(&["wait", "auth-fix", "--interval", "50ms", "--timeout", "5s"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

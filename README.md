@@ -69,8 +69,10 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` |
 | `niles quiet <id>` | Disarm an intentionally idle worker's check-in |
 
-`spawn` and `send` accept `--checkin 90s`, `5m`, `1h`, bare minutes, or `off`. For one worker,
-their `--wait` forms fold in `wait`; for a fleet, dispatch first and use `niles wait --task LABEL`.
+Every duration is a non-negative integer followed by `ms`, `s`, `m`, or `h`, such as `500ms`,
+`90s`, `5m`, or `1h`; plain `0` is also accepted. `spawn` and `send` accept `off` for
+`--checkin`, whose nonzero delays must be at least `1s`. For one worker, their `--wait` forms fold
+in `wait`; for a fleet, dispatch first and use `niles wait --task LABEL`.
 
 ## Configuration
 
@@ -107,8 +109,10 @@ Run `niles models` to list the effective models and effort levels for the curren
 
 Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
 planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
-to five minutes, then back off to hourly reminders; `recheck: 10m` selects a fixed gap instead.
-Per-command `--checkin` overrides the manifest, and `off` disables the check-in.
+to five minutes, then back off to hourly reminders. `checkin` and fixed `recheck` values use the
+same duration grammar: a non-negative integer followed by `ms`, `s`, `m`, or `h`. Plain `0` and
+`off` disable a check-in; a fixed recheck must be greater than zero, while `recheck: backoff`
+selects backoff instead. Per-command `--checkin` overrides the manifest.
 
 ## Contributing and security
 

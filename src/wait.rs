@@ -24,6 +24,7 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8PathBuf;
 
 use crate::{
+    duration::parse_duration,
     wake::{self, WakeKind},
     worker,
 };
@@ -44,7 +45,7 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Largest accepted `--interval`. A poll interval beyond the default timeout is always a typo.
-const MAX_INTERVAL_SECS: f64 = 3600.0;
+const MAX_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Longest status line rendered to the manager. A worker can append a line of any length; the
 /// manager's terminal should not have to absorb it.
@@ -324,25 +325,37 @@ fn render(line: &str) -> String {
 }
 
 pub(crate) fn parse_interval(value: &str) -> Result<Duration, String> {
-    let invalid = || {
-        format!(
-            "wait interval must be a finite positive number at most {MAX_INTERVAL_SECS} seconds"
-        )
-    };
-    let seconds = value.parse::<f64>().map_err(|_| invalid())?;
-    if !seconds.is_finite() || seconds <= 0.0 || seconds > MAX_INTERVAL_SECS {
-        return Err(invalid());
+    let interval = parse_duration(value).map_err(|error| error.to_string())?;
+    if interval.is_zero() || interval > MAX_INTERVAL {
+        return Err("wait `--interval` must be greater than zero and at most 1h".to_owned());
     }
-    Ok(Duration::from_secs_f64(seconds))
+    Ok(interval)
 }
 
 pub(crate) fn parse_timeout(value: &str) -> Result<Duration, String> {
-    const INVALID_TIMEOUT: &str = "wait timeout must be a finite non-negative number";
-    let seconds = value
-        .parse::<f64>()
-        .map_err(|_| INVALID_TIMEOUT.to_owned())?;
-    if !seconds.is_finite() || seconds < 0.0 {
-        return Err(INVALID_TIMEOUT.to_owned());
+    parse_duration(value).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interval_is_positive_and_at_most_one_hour() {
+        assert_eq!(parse_interval("1ms").unwrap(), Duration::from_millis(1));
+        assert_eq!(parse_interval("1h").unwrap(), MAX_INTERVAL);
+        for value in ["0", "3600001ms"] {
+            let error = parse_interval(value).unwrap_err();
+            assert!(error.contains("--interval"), "{error}");
+        }
     }
-    Ok(Duration::from_secs_f64(seconds))
+
+    #[test]
+    fn timeout_accepts_zero_and_has_no_policy_maximum() {
+        assert_eq!(parse_timeout("0").unwrap(), Duration::ZERO);
+        assert_eq!(
+            parse_timeout("10000h").unwrap(),
+            Duration::from_secs(36_000_000)
+        );
+    }
 }

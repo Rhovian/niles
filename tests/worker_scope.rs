@@ -57,7 +57,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     let wait = env
         .niles(
             &workspace_a,
-            &["wait", "shared", "--interval", "0.01", "--timeout", "0"],
+            &["wait", "shared", "--interval", "10ms", "--timeout", "0"],
         )
         .output()
         .unwrap();
