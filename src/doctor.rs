@@ -1,13 +1,10 @@
 use std::{fs, process::Command};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
-use crate::{
-    build_info, schema,
-    util::{current_dir_utf8, print_structured_rows},
-};
+use crate::{build_info, util::current_dir_utf8};
 
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
 const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
@@ -18,34 +15,8 @@ pub(crate) fn doctor() -> Result<()> {
     println!("version: {}", build_info::VERSION);
     println!("git_hash: {}", build_info::GIT_HASH);
     println!("built_at: {}", build_info::BUILD_TIMESTAMP);
-    println!("schema: {}", schema::CURRENT_SCHEMA);
     println!("workspace: {workspace}");
-
-    let observations = schema::scan_workspace(&workspace)?;
-
-    let has_schema_problem = observations
-        .iter()
-        .any(|observation| observation.status.is_problem());
-    if observations.is_empty() {
-        println!("schemas: none");
-    } else {
-        let rows = observations
-            .iter()
-            .map(|observation| {
-                [
-                    observation.kind.label().to_owned(),
-                    display_path(&workspace, &observation.path),
-                    observation.status.summary().to_owned(),
-                ]
-            })
-            .collect::<Vec<_>>();
-        print_structured_rows("schemas", ["kind", "path", "status"], &rows);
-    }
-
     print_dev_mode(&workspace)?;
-    if has_schema_problem {
-        bail!("doctor found non-current or unreadable Niles artifacts");
-    }
     Ok(())
 }
 
@@ -168,11 +139,4 @@ fn worktree_dirty(workspace: &Utf8Path) -> Option<bool> {
             .trim()
             .is_empty(),
     )
-}
-
-fn display_path(workspace: &Utf8Path, path: &Utf8Path) -> String {
-    if let Ok(relative) = path.strip_prefix(workspace) {
-        return relative.to_string();
-    }
-    path.to_string()
 }

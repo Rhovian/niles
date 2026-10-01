@@ -103,7 +103,7 @@ fn worker_close_does_not_write_or_advertise_empty_final_pane() {
 }
 
 #[test]
-fn worker_close_old_metadata_reports_schema_skew_without_raw_serde_error() {
+fn worker_close_malformed_metadata_names_path_and_cause() {
     let workspace = temp_workspace("niles-worker-old-meta");
     let worker_dir = workspace.join(".niles/worker/auth-fix");
     fs::create_dir_all(&worker_dir).unwrap();
@@ -125,11 +125,8 @@ fn worker_close_old_metadata_reports_schema_skew_without_raw_serde_error() {
         .output()
         .unwrap();
 
-    assert_failure_contains("close with old metadata", &output, "worker metadata");
+    assert_failure_contains("close with old metadata", &output, "failed to parse");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("meta.json"));
-    assert!(stderr.contains("schema 1"));
-    assert!(stderr.contains("expects 2"));
-    assert!(stderr.contains("remove the worker dir and respawn"));
-    assert!(!stderr.contains("missing field"));
+    assert!(stderr.contains("missing field"), "{stderr}");
 }

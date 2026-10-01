@@ -3,10 +3,7 @@ use std::fs;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{
-    schema::{self, ArtifactKind},
-    store::paths::NILES_DIR,
-};
+use crate::{store, store::paths::NILES_DIR};
 
 use super::WorkspaceManifest;
 
@@ -16,14 +13,14 @@ pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
 
 pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let path = manifest_path(root);
-    schema::read_optional_yaml(&path, ArtifactKind::WorkspaceManifest)
+    store::read_optional_yaml(&path)
 }
 
 pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
     let path = manifest_path(root);
     let parent = root.join(NILES_DIR);
     fs::create_dir_all(&parent).with_context(|| format!("failed to create {parent}"))?;
-    schema::write_yaml(&path, manifest)
+    store::write_yaml(&path, manifest)
 }
 
 #[cfg(test)]
@@ -41,17 +38,6 @@ mod tests {
         result
     }
 
-    #[test]
-    fn skewed_manifest_remediation_names_delete_and_rerun() {
-        let err = load_body("skewed-remediation", "lead: codex\n")
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("workspace manifest"));
-        assert!(err.contains("schema 1"));
-        assert!(err.contains("delete .niles/manifest.yaml and rerun `niles`"));
-    }
-
     /// The two check-in keys are read from the manifest as written, and a manifest that says
     /// nothing about them carries no default of its own: the cadence resolver owns that decision.
     #[test]
@@ -67,7 +53,6 @@ reviewer: claude
 security: claude
 checkin: 15m
 recheck: backoff
-niles_schema: 2
 "#,
         )
         .unwrap();
@@ -80,7 +65,6 @@ lead: claude
 worker: codex
 reviewer: claude
 security: claude
-niles_schema: 2
 "#,
         )
         .unwrap();
@@ -116,22 +100,17 @@ flow:
   - planner
   - worker
   - reviewer
-niles_schema: 2
 "#,
             )
             .unwrap_err()
         );
 
-        // Names the offending field, the fields that replaced it, and what to do about it.
+        // Names the offending field and the fields that replaced it.
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "unknown field `manager`, expected one of lead, worker, reviewer, security, worker_planning, checkin, recheck, niles_schema"
+                "unknown field `manager`, expected one of lead, worker, reviewer, security, worker_planning, checkin, recheck"
             ),
-            "{err}"
-        );
-        assert!(
-            err.contains("delete .niles/manifest.yaml and rerun `niles`"),
             "{err}"
         );
     }
@@ -181,8 +160,6 @@ niles_schema: 2
             ..manifest
         };
         save(&root, &configured).unwrap();
-        let body = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(body.ends_with("niles_schema: 2\n"), "{body}");
         assert_eq!(load(&root).unwrap(), Some(configured));
 
         fs::remove_dir_all(root).unwrap();
@@ -205,7 +182,6 @@ worker_planning:
   codex:gpt-5.6-sol: |
     Supply the objective, constraints, and explicit acceptance criteria with
     minimal implementation granularity.
-niles_schema: 2
 "#,
         )
         .unwrap();
@@ -242,12 +218,12 @@ niles_schema: 2
     fn malformed_manifest_keeps_saphyr_line_and_column() {
         let err = load_body(
             "manifest-malformed-location",
-            "lead: claude\nworker_planning: [\nniles_schema: 2\n",
+            "lead: claude\nworker_planning: [\n",
         )
         .unwrap_err();
         let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
 
-        assert!(chain[0].contains("malformed YAML"), "{chain:?}");
+        assert!(chain[0].contains("manifest.yaml"), "{chain:?}");
         assert!(
             chain
                 .iter()
@@ -260,24 +236,6 @@ niles_schema: 2
                 .all(|message| !message.contains("worker_planning: [")),
             "{chain:?}"
         );
-    }
-
-    #[test]
-    fn invalid_schema_stamps_are_rejected_before_deserialization() {
-        for (label, stamp) in [("quoted", "\"2\""), ("null", "~")] {
-            let err = load_body(
-                &format!("manifest-{label}-schema"),
-                &format!(
-                    "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\nniles_schema: {stamp}\n"
-                ),
-            )
-            .unwrap_err();
-
-            assert!(
-                err.to_string().contains("invalid niles_schema stamp"),
-                "{label}: {err:#}"
-            );
-        }
     }
 
     #[test]
@@ -294,7 +252,6 @@ security: claude
 worker_planning:
   codex:gpt-6-astra:
     steps: 2
-niles_schema: 2
 "#,
             )
             .unwrap_err()

@@ -3,7 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{self, ArtifactKind};
+use crate::store;
 
 use super::resolve::resolve_worker;
 use super::role::WorkerRole;
@@ -32,7 +32,7 @@ pub(super) struct WorkerMeta {
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
     let path = meta_path(worker_dir);
-    schema::write_json(&path, meta)
+    store::write_json(&path, meta)
 }
 
 pub(super) fn read_meta(id: &str) -> Result<WorkerMeta> {
@@ -45,7 +45,7 @@ pub(super) fn read_meta(id: &str) -> Result<WorkerMeta> {
 
 pub(super) fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    schema::read_optional_json(&path, ArtifactKind::WorkerMetadata)
+    store::read_optional_json(&path)
 }
 
 pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::Deserialize;
 
-use crate::{agents::ModelRoster, schema};
+use crate::{agents::ModelRoster, store};
 
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
@@ -48,7 +48,7 @@ pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
         if path.exists() {
             let body =
                 fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-            return schema::parse_yaml(&body)
+            return store::parse_yaml(&body)
                 .and_then(|raw| project_config(raw, models))
                 .with_context(|| format!("failed to parse {path}"));
         }

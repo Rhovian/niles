@@ -93,7 +93,7 @@ impl ModelRoster {
 }
 
 pub(crate) fn parse(body: &str) -> Result<ModelRoster> {
-    let raw = crate::schema::parse_yaml(body)?;
+    let raw = crate::store::parse_yaml(body)?;
     ModelRoster::from_raw(raw)
 }
 

@@ -6,7 +6,7 @@ use common::*;
 use std::{fs, path::Path, process::Command};
 
 #[test]
-fn doctor_reports_binary_identity_and_workspace_schema_state() {
+fn doctor_reports_binary_identity() {
     let workspace = temp_workspace("niles-doctor-test");
     let home = niles_home(&workspace);
     write_workspace_manifest(&workspace, "claude", "codex", "claude", "claude");
@@ -21,46 +21,7 @@ fn doctor_reports_binary_identity_and_workspace_schema_state() {
     assert!(stdout.contains("binary: niles 0.1.0 ("));
     assert!(stdout.contains("git_hash: "));
     assert!(stdout.contains("built_at: "));
-    assert!(stdout.contains("schema: 2"));
-    assert!(stdout.contains("schemas[1]{kind,path,status}:"));
-    assert!(stdout.contains("workspace manifest,.niles/manifest.yaml,current schema 2"));
     assert!(stdout.contains("dev_mode: no"));
-}
-
-#[test]
-fn doctor_reports_workspace_artifact_classes_nonzero() {
-    let workspace = temp_workspace("niles-doctor-artifacts-test");
-    let home = niles_home(&workspace);
-
-    fs::create_dir_all(workspace.join(".niles/worker/worker-1")).unwrap();
-    fs::create_dir_all(workspace.join(".niles/sessions/session-1")).unwrap();
-    fs::write(
-        workspace.join(".niles/manifest.yaml"),
-        "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
-    )
-    .unwrap();
-    fs::write(workspace.join(".niles/worker/worker-1/meta.json"), "{}").unwrap();
-    fs::write(workspace.join(".niles/worker/worker-1.json"), "{}").unwrap();
-    fs::write(
-        workspace.join(".niles/sessions/session-1/session.json"),
-        "{}",
-    )
-    .unwrap();
-
-    let output = niles_bare(&workspace, &home)
-        .arg("doctor")
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("workspace manifest,.niles/manifest.yaml,older schema 1"));
-    assert!(stdout.contains("worker metadata,.niles/worker/worker-1/meta.json,older schema 1"));
-    assert!(!stdout.contains(".niles/worker/worker-1.json"));
-    assert!(stdout.contains(
-        "manager session metadata,.niles/sessions/session-1/session.json,older schema 1"
-    ));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("doctor found non-current"));
 }
 
 #[test]

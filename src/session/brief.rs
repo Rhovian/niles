@@ -75,7 +75,7 @@ pub(super) fn write_manager_session(
 
 pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
     let meta_path = session_meta_path(workspace, &meta.id);
-    crate::schema::write_json(&meta_path, meta)
+    crate::store::write_json(&meta_path, meta)
 }
 
 fn render_lead_brief(
@@ -164,7 +164,6 @@ mod tests {
 
         let body = fs::read_to_string(&file).unwrap();
         assert!(body.contains("\"lead_pane\": \"%7\""), "{body}");
-        assert!(body.contains("\"niles_schema\": 2"), "{body}");
 
         // A session with no pane omits the field rather than writing a null nobody records.
         meta.lead_pane = None;
