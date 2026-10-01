@@ -50,17 +50,12 @@ fn run() -> Result<ExitCode> {
             role,
             task_label,
             agent,
-            task_file,
             checkin,
-            mut task,
+            message,
         }) => {
-            // `--wait` and `--checkin <delay>` written after the worker id land in the trailing
-            // task text.
-            let (trailing_wait, trailing_checkin) = cli::take_leading_dispatch_flags(&mut task);
-            let wait = wait || trailing_wait;
-            let checkin = checkin.or(trailing_checkin);
+            let task = message.resolve()?;
             let worker_id = id.clone();
-            worker::spawn(id, role, task_label, agent, task_file, task, checkin)?;
+            worker::spawn(id, role, task_label, agent, task, checkin)?;
             if wait {
                 return Ok(wait::wait(
                     wait::WaitOn::Workers(vec![worker_id]),
@@ -82,9 +77,11 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Send {
             wait,
             checkin,
-            target_and_message,
+            id,
+            message,
         }) => {
-            let sent = worker::send(wait, checkin, target_and_message)?;
+            let message = message.resolve()?;
+            let sent = worker::send(wait, checkin, id, message)?;
             if sent.wait_requested {
                 return Ok(wait::wait(
                     wait::WaitOn::Workers(vec![sent.id]),

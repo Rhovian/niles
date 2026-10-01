@@ -59,13 +59,13 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | --- | --- |
 | `niles` | Configure the manifest and start the foreground lead |
 | `niles doctor` | Show binary identity, schema state, and dev-build staleness |
-| `niles spawn [options] <id> <task...>` | Start a worker window; add `--wait` to await its first wake |
+| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
 | `niles workers` | List this workspace's live workers, window health, and pending wakes |
 | `niles models` | List the effective model and effort roster for this workspace |
 | `niles report <id>` | Print a live or most recently archived worker report |
 | `niles peek <id>` | Print recent pane output; `--lines 0` captures all history |
-| `niles send [options] <id> <message...>` | Steer a worker; add `--wait` to await its next wake |
+| `niles send [options] <id> (<text...> \| - \| -m <text>...)` | Steer a worker; add `--wait` to await its next wake |
 | `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` |
 | `niles quiet <id>` | Disarm an intentionally idle worker's check-in |
 

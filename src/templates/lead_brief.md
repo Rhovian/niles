@@ -35,11 +35,9 @@ Effort follows risk: use it to decide how many review rounds to commission, how 
 
 Scope a re-review to the fix and regressions around it, not the original pass. Full re-review is for changes that touched shared substrate.
 
-The gate belongs to the worker, who runs the checks before reporting `done:` and says what printed. Do not commission a pass to re-run them, and do not re-run them yourself on an unchanged tree — that is the same command a third time, not verification. Re-run only when the evidence is stale or was scoped narrower than the change.
-Hand checks expected to take more than a few minutes to the operator instead of sending an agent into a waiting loop. A worker's `needs-decision:` report must give the exact command and current status; do not treat it as a pass or restart a check it says is still running.
+The gate belongs to the worker, who runs the checks before reporting `done:` and says what printed. Do not commission a pass to re-run them, and do not re-run them yourself on an unchanged tree — that is the same command a third time, not verification. Re-run only when the evidence is stale or was scoped narrower than the change. Hand checks expected to take more than a few minutes to the operator instead of sending an agent into a waiting loop. A worker's `needs-decision:` report must give the exact command and current status; do not treat it as a pass or restart a check it says is still running.
 
-Scope a re-gate the same way: to what the change could plausibly have broken. A docs-only edit has not earned a test suite.
-When a report turns out to be wrong, verify the next one yourself — and when that one holds, go back to reading status lines. Distrust with no way out is how one bad report becomes a full suite after every turn.
+Scope a re-gate the same way: to what the change could plausibly have broken. A docs-only edit has not earned a test suite. When a report turns out to be wrong, verify the next one yourself — and when that one holds, go back to reading status lines. Distrust with no way out is how one bad report becomes a full suite after every turn.
 If you change the tree yourself, even with a formatter, you have invalidated the worker's gate and the re-run is yours. That cost is a reason to hand the change back instead.
 
 Keep your context lean. Status lines are the signal; read reports selectively, quote only what you need, and never paste large command output back into your own context.
@@ -47,8 +45,12 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 ## Delegating
 
 ```sh
-niles spawn <id> --role <worker|reviewer|security> "<task>"
+niles spawn <id> --role <worker|reviewer|security> - <<'TASK'
+<task>
+TASK
 ```
+
+`niles send <id> - <<'MSG'` takes stdin the same way; `--` ends flags before a message that starts with a dash.
 
 Before delegating an implementation assignment, resolve the selected worker family and model, then consult `worker_planning` in `{manifest}`. Its keys are exact `family:model` pairs (effort is ignored); apply matching operator instructions to planning and handoff detail. A missing match or unspecified model adds no special policy — do not invent capability assumptions. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
 

@@ -9,7 +9,7 @@ use crate::{
     config::spec::load_project_config_from,
     store,
     tmux::{self, WindowTarget},
-    util::{absolute_existing_file, current_dir_utf8, remove_dir_all_if_exists, render_template},
+    util::{current_dir_utf8, remove_dir_all_if_exists, render_template},
     wake, watch, workspace_manifest,
 };
 
@@ -28,26 +28,13 @@ pub fn spawn(
     role: WorkerRole,
     task_label: Option<String>,
     agent: Option<String>,
-    task_file: Option<Utf8PathBuf>,
-    task: Vec<String>,
+    task: String,
     checkin: Option<String>,
 ) -> Result<()> {
     validate_id(&id)?;
     if let Some(label) = &task_label {
         validate_task_label(label)?;
     }
-    if task_file.is_none() && task.is_empty() {
-        bail!("spawn requires either --task-file or task text");
-    }
-
-    let task = match task_file {
-        Some(path) => {
-            let path = absolute_existing_file(&path, "task file")?;
-            fs::read_to_string(&path).with_context(|| format!("failed to read task file {path}"))?
-        }
-        None => task.join(" "),
-    };
-
     let project = current_dir_utf8()?;
     let agent = resolve_agent(&project, role, agent)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the

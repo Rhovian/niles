@@ -5,11 +5,10 @@ use super::support::*;
 fn spawn_wait_blocks_for_the_workers_first_report() {
     let lab = Lab::start("niles-spawn-wait");
 
-    // `--wait` after the id, where clap's trailing var-arg would otherwise swallow it into the
-    // task text and write it into the worker's brief.
+    // Dispatch flags remain options even when they follow every task word.
     let child = lab
         .niles(&[
-            "spawn", "w1", "--wait", "--agent", "codex", "fix", "the", "login", "bug",
+            "spawn", "w1", "--agent", "codex", "fix", "the", "login", "bug", "--wait",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

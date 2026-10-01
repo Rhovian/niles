@@ -1,4 +1,5 @@
 use super::support::*;
+use std::{io::Write, process::Stdio};
 
 #[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
@@ -101,4 +102,51 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(log.contains(&format!("capture-pane -p -t {target} -S -7")));
     assert!(log.contains(&format!("send-keys -t {target} -l continue please")));
     assert!(log.contains(&format!("send-keys -t {target} C-m")));
+}
+
+#[test]
+fn send_accepts_stdin_and_literal_flag_text() {
+    let env = TestEnv::new("niles-worker-send-message-input");
+    let pane_file = env.root.join("pane.txt");
+    let spawn = env.run(&["spawn", "worker", "--agent", "claude", "task"]);
+    assert_command_success("fixture spawn", &spawn);
+
+    let mut child = env
+        .niles(&env.root, &["send", "worker", "-"])
+        .env("TMUX_PANE_FILE", &pane_file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"  stdin first\nstdin second\n\n")
+        .unwrap();
+    let stdin = child.wait_with_output().unwrap();
+    assert_command_success("send stdin", &stdin);
+    assert_eq!(
+        fs::read_to_string(&pane_file).unwrap(),
+        "composer:   stdin first\nstdin second\n\nsubmitted\n"
+    );
+
+    let literal = env
+        .niles(&env.root, &["send", "worker", "--", "--wait"])
+        .env("TMUX_PANE_FILE", &pane_file)
+        .output()
+        .unwrap();
+    assert_command_success("send literal --wait", &literal);
+    assert!(stdout_of(&literal).contains("wait: niles wait worker"));
+
+    let log = env.tmux_log();
+    for message in ["  stdin first\nstdin second\n", "--wait"] {
+        assert!(
+            log.contains(&format!(
+                "send-keys -t =niles-test-session:=niles-worker -l {message}"
+            )),
+            "message {message:?} was not delivered verbatim:\n{log}"
+        );
+    }
 }
