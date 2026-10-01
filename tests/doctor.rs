@@ -18,7 +18,7 @@ fn doctor_reports_binary_identity() {
 
     assert_command_success("doctor", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("binary: niles 0.1.0 ("));
+    assert!(stdout.contains(concat!("binary: niles ", env!("CARGO_PKG_VERSION"), " (")));
     assert!(stdout.contains("git_hash: "));
     assert!(stdout.contains("built_at: "));
     assert!(stdout.contains("dev_mode: no"));
@@ -78,7 +78,7 @@ fn version_includes_build_identity() {
 
     assert_command_success("--version", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("niles 0.1.0 ("));
+    assert!(stdout.contains(concat!("niles ", env!("CARGO_PKG_VERSION"), " (")));
     assert!(stdout.contains("built "));
 }
 

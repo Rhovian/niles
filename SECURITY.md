@@ -2,14 +2,14 @@
 
 ## Supported versions
 
-Niles supports the current `main` branch only. Security fixes are made on `main`; there are no
-maintained release branches and no promise to backport fixes. The repository currently has no
-tagged releases.
+Niles supports the latest release and current `main`. Security fixes are made on `main` and ship
+as a new release. Older releases do not receive backports.
 
 | Version | Supported |
 | ------- | --------- |
+| Latest release | Yes |
 | Current `main` | Yes |
-| Other commits or branches | No |
+| Older releases | No |
 
 ## Reporting a vulnerability
 

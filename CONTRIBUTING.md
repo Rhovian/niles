@@ -22,9 +22,11 @@ named const. Where a site truly owns it, use `#[expect(…, reason = "…")]` an
 
 ## Releases
 
-Before 1.0, breaking changes bump the minor version. This includes removing or renaming CLI
-commands or flags, changing the manifest format or `--json` output, or changing `niles wait`'s
-exit codes. All other changes bump the patch version.
+From 1.0, patch releases cover fixes and internal changes. Minor releases cover any user-visible
+change, including adding, removing, or renaming commands or flags, changing `--json` output or
+`niles wait`'s exit codes, and adding manifest keys. When a change breaks existing usage, such as
+a removed or renamed flag or a manifest format change, the release notes say what to update.
+Major releases are reserved for a fundamental change in what niles is; there is no fixed trigger.
 
 1. Bump `version` in `Cargo.toml` through a normal PR.
 2. After merge, tag `vX.Y.Z` on `main` and push the tag.
