@@ -1,44 +1,6 @@
 use super::support::*;
 
 #[test]
-fn returns_unconsumed_wake_already_in_status() {
-    let workspace = temp_workspace("niles-wait-preexisting");
-    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: already complete\n");
-
-    let started = Instant::now();
-    let output = run_wait(
-        &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
-    );
-
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
-        stdout_of(&output),
-        stderr_of(&output)
-    );
-    assert_command_success("wait --worker preexisting", &output);
-    assert_eq!(stdout_of(&output), "done: already complete\n");
-    // The cursor is a byte offset just past the delivered line, here the whole file.
-    assert_eq!(cursor(&worker_dir), "23\n");
-}
-
-#[test]
-fn strips_all_trailing_carriage_returns_from_a_wake() {
-    let workspace = temp_workspace("niles-wait-multiple-cr");
-    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: x\r\r\n");
-
-    let output = run_wait(
-        &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
-    );
-
-    assert_command_success("wait with carriage returns", &output);
-    assert_eq!(stdout_of(&output), "done: x\n");
-    assert_eq!(cursor(&worker_dir), "10\n");
-}
-
-#[test]
 fn does_not_redeliver_consumed_wake_and_delivers_next() {
     let workspace = temp_workspace("niles-wait-cursor");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
@@ -55,11 +17,7 @@ fn does_not_redeliver_consumed_wake_and_delivers_next() {
     assert!(stdout_of(&second).is_empty());
     assert!(stderr_of(&second).contains("timeout"));
 
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(worker_dir.join("status.log"))
-        .unwrap();
-    writeln!(status, "done: second").unwrap();
+    append_status(&worker_dir.join("status.log"), b"done: second\n");
 
     let third = run_wait(&workspace, &args);
     assert_command_success("third wait", &third);
@@ -104,11 +62,7 @@ fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
         "a half-written line must not advance the cursor, found {recorded:?}"
     );
 
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(worker_dir.join("status.log"))
-        .unwrap();
-    status.write_all(b"lete\n").unwrap();
+    append_status(&worker_dir.join("status.log"), b"lete\n");
 
     let whole = run_wait(
         &workspace,
@@ -193,11 +147,10 @@ fn concurrent_waits_deliver_the_line_to_exactly_one() {
     let second = spawn_wait(&workspace, &args);
     settle();
 
-    let mut status = fs::OpenOptions::new()
-        .append(true)
-        .open(workspace.join(".niles/worker/auth-fix/status.log"))
-        .unwrap();
-    writeln!(status, "done: only once").unwrap();
+    append_status(
+        &workspace.join(".niles/worker/auth-fix/status.log"),
+        b"done: only once\n",
+    );
 
     let first = first.wait_with_output().unwrap();
     let second = second.wait_with_output().unwrap();

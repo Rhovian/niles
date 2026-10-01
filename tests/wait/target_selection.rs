@@ -26,9 +26,8 @@ fn corrupt_cursor_fails_loudly_and_names_the_file() {
         &["auth-fix", "--interval", "0.05", "--timeout", "0"],
     );
 
-    assert!(!output.status.success());
+    assert_failure_contains("wait with corrupt cursor", &output, "invalid wake cursor");
     let stderr = stderr_of(&output);
-    assert!(stderr.contains("invalid wake cursor"), "stderr: {stderr}");
     // The operator has to be told which file to delete, or the worker is wedged.
     assert!(stderr.contains("status.cursor"), "stderr: {stderr}");
     assert!(stderr.contains("remove it to resume"), "stderr: {stderr}");
@@ -43,10 +42,13 @@ fn unknown_id_errors_without_closed_backstop() {
         &["missing", "--interval", "0.05", "--timeout", "0"],
     );
 
-    assert!(!output.status.success());
+    assert_failure_contains(
+        "wait for unknown worker",
+        &output,
+        "unknown worker id 'missing'",
+    );
     assert!(stdout_of(&output).is_empty());
     let stderr = stderr_of(&output);
-    assert!(stderr.contains("unknown worker id 'missing'"));
     assert!(!stderr.contains("worker 'missing' closed"));
 }
 
@@ -135,24 +137,19 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
 
 #[test]
 fn task_label_waits_on_every_live_worker_carrying_it() {
-    let workspace = temp_workspace("niles-wait-task");
-    // The fabricated workers need real tmux windows, or `wait`'s window-gone check (commit
-    // 82c8795) would report them gone before their status logs are ever read.
-    let server = TmuxServer::start(&workspace, "niles");
-    server.new_window("niles-alpha");
-    server.new_window("niles-beta");
-    server.new_window("niles-gamma");
-    write_task_worker(&workspace, "alpha", "auth", b"working: nothing yet\n");
-    write_task_worker(&workspace, "beta", "auth", b"blocked: needs a decision\n");
-    write_task_worker(&workspace, "gamma", "other", b"done: unrelated task\n");
+    let lab = Lab::start("niles-wait-task");
+    // The fabricated workers need real tmux windows so the window-gone check does not win.
+    for (id, task, status) in [
+        ("alpha", "auth", b"working: nothing yet\n".as_slice()),
+        ("beta", "auth", b"blocked: needs a decision\n".as_slice()),
+        ("gamma", "other", b"done: unrelated task\n".as_slice()),
+    ] {
+        lab.server.new_window(&format!("niles-{id}"));
+        lab.worker(id, Some(task), status);
+    }
 
-    let bin = workspace.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let output = niles_in(
-        &server,
-        &workspace,
-        &bin,
-        &[
+    let output = lab
+        .niles(&[
             "wait",
             "--task",
             "auth",
@@ -160,12 +157,43 @@ fn task_label_waits_on_every_live_worker_carrying_it() {
             "0.05",
             "--timeout",
             "0",
-        ],
-    )
-    .output()
-    .unwrap();
+        ])
+        .output()
+        .unwrap();
 
     assert_command_success("wait --task", &output);
     // gamma carries a different label, so its wake must not satisfy this wait.
     assert_eq!(stdout_of(&output), "beta: blocked: needs a decision\n");
+}
+
+#[test]
+fn worker_close_wakes_waiters_with_nonzero_closed_status() {
+    let lab = Lab::start("niles-close-wait");
+    lab.worker_window("auth-fix", b"working: close requested");
+
+    let waiter = lab
+        .niles(&["wait", "auth-fix", "--interval", "0.05", "--timeout", "5"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    settle();
+
+    let close = lab.niles(&["close", "auth-fix"]).output().unwrap();
+    assert_command_success("close", &close);
+
+    let started = Instant::now();
+    let output = waiter.wait_with_output().unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "wait did not return promptly; stdout:\n{}\nstderr:\n{}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert_eq!(output.status.code(), Some(10));
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("closed:"), "stdout:\n{stdout}");
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("worker 'auth-fix' closed"), "{stderr}");
+    assert!(!stderr.contains("timeout"), "{stderr}");
 }

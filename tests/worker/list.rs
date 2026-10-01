@@ -2,32 +2,30 @@ use super::support::*;
 
 #[test]
 fn workers_lists_live_workers_with_task_age_and_last_status() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-workers-list");
-    let (bin, tmux_log) = write_worker_test_bins(&workspace);
-    let path = path_with_bin(&bin);
+    let env = TestEnv::new("niles-workers-list");
 
-    write_worker_fixture_with_task(
-        &workspace,
+    write_worker(
+        &env.root,
         "auth-fix",
-        "working: running tests\ndone: ready for review\n",
+        "niles:niles-auth-fix",
         Some("auth"),
+        b"working: running tests\ndone: ready for review\n",
     );
-    write_worker_fixture(
-        &workspace,
+    write_worker(
+        &env.root,
         "reviewer",
-        "working: reading diff\nblocked: needs clarification\n",
+        "niles:niles-reviewer",
+        None,
+        b"working: reading diff\nblocked: needs clarification\n",
     );
-    let archive = workspace.join(".niles/worker/archive/old-worker-20000101T000000000000000Z");
+    let archive = env
+        .root
+        .join(".niles/worker/archive/old-worker-20000101T000000000000000Z");
     fs::create_dir_all(&archive).unwrap();
     fs::write(archive.join("status.log"), "done: archived\n").unwrap();
 
-    let output = Command::new(niles)
-        .arg("workers")
-        .current_dir(&workspace)
-        .env("PATH", &path)
-        .env("NILES_HOME", niles_home(&workspace))
-        .env("TMUX_LOG", &tmux_log)
+    let output = env
+        .niles(&env.root, &["workers"])
         .env("TMUX_WINDOWS", "niles-auth-fix\t0")
         .output()
         .unwrap();
@@ -48,35 +46,40 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
     assert!(!stdout.contains("old-worker"));
 }
 
-/// Two workers reporting `done:` render identically unless the listing says which line the lead
-/// still owes itself a `niles wait` for. That is how a finished worker sat unnoticed for twenty
-/// minutes next to two that had already been collected.
+/// The listing distinguishes a wake the lead still owes itself a `niles wait` for.
 #[test]
 fn workers_marks_a_worker_whose_wake_has_not_been_collected() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-workers-pending-wake");
-    let (bin, tmux_log) = write_worker_test_bins(&workspace);
-    let path = path_with_bin(&bin);
+    let env = TestEnv::new("niles-workers-pending-wake");
 
     // Collected: a wait consumed the `done:` and left its cursor past the end of the log.
-    let collected = write_worker_fixture(&workspace, "collected", "done: ready for review\n");
+    let collected = write_worker(
+        &env.root,
+        "collected",
+        "niles:niles-collected",
+        None,
+        b"done: ready for review\n",
+    );
     fs::write(collected.join("status.cursor"), "23\n").unwrap();
     // Waiting: the same line, and no wait has ever run against it.
-    write_worker_fixture(&workspace, "waiting", "done: ready for review\n");
+    write_worker(
+        &env.root,
+        "waiting",
+        "niles:niles-waiting",
+        None,
+        b"done: ready for review\n",
+    );
     // Working: the only undelivered line wakes nobody, so nothing is owed.
-    let working = write_worker_fixture(
-        &workspace,
+    let working = write_worker(
+        &env.root,
         "working",
-        "done: first pass\nworking: second pass\n",
+        "niles:niles-working",
+        None,
+        b"done: first pass\nworking: second pass\n",
     );
     fs::write(working.join("status.cursor"), "17\n").unwrap();
 
-    let output = Command::new(niles)
-        .arg("workers")
-        .current_dir(&workspace)
-        .env("PATH", &path)
-        .env("NILES_HOME", niles_home(&workspace))
-        .env("TMUX_LOG", &tmux_log)
+    let output = env
+        .niles(&env.root, &["workers"])
         .env(
             "TMUX_WINDOWS",
             "niles-collected\t0\nniles-waiting\t0\nniles-working\t0",
@@ -111,19 +114,18 @@ fn workers_marks_a_worker_whose_wake_has_not_been_collected() {
 
 #[test]
 fn workers_reports_unknown_when_tmux_window_query_fails() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-workers-list-unknown");
-    let (bin, tmux_log) = write_worker_test_bins(&workspace);
-    let path = path_with_bin(&bin);
+    let env = TestEnv::new("niles-workers-list-unknown");
 
-    write_worker_fixture(&workspace, "auth-fix", "working: checking window\n");
+    write_worker(
+        &env.root,
+        "auth-fix",
+        "niles:niles-auth-fix",
+        None,
+        b"working: checking window\n",
+    );
 
-    let output = Command::new(niles)
-        .arg("workers")
-        .current_dir(&workspace)
-        .env("PATH", &path)
-        .env("NILES_HOME", niles_home(&workspace))
-        .env("TMUX_LOG", &tmux_log)
+    let output = env
+        .niles(&env.root, &["workers"])
         .env("TMUX_LIST_WINDOWS_FAIL", "1")
         .output()
         .unwrap();
