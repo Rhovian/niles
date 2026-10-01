@@ -2,13 +2,8 @@
 
 ## Checks
 
-Before submitting a change, run:
-
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --no-fail-fast
-```
+The gate is whatever [CI](.github/workflows/ci.yml) runs. Run the same commands locally before
+submitting a change. Install `tmux` first; the integration tests start a private tmux server.
 
 Keep `--no-fail-fast`: plain `cargo test` stops at the first failing binary, so a failure in one
 test file hides every later one.
