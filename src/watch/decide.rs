@@ -8,13 +8,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::{agents::ComposerState, wake::WakeKind, worker::WorkerSnapshot};
+use crate::{wake::WakeKind, worker::WorkerSnapshot};
 
 use super::checkin::Checkin;
 
-const MAX_NUDGE_HOLD: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const MAX_NUDGE_HOLD: TimeDelta = TimeDelta::minutes(5);
 
 /// What one tick should do, in the order the edge does it.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -69,17 +69,13 @@ pub(crate) struct WatchMemory {
 }
 
 impl WatchMemory {
-    pub(crate) fn clear_hold(&mut self) {
-        self.held_since = None;
-    }
-
-    pub(crate) fn hold_nudge(&mut self, state: ComposerState, now: DateTime<Utc>) -> bool {
-        if state != ComposerState::Typed {
-            self.clear_hold();
+    pub(crate) fn hold_nudge(&mut self, has_draft: bool, now: DateTime<Utc>) -> bool {
+        if !has_draft {
+            self.held_since = None;
             return false;
         }
         let since = *self.held_since.get_or_insert(now);
-        should_hold(state, since, now)
+        now - since < MAX_NUDGE_HOLD
     }
     /// Memory for a watcher that is starting now.
     ///
@@ -87,11 +83,11 @@ impl WatchMemory {
     /// even launched must not nudge on every restart.
     pub(crate) fn at_start(snapshot: &[WorkerSnapshot]) -> Self {
         Self {
-            held_since: None,
             seen: snapshot
                 .iter()
                 .map(|worker| (worker.id.clone(), worker.log_len))
                 .collect(),
+            ..Self::default()
         }
     }
 
@@ -161,14 +157,6 @@ impl WatchMemory {
             self.seen.insert(nudge.id.clone(), len);
         }
     }
-}
-
-fn should_hold(state: ComposerState, held_since: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    state == ComposerState::Typed
-        && now
-            .signed_duration_since(held_since)
-            .to_std()
-            .is_ok_and(|elapsed| elapsed < MAX_NUDGE_HOLD)
 }
 
 /// `niles: impl reported (done) — check workers`

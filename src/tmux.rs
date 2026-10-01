@@ -63,28 +63,16 @@ pub(crate) struct CursorPosition {
 }
 
 pub(crate) fn cursor_position(target: &TmuxTarget) -> Result<CursorPosition> {
-    let format = "#{cursor_x} #{cursor_y} #{cursor_flag}";
-    let output = output(&["display", "-p", "-t", target.as_str(), format])?;
-    if !output.status.success() {
-        bail!(
-            "tmux display failed for {target}: {}",
-            normalize_stderr(&output.stderr)
-        );
-    }
-    let value = String::from_utf8_lossy(&output.stdout);
-    let invalid = || format!("unexpected tmux cursor position {value:?}");
+    let value = display(target, "#{cursor_x} #{cursor_y} #{cursor_flag}")?;
     let [x, y, flag] = value.split_whitespace().collect::<Vec<_>>()[..] else {
-        bail!(invalid());
-    };
-    let visible = match flag {
-        "1" => true,
-        "0" => false,
-        _ => bail!(invalid()),
+        bail!("unexpected tmux cursor position {value:?}");
     };
     Ok(CursorPosition {
-        x: x.parse().with_context(invalid)?,
-        y: y.parse().with_context(invalid)?,
-        visible,
+        x: x.parse()
+            .with_context(|| format!("unexpected tmux cursor position {value:?}"))?,
+        y: y.parse()
+            .with_context(|| format!("unexpected tmux cursor position {value:?}"))?,
+        visible: flag == "1",
     })
 }
 
@@ -100,6 +88,17 @@ fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     }
 
     Ok(format_capture(&output.stdout))
+}
+
+fn display(target: &TmuxTarget, format: &str) -> Result<String> {
+    let output = output(&["display", "-p", "-t", target.as_str(), format])?;
+    if !output.status.success() {
+        bail!(
+            "tmux display failed for {target}: {}",
+            normalize_stderr(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn capture_start(lines: usize) -> String {

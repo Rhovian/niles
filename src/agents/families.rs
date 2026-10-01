@@ -14,13 +14,6 @@ pub struct AgentProfile {
     pub composer: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComposerState {
-    Empty,
-    Typed,
-    Unknown,
-}
-
 /// How an agent receives its brief.
 ///
 /// One dial, answered per role on every profile, so both launch paths — the worker's generated

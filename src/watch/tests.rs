@@ -5,11 +5,12 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agents::ComposerState,
     test_support::{at, temp_test_path},
     tmux::TmuxTarget,
     worker::worker_snapshot,
 };
+
+mod hold;
 
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
@@ -18,8 +19,6 @@ use super::{
     quiet, read_checkins, tick,
     trust::claude_prompt,
 };
-
-mod composer_tests;
 
 fn running() -> AtomicBool {
     AtomicBool::new(false)
@@ -47,12 +46,8 @@ struct RecordingSink {
 }
 
 impl Sink for RecordingSink {
-    fn composer_state(&mut self) -> ComposerState {
-        if self.typed {
-            ComposerState::Typed
-        } else {
-            ComposerState::Empty
-        }
+    fn has_draft(&mut self) -> bool {
+        self.typed
     }
     fn nudge(&mut self, text: &str) -> Result<()> {
         self.attempts.push(text.to_owned());
@@ -448,7 +443,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     let fresh = armed_checkin(300, (WINDOW.len() + DONE.len()) as u64, at(1_060));
     fresh.write(&dir).unwrap();
 
-    apply(&plan, at(1_060), &mut memory, &mut sink, &running());
+    apply(&plan, &mut memory, &mut sink, &running());
 
     assert_eq!(
         Checkin::read(&dir).unwrap(),
@@ -483,7 +478,7 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
     let fresh = armed_checkin(300, WINDOW.len() as u64, at(1_300));
     fresh.write(&dir).unwrap();
 
-    apply(&plan, at(1_300), &mut memory, &mut sink, &running());
+    apply(&plan, &mut memory, &mut sink, &running());
 
     assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
 

@@ -1,35 +1,31 @@
 //! Reads a draft from the cursor's position in the visible pane.
 
-use crate::{agents::ComposerState, tmux::CursorPosition};
+use crate::tmux::CursorPosition;
 
-pub(crate) fn recognize(screen: &str, cursor: CursorPosition, marker: &str) -> ComposerState {
+pub(crate) fn recognize(screen: &str, cursor: CursorPosition, marker: &str) -> bool {
     if !cursor.visible {
-        return ComposerState::Unknown;
+        return false;
     }
     let lines: Vec<_> = screen.lines().collect();
     let Some(line) = lines.get(cursor.y) else {
-        return ComposerState::Unknown;
+        return false;
     };
     if line.starts_with(marker) {
         // Both markers are single-cell characters, so their width in cells is their char count.
-        return match cursor.x.cmp(&marker.chars().count()) {
-            std::cmp::Ordering::Equal => ComposerState::Empty,
-            std::cmp::Ordering::Greater => ComposerState::Typed,
-            std::cmp::Ordering::Less => ComposerState::Unknown,
-        };
+        return cursor.x > marker.chars().count();
     }
     if !line.starts_with("  ") {
-        return ComposerState::Unknown;
+        return false;
     }
     for line in lines[..cursor.y].iter().rev() {
         if line.starts_with(marker) {
-            return ComposerState::Typed;
+            return true;
         }
         if !line.starts_with("  ") {
             break;
         }
     }
-    ComposerState::Unknown
+    false
 }
 
 #[cfg(test)]
@@ -38,27 +34,21 @@ mod tests {
 
     #[test]
     fn cursor_identifies_drafts_for_both_families() {
-        use ComposerState::{Empty, Typed, Unknown};
         for marker in ["❯\u{a0}", "› "] {
-            let empty = format!("header\n{marker}placeholder\nfooter\n");
-            let typed = format!("header\n{marker}hello\nfooter\n");
-            let wrapped = format!("header\n{marker}hello\n  world\nfooter\n");
+            let screen = format!("header\n{marker}hello\n  world\nfooter\n");
             let dialog = format!("{marker}hello\n╭ dialog\n  option\n");
-            let cases = [
-                (&empty, 2, 1, true, Empty),
-                (&typed, 7, 1, true, Typed),
-                (&wrapped, 7, 2, true, Typed),
-                (&typed, 4, 0, true, Unknown),
-                (&dialog, 4, 2, true, Unknown),
-                (&typed, 7, 1, false, Unknown),
-                (&typed, 7, 3, true, Unknown),
-            ];
-            for (screen, x, y, visible, expected) in cases {
-                let cursor = CursorPosition { x, y, visible };
+            for (text, x, y, visible, expected) in [
+                (&screen, 2, 1, true, false),
+                (&screen, 7, 1, true, true),
+                (&screen, 7, 2, true, true),
+                (&screen, 4, 0, true, false),
+                (&dialog, 4, 2, true, false),
+                (&screen, 7, 1, false, false),
+                (&screen, 7, 4, true, false),
+            ] {
                 assert_eq!(
-                    recognize(screen, cursor, marker),
-                    expected,
-                    "{screen:?} at {x},{y}"
+                    recognize(text, CursorPosition { x, y, visible }, marker),
+                    expected
                 );
             }
         }

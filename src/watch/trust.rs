@@ -116,7 +116,7 @@ mod tests {
 
     use super::*;
     use crate::watch::tests::{worker_dir, workspace, write_starting_worker};
-    use crate::{agents::ComposerState, test_support::at, worker::worker_snapshot};
+    use crate::{test_support::at, worker::worker_snapshot};
 
     struct ReplacingSink {
         status_path: Utf8PathBuf,
@@ -125,8 +125,8 @@ mod tests {
     }
 
     impl Sink for ReplacingSink {
-        fn composer_state(&mut self) -> ComposerState {
-            ComposerState::Unknown
+        fn has_draft(&mut self) -> bool {
+            false
         }
         fn nudge(&mut self, _: &str) -> Result<()> {
             bail!("startup inspection does not nudge")
