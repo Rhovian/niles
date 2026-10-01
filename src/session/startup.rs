@@ -10,12 +10,10 @@ use crate::store;
 /// blind to whatever was already running. It now reads the same worker locations the rest of the
 /// CLI does, so there is no second layout to drift out of step.
 pub(super) fn startup_context(workspace: &Utf8Path) -> Result<String> {
-    let mut ids = store::resolve_worker_locations_in(workspace)?
+    let ids = store::worker_locations(workspace)?
         .into_iter()
         .map(|entry| entry.id)
         .collect::<Vec<_>>();
-    ids.sort();
-
     if ids.is_empty() {
         return Ok("worker: none".to_owned());
     }
@@ -24,8 +22,8 @@ pub(super) fn startup_context(workspace: &Utf8Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::temp_test_path;
     use super::*;
+    use crate::test_support::temp_test_path;
 
     use std::fs;
 

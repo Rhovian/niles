@@ -1,11 +1,7 @@
 mod archive;
 pub(crate) mod paths;
-#[cfg(test)]
-mod test_support;
 mod worker;
 
-pub(crate) use archive::{WorkerArchive, resolve_worker_archives};
-pub(crate) use paths::workspace_worker_dir;
-pub(crate) use worker::{
-    resolve_worker_location, resolve_worker_locations, resolve_worker_locations_in,
-};
+pub(crate) use archive::latest_worker_archive;
+pub(crate) use paths::{ARCHIVE_DIR, archive_dir, workers_dir};
+pub(crate) use worker::{worker_location, worker_locations};

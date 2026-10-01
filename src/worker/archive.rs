@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agent_window,
+    store, tmux,
     tmux::WindowTarget,
     util::{remove_dir_all_if_exists, timestamp_id},
 };
@@ -24,7 +24,7 @@ pub(super) fn capture_final_pane(
         return Ok(None);
     }
 
-    let text = agent_window::capture_target(target, FINAL_PANE_CAPTURE_LINES)?;
+    let text = tmux::capture_pane(&tmux::TmuxTarget::window(target), FINAL_PANE_CAPTURE_LINES)?;
     if text.is_empty() {
         return Ok(None);
     }
@@ -34,6 +34,7 @@ pub(super) fn capture_final_pane(
 }
 
 pub(super) fn archive_worker_dir(
+    workspace: &Utf8Path,
     id: &str,
     worker_dir: &Utf8Path,
     archived_at: DateTime<Utc>,
@@ -41,19 +42,12 @@ pub(super) fn archive_worker_dir(
     if !worker_dir.exists() {
         return Ok(worker_dir.to_path_buf());
     }
-    let archive_root = archive_root(worker_dir)?;
+    let archive_root = store::archive_dir(workspace);
     fs::create_dir_all(&archive_root)
         .with_context(|| format!("failed to create {archive_root}"))?;
     let archive_dir = archive_root.join(format!("{id}-{}", timestamp_id(&archived_at)));
     move_dir(worker_dir, &archive_dir)?;
     Ok(archive_dir)
-}
-
-fn archive_root(worker_dir: &Utf8Path) -> Result<Utf8PathBuf> {
-    let workers_dir = worker_dir
-        .parent()
-        .with_context(|| format!("worker dir {worker_dir} has no parent"))?;
-    Ok(workers_dir.join("archive"))
 }
 
 fn move_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {

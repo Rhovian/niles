@@ -98,23 +98,18 @@ where
     crate::schema::write_json(path, value)
 }
 
-pub fn append_line(
-    path: &Utf8Path,
-    line: &str,
-    open_context: impl FnOnce(&Utf8Path) -> String,
-    inspect_context: impl FnOnce(&Utf8Path) -> String,
-    write_context: impl Fn(&Utf8Path) -> String,
-) -> Result<()> {
+pub fn append_line(path: &Utf8Path, line: &str) -> Result<()> {
+    let context = || format!("failed to append to {path}");
     let mut file = fs::OpenOptions::new()
         .create(true)
         .read(true)
         .append(true)
         .open(path)
-        .with_context(|| open_context(path))?;
-    if needs_leading_newline(&mut file).with_context(|| inspect_context(path))? {
-        file.write_all(b"\n").with_context(|| write_context(path))?;
+        .with_context(context)?;
+    if needs_leading_newline(&mut file).with_context(context)? {
+        file.write_all(b"\n").with_context(context)?;
     }
-    writeln!(file, "{line}").with_context(|| write_context(path))
+    writeln!(file, "{line}").with_context(context)
 }
 
 pub fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {

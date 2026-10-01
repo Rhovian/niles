@@ -4,51 +4,21 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 
 use crate::util::read_dir_utf8_paths;
 
-use super::paths::current_workers_dir;
+use super::paths::archive_dir;
 
-pub(crate) fn resolve_worker_archives(worker: &str) -> Result<Vec<WorkerArchive>> {
-    let mut archives = local_worker_archives(worker)?;
-    sort_archives(&mut archives);
-    Ok(archives)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct WorkerArchive {
-    pub(crate) archive_dir: Utf8PathBuf,
-    pub(crate) archived_at: DateTime<Utc>,
-}
-
-fn worker_archive_root(workers_dir: &Utf8Path) -> Utf8PathBuf {
-    workers_dir.join("archive")
-}
-
-fn local_worker_archives(worker: &str) -> Result<Vec<WorkerArchive>> {
-    let archive_root = worker_archive_root(&current_workers_dir()?);
-    let mut archives = Vec::new();
-    for path in read_dir_utf8_paths(&archive_root)? {
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name() else {
-            continue;
-        };
-        let Some(archived_at) = worker_archive_timestamp(worker, name) else {
-            continue;
-        };
-        archives.push(WorkerArchive {
-            archive_dir: path,
-            archived_at,
-        });
-    }
-    Ok(archives)
-}
-
-fn sort_archives(archives: &mut [WorkerArchive]) {
-    archives.sort_by(|left, right| {
-        left.archived_at
-            .cmp(&right.archived_at)
-            .then_with(|| left.archive_dir.cmp(&right.archive_dir))
-    });
+pub(crate) fn latest_worker_archive(
+    workspace: &Utf8Path,
+    worker: &str,
+) -> Result<Option<Utf8PathBuf>> {
+    Ok(read_dir_utf8_paths(&archive_dir(workspace))?
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .filter_map(|path| {
+            let archived_at = worker_archive_timestamp(worker, path.file_name()?)?;
+            Some((archived_at, path))
+        })
+        .max_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)))
+        .map(|(_, path)| path))
 }
 
 #[expect(

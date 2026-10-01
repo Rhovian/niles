@@ -17,8 +17,7 @@ use super::{
 pub(super) const UNLABELED_TASK_LABEL: &str = "-";
 const EMPTY_STATUS_PLACEHOLDER: &str = "-";
 /// Shown for a worker holding an actionable line the lead has not collected with `niles wait`.
-/// Without it a worker that finished twenty minutes ago and one still working render identically,
-/// which is how a `done:` sat undelivered until a human asked about it.
+/// Without it a finished worker and one still working render identically.
 const PENDING_WAKE: &str = "pending";
 const NO_PENDING_WAKE: &str = "-";
 /// Shown for a worker whose `meta.json` could not be read; niles cannot reach it, so the lead must

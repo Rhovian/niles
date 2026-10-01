@@ -87,7 +87,7 @@ case "$1" in
     if [ "$2" = "-a" ]; then
       exit 0
     fi
-    printf 'niles-auth-fix\n'
+    printf 'niles-auth-fix\t0\n'
     exit 0
     ;;
   capture-pane) printf 'final pane\n'; exit 0 ;;
@@ -169,7 +169,7 @@ fn worker_close_targets_recorded_session_not_ambient() {
         .env("PATH", &path)
         .env("NILES_HOME", &home)
         .env("TMUX_LOG", &tmux_log)
-        .env("TMUX_WINDOWS", "niles-auth-fix")
+        .env("TMUX_WINDOWS", "niles-auth-fix\t0")
         .env("TMUX", "/tmp/ambient-tmux")
         .output()
         .unwrap();
@@ -177,7 +177,7 @@ fn worker_close_targets_recorded_session_not_ambient() {
 
     let log = fs::read_to_string(&tmux_log).unwrap();
     assert!(!log.contains("display-message"));
-    assert!(log.contains("list-windows -t =home -F #{window_name}"));
+    assert!(log.contains("list-windows -t =home -F #{window_name}\t#{pane_dead}"));
     assert!(log.contains("capture-pane -p -t =home:=niles-auth-fix -S -2000"));
     assert!(log.contains("kill-window -t =home:=niles-auth-fix"));
 }

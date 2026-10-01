@@ -372,15 +372,6 @@ fn resolve_targets(worker_ids: Vec<String>, task: Option<String>) -> Result<Vec<
 fn task_worker_ids(label: &str) -> Result<Vec<String>> {
     worker::validate_task_label(label)?;
     let selection = worker::select_worker_ids_by_task(label)?;
-    if !selection.failures.is_empty() {
-        let failures = selection
-            .failures
-            .into_iter()
-            .map(|(id, err)| format!("{id}: {err}"))
-            .collect::<Vec<_>>()
-            .join("; ");
-        bail!("failed to select workers with task label {label}: {failures}");
-    }
     // A worker with unreadable metadata carries no label, so it cannot be in scope for `label`;
     // surface it but do not let it block a wait on a label it could never carry.
     if !selection.unreadable.is_empty() {

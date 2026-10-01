@@ -28,7 +28,7 @@ fn workers_lists_live_workers_with_task_age_and_last_status() {
         .env("PATH", &path)
         .env("NILES_HOME", niles_home(&workspace))
         .env("TMUX_LOG", &tmux_log)
-        .env("TMUX_WINDOWS", "niles-auth-fix")
+        .env("TMUX_WINDOWS", "niles-auth-fix\t0")
         .output()
         .unwrap();
 
@@ -79,7 +79,7 @@ fn workers_marks_a_worker_whose_wake_has_not_been_collected() {
         .env("TMUX_LOG", &tmux_log)
         .env(
             "TMUX_WINDOWS",
-            "niles-collected\nniles-waiting\nniles-working",
+            "niles-collected\t0\nniles-waiting\t0\nniles-working\t0",
         )
         .output()
         .unwrap();

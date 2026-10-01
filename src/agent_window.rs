@@ -1,6 +1,6 @@
 use std::fs;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use crate::{
@@ -20,7 +20,7 @@ pub(crate) struct WorkerPaths<'a> {
     pub(crate) status: &'a Utf8Path,
 }
 
-pub(crate) fn spawn_agent_window_in_session(
+pub(crate) fn launch_worker_window(
     session: &SessionName,
     window_name: &str,
     cwd: &Utf8Path,
@@ -32,45 +32,37 @@ pub(crate) fn spawn_agent_window_in_session(
         launch: launch_path,
         status: status_path,
     } = *paths;
-    if !brief_path.is_file() {
-        bail!("cannot launch agent window {window_name}: brief does not exist at {brief_path}");
-    }
-
-    write_launch_script(launch_path, invocation, brief_path, status_path)?;
+    fs::write(
+        launch_path,
+        launch_script(invocation, brief_path, status_path),
+    )
+    .with_context(|| format!("failed to write {launch_path}"))?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
-    open_window_in_session(session, window_name, cwd, &command)
+    tmux::ensure_window_available(session, window_name)?;
+    let target = WindowTarget::new(session.clone(), window_name.to_owned())?;
+    tmux::new_window(session, window_name, cwd, &command)?;
+    Ok(target)
 }
 
-/// Writes the script the worker window runs.
-///
-/// The agent is run, not `exec`ed. Exec replaced the shell with the agent, so when the agent died
-/// there was nothing left to say so — the window simply vanished and any waiting lead learned
-/// nothing until it noticed the window was gone. Running it as a child lets the script report the
-/// exit as an ordinary status line, through the same cursor as every other wake.
-fn write_launch_script(
-    path: &Utf8Path,
+/// Run, not `exec`ed, so the script outlives the agent and reports its exit.
+fn launch_script(
     invocation: &agents::AgentInvocation,
     brief_path: &Utf8Path,
     status_path: &Utf8Path,
-) -> Result<()> {
-    let mut body = String::new();
-    body.push_str("#!/bin/sh\n");
-    body.push_str("set -eu\n");
-    body.push_str("BRIEF=");
-    body.push_str(&shell_quote(brief_path.as_str()));
-    body.push('\n');
-    body.push_str("STATUS=");
-    body.push_str(&shell_quote(status_path.as_str()));
-    body.push('\n');
+) -> String {
+    let mut body = format!(
+        "#!/bin/sh\nset -eu\nBRIEF={}\nSTATUS={}\n",
+        shell_quote(brief_path.as_str()),
+        shell_quote(status_path.as_str())
+    );
     for (key, value) in &invocation.env {
-        body.push_str("export ");
-        body.push_str(key);
-        body.push('=');
-        body.push_str(&shell_assignment_value(value));
-        body.push('\n');
+        body.push_str(&format!("export {key}={}\n", shell_assignment_value(value)));
     }
     body.push_str("code=0\n");
-    write_agent_command(&mut body, invocation);
+    body.push_str(&shell_quote(&invocation.binary));
+    for arg in &invocation.args {
+        body.push_str(&format!(" {}", shell_quote(arg)));
+    }
     match invocation.brief {
         BriefDelivery::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
         BriefDelivery::Stdin => body.push_str(" < \"$BRIEF\""),
@@ -95,39 +87,7 @@ fn write_launch_script(
     body.push_str(&shell_quote(")"));
     body.push_str(" >> \"$STATUS\"\n");
 
-    fs::write(path, body).with_context(|| format!("failed to write {path}"))
-}
-
-fn write_agent_command(body: &mut String, invocation: &agents::AgentInvocation) {
-    body.push_str(&shell_quote(&invocation.binary));
-    for arg in &invocation.args {
-        body.push(' ');
-        body.push_str(&shell_quote(arg));
-    }
-}
-
-pub(crate) fn capture_target(target: &WindowTarget, lines: usize) -> Result<String> {
-    tmux::capture_pane(&tmux::TmuxTarget::window(target), lines)
-}
-
-pub(crate) fn send_target(target: &WindowTarget, message: &str) -> Result<()> {
-    tmux::send_line(&tmux::TmuxTarget::window(target), message)
-}
-
-pub(crate) fn close_target(target: &WindowTarget) -> Result<()> {
-    tmux::kill_window(target)
-}
-
-pub(crate) fn open_window_in_session(
-    session: &SessionName,
-    window_name: &str,
-    cwd: &Utf8Path,
-    command: &str,
-) -> Result<WindowTarget> {
-    tmux::ensure_window_available(session, window_name)?;
-    let target = WindowTarget::new(session.clone(), window_name.to_owned())?;
-    tmux::new_window(session, window_name, cwd, command)?;
-    Ok(target)
+    body
 }
 
 pub(crate) fn shell_quote(value: &str) -> String {
@@ -148,14 +108,8 @@ fn shell_assignment_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn script_for(brief: BriefDelivery) -> String {
-        // A distinct path per call: these tests run in parallel and would otherwise delete the
-        // file out from under each other. A process id plus a per-binary counter (not the clock)
-        // guarantees uniqueness even when two calls land in the same nanosecond.
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
         let invocation = agents::AgentInvocation {
             binary: "codex".to_owned(),
             args: vec!["--flag".to_owned()],
@@ -163,21 +117,11 @@ mod tests {
             env: Vec::new(),
             spec: agents::parse_spec("codex", &agents::ModelRoster::builtin().unwrap()).unwrap(),
         };
-        let dir = std::env::temp_dir();
-        let path = Utf8Path::from_path(&dir).unwrap().join(format!(
-            "niles-launch-test-{}-{unique}.sh",
-            std::process::id()
-        ));
-        write_launch_script(
-            &path,
+        launch_script(
             &invocation,
             Utf8Path::new("/w/brief.md"),
             Utf8Path::new("/w/status.log"),
         )
-        .unwrap();
-        let body = fs::read_to_string(&path).unwrap();
-        fs::remove_file(&path).unwrap();
-        body
     }
 
     /// The agent is run, not `exec`ed, so something survives it to report the exit.
@@ -221,10 +165,5 @@ mod tests {
     #[test]
     fn shell_quotes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-    }
-
-    #[test]
-    fn worker_window_names_use_niles_prefix() {
-        assert_eq!(worker_window_name("auth-fix"), "niles-auth-fix");
     }
 }

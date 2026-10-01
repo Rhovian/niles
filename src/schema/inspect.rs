@@ -12,7 +12,8 @@ use super::{
     version::schema_from_json,
     yaml::probe_schema,
 };
-use crate::store::paths::{NILES_DIR, WORKERS_DIR};
+use crate::store::paths::NILES_DIR;
+use crate::store::{self, ARCHIVE_DIR};
 
 pub(crate) fn inspect_json(path: &Utf8Path, kind: ArtifactKind) -> SchemaObservation {
     let status = match fs::read_to_string(path) {
@@ -57,10 +58,8 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
         ArtifactKind::WorkspaceManifest,
     );
 
-    // The worker layout is owned by `store`; route the scan through the same reader so a rename of
-    // `WORKERS_DIR` reaches doctor, and so the `archive` directory is excluded here exactly as it
-    // is everywhere else (it nests one level deeper and carries no `meta.json`).
-    let workers = niles.join(WORKERS_DIR);
+    // Archives nest one level deeper and carry no worker `meta.json`.
+    let workers = store::workers_dir(root);
     for path in read_dir_paths(&mut observations, &workers) {
         if !path.is_dir() {
             continue;
@@ -68,7 +67,7 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
         let Some(name) = path.file_name() else {
             continue;
         };
-        if name == "archive" {
+        if name == ARCHIVE_DIR {
             continue;
         }
         push_json_if_file(
@@ -140,13 +139,13 @@ mod tests {
     #[test]
     fn worker_scan_excludes_the_archive_directory() {
         let root = temp_test_path("scan-excludes-archivedir");
-        let workers = root.join(NILES_DIR).join(WORKERS_DIR);
+        let workers = store::workers_dir(&root);
         fs::create_dir_all(workers.join("worker-1")).unwrap();
         fs::write(workers.join("worker-1/meta.json"), "{}").unwrap();
         // A stray `meta.json` inside `archive` must not be reported as a worker, just as every
         // other reader excludes the archive directory by name.
-        fs::create_dir_all(workers.join("archive")).unwrap();
-        fs::write(workers.join("archive/meta.json"), "{}").unwrap();
+        fs::create_dir_all(workers.join(ARCHIVE_DIR)).unwrap();
+        fs::write(workers.join(ARCHIVE_DIR).join("meta.json"), "{}").unwrap();
 
         let observations = scan_workspace(&root).unwrap();
 

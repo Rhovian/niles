@@ -10,8 +10,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use crate::{
-    store::paths::{NILES_DIR, WORKERS_DIR},
-    tmux,
+    store, tmux,
     util::current_dir_utf8,
     workspace_manifest::{self, WorkspaceManifest},
 };
@@ -33,7 +32,7 @@ pub fn run() -> Result<()> {
 }
 
 fn launch_prelude(workspace: &Utf8Path) -> Result<WorkspaceManifest> {
-    let worker_dir = workspace.join(NILES_DIR).join(WORKERS_DIR);
+    let worker_dir = store::workers_dir(workspace);
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 
     let defaults = WorkspaceManifest::default();

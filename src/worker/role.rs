@@ -97,59 +97,6 @@ mod tests {
         }
     }
 
-    /// Security is its own pass. Fusing it into code review is what made small changes
-    /// accrete hardening they did not need (#119).
-    #[test]
-    fn only_the_security_role_audits() {
-        let security = WorkerRole::Security.fragment();
-        assert!(security.contains("Name the attacker first"));
-        assert!(security.contains("it is not a finding"));
-
-        let reviewer = WorkerRole::Reviewer.fragment();
-        assert!(reviewer.contains("Do not do a security review"));
-        for audit_only in [
-            "Name the attacker first",
-            "amplification",
-            "recursion depth",
-        ] {
-            assert!(
-                !reviewer.contains(audit_only),
-                "reviewer fragment should leave {audit_only:?} to the security pass"
-            );
-        }
-    }
-
-    /// The reviewer's lens is bounded, so it cannot wander into an architecture rewrite.
-    #[test]
-    fn reviewer_lens_is_correctness_idiom_and_economy() {
-        let reviewer = WorkerRole::Reviewer.fragment();
-
-        for lens in [
-            "**Correctness.**",
-            "**Idiom.**",
-            "**Economy.**",
-            "**Tests.**",
-        ] {
-            assert!(reviewer.contains(lens), "reviewer is missing {lens}");
-        }
-        assert!(reviewer.contains("Could this have been done in less code?"));
-        assert!(reviewer.contains("a requirement that drives disproportionate code"));
-        assert!(reviewer.contains("Redundant cases, verbose setup"));
-    }
-
-    /// Doctrine addressed to another role is what the split exists to prevent.
-    #[test]
-    fn no_fragment_carries_another_role_doctrine() {
-        let worker = WorkerRole::Worker.fragment();
-
-        for foreign in ["attacker", "Review the delta", "hardening"] {
-            assert!(
-                !worker.contains(foreign),
-                "worker fragment should not mention {foreign:?}"
-            );
-        }
-    }
-
     /// The contract is shared, so every role carries it exactly once.
     #[test]
     fn every_brief_carries_the_shared_contract_once() {

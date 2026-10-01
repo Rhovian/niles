@@ -9,7 +9,7 @@ use crate::{
     wake::{self, WakeKind},
 };
 
-use super::meta::{WorkerMeta, meta_path, read_meta_if_exists};
+use super::meta::{WorkerMeta, read_meta_if_exists};
 
 /// The last actionable line in a worker's status log, with the byte offset just past it.
 ///
@@ -95,10 +95,7 @@ impl WorkerSnapshot {
 /// worker rather than a leftover.
 pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
     let mut workers = Vec::new();
-    for entry in store::resolve_worker_locations_in(workspace)? {
-        if !meta_path(&entry.worker_dir).exists() {
-            continue;
-        }
+    for entry in store::worker_locations(workspace)? {
         let (meta, read_error) = match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) => (Some(meta), None),
             Ok(None) => continue,
@@ -110,7 +107,6 @@ pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot
         snapshot.read_error = read_error;
         workers.push(snapshot);
     }
-    workers.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(workers)
 }
 
@@ -130,9 +126,7 @@ fn status_log(worker_dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
 
 /// The last actionable line in the log, complete lines only.
 ///
-/// A trailing partial line is still being written — `niles wait` leaves it for the next poll, and
-/// so does this: nudging a report before the newline that finishes it would have the lead look at
-/// a line the worker has not finished saying.
+/// A trailing partial line is still being written, so it stays for the next poll.
 fn last_actionable_wake(log: &[u8]) -> Option<ActionableWake> {
     let mut end = 0u64;
     let mut found = None;
@@ -168,31 +162,19 @@ mod tests {
     fn log_length_is_the_byte_length() {
         assert_eq!(snapshot("impl", "done: x\n").log_len, 8);
         assert_eq!(snapshot("impl", "working: café\n").log_len, 15);
-        assert_eq!(
-            WorkerSnapshot::new("impl".to_owned(), Utf8PathBuf::from("/w"), None).log_len,
-            0
-        );
+        let empty = WorkerSnapshot::new("impl".to_owned(), Utf8PathBuf::from("/w"), None);
+        assert_eq!(empty.log_len, 0);
+        assert_eq!(empty.last_actionable, None);
+        assert_eq!(empty.last_status_line(), None);
     }
 
     #[test]
     fn the_last_actionable_line_carries_its_end_offset() {
-        let log = "working: launch\nworking: busy\ndone: shipped\n";
+        let log = "done: one\nworking: more\ndone: shipped\n";
         let wake = snapshot("impl", log).last_actionable.unwrap();
 
         assert_eq!(wake.kind, WakeKind::Done);
         assert_eq!(wake.end, log.len() as u64);
-    }
-
-    /// `done: x` → follow-up → `done: y`: the last one is what the log ends on, and its offset is
-    /// past the first, which is how a second report is told from a replay of the first.
-    #[test]
-    fn only_the_last_actionable_line_is_kept() {
-        let wake = snapshot("impl", "done: one\nworking: more\ndone: two\n")
-            .last_actionable
-            .unwrap();
-
-        assert_eq!(wake.kind, WakeKind::Done);
-        assert_eq!(wake.end, 34);
         assert!(wake.end > "done: one\n".len() as u64);
     }
 
@@ -220,15 +202,6 @@ mod tests {
     fn working_lines_are_not_actionable() {
         assert_eq!(snapshot("impl", "working: launch\n").last_actionable, None);
         assert_eq!(snapshot("impl", "note: launch\n").last_actionable, None);
-    }
-
-    #[test]
-    fn a_worker_with_no_log_has_nothing_to_report() {
-        let worker = WorkerSnapshot::new("impl".to_owned(), Utf8PathBuf::from("/w"), None);
-
-        assert_eq!(worker.log_len, 0);
-        assert_eq!(worker.last_actionable, None);
-        assert_eq!(worker.last_status_line(), None);
     }
 
     #[test]

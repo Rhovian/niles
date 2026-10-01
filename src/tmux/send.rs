@@ -19,13 +19,7 @@ struct Timings {
 
     /// How long the pane must hold still before the paste counts as ingested.
     ///
-    /// A TUI does not redraw once per keystroke, it redraws in bursts: a 6KB message handed to
-    /// hermes moved the pane at 69ms, 193ms, 313ms, 554ms, 799ms and 923ms, with up to 245ms of
-    /// stillness between bursts. "Unchanged since the last poll" is therefore not quiet — it is
-    /// the gap between two bursts, and a submit sent into one is the swallowed submit this whole
-    /// dance exists to avoid. The window is wider than the widest observed gap, and it is a
-    /// floor on how long to keep looking rather than a guess at how long ingestion takes: the wait
-    /// ends when the pane stops moving, however long that takes.
+    /// Wider than the widest observed inter-burst gap (245ms); a floor, not a guess.
     quiet_window: Duration,
 
     /// Longest wait for a pasted message to render and go quiet before the submit key is sent.
@@ -53,7 +47,7 @@ trait Pane: fmt::Display {
 
 impl Pane for TmuxTarget {
     fn leave_copy_mode(&self) -> Result<()> {
-        super::run(["copy-mode", "-q", "-t", self.as_str()])
+        super::run(&["copy-mode", "-q", "-t", self.as_str()])
     }
 
     fn capture_watched_lines(&self) -> Result<String> {
@@ -61,11 +55,11 @@ impl Pane for TmuxTarget {
     }
 
     fn paste_literal(&self, line: &str) -> Result<()> {
-        super::run(send_line_literal_args(self.as_str(), line))
+        super::run(&["send-keys", "-t", self.as_str(), "-l", line])
     }
 
     fn send_submit_key(&self) -> Result<()> {
-        super::run(send_line_submit_args(self.as_str()))
+        super::run(&["send-keys", "-t", self.as_str(), SEND_LINE_SUBMIT_KEY])
     }
 }
 
@@ -149,14 +143,6 @@ fn confirm_submit_took<P: Pane>(pane: &P, staged: &str, timings: &Timings) -> Re
             );
         }
     }
-}
-
-fn send_line_literal_args<'a>(target: &'a str, line: &'a str) -> [&'a str; 5] {
-    ["send-keys", "-t", target, "-l", line]
-}
-
-fn send_line_submit_args(target: &str) -> [&str; 4] {
-    ["send-keys", "-t", target, SEND_LINE_SUBMIT_KEY]
 }
 
 #[cfg(test)]
@@ -318,21 +304,5 @@ mod tests {
         send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap();
 
         assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
-    }
-
-    #[test]
-    fn literal_args_preserve_multiline_message_as_one_argument() {
-        assert_eq!(
-            send_line_literal_args("niles:step", "line 1\nline 2"),
-            ["send-keys", "-t", "niles:step", "-l", "line 1\nline 2"]
-        );
-    }
-
-    #[test]
-    fn submit_args_use_discrete_control_m() {
-        assert_eq!(
-            send_line_submit_args("niles:step"),
-            ["send-keys", "-t", "niles:step", SEND_LINE_SUBMIT_KEY]
-        );
     }
 }
