@@ -22,7 +22,7 @@ fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it(
 
     // The pre-send `done:` must not satisfy the wait that follows the send.
     let waited = lab
-        .niles(&["wait", "auth-fix", "--interval", "0.05", "--timeout", "0"])
+        .niles(&["wait", "auth-fix", "--interval", "50ms", "--timeout", "0"])
         .output()
         .unwrap();
     assert_eq!(

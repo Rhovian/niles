@@ -6,6 +6,7 @@ mod build_info;
 mod cli;
 mod config;
 mod doctor;
+mod duration;
 mod models;
 mod schema;
 mod session;

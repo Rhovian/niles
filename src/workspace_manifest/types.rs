@@ -23,8 +23,9 @@ pub struct WorkspaceManifest {
     /// implementation assignments; Niles does not interpret models or infer capabilities.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub worker_planning: BTreeMap<String, String>,
-    /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: `15m`, `90s`,
-    /// a bare number of minutes, or `off` for none. Absent is the built-in five-minute default.
+    /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
+    /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
+    /// default.
     ///
     /// A value the delay speller rejects fails the dispatch, naming this file, rather than
     /// quietly falling back to the default the workspace just tried to change.

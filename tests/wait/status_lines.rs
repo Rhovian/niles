@@ -4,7 +4,7 @@ use super::support::*;
 fn does_not_redeliver_consumed_wake_and_delivers_next() {
     let workspace = temp_workspace("niles-wait-cursor");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
-    let args = ["auth-fix", "--interval", "0.05", "--timeout", "0"];
+    let args = ["auth-fix", "--interval", "50ms", "--timeout", "0"];
 
     let first = run_wait(&workspace, &args);
     assert_command_success("first wait", &first);
@@ -36,7 +36,7 @@ fn skips_non_actionable_lines_without_persisting_past_an_undelivered_wake() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_command_success("wait past working lines", &output);
@@ -52,7 +52,7 @@ fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
 
     let partial = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
     assert_eq!(partial.status.code(), Some(22));
     // The cursor file exists because it doubles as the lock, but holds no advanced position.
@@ -66,7 +66,7 @@ fn leaves_an_unterminated_trailing_line_for_the_next_poll() {
 
     let whole = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
     assert_command_success("wait after line completed", &whole);
     assert_eq!(stdout_of(&whole), "done: complete\n");
@@ -83,7 +83,7 @@ fn escapes_control_characters_instead_of_emitting_them() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_command_success("wait with control characters", &output);
@@ -110,7 +110,7 @@ fn non_utf8_bytes_do_not_desynchronise_the_cursor() {
 
     let output = run_wait(
         &workspace,
-        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
 
     assert_command_success("wait past non-utf8", &output);
@@ -123,7 +123,7 @@ fn non_utf8_bytes_do_not_desynchronise_the_cursor() {
 fn a_truncated_log_rescans_from_the_start() {
     let workspace = temp_workspace("niles-wait-truncated");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");
-    let args = ["auth-fix", "--interval", "0.05", "--timeout", "0"];
+    let args = ["auth-fix", "--interval", "50ms", "--timeout", "0"];
 
     assert_command_success("first wait", &run_wait(&workspace, &args));
     assert_eq!(cursor(&worker_dir), "12\n");
@@ -141,7 +141,7 @@ fn a_truncated_log_rescans_from_the_start() {
 fn concurrent_waits_deliver_the_line_to_exactly_one() {
     let workspace = temp_workspace("niles-wait-concurrent");
     worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    let args = ["auth-fix", "--interval", "0.05", "--timeout", "5"];
+    let args = ["auth-fix", "--interval", "50ms", "--timeout", "5s"];
 
     let first = spawn_wait(&workspace, &args);
     let second = spawn_wait(&workspace, &args);

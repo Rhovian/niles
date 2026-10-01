@@ -188,15 +188,6 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     assert!(brief.contains("Fix auth"), "{brief}");
     assert!(!brief.contains("--checkin"), "{brief}");
 
-    // A bare number is minutes, the way the help words it.
-    let minutes = fixture.spawn_with_checkin("review", "2");
-    assert_command_success("spawn --checkin 2", &minutes);
-    assert!(
-        stdout_of(&minutes).contains("checkin: 2m"),
-        "{}",
-        stdout_of(&minutes)
-    );
-
     // `send` is an assignment too, so it arms the same state.
     let send = fixture.niles(&["send", "impl", "--checkin", "1h", "again"]);
     assert_command_success("send --checkin 1h", &send);
@@ -331,6 +322,7 @@ fn a_malformed_checkin_flag_fails_the_dispatch() {
 
     assert!(!spawn.status.success());
     let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(stderr.contains("invalid `--checkin`"), "{stderr}");
     assert!(stderr.contains("is not a duration"), "{stderr}");
     assert!(!fixture.checkin_path("impl").exists());
 }
@@ -395,4 +387,20 @@ fn a_malformed_manifest_checkin_key_fails_the_dispatch() {
         // no tmux log at all.
         assert!(!fixture.env.tmux_log.exists());
     }
+}
+
+#[test]
+fn a_bare_manifest_checkin_names_the_manifest_and_lists_the_units() {
+    let fixture = fixture("niles-watch-manifest-bare-checkin");
+    fixture.write_manifest("checkin: 15\n");
+
+    let spawn = fixture.spawn("impl");
+
+    assert!(!spawn.status.success(), "bare checkin was accepted");
+    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    assert!(
+        stderr.contains("`15` needs a unit: ms, s, m or h"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(".niles/manifest.yaml"), "{stderr}");
 }

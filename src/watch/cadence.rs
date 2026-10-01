@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
-use crate::workspace_manifest::WorkspaceManifest;
+use crate::{duration::parse_duration, workspace_manifest::WorkspaceManifest};
 
 /// The delay `spawn` and `send` arm when nothing else is asked for.
 pub(crate) const DEFAULT_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -48,7 +48,7 @@ pub(crate) fn resolve_cadence(
     manifest_path: &Utf8Path,
 ) -> Result<Cadence> {
     let delay = match flag {
-        Some(value) => parse_delay(value)?,
+        Some(value) => parse_delay(value).context("invalid `--checkin`")?,
         None => match manifest.and_then(|manifest| manifest.checkin.as_deref()) {
             Some(value) => parse_delay(value).with_context(|| {
                 format!("invalid `checkin` in workspace manifest {manifest_path}")
@@ -74,8 +74,7 @@ pub(super) fn parse_recheck(value: &str) -> Result<Recheck> {
     match parse_delay(value)? {
         Some(delay) => Ok(Recheck::Fixed(delay)),
         None => bail!(
-            "re-check policy `{value}` is not `backoff` or a delay; use backoff, 10m, 1h, or a \
-             bare number of minutes"
+            "re-check policy `{value}` is not `backoff` or a delay; use backoff, 90s, 10m or 1h"
         ),
     }
 }
@@ -97,30 +96,12 @@ fn parse_delay(value: &str) -> Result<Option<Duration>> {
         return Ok(None);
     }
 
-    let (digits, unit) = match value.chars().last() {
-        Some(unit) if unit.is_ascii_alphabetic() => (&value[..value.len() - 1], Some(unit)),
-        _ => (value, None),
-    };
-    let Ok(amount) = digits.trim().parse::<u64>() else {
-        bail!(
-            "check-in delay `{value}` is not a duration; use 90s, 5m, 1h, a bare number of \
-             minutes, or 0/off"
-        );
-    };
-    let multiplier = match unit {
-        None => 60,
-        Some('s') => 1,
-        Some('m') => 60,
-        Some('h') => 60 * 60,
-        Some(other) => bail!("check-in delay `{value}` uses unknown unit `{other}`; use s, m or h"),
-    };
-    let Some(seconds) = amount.checked_mul(multiplier) else {
-        bail!("check-in delay `{value}` is too long");
-    };
-
-    let delay = Duration::from_secs(seconds);
+    let delay = parse_duration(value)?;
     if delay.is_zero() {
         return Ok(None);
+    }
+    if delay < Duration::from_secs(1) {
+        bail!("check-in delay `{value}` is shorter than 1s");
     }
     if delay > MAX_DELAY {
         bail!("check-in delay `{value}` is longer than 24h");
@@ -156,7 +137,6 @@ mod tests {
             ("90s", Duration::from_secs(90)),
             ("5m", Duration::from_secs(300)),
             ("1h", Duration::from_secs(3600)),
-            ("7", Duration::from_secs(420)),
         ] {
             assert_eq!(
                 parse_delay(written).unwrap(),
@@ -223,7 +203,7 @@ mod tests {
             assert!(err.contains(manifest_file().as_str()), "{err}");
         }
 
-        for value in ["backoff", "BACKOFF", "10m", "1h", "7"] {
+        for value in ["backoff", "BACKOFF", "10m", "1h"] {
             assert!(
                 cadence(None, Some(&manifest(None, Some(value)))).is_ok(),
                 "{value}"
@@ -233,8 +213,18 @@ mod tests {
 
     #[test]
     fn a_malformed_delay_is_rejected_rather_than_guessed_at() {
-        for value in ["", "5x", "m", "-5", "1.5m", "99999h"] {
+        for value in ["", "5x", "m", "-5", "1.5m"] {
             assert!(parse_delay(value).is_err(), "{value} should not parse");
         }
+    }
+
+    #[test]
+    fn a_checkin_delay_is_at_least_one_second_and_at_most_one_day() {
+        assert_eq!(parse_delay("1s").unwrap(), Some(Duration::from_secs(1)));
+        assert_eq!(parse_delay("24h").unwrap(), Some(MAX_DELAY));
+        let error = parse_delay("999ms").unwrap_err().to_string();
+        assert!(error.contains("shorter than 1s"), "{error}");
+        let error = parse_delay("86401s").unwrap_err().to_string();
+        assert!(error.contains("longer than 24h"), "{error}");
     }
 }
