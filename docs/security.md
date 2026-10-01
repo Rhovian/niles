@@ -130,6 +130,9 @@ values. These are launch-integrity measures, not containment. See
 [`src/agent_window.rs`](../src/agent_window.rs), and
 [`src/agents/families.rs`](../src/agents/families.rs).
 
+Niles reads Claude, Codex, and Hermes session stores to report agent token usage. It uses
+read-only access to those stores and links sessions through launch identifiers or a Codex brief.
+
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
 `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`, and
 Hermes `chat` with `--yolo`. Foreground defaults differ, and project configuration can replace

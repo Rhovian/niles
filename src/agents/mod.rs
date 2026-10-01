@@ -10,6 +10,7 @@ pub(crate) mod roster;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use families::session_link;
 pub use families::{BriefDelivery, known_agent_ids, profile_for};
 pub use roster::ModelRoster;
 

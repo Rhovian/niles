@@ -1,4 +1,5 @@
-use crate::config::spec::PromptMode;
+use crate::{config::spec::PromptMode, telemetry::SessionLink};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentProfile {
@@ -65,6 +66,20 @@ const HERMES_QUERY: BriefDelivery = BriefDelivery::Flag {
     value: "-q",
     path: "--query-file",
 };
+
+/// The session niles can read usage back from, chosen at launch. A family not listed has none.
+pub(crate) fn session_link(family: &str, source: &str) -> Option<SessionLink> {
+    Some(match profile_for(family)?.id {
+        "claude" => SessionLink::Claude {
+            session_id: Uuid::new_v4().to_string(),
+        },
+        "codex" => SessionLink::Codex,
+        "hermes" => SessionLink::Hermes {
+            source: format!("niles:{source}:{}", Uuid::new_v4()),
+        },
+        _ => return None,
+    })
+}
 
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {

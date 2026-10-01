@@ -268,3 +268,18 @@ fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
         "{unsupported}"
     );
 }
+
+#[test]
+fn hermes_sources_are_unique_per_launch() {
+    let first = super::session_link("hermes", "worker").unwrap();
+    let second = super::session_link("hermes", "worker").unwrap();
+    let (
+        crate::telemetry::SessionLink::Hermes { source: a },
+        crate::telemetry::SessionLink::Hermes { source: b },
+    ) = (first, second)
+    else {
+        panic!("hermes must have a source")
+    };
+    assert!(a.starts_with("niles:worker:"));
+    assert_ne!(a, b);
+}
