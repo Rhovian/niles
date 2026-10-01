@@ -422,7 +422,7 @@ impl Sink for WatchSink {
         let Some(marker) = self.composer else {
             return ComposerState::Unknown;
         };
-        let screen = tmux::capture_visible_pane(&self.target);
+        let screen = tmux::capture_visible_rows(&self.target);
         let cursor = tmux::cursor_position(&self.target);
         match (screen, cursor) {
             (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, marker),

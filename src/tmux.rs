@@ -47,16 +47,12 @@ pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> 
 
 /// Captures only the pane's currently visible screen, excluding scrollback.
 pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
-    let args = &["capture-pane", "-p", "-t", target.as_str()];
-    let output =
-        output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
-    if !output.status.success() {
-        bail!(
-            "tmux capture-pane failed for {target}: {}",
-            normalize_stderr(&output.stderr)
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    capture(target, &["capture-pane", "-p", "-J", "-t", target.as_str()])
+}
+
+/// The visible screen with wrapped lines left unjoined, so each row lines up with `cursor_y`.
+pub(crate) fn capture_visible_rows(target: &TmuxTarget) -> Result<String> {
+    capture(target, &["capture-pane", "-p", "-t", target.as_str()])
 }
 
 #[derive(Debug, Clone, Copy)]
