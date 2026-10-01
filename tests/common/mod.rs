@@ -201,9 +201,7 @@ pub fn write_workspace_manifest(
     fs::create_dir_all(workspace.join(".niles")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
-        format!(
-            "lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\nniles_schema: 2\n"
-        ),
+        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\n"),
     )
     .unwrap();
 }
@@ -230,7 +228,6 @@ pub fn write_worker(
         worker_dir.join("meta.json"),
         format!(
             r#"{{
-  "niles_schema": 2,
   "id": "{id}",
   "role": "worker",
   "agent": "codex",

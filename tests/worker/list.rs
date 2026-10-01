@@ -33,7 +33,7 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
     assert_command_success("workers", &output);
     let metadata_path = env.root.join(".niles/worker/z-unreadable/meta.json");
     let error = format!(
-        "worker metadata {} was written by an older niles (schema 1, this binary expects 2) and could not be read as the current format; remove the worker dir and respawn, or use the older binary to close it",
+        "failed to parse {}: missing field `role` at line 4 column 1",
         metadata_path.display()
     );
     let error = serde_json::to_string(&error).unwrap();

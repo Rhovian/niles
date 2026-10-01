@@ -58,7 +58,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | Command | Purpose |
 | --- | --- |
 | `niles` | Show or configure workspace roles, then start the foreground lead |
-| `niles doctor` | Show binary identity, schema state, and dev-build staleness |
+| `niles doctor` | Show binary identity and dev-build staleness |
 | `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
 | `niles workers` | Print this workspace's live workers, window health, and pending wakes as JSON |
@@ -83,7 +83,6 @@ lead: codex
 worker: codex
 reviewer: claude
 security: claude
-niles_schema: 2
 ```
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:

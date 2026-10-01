@@ -58,7 +58,7 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
-    /// Report binary identity, workspace schema state, and dev-mode staleness.
+    /// Report binary identity and dev-mode staleness.
     Doctor,
     /// Spawn a worker agent in a tmux window.
     ///

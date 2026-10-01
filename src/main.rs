@@ -8,7 +8,6 @@ mod config;
 mod doctor;
 mod duration;
 mod models;
-mod schema;
 mod session;
 mod store;
 mod tmux;

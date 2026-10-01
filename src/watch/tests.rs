@@ -92,7 +92,7 @@ fn write_meta(workspace: &Utf8PathBuf, id: &str, created_at: DateTime<Utc>, sess
     fs::write(
         dir.join("meta.json"),
         format!(
-            "{{\"niles_schema\":2,\"id\":\"{id}\",\"role\":\"worker\",\"agent\":\"claude\",\"created_at\":\"{}\",\
+            "{{\"id\":\"{id}\",\"role\":\"worker\",\"agent\":\"claude\",\"created_at\":\"{}\",\
              \"project\":\"{workspace}\",\"window\":\"{session}:niles-{id}\",\
              \"brief\":\"{workspace}/brief.md\",\
              \"launch\":\"{workspace}/launch.sh\"}}",
