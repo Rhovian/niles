@@ -5,6 +5,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::{
+    agents::ComposerState,
     test_support::{at, temp_test_path},
     tmux::TmuxTarget,
     worker::worker_snapshot,
@@ -17,6 +18,8 @@ use super::{
     quiet, read_checkins, tick,
     trust::claude_prompt,
 };
+
+mod composer_tests;
 
 fn running() -> AtomicBool {
     AtomicBool::new(false)
@@ -31,7 +34,7 @@ fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin
     )
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RecordingSink {
     attempts: Vec<String>,
     sent: Vec<String>,
@@ -40,9 +43,13 @@ struct RecordingSink {
     fail: bool,
     capture_failure: bool,
     screen: String,
+    composer: ComposerState,
 }
 
 impl Sink for RecordingSink {
+    fn composer_state(&mut self) -> ComposerState {
+        self.composer
+    }
     fn nudge(&mut self, text: &str) -> Result<()> {
         self.attempts.push(text.to_owned());
         if self.fail {
@@ -363,7 +370,7 @@ fn a_session_with_no_lead_pane_starts_no_watcher() {
     let root = workspace("no-pane-workspace");
     write_worker(&root, "impl", &format!("{WINDOW}{DONE}"));
 
-    drop(super::start(&session, &root, None));
+    drop(super::start(&session, &root, None, None));
 
     let log = fs::read_to_string(session.join("watch.log")).unwrap();
     assert!(log.contains("recorded no lead pane"), "{log}");
@@ -378,7 +385,7 @@ fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
     let session = workspace("pane-session");
     let root = workspace("pane-workspace");
 
-    let watcher = super::start(&session, &root, Some("%7"));
+    let watcher = super::start(&session, &root, Some("%7"), None);
     drop(watcher);
 
     let log = fs::read_to_string(session.join("watch.log")).unwrap();
@@ -437,7 +444,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     let fresh = armed_checkin(300, (WINDOW.len() + DONE.len()) as u64, at(1_060));
     fresh.write(&dir).unwrap();
 
-    apply(&plan, &mut memory, &mut sink, &running());
+    apply(&plan, at(1_060), &mut memory, &mut sink, &running());
 
     assert_eq!(
         Checkin::read(&dir).unwrap(),
@@ -472,7 +479,7 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
     let fresh = armed_checkin(300, WINDOW.len() as u64, at(1_300));
     fresh.write(&dir).unwrap();
 
-    apply(&plan, &mut memory, &mut sink, &running());
+    apply(&plan, at(1_300), &mut memory, &mut sink, &running());
 
     assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
 

@@ -268,3 +268,91 @@ fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
         "{unsupported}"
     );
 }
+
+#[test]
+fn captured_composers_are_recognized_only_in_their_normal_screen_layout() {
+    let cases = [
+        (
+            "claude",
+            include_str!("../../tests/fixtures/composer/claude-empty.txt"),
+            ComposerState::Empty,
+        ),
+        (
+            "claude",
+            include_str!("../../tests/fixtures/composer/claude-typed.txt"),
+            ComposerState::Typed,
+        ),
+        (
+            "claude",
+            include_str!("../../tests/fixtures/composer/claude-wrapped.txt"),
+            ComposerState::Typed,
+        ),
+        (
+            "claude",
+            include_str!("../../tests/fixtures/composer/claude-popup.txt"),
+            ComposerState::Unknown,
+        ),
+        (
+            "codex",
+            include_str!("../../tests/fixtures/composer/codex-empty.txt"),
+            ComposerState::Empty,
+        ),
+        (
+            "codex",
+            include_str!("../../tests/fixtures/composer/codex-typed.txt"),
+            ComposerState::Typed,
+        ),
+        (
+            "codex",
+            include_str!("../../tests/fixtures/composer/codex-popup.txt"),
+            ComposerState::Unknown,
+        ),
+    ];
+    for (family, capture, expected) in cases {
+        let recognize = profile_for(family).unwrap().composer.unwrap();
+        assert_eq!(
+            recognize(capture),
+            expected,
+            "{family} fixture with expected {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn grey_and_extended_color_sequences_are_not_positive_typed_text() {
+    let codex = profile_for("codex").unwrap().composer.unwrap();
+    let empty = include_str!("../../tests/fixtures/composer/codex-empty.txt");
+    for color in ["38;5;244", "38;5;2", "38;2;0;2;5", "48;2;2;0;5"] {
+        let colored = empty.replace("\x1b[2mAsk", &format!("\x1b[{color}mAsk"));
+        assert_eq!(codex(&colored), ComposerState::Unknown, "{color}");
+    }
+    let typed = include_str!("../../tests/fixtures/composer/codex-typed.txt");
+    let colored = typed.replace("\x1b[0m niles", "\x1b[38;2;0;2;5m niles");
+    assert_eq!(codex(&colored), ComposerState::Unknown);
+}
+
+#[test]
+fn transcript_user_rows_cannot_replace_a_missing_composer() {
+    let cases = [
+        (
+            "claude",
+            include_str!("../../tests/fixtures/composer/claude-typed.txt"),
+            "\x1b[39m❯\u{a0}niles fixture typed draft",
+        ),
+        (
+            "codex",
+            include_str!("../../tests/fixtures/composer/codex-typed.txt"),
+            "\x1b[1m›\x1b[0m niles fixture typed draft",
+        ),
+    ];
+    for (family, fixture, composer) in cases {
+        let recognize = profile_for(family).unwrap().composer.unwrap();
+        let without_composer = fixture.replace(composer, "");
+        assert_ne!(without_composer, fixture);
+        assert_eq!(
+            recognize(&without_composer),
+            ComposerState::Unknown,
+            "{family}"
+        );
+    }
+}

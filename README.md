@@ -110,6 +110,7 @@ An empty `efforts: []` marks a model that takes no effort qualifier.
 
 Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
 `--agent` overrides a role binding. Built-in families are `codex`, `claude`, and `hermes`.
+Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer session, but the lead reviews its own plan and must question its design during the economy pass.
 Run `niles models` to list the effective models and effort levels for the current workspace.
 
 Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to

@@ -6,6 +6,7 @@ use dialoguer::{Select, console::Term};
 use crate::{
     agents,
     config::spec::{AgentConfig, ProjectConfig},
+    workspace_manifest::ReviewerBinding,
 };
 
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
@@ -20,6 +21,52 @@ pub(crate) fn prompt_agent_value(
     let choices = agent_choices(default, &default_spec, &config.agents);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
     prompt_selected_agent(&term, &choices[index].value, &default_spec, config)
+}
+
+pub(crate) fn prompt_reviewer_value(
+    label: &str,
+    default: &ReviewerBinding,
+    config: &ProjectConfig,
+) -> Result<ReviewerBinding> {
+    let term = Term::stderr();
+    let default_spec = match default {
+        ReviewerBinding::Agent(agent) => agents::AgentSpec::parse(agent, &config.models)?,
+        ReviewerBinding::Lead => agents::AgentSpec::parse("claude", &config.models)?,
+    };
+    let choices = reviewer_choices(default, &default_spec, &config.agents);
+    let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
+    match &choices[index].value {
+        ReviewerChoice::Lead => Ok(ReviewerBinding::Lead),
+        ReviewerChoice::Agent(agent) => {
+            prompt_selected_agent(&term, agent, &default_spec, config).map(ReviewerBinding::Agent)
+        }
+    }
+}
+
+fn reviewer_choices(
+    default: &ReviewerBinding,
+    default_spec: &agents::AgentSpec,
+    agent_configs: &BTreeMap<String, AgentConfig>,
+) -> Vec<MenuChoice<ReviewerChoice>> {
+    let mut choices = agent_choices(default.as_str(), default_spec, agent_configs)
+        .into_iter()
+        .map(|choice| MenuChoice {
+            label: choice.label,
+            value: ReviewerChoice::Agent(choice.value),
+            is_default: choice.is_default,
+        })
+        .collect::<Vec<_>>();
+    choices.push(MenuChoice {
+        label: "lead".to_owned(),
+        value: ReviewerChoice::Lead,
+        is_default: matches!(default, ReviewerBinding::Lead),
+    });
+    choices
+}
+
+enum ReviewerChoice {
+    Lead,
+    Agent(String),
 }
 
 fn prompt_selected_agent(
@@ -212,6 +259,9 @@ mod tests {
 
         assert_eq!(labels, ["codex", "claude", "hermes"]);
         assert_eq!(default_choice_index(&choices), 0);
+        let reviewer = reviewer_choices(&ReviewerBinding::Lead, &default, &BTreeMap::new());
+        assert_eq!(reviewer.last().unwrap().label, "lead");
+        assert_eq!(default_choice_index(&reviewer), reviewer.len() - 1);
     }
 
     #[test]

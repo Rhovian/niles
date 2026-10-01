@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fs};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use serde::Deserialize;
 
@@ -58,6 +58,9 @@ pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
 }
 
 fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectConfig> {
+    if raw.agents.contains_key("lead") {
+        bail!("custom agent name `lead` is reserved for the reviewer binding");
+    }
     Ok(ProjectConfig {
         agents: raw.agents,
         models: models.with_overrides(raw.models)?,
@@ -142,5 +145,13 @@ models:
             assert!(message.contains("niles.yaml"), "{message}");
             assert!(message.contains(cause), "expected `{cause}` in `{message}`");
         }
+    }
+
+    #[test]
+    fn lead_is_reserved_as_custom_agent_name() {
+        let error = load("agents: { lead: { binary: custom-reviewer } }").unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("niles.yaml"), "{message}");
+        assert!(message.contains("`lead` is reserved"), "{message}");
     }
 }

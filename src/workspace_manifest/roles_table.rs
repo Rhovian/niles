@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{agents, config::spec::ProjectConfig};
 
-use super::WorkspaceManifest;
+use super::{ReviewerBinding, WorkspaceManifest};
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -22,7 +22,7 @@ pub(super) fn print_manifest_roles<W: Write>(
     let rows = [
         role_row("lead", &manifest.lead, config),
         role_row("worker", &manifest.worker, config),
-        role_row("reviewer", &manifest.reviewer, config),
+        reviewer_row(&manifest.reviewer, config),
         role_row("security", &manifest.security, config),
     ];
 
@@ -45,6 +45,19 @@ pub(super) fn print_manifest_roles<W: Write>(
     }
 
     Ok(())
+}
+
+fn reviewer_row(binding: &ReviewerBinding, config: &ProjectConfig) -> RoleRow {
+    match binding {
+        ReviewerBinding::Lead => RoleRow {
+            role: "reviewer",
+            family: "lead".to_owned(),
+            model: MISSING.to_owned(),
+            effort: MISSING.to_owned(),
+            invalid_reason: None,
+        },
+        ReviewerBinding::Agent(agent) => role_row("reviewer", agent, config),
+    }
 }
 
 struct RoleRow {
@@ -113,7 +126,7 @@ mod tests {
         WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: reviewer.to_owned(),
+            reviewer: reviewer.to_owned().into(),
             security: "claude:opus:max".to_owned(),
             ..WorkspaceManifest::default()
         }
@@ -156,6 +169,19 @@ security  claude  opus     max
             row.split_whitespace().collect::<Vec<_>>(),
             ["reviewer", "codex", "-", "-"],
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn lead_reviewer_uses_lead_row() {
+        let rendered = render(&manifest("lead"));
+        let row = rendered
+            .lines()
+            .find(|line| line.starts_with("reviewer"))
+            .unwrap();
+        assert_eq!(
+            row.split_whitespace().collect::<Vec<_>>(),
+            ["reviewer", "lead", "-", "-"]
         );
     }
 

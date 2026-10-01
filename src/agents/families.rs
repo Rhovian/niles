@@ -1,4 +1,7 @@
-use crate::config::spec::PromptMode;
+use crate::{
+    config::spec::PromptMode,
+    watch::composer::{Anchor, recognize},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentProfile {
@@ -11,7 +14,17 @@ pub struct AgentProfile {
     pub default_model: &'static str,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
+    pub composer: Option<ComposerRecognizer>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerState {
+    Empty,
+    Typed,
+    Unknown,
+}
+
+pub type ComposerRecognizer = fn(&str) -> ComposerState;
 
 /// How an agent receives its brief.
 ///
@@ -82,6 +95,7 @@ const PROFILES: &[AgentProfile] = &[
             },
         },
         launch_env: &[],
+        composer: Some(codex_composer),
     },
     AgentProfile {
         id: "claude",
@@ -96,6 +110,7 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--effort"),
         },
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+        composer: Some(claude_composer),
     },
     AgentProfile {
         id: "hermes",
@@ -111,8 +126,17 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--reasoning"),
         },
         launch_env: &[],
+        composer: None,
     },
 ];
+
+fn claude_composer(capture: &str) -> ComposerState {
+    recognize(capture, Anchor::Claude("❯\u{a0}"))
+}
+
+fn codex_composer(capture: &str) -> ComposerState {
+    recognize(capture, Anchor::Codex("› "))
+}
 
 pub fn known_agent_ids() -> impl Iterator<Item = &'static str> {
     PROFILES.iter().map(|profile| profile.id)

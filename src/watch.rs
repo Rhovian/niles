@@ -16,8 +16,6 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
-    io::Write,
     panic,
     sync::{
         Arc,
@@ -30,9 +28,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 
 use crate::{
+    agents::{ComposerRecognizer, ComposerState},
     tmux::{self, TmuxTarget},
     worker::{self, WorkerSnapshot, worker_snapshot},
     workspace_manifest,
@@ -40,7 +39,9 @@ use crate::{
 
 mod cadence;
 mod checkin;
+pub(crate) mod composer;
 mod decide;
+mod log;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -48,6 +49,7 @@ mod trust;
 use cadence::Cadence;
 pub(crate) use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory};
+use log::WatchLog;
 
 pub(crate) use cadence::describe_delay;
 
@@ -112,35 +114,6 @@ fn install_panic_hook(log: WatchLog) {
     }));
 }
 
-#[cfg(test)]
-mod panic_tests {
-    use super::*;
-    use crate::test_support::temp_test_path;
-
-    #[test]
-    fn a_panicking_watcher_is_recorded_by_its_hook() {
-        let session = temp_test_path("panic-session");
-        fs::create_dir_all(&session).unwrap();
-        let log = WatchLog {
-            path: session.join(WATCH_LOG),
-        };
-        let handle = thread::Builder::new()
-            .name(WATCH_THREAD_NAME.to_owned())
-            .spawn(move || {
-                install_panic_hook(log);
-                panic!("broken watcher");
-            })
-            .unwrap();
-
-        join_watcher(handle);
-
-        let body = fs::read_to_string(session.join(WATCH_LOG)).unwrap();
-        assert!(body.contains("watcher panic:"), "{body}");
-        assert!(body.contains("broken watcher"), "{body}");
-        fs::remove_dir_all(&session).unwrap();
-    }
-}
-
 /// Starts the watcher for the lead's lifetime.
 ///
 /// The pane is the one the session recorded at startup — a `%N` pane id, which tmux accepts as a
@@ -150,6 +123,7 @@ pub(crate) fn start(
     session_dir: &Utf8Path,
     workspace: &Utf8Path,
     lead_pane: Option<&str>,
+    composer: Option<ComposerRecognizer>,
 ) -> Watcher {
     let log = WatchLog {
         path: session_dir.join(WATCH_LOG),
@@ -178,7 +152,7 @@ pub(crate) fn start(
             let log = log.clone();
             move || {
                 install_panic_hook(log.clone());
-                watch(workspace, log, target, stop);
+                watch(workspace, log, target, composer, stop);
             }
         });
 
@@ -238,9 +212,19 @@ pub(crate) fn quiet(id: &str) -> Result<bool> {
     Checkin::disarm(&worker::worker_dir(id)?)
 }
 
-fn watch(workspace: Utf8PathBuf, log: WatchLog, target: TmuxTarget, stop: Arc<AtomicBool>) {
+fn watch(
+    workspace: Utf8PathBuf,
+    log: WatchLog,
+    target: TmuxTarget,
+    composer: Option<ComposerRecognizer>,
+    stop: Arc<AtomicBool>,
+) {
     let pane = target.as_str().to_owned();
-    let mut sink = WatchSink { target, log };
+    let mut sink = WatchSink {
+        target,
+        log,
+        composer,
+    };
     let mut memory = match worker_snapshot(&workspace) {
         Ok(snapshot) => WatchMemory::at_start(&snapshot),
         Err(err) => {
@@ -292,7 +276,10 @@ fn tick(
     trust::inspect_starting_workers(&snapshot, now, sink);
     let checkins = read_checkins(&snapshot, sink);
     let plan = memory.plan(&snapshot, &checkins, now);
-    apply(&plan, memory, sink, stop);
+    if plan.nudges.is_empty() {
+        memory.clear_hold();
+    }
+    apply(&plan, now, memory, sink, stop);
 }
 
 /// Delivers a plan, one nudge at a time.
@@ -300,7 +287,13 @@ fn tick(
 /// Every file this touches is re-read first: a tick spends seconds inside `send_line`, and anything
 /// armed or answered in that window is newer than the plan and is left for the next tick to judge.
 /// Nothing here is worth losing — a lost nudge costs a look.
-fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &AtomicBool) {
+fn apply(
+    plan: &Plan,
+    now: DateTime<Utc>,
+    memory: &mut WatchMemory,
+    sink: &mut dyn Sink,
+    stop: &AtomicBool,
+) {
     for disarm in &plan.disarms {
         with_planned_checkin(
             &disarm.id,
@@ -325,6 +318,9 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
         if stop.load(Ordering::Relaxed) {
             sink.note("the foreground agent is exiting: the rest of this plan waits for next time");
             return;
+        }
+        if memory.hold_nudge(sink.composer_state(), now) {
+            continue;
         }
         match sink.nudge(&nudge.text) {
             Ok(()) => {
@@ -410,6 +406,7 @@ fn read_checkins(snapshot: &[WorkerSnapshot], sink: &mut dyn Sink) -> BTreeMap<S
 /// The edge: read worker panes, send lead nudges, and record diagnostics without using stdout.
 trait Sink {
     fn nudge(&mut self, text: &str) -> Result<()>;
+    fn composer_state(&mut self) -> ComposerState;
     fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String>;
     fn note(&mut self, line: &str);
 }
@@ -417,9 +414,22 @@ trait Sink {
 struct WatchSink {
     target: TmuxTarget,
     log: WatchLog,
+    composer: Option<ComposerRecognizer>,
 }
 
 impl Sink for WatchSink {
+    fn composer_state(&mut self) -> ComposerState {
+        let Some(recognize) = self.composer else {
+            return ComposerState::Unknown;
+        };
+        match tmux::capture_styled_pane(&self.target) {
+            Ok(capture) => recognize(&capture),
+            Err(err) => {
+                self.note(&format!("could not read lead composer: {err:#}"));
+                ComposerState::Unknown
+            }
+        }
+    }
     fn nudge(&mut self, text: &str) -> Result<()> {
         // Deliberately not `nudge_line` or a hand-rolled send-keys: `send_line` is the one place
         // that knows how to confirm a submit took, and a nudge that silently sat in the lead's
@@ -436,21 +446,32 @@ impl Sink for WatchSink {
     }
 }
 
-/// The watcher's own record of what it did, appended one line at a time.
-#[derive(Clone)]
-struct WatchLog {
-    path: Utf8PathBuf,
-}
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+    use crate::test_support::temp_test_path;
+    use std::fs;
 
-impl WatchLog {
-    fn note(&self, line: &str) {
-        let stamp = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-        // A log that cannot be appended is not worth stopping the watcher over: the nudge is the
-        // feature, and there is nowhere else this failure could be reported to.
-        let _ = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .and_then(|mut file| writeln!(file, "{stamp} {line}"));
+    #[test]
+    fn a_panicking_watcher_is_recorded_by_its_hook() {
+        let session = temp_test_path("panic-session");
+        fs::create_dir_all(&session).unwrap();
+        let log = WatchLog {
+            path: session.join(WATCH_LOG),
+        };
+        let handle = thread::Builder::new()
+            .name(WATCH_THREAD_NAME.to_owned())
+            .spawn(move || {
+                install_panic_hook(log);
+                panic!("broken watcher");
+            })
+            .unwrap();
+
+        join_watcher(handle);
+
+        let body = fs::read_to_string(session.join(WATCH_LOG)).unwrap();
+        assert!(body.contains("watcher panic:"), "{body}");
+        assert!(body.contains("broken watcher"), "{body}");
+        fs::remove_dir_all(&session).unwrap();
     }
 }

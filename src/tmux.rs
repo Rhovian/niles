@@ -50,6 +50,11 @@ pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
     capture(target, &["capture-pane", "-p", "-J", "-t", target.as_str()])
 }
 
+/// Keeps SGR styling so a composer placeholder can be distinguished from typed text.
+pub(crate) fn capture_styled_pane(target: &TmuxTarget) -> Result<String> {
+    capture(target, &["capture-pane", "-p", "-e", "-t", target.as_str()])
+}
+
 fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     let output =
         output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
