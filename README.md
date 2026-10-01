@@ -23,7 +23,7 @@ Pairing a frontier lead with a cheaper worker may also reduce cost.
 
 ## Requirements
 
-- Rust 1.85+ and `tmux`.
+- `tmux`. Rust 1.85+ is required when installing with Cargo or building from source.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
 - Unix only.
 
@@ -36,11 +36,14 @@ Bare `niles` prompts for all four roles when creating `.niles/manifest.yaml`. On
 shows the current roles and lets you change them before starting the lead in the current tmux pane.
 
 ```sh
-cargo install --git https://github.com/Rhovian/niles
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
 cd /path/to/your/project
 tmux new-session -s niles # skip if already in tmux
 niles
 ```
+
+Alternatively, install with `cargo install niles`, or build from source with
+`cargo install --git https://github.com/Rhovian/niles`.
 
 ## Roles
 
