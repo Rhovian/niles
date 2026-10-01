@@ -20,6 +20,17 @@ named const. Where a site truly owns it, use `#[expect(…, reason = "…")]` an
 
 [AGENTS.md](AGENTS.md) holds the full coding standards that agents working on this repo follow.
 
+## Releases
+
+Before 1.0, breaking changes bump the minor version. This includes removing or renaming CLI
+commands or flags, changing the manifest format or `--json` output, or changing `niles wait`'s
+exit codes. All other changes bump the patch version.
+
+1. Bump `version` in `Cargo.toml` through a normal PR.
+2. After merge, tag `vX.Y.Z` on `main` and push the tag.
+3. The release workflow builds the binaries and publishes the GitHub release.
+4. Run `cargo publish`.
+
 ## Legal and security
 
 By intentionally submitting a contribution for inclusion in this project, you agree to the
