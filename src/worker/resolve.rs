@@ -4,17 +4,12 @@ use camino::Utf8PathBuf;
 use crate::{
     store,
     tmux::{self, TargetState, WindowTarget},
-    wake,
 };
 
 use super::{
     meta::{WorkerMeta, read_meta_if_exists},
     validation::validate_id,
 };
-
-pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
-    Ok(wake::status_log_path(&resolve_worker(id)?))
-}
 
 /// Whether this worker's tmux window is definitively gone, so nothing can ever append to its
 /// status log again.

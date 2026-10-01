@@ -62,9 +62,12 @@ fn run() -> Result<ExitCode> {
             let worker_id = id.clone();
             worker::spawn(id, role, task_label, agent, task_file, task, checkin)?;
             if wait {
-                return Ok(
-                    wait::wait(vec![worker_id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
-                );
+                return Ok(wait::wait(
+                    wait::WaitOn::Workers(vec![worker_id]),
+                    wait::DEFAULT_INTERVAL,
+                    wait::DEFAULT_TIMEOUT,
+                )?
+                .emit());
             }
         }
         Some(CommandName::Close {
@@ -83,9 +86,12 @@ fn run() -> Result<ExitCode> {
         }) => {
             let sent = worker::send(wait, checkin, target_and_message)?;
             if sent.wait_requested {
-                return Ok(
-                    wait::wait(vec![sent.id], None, wait::DEFAULT_INTERVAL_SECS, None)?.emit(),
-                );
+                return Ok(wait::wait(
+                    wait::WaitOn::Workers(vec![sent.id]),
+                    wait::DEFAULT_INTERVAL,
+                    wait::DEFAULT_TIMEOUT,
+                )?
+                .emit());
             }
         }
         Some(CommandName::Wait {
@@ -93,7 +99,13 @@ fn run() -> Result<ExitCode> {
             task,
             interval,
             timeout,
-        }) => return Ok(wait::wait(worker, task, interval, timeout)?.emit()),
+        }) => {
+            let on = match task {
+                Some(label) => wait::WaitOn::Task(label),
+                None => wait::WaitOn::Workers(worker),
+            };
+            return Ok(wait::wait(on, interval, timeout)?.emit());
+        }
         Some(CommandName::Quiet { id }) => {
             if watch::quiet(&id)? {
                 println!("quiet: {id}");

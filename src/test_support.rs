@@ -7,6 +7,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use camino::Utf8PathBuf;
+use chrono::{DateTime, Utc};
+
+pub(crate) fn at(seconds: i64) -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
+}
 
 /// A unique path under the system temp directory, named for the test that asked for it.
 ///

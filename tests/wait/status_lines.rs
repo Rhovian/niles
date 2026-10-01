@@ -24,6 +24,21 @@ fn returns_unconsumed_wake_already_in_status() {
 }
 
 #[test]
+fn strips_all_trailing_carriage_returns_from_a_wake() {
+    let workspace = temp_workspace("niles-wait-multiple-cr");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: x\r\r\n");
+
+    let output = run_wait(
+        &workspace,
+        &["auth-fix", "--interval", "0.05", "--timeout", "0"],
+    );
+
+    assert_command_success("wait with carriage returns", &output);
+    assert_eq!(stdout_of(&output), "done: x\n");
+    assert_eq!(cursor(&worker_dir), "10\n");
+}
+
+#[test]
 fn does_not_redeliver_consumed_wake_and_delivers_next() {
     let workspace = temp_workspace("niles-wait-cursor");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: first\n");

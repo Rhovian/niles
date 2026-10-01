@@ -1,5 +1,6 @@
 use camino::Utf8PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -183,11 +184,19 @@ pub enum CommandName {
         #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
         task: Option<String>,
         /// Poll interval in seconds.
-        #[arg(long, default_value_t = crate::wait::DEFAULT_INTERVAL_SECS)]
-        interval: f64,
-        /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
-        #[arg(long)]
-        timeout: Option<f64>,
+        #[arg(
+            long,
+            default_value = "2",
+            value_parser = crate::wait::parse_interval
+        )]
+        interval: Duration,
+        /// Maximum seconds to wait before exiting non-zero.
+        #[arg(
+            long,
+            default_value = "3600",
+            value_parser = crate::wait::parse_timeout
+        )]
+        timeout: Duration,
     },
     /// Disarm a worker's check-in, so the watcher stops nudging about it.
     ///

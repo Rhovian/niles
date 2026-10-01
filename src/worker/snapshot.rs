@@ -128,19 +128,13 @@ fn status_log(worker_dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
 ///
 /// A trailing partial line is still being written, so it stays for the next poll.
 fn last_actionable_wake(log: &[u8]) -> Option<ActionableWake> {
-    let mut end = 0u64;
     let mut found = None;
-    for raw in log.split_inclusive(|byte| *byte == b'\n') {
-        if !raw.ends_with(b"\n") {
-            break;
-        }
-        end += raw.len() as u64;
-        let line = String::from_utf8_lossy(raw);
-        let line = line.trim_end_matches('\n').trim_end_matches('\r');
-        if wake::is_actionable_wake(line)
-            && let Some(kind) = WakeKind::parse_line(line)
-        {
-            found = Some(ActionableWake { end, kind });
+    for (end, line) in wake::complete_lines(log) {
+        if let Some(kind) = WakeKind::actionable(&line) {
+            found = Some(ActionableWake {
+                end: end as u64,
+                kind,
+            });
         }
     }
     found

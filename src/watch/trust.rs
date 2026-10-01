@@ -3,7 +3,7 @@
 //! This only observes a worker's visible pane and appends an ordinary blocked report. The
 //! operator owns the decision; the watcher never sends input to the worker.
 
-use std::{fs, io::Write};
+use std::{fs, io::Write, os::unix::fs::OpenOptionsExt};
 
 use anyhow::Result;
 use camino::Utf8Path;
@@ -39,7 +39,10 @@ fn inspect_worker(worker: &WorkerSnapshot, now: DateTime<Utc>, sink: &mut dyn Si
     // Hold the existing inode across capture: a closed worker is never recreated, and a
     // replacement under the same id is not the destination of this inspection.
     let status_path = wake::status_log_path(&worker.worker_dir);
-    let mut status = fs::OpenOptions::new().append(true).open(status_path)?;
+    let mut status = fs::OpenOptions::new()
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&status_path)?;
     if status.metadata()?.len() != 0 {
         return Ok(());
     }
@@ -108,7 +111,53 @@ pub(super) fn claude_prompt(project: &Utf8Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
+    use camino::Utf8PathBuf;
+
     use super::*;
+    use crate::watch::tests::{worker_dir, workspace, write_starting_worker};
+    use crate::{test_support::at, worker::worker_snapshot};
+
+    struct ReplacingSink {
+        status_path: Utf8PathBuf,
+        project: Utf8PathBuf,
+        notes: Vec<String>,
+    }
+
+    impl Sink for ReplacingSink {
+        fn nudge(&mut self, _: &str) -> Result<()> {
+            bail!("startup inspection does not nudge")
+        }
+
+        fn capture_visible(&mut self, _: &TmuxTarget) -> Result<String> {
+            fs::remove_file(&self.status_path)?;
+            fs::write(&self.status_path, "")?;
+            Ok(claude_prompt(&self.project))
+        }
+
+        fn note(&mut self, line: &str) {
+            self.notes.push(line.to_owned());
+        }
+    }
+
+    #[test]
+    fn replacing_the_status_log_during_capture_does_not_block_the_new_worker() {
+        let project = workspace("trust-replaced-log");
+        write_starting_worker(&project, "impl", "", at(1_000));
+        let status_path = worker_dir(&project, "impl").join("status.log");
+        let snapshot = worker_snapshot(&project).unwrap();
+        let mut sink = ReplacingSink {
+            status_path: status_path.clone(),
+            project: project.clone(),
+            notes: Vec::new(),
+        };
+
+        inspect_starting_workers(&snapshot, at(1_000), &mut sink);
+
+        assert!(sink.notes.is_empty(), "{:?}", sink.notes);
+        assert_eq!(fs::read_to_string(&status_path).unwrap(), "");
+        fs::remove_dir_all(&project).unwrap();
+    }
 
     const PROJECT: &str = "/private/tmp/niles-trust-probe/claude";
     #[test]

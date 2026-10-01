@@ -18,6 +18,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::Write,
+    panic,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -37,16 +38,18 @@ use crate::{
     workspace_manifest,
 };
 
+mod cadence;
 mod checkin;
 mod decide;
 #[cfg(test)]
 mod tests;
 mod trust;
 
+use cadence::Cadence;
 use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory};
 
-pub(crate) use checkin::{Cadence, describe_delay};
+pub(crate) use cadence::describe_delay;
 
 /// How often the workspace is re-read. Report detection is a log-length comparison, so this only
 /// has to be prompt enough that a lead who is idle does not stay idle for long.
@@ -55,15 +58,12 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 /// The tick is slept in slices so stopping the watcher does not wait out a whole one.
 const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// How long dropping the watcher waits for the thread.
-///
-/// A tick can be inside a `send_line` that is waiting on the lead's pane to redraw — up to its
-/// settle plus submit timeouts — and the lead's exit must not queue behind tmux. One send in flight
-/// is given its full time to land, so a nudge is not abandoned half-typed; past that, an exit that
-/// waits is worse than a nudge that is collected from the state on disk next session.
+/// One in-flight `send_line` gets its settle+submit time to land; past that, exiting beats finishing
+/// the nudge.
 const EXIT_JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 const WATCH_LOG: &str = "watch.log";
+const WATCH_THREAD_NAME: &str = "niles-watch";
 
 /// A running watcher. Dropping it stops and joins the thread, which is what ties the thread's
 /// lifetime to the lead's: `launch_foreground_agent` holds one for as long as the foreground agent
@@ -81,26 +81,63 @@ impl Watcher {
             handle: None,
         }
     }
-
-    fn stop_and_join(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let Some(handle) = self.handle.take() else {
-            return;
-        };
-        // The wait is bounded by handing the join to a thread nobody keeps: `join` itself has no
-        // timeout, and a watcher wedged in tmux would otherwise hold the lead's exit forever.
-        let (joined, waiter) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = handle.join();
-            let _ = joined.send(());
-        });
-        let _ = waiter.recv_timeout(EXIT_JOIN_TIMEOUT);
-    }
 }
 
 impl Drop for Watcher {
     fn drop(&mut self) {
-        self.stop_and_join();
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            join_watcher(handle);
+        }
+    }
+}
+
+fn join_watcher(handle: JoinHandle<()>) {
+    let (joined, waiter) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = handle.join();
+        let _ = joined.send(());
+    });
+    let _ = waiter.recv_timeout(EXIT_JOIN_TIMEOUT);
+}
+
+fn install_panic_hook(log: WatchLog) {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        if thread::current().name() == Some(WATCH_THREAD_NAME) {
+            log.note(&format!("watcher panic: {info}"));
+        } else {
+            previous(info);
+        }
+    }));
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+    use crate::test_support::temp_test_path;
+
+    #[test]
+    fn a_panicking_watcher_is_recorded_by_its_hook() {
+        let session = temp_test_path("panic-session");
+        fs::create_dir_all(&session).unwrap();
+        let log = WatchLog {
+            path: session.join(WATCH_LOG),
+        };
+        let handle = thread::Builder::new()
+            .name(WATCH_THREAD_NAME.to_owned())
+            .spawn(move || {
+                install_panic_hook(log);
+                panic!("broken watcher");
+            })
+            .unwrap();
+
+        join_watcher(handle);
+
+        let body = fs::read_to_string(session.join(WATCH_LOG)).unwrap();
+        assert!(body.contains("watcher panic:"), "{body}");
+        assert!(body.contains("broken watcher"), "{body}");
+        fs::remove_dir_all(&session).unwrap();
     }
 }
 
@@ -114,28 +151,35 @@ pub(crate) fn start(
     workspace: &Utf8Path,
     lead_pane: Option<&str>,
 ) -> Watcher {
-    let log = WatchLog::new(session_dir.join(WATCH_LOG));
-    let Some(pane) = lead_pane.map(str::trim).filter(|pane| !pane.is_empty()) else {
+    let log = WatchLog {
+        path: session_dir.join(WATCH_LOG),
+    };
+    let Some(pane) = lead_pane else {
         log.note(
             "watcher not started: this session recorded no lead pane, so there is nothing to type \
              into; niles works without it",
         );
         return Watcher::idle();
     };
-    if let Err(err) = TmuxTarget::pane(pane) {
-        log.note(&format!("watcher not started: {err:#}"));
-        return Watcher::idle();
-    }
+    let target = match TmuxTarget::pane(pane) {
+        Ok(target) => target,
+        Err(err) => {
+            log.note(&format!("watcher not started: {err:#}"));
+            return Watcher::idle();
+        }
+    };
 
     let stop = Arc::new(AtomicBool::new(false));
     let workspace = workspace.to_path_buf();
     let spawned = thread::Builder::new()
-        .name("niles-watch".to_owned())
+        .name(WATCH_THREAD_NAME.to_owned())
         .spawn({
             let stop = Arc::clone(&stop);
-            let pane = pane.to_owned();
             let log = log.clone();
-            move || watch(workspace, log, pane, stop)
+            move || {
+                install_panic_hook(log.clone());
+                watch(workspace, log, target, stop);
+            }
         });
 
     match spawned {
@@ -161,7 +205,7 @@ pub(crate) fn checkin_cadence(project: &Utf8Path, flag: Option<&str>) -> Result<
     let path = workspace_manifest::manifest_path(project);
     let manifest = workspace_manifest::load(project)
         .with_context(|| format!("cannot resolve the check-in from {path}"))?;
-    checkin::resolve_cadence(flag, manifest.as_ref(), &path)
+    cadence::resolve_cadence(flag, manifest.as_ref(), &path)
 }
 
 /// Arms a worker's check-in, as `spawn` and `send` do: the lead is the only one who arms one.
@@ -194,11 +238,8 @@ pub(crate) fn quiet(id: &str) -> Result<bool> {
     Checkin::disarm(&worker::worker_dir(id)?)
 }
 
-fn watch(workspace: Utf8PathBuf, log: WatchLog, pane: String, stop: Arc<AtomicBool>) {
-    let Ok(target) = TmuxTarget::pane(&pane) else {
-        log.note(&format!("watcher not started: invalid pane id `{pane}`"));
-        return;
-    };
+fn watch(workspace: Utf8PathBuf, log: WatchLog, target: TmuxTarget, stop: Arc<AtomicBool>) {
+    let pane = target.as_str().to_owned();
     let mut sink = WatchSink { target, log };
     let mut memory = match worker_snapshot(&workspace) {
         Ok(snapshot) => WatchMemory::at_start(&snapshot),
@@ -327,16 +368,13 @@ fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) 
 /// A tick spends seconds inside `send_line`, so an arm state written in that window is newer than
 /// the plan and belongs to work the tick has not seen: the action is skipped, and the reason is
 /// logged here once rather than in each caller.
-fn with_planned_checkin<S, F>(
+fn with_planned_checkin(
     id: &str,
     worker_dir: &Utf8Path,
     planned: &Checkin,
-    sink: &mut S,
-    action: F,
-) where
-    S: Sink + ?Sized,
-    F: FnOnce(&Utf8Path, &mut S),
-{
+    sink: &mut dyn Sink,
+    action: impl FnOnce(&Utf8Path, &mut dyn Sink),
+) {
     match Checkin::read(worker_dir) {
         Ok(Some(current)) if current == *planned => action(worker_dir, sink),
         // Nothing armed: `niles quiet` got there first, or the worker reported twice.
@@ -405,10 +443,6 @@ struct WatchLog {
 }
 
 impl WatchLog {
-    fn new(path: Utf8PathBuf) -> Self {
-        Self { path }
-    }
-
     fn note(&self, line: &str) {
         let stamp = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
         // A log that cannot be appended is not worth stopping the watcher over: the nudge is the

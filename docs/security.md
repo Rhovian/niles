@@ -61,13 +61,17 @@ briefs, launch scripts, reports, status logs, and cursors in that tree. See
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
 **Existing mitigations.** Worker IDs and task labels accept only ASCII letters, digits, hyphens,
-and underscores (and reserve `archive`). The final open of `status.log` for `niles wait` and the
-open of `status.cursor` use `O_NOFOLLOW`. An exclusive advisory `flock` on `status.cursor` covers
-the cursor read, status scan, and cursor advance, serializing concurrent waiters. See
+and underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's
+own file appends (through `append_line` or the trust watcher's held descriptor), spawn's log
+creation, and the open of `status.cursor` use `O_NOFOLLOW`. An exclusive advisory `flock` on
+`status.cursor` covers the cursor read, status scan, and cursor advance, serializing concurrent
+waiters. See
 [`src/worker/validation.rs`](../src/worker/validation.rs) and [`src/wait.rs`](../src/wait.rs).
 
 **Known gaps.** `O_NOFOLLOW` protects only those final path components; parent directories and
 other filesystem operations are not protected globally against symlink traversal or replacement.
+The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
+`O_NOFOLLOW`.
 The cursor itself is the locked file—there is no separate persistent lock file—and the advisory
 lock authenticates neither writers nor status content. Other `.niles` state is not universally
 locked. Niles does not defend its state from a process that already has the operator's filesystem

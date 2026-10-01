@@ -13,30 +13,35 @@
 //! threshold, or takeover path to recover from a waiter that went away.
 
 use std::{
-    fs::{self, File},
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
-    process::ExitCode,
+    fs,
+    io::{ErrorKind, Read, Seek, SeekFrom},
+    os::unix::fs::OpenOptionsExt,
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 
 use crate::{
-    wake::{self, WakeKind, is_actionable_wake, is_closed_wake},
+    wake::{self, WakeKind},
     worker,
 };
+
+pub(crate) mod cursor;
+mod exit;
+
+use cursor::{cursor_path, open_cursor, read_cursor, write_cursor};
+use exit::Outcome;
+pub(crate) use exit::WaitExit;
 
 pub const EXIT_WAKE: u8 = 0;
 pub const EXIT_WORKER_CLOSED: u8 = 10;
 pub const EXIT_TIMEOUT: u8 = 22;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
-
 /// Poll interval used by `niles wait` and by `niles send --wait`.
-pub const DEFAULT_INTERVAL_SECS: f64 = 2.0;
+pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Largest accepted `--interval`. A poll interval beyond the default timeout is always a typo.
 const MAX_INTERVAL_SECS: f64 = 3600.0;
@@ -45,32 +50,18 @@ const MAX_INTERVAL_SECS: f64 = 3600.0;
 /// manager's terminal should not have to absorb it.
 const MAX_LINE_BYTES: usize = 4096;
 
-const CURSOR_FILE: &str = "status.cursor";
-
-/// How often to ask tmux whether a worker's window still exists. This is a backstop against a
-/// wait that would otherwise block for its full timeout, so it does not need to be prompt — and
-/// asking on every poll would spend a subprocess per worker per interval for an answer that
-/// almost never changes.
+/// Backstop only; each check costs a tmux subprocess per worker.
 const WINDOW_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
-pub fn wait(
-    worker_ids: Vec<String>,
-    task: Option<String>,
-    interval: f64,
-    timeout: Option<f64>,
-) -> Result<WaitExit> {
-    let mut targets = resolve_targets(worker_ids, task)?;
+pub(crate) enum WaitOn {
+    Workers(Vec<String>),
+    Task(String),
+}
+
+pub fn wait(on: WaitOn, interval: Duration, timeout: Duration) -> Result<WaitExit> {
+    let mut targets = resolve_targets(on)?;
     let prefix_worker_id = targets.len() > 1;
     let subject = timeout_subject(&targets);
-
-    let interval = positive_seconds_duration(interval, "wait interval")?;
-    let timeout = match timeout
-        .map(|seconds| non_negative_seconds_duration(seconds, "wait timeout"))
-        .transpose()?
-    {
-        Some(timeout) => timeout,
-        None => DEFAULT_TIMEOUT,
-    };
 
     let deadline = Instant::now() + timeout;
     loop {
@@ -116,11 +107,8 @@ struct Target {
 
 impl Target {
     fn resolve(id: String) -> Result<Self> {
-        let status = worker::status_log_path(&id)?;
-        let dir = status
-            .parent()
-            .map(Utf8Path::to_path_buf)
-            .with_context(|| format!("worker status path has no parent directory: {status}"))?;
+        let dir = worker::worker_dir(&id)?;
+        let status = wake::status_log_path(&dir);
         Ok(Self {
             id,
             dir,
@@ -140,23 +128,25 @@ impl Target {
 
         let path = cursor_path(&self.dir);
         let mut cursor = open_cursor(&path)?;
-        let guard = CursorLock::acquire(&cursor, &path)?;
+        cursor
+            .lock()
+            .with_context(|| format!("failed to lock {path}"))?;
 
         // Another wait may have consumed past our in-memory position since the last poll.
         let persisted = read_cursor(&mut cursor, &path)?;
         self.scanned = self.scanned.max(persisted);
 
-        let Some((line, end)) = self.next_actionable()? else {
-            drop(guard);
+        let Some((kind, line, end)) = self.next_actionable()? else {
+            drop(cursor);
             // Only once the log holds nothing further to deliver. A worker can report `done:`
             // and then exit, and that line must still be handed over.
             return self.window_gone_if_confirmed();
         };
         write_cursor(&mut cursor, &path, end)?;
         self.scanned = end;
-        drop(guard);
+        drop(cursor);
 
-        Ok(Some(if is_closed_wake(&line) {
+        Ok(Some(if kind == WakeKind::Closed {
             self.closed(line)
         } else {
             Outcome::Wake {
@@ -168,7 +158,7 @@ impl Target {
 
     /// Reads only the bytes appended since the last scan and returns the first actionable line
     /// with the offset just past it. A trailing partial line is left for the next poll.
-    fn next_actionable(&mut self) -> Result<Option<(String, u64)>> {
+    fn next_actionable(&mut self) -> Result<Option<(WakeKind, String, u64)>> {
         let mut file = match fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -200,20 +190,15 @@ impl Target {
             .read_to_end(&mut appended)
             .with_context(|| format!("failed to read {}", self.status))?;
 
-        let mut start = 0usize;
-        while let Some(offset) = appended[start..].iter().position(|byte| *byte == b'\n') {
-            let raw = &appended[start..start + offset];
-            let end = self.scanned + as_u64(start + offset + 1);
-            // Offsets come from the raw bytes, so a non-UTF-8 line cannot shift the cursor.
-            let line = String::from_utf8_lossy(raw);
-            let line = line.trim_end_matches('\r');
-            if is_actionable_wake(line) {
-                return Ok(Some((render(line), end)));
+        let mut complete = 0;
+        for (end, line) in wake::complete_lines(&appended) {
+            complete = end;
+            if let Some(kind) = WakeKind::actionable(&line) {
+                return Ok(Some((kind, render(&line), self.scanned + end as u64)));
             }
-            start += offset + 1;
         }
 
-        self.scanned += as_u64(start);
+        self.scanned += complete as u64;
         Ok(None)
     }
 
@@ -221,18 +206,20 @@ impl Target {
     fn skip_to_end(&mut self) -> Result<Vec<String>> {
         let path = cursor_path(&self.dir);
         let mut cursor = open_cursor(&path)?;
-        let guard = CursorLock::acquire(&cursor, &path)?;
+        cursor
+            .lock()
+            .with_context(|| format!("failed to lock {path}"))?;
         self.scanned = self.scanned.max(read_cursor(&mut cursor, &path)?);
 
         let mut skipped = Vec::new();
-        while let Some((line, end)) = self.next_actionable()? {
+        while let Some((_, line, end)) = self.next_actionable()? {
             skipped.push(line);
             self.scanned = end;
         }
         // A failed scan leaves `scanned` just past the last complete line, which is where the
         // next wait should resume from.
         write_cursor(&mut cursor, &path, self.scanned)?;
-        drop(guard);
+        drop(cursor);
         Ok(skipped)
     }
 
@@ -265,108 +252,12 @@ impl Target {
     }
 }
 
-enum Outcome {
-    Wake {
-        id: String,
-        line: String,
-    },
-    Closed {
-        id: String,
-        status: Utf8PathBuf,
-        line: String,
-    },
-    WindowGone {
-        id: String,
-        status: Utf8PathBuf,
-    },
-    Timeout {
-        subject: String,
-        timeout: Duration,
-    },
-}
-
-pub(crate) struct WaitExit {
-    code: u8,
-    stdout: Option<String>,
-    stderr: Option<String>,
-}
-
-impl WaitExit {
-    fn from_outcome(outcome: Outcome, prefix_worker_id: bool) -> Self {
-        match outcome {
-            Outcome::Wake { id, line } => Self {
-                code: EXIT_WAKE,
-                stdout: Some(wake_line(&id, line, prefix_worker_id)),
-                stderr: None,
-            },
-            Outcome::Closed { id, status, line } => Self {
-                code: EXIT_WORKER_CLOSED,
-                stdout: Some(wake_line(&id, line, prefix_worker_id)),
-                stderr: Some(format!(
-                    "wait: worker-closed worker={} status={} detail={}",
-                    field(&id),
-                    field(status.as_str()),
-                    detail(&format!("worker '{id}' closed"))
-                )),
-            },
-            Outcome::WindowGone { id, status } => Self {
-                code: EXIT_WORKER_CLOSED,
-                stdout: Some(wake_line(
-                    &id,
-                    wake::line(
-                        WakeKind::Failed,
-                        &format!("worker '{id}' exited without reporting; its window is gone"),
-                    ),
-                    prefix_worker_id,
-                )),
-                stderr: Some(format!(
-                    "wait: window-gone worker={} status={} detail={}",
-                    field(&id),
-                    field(status.as_str()),
-                    detail(&format!(
-                        "worker '{id}' tmux window is gone and its status log ended without a final line"
-                    ))
-                )),
-            },
-            Outcome::Timeout { subject, timeout } => Self {
-                code: EXIT_TIMEOUT,
-                stdout: None,
-                stderr: Some(format!(
-                    "wait: timeout target={} timeout={}",
-                    field(&subject),
-                    format_duration(timeout)
-                )),
-            },
-        }
-    }
-
-    pub(crate) fn emit(self) -> ExitCode {
-        if let Some(stdout) = self.stdout {
-            println!("{stdout}");
-        }
-        if let Some(stderr) = self.stderr {
-            eprintln!("{stderr}");
-        }
-        ExitCode::from(self.code)
-    }
-}
-
-fn resolve_targets(worker_ids: Vec<String>, task: Option<String>) -> Result<Vec<Target>> {
-    let ids = match (worker_ids.is_empty(), task) {
-        (false, None) => dedup(worker_ids),
-        (true, Some(label)) => task_worker_ids(&label)?,
-        (false, Some(_)) => bail!("use either --worker <id> or --task <label>, not both"),
-        (true, None) => bail!("wait requires --worker <id> or --task <label>"),
+fn resolve_targets(on: WaitOn) -> Result<Vec<Target>> {
+    let ids = match on {
+        WaitOn::Workers(ids) => dedup(ids),
+        WaitOn::Task(label) => task_worker_ids(&label)?,
     };
-
-    let mut targets = Vec::with_capacity(ids.len());
-    for id in ids {
-        targets.push(Target::resolve(id)?);
-    }
-    if targets.is_empty() {
-        bail!("wait requires at least one worker target");
-    }
-    Ok(targets)
+    ids.into_iter().map(Target::resolve).collect()
 }
 
 fn task_worker_ids(label: &str) -> Result<Vec<String>> {
@@ -408,76 +299,6 @@ fn timeout_subject(targets: &[Target]) -> String {
     }
 }
 
-fn cursor_path(dir: &Utf8Path) -> Utf8PathBuf {
-    dir.join(CURSOR_FILE)
-}
-
-/// Opens the cursor for locking and rewriting. `O_NOFOLLOW` so a symlink planted at the cursor
-/// path cannot redirect the write out of the worker directory.
-fn open_cursor(path: &Utf8Path) -> Result<File> {
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .with_context(|| format!("failed to open {path}"))
-}
-
-/// An exclusive advisory lock over the read-scan-advance window, released on drop and by the
-/// kernel if this process dies holding it.
-struct CursorLock<'a> {
-    fd: i32,
-    path: &'a Utf8Path,
-}
-
-impl<'a> CursorLock<'a> {
-    fn acquire(file: &File, path: &'a Utf8Path) -> Result<Self> {
-        let fd = file.as_raw_fd();
-        // SAFETY: `fd` is owned by `file`, which outlives the returned guard.
-        if unsafe { libc::flock(fd, libc::LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error())
-                .with_context(|| format!("failed to lock {path}"));
-        }
-        Ok(Self { fd, path })
-    }
-}
-
-impl Drop for CursorLock<'_> {
-    fn drop(&mut self) {
-        // SAFETY: the fd is still open; the file this borrows from outlives the guard.
-        if unsafe { libc::flock(self.fd, libc::LOCK_UN) } != 0 {
-            eprintln!("wait: failed to unlock {}", self.path);
-        }
-    }
-}
-
-fn read_cursor(file: &mut File, path: &Utf8Path) -> Result<u64> {
-    file.seek(SeekFrom::Start(0))
-        .with_context(|| format!("failed to read {path}"))?;
-    let mut body = String::new();
-    file.read_to_string(&mut body)
-        .with_context(|| format!("failed to read {path}"))?;
-    let body = body.trim();
-    // A cursor this process just created is empty, which is the same position as zero.
-    if body.is_empty() {
-        return Ok(0);
-    }
-    body.parse::<u64>()
-        .with_context(|| format!("invalid wake cursor in {path}; remove it to resume"))
-}
-
-fn write_cursor(file: &mut File, path: &Utf8Path, offset: u64) -> Result<()> {
-    let body = format!("{offset}\n");
-    file.set_len(0)
-        .with_context(|| format!("failed to write {path}"))?;
-    file.seek(SeekFrom::Start(0))
-        .with_context(|| format!("failed to write {path}"))?;
-    file.write_all(body.as_bytes())
-        .with_context(|| format!("failed to write {path}"))
-}
-
 /// Escapes control characters so a status line cannot rewrite the manager's terminal, and caps
 /// the length so it cannot flood it.
 fn render(line: &str) -> String {
@@ -502,73 +323,26 @@ fn render(line: &str) -> String {
     rendered
 }
 
-fn wake_line(id: &str, line: String, prefix_worker_id: bool) -> String {
-    if prefix_worker_id {
-        return format!("{id}: {line}");
-    }
-    line
-}
-
-fn positive_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        bail!("{label} must be a finite positive number");
-    }
-    if seconds > MAX_INTERVAL_SECS {
-        bail!("{label} must be at most {MAX_INTERVAL_SECS} seconds");
+pub(crate) fn parse_interval(value: &str) -> Result<Duration, String> {
+    let invalid = || {
+        format!(
+            "wait interval must be a finite positive number at most {MAX_INTERVAL_SECS} seconds"
+        )
+    };
+    let seconds = value.parse::<f64>().map_err(|_| invalid())?;
+    if !seconds.is_finite() || seconds <= 0.0 || seconds > MAX_INTERVAL_SECS {
+        return Err(invalid());
     }
     Ok(Duration::from_secs_f64(seconds))
 }
 
-fn non_negative_seconds_duration(seconds: f64, label: &str) -> Result<Duration> {
+pub(crate) fn parse_timeout(value: &str) -> Result<Duration, String> {
+    const INVALID_TIMEOUT: &str = "wait timeout must be a finite non-negative number";
+    let seconds = value
+        .parse::<f64>()
+        .map_err(|_| INVALID_TIMEOUT.to_owned())?;
     if !seconds.is_finite() || seconds < 0.0 {
-        bail!("{label} must be a finite non-negative number");
+        return Err(INVALID_TIMEOUT.to_owned());
     }
-    if seconds == 0.0 {
-        Ok(Duration::ZERO)
-    } else {
-        Ok(Duration::from_secs_f64(seconds))
-    }
-}
-
-fn format_duration(duration: Duration) -> String {
-    let nanos = duration.as_nanos();
-    if nanos == 0 {
-        return "0s".to_owned();
-    }
-    if nanos.is_multiple_of(1_000_000_000) {
-        return format!("{}s", duration.as_secs());
-    }
-    if nanos.is_multiple_of(1_000_000) {
-        return format!("{}ms", nanos / 1_000_000);
-    }
-    format!("{:.3}s", duration.as_secs_f64())
-}
-
-fn field(value: &str) -> String {
-    if value.is_empty()
-        || value
-            .chars()
-            .any(|ch| ch.is_whitespace() || ch == '\'' || ch == '"')
-    {
-        quoted(value)
-    } else {
-        value.to_owned()
-    }
-}
-
-fn quoted(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn detail(value: &str) -> String {
-    match serde_json::to_string(value) {
-        Ok(json) => json,
-        Err(_) => quoted(value),
-    }
-}
-
-/// Byte offsets within a status log start life as `usize` from slice scanning. Rust has no
-/// target where `usize` exceeds 64 bits, so widening is lossless and there is no default to pick.
-fn as_u64(value: usize) -> u64 {
-    value as u64
+    Ok(Duration::from_secs_f64(seconds))
 }

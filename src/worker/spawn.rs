@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, os::unix::fs::OpenOptionsExt};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -82,6 +82,7 @@ pub fn spawn(
     fs::OpenOptions::new()
         .create(true)
         .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 

@@ -1,78 +1,17 @@
 //! Check-in arm state: `.niles/worker/<id>/checkin`.
 //!
-//! Only the lead arms a check-in (`spawn`, `send`); anything else can only disarm it by reporting.
-//! The file outlives nothing but the worker's own directory, so it carries everything a later
-//! tick needs: when the check-in is due, how long this arm waits, which policy a fire follows,
-//! which step of the schedule that is, and — the one that matters — how long the status log was at
-//! the moment it was armed. That last number is what stops a worker's stale previous `done:` from
-//! satisfying a fresh assignment.
-//!
-//! The policy travels in the state rather than in the manifest the watcher would have to re-read:
-//! the watcher's job is to fire what is armed, and a workspace whose manifest changed mid-flight
-//! would otherwise re-time a check-in that was armed under the old one.
-//!
-//! No lock guards it and none is wanted: the stake is one extra look. A tick that reads the file
-//! mid-write treats it as unreadable and tries again a second later.
+//! `armed_len` keeps an old report from satisfying a fresh assignment. No lock guards this file:
+//! a tick that catches a write in progress retries on the next pass.
 
-use std::{fs, io::ErrorKind, time::Duration};
+use std::{collections::BTreeMap, fs, io::ErrorKind, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
-use crate::{worker::ActionableWake, workspace_manifest::WorkspaceManifest};
+use crate::worker::ActionableWake;
 
-/// The delay `spawn` and `send` arm when nothing else is asked for.
-pub(crate) const DEFAULT_DELAY: Duration = Duration::from_secs(5 * 60);
-
-/// How far a doubling re-check backs off.
-///
-/// A worker still silent after an hour is worth a look, but it is not worth a nudge every three
-/// minutes to surface: past this the gap stops growing rather than the nudge stopping.
-pub(crate) const BACKOFF_CAP: Duration = Duration::from_secs(60 * 60);
-
-/// How a check-in that has fired picks the delay it re-arms at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Recheck {
-    /// Double the delay after each fire, up to [`BACKOFF_CAP`]: 5m, 10m, 20m, 40m, 60m, 60m…
-    Backoff,
-    /// The same delay after every fire, because the manifest asked for a fixed one.
-    Fixed(Duration),
-}
-
-impl Recheck {
-    /// The delay the next check-in waits, given the one that just fired.
-    fn next_delay(self, fired: Duration) -> Duration {
-        match self {
-            Self::Backoff => {
-                // Doubled, bounded by the cap, and never below the delay that just fired: an
-                // explicit `--checkin 2h` is past the cap already, and the cap is a ceiling on
-                // growth rather than a re-write of the delay the lead asked for.
-                fired.saturating_mul(2).min(BACKOFF_CAP).max(fired)
-            }
-            Self::Fixed(delay) => delay,
-        }
-    }
-
-    /// How the arm state spells this policy: `backoff`, or the delay as `--checkin` spells it.
-    fn spelling(self) -> String {
-        match self {
-            Self::Backoff => "backoff".to_owned(),
-            Self::Fixed(delay) => describe_delay(delay),
-        }
-    }
-}
-
-/// The check-in a dispatch arms with: how long it waits, and what a fire does next.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Cadence {
-    /// `None` is no check-in at all: `--checkin off`, or `checkin: off` in the manifest.
-    pub(crate) delay: Option<Duration>,
-    pub(crate) recheck: Recheck,
-}
-
-/// Longest accepted `--checkin`. A check-in further out than a day is always a typo.
-const MAX_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
+use super::cadence::{Recheck, describe_delay, parse_recheck};
 
 const CHECKIN_FILE: &str = "checkin";
 
@@ -150,67 +89,20 @@ impl Checkin {
             Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
         };
 
-        let mut deadline = None;
-        let mut delay = None;
-        let mut step = None;
-        let mut recheck = None;
-        let mut armed_len = None;
-        for line in body.lines() {
-            let Some((key, value)) = line.trim().split_once('=') else {
-                continue;
-            };
-            let value = value.trim();
-            match key {
-                "deadline" => {
-                    deadline = Some(
-                        DateTime::parse_from_rfc3339(value)
-                            .with_context(|| format!("invalid check-in deadline in {path}"))?
-                            .with_timezone(&Utc),
-                    );
-                }
-                "delay" => {
-                    delay = Some(
-                        value
-                            .parse::<u64>()
-                            .with_context(|| format!("invalid check-in delay in {path}"))?,
-                    );
-                }
-                "step" => {
-                    step = Some(
-                        value
-                            .parse::<u64>()
-                            .with_context(|| format!("invalid check-in step in {path}"))?,
-                    );
-                }
-                "recheck" => {
-                    recheck = Some(
-                        parse_recheck(value)
-                            .with_context(|| format!("invalid check-in re-check in {path}"))?,
-                    );
-                }
-                "armed_len" => {
-                    armed_len = Some(
-                        value
-                            .parse::<u64>()
-                            .with_context(|| format!("invalid check-in log length in {path}"))?,
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        match (deadline, delay, step, recheck, armed_len) {
-            (Some(deadline), Some(delay), Some(step), Some(recheck), Some(armed_len)) => {
-                Ok(Some(Self {
-                    deadline,
-                    delay,
-                    step,
-                    recheck,
-                    armed_len,
-                }))
-            }
-            _ => bail!("check-in file {path} is incomplete; `niles quiet` clears it"),
-        }
+        let fields = body
+            .lines()
+            .filter_map(|line| line.trim().split_once('='))
+            .map(|(key, value)| (key, value.trim()))
+            .collect::<BTreeMap<_, _>>();
+        Ok(Some(Self {
+            deadline: field(&fields, "deadline", "deadline", &path, |value| {
+                DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Utc))
+            })?,
+            delay: field(&fields, "delay", "delay", &path, str::parse::<u64>)?,
+            step: field(&fields, "step", "step", &path, str::parse::<u64>)?,
+            recheck: field(&fields, "recheck", "re-check", &path, parse_recheck)?,
+            armed_len: field(&fields, "armed_len", "log length", &path, str::parse::<u64>)?,
+        }))
     }
 
     /// Written beside the target and renamed over it, rather than truncated in place: a crash
@@ -243,248 +135,38 @@ impl Checkin {
     }
 }
 
-/// `now` plus a delay bounded by [`MAX_DELAY`], so the conversion cannot overflow.
+/// `now` plus a parsed delay, which is bounded so the conversion cannot overflow.
 fn fire_at(now: DateTime<Utc>, seconds: u64) -> DateTime<Utc> {
     now + TimeDelta::seconds(seconds as i64)
 }
 
-/// The cadence a dispatch arms with, from the `--checkin` flag and the workspace manifest.
-///
-/// Precedence is the flag, then the manifest's `checkin`, then [`DEFAULT_DELAY`]. The re-check
-/// policy is the manifest's `recheck`, and backoff when it says nothing. A malformed value in
-/// either key is refused here rather than defaulted over: the lead would otherwise be printed a
-/// cadence they never asked for.
-pub(crate) fn resolve_cadence(
-    flag: Option<&str>,
-    manifest: Option<&WorkspaceManifest>,
-    manifest_path: &Utf8Path,
-) -> Result<Cadence> {
-    let delay = match flag {
-        Some(value) => parse_delay(value)?,
-        None => match manifest.and_then(|manifest| manifest.checkin.as_deref()) {
-            Some(value) => parse_delay(value).with_context(|| {
-                format!("invalid `checkin` in workspace manifest {manifest_path}")
-            })?,
-            None => Some(DEFAULT_DELAY),
-        },
-    };
-    let recheck = match manifest.and_then(|manifest| manifest.recheck.as_deref()) {
-        Some(value) => parse_recheck(value)
-            .with_context(|| format!("invalid `recheck` in workspace manifest {manifest_path}"))?,
-        None => Recheck::Backoff,
-    };
-
-    Ok(Cadence { delay, recheck })
-}
-
-/// The `recheck` spelling: the literal `backoff`, or a delay like `10m` to re-arm flat.
-fn parse_recheck(value: &str) -> Result<Recheck> {
-    let value = value.trim();
-    if value.eq_ignore_ascii_case("backoff") {
-        return Ok(Recheck::Backoff);
-    }
-
-    match parse_delay(value)? {
-        Some(delay) => Ok(Recheck::Fixed(delay)),
-        None => bail!(
-            "re-check policy `{value}` is not `backoff` or a delay; use backoff, 10m, 1h, or a \
-             bare number of minutes"
-        ),
-    }
-}
-
-/// The `--checkin` spelling of a delay, for `spawn` to print back to the lead.
-pub(crate) fn describe_delay(delay: Duration) -> String {
-    let seconds = delay.as_secs();
-    if seconds.is_multiple_of(60 * 60) {
-        format!("{}h", seconds / (60 * 60))
-    } else if seconds.is_multiple_of(60) {
-        format!("{}m", seconds / 60)
-    } else {
-        format!("{seconds}s")
-    }
-}
-
-fn parse_delay(value: &str) -> Result<Option<Duration>> {
-    let value = value.trim();
-    if value.eq_ignore_ascii_case("off") {
-        return Ok(None);
-    }
-
-    let (digits, unit) = match value.chars().last() {
-        Some(unit) if unit.is_ascii_alphabetic() => (&value[..value.len() - 1], Some(unit)),
-        _ => (value, None),
-    };
-    let Ok(amount) = digits.trim().parse::<u64>() else {
-        bail!(
-            "check-in delay `{value}` is not a duration; use 90s, 5m, 1h, a bare number of \
-             minutes, or 0/off"
-        );
-    };
-    let multiplier = match unit {
-        None => 60,
-        Some('s') => 1,
-        Some('m') => 60,
-        Some('h') => 60 * 60,
-        Some(other) => bail!("check-in delay `{value}` uses unknown unit `{other}`; use s, m or h"),
-    };
-    let Some(seconds) = amount.checked_mul(multiplier) else {
-        bail!("check-in delay `{value}` is too long");
-    };
-
-    let delay = Duration::from_secs(seconds);
-    if delay.is_zero() {
-        return Ok(None);
-    }
-    if delay > MAX_DELAY {
-        bail!("check-in delay `{value}` is longer than 24h");
-    }
-    Ok(Some(delay))
+fn field<T, E>(
+    fields: &BTreeMap<&str, &str>,
+    key: &str,
+    what: &str,
+    path: &Utf8Path,
+    parse: impl FnOnce(&str) -> std::result::Result<T, E>,
+) -> Result<T>
+where
+    E: Into<anyhow::Error>,
+{
+    let value = fields
+        .get(key)
+        .with_context(|| format!("check-in file {path} is incomplete; `niles quiet` clears it"))?;
+    parse(value)
+        .map_err(Into::into)
+        .with_context(|| format!("invalid check-in {what} in {path}"))
 }
 
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::MetadataExt;
 
-    use camino::Utf8PathBuf;
-
     use super::*;
-    use crate::test_support::temp_test_path;
-
-    fn at(seconds: i64) -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
-    }
-
-    fn manifest_file() -> Utf8PathBuf {
-        Utf8PathBuf::from("/w/.niles/manifest.yaml")
-    }
-
-    /// A workspace manifest carrying the two check-in keys under test.
-    fn manifest(checkin: Option<&str>, recheck: Option<&str>) -> WorkspaceManifest {
-        WorkspaceManifest {
-            checkin: checkin.map(str::to_owned),
-            recheck: recheck.map(str::to_owned),
-            ..WorkspaceManifest::default()
-        }
-    }
-
-    fn cadence(flag: Option<&str>, manifest: Option<&WorkspaceManifest>) -> Result<Cadence> {
-        resolve_cadence(flag, manifest, &manifest_file())
-    }
-
-    /// The `--checkin` spellings, both directions: what the lead can write, and what `spawn` prints
-    /// back for the delay it armed. A bare number is minutes, and describes back as minutes —
-    /// `7m` — since that is the delay `spawn` actually armed.
-    #[test]
-    fn the_checkin_spellings_parse_and_the_armed_delay_prints_back() {
-        for (written, delay) in [
-            ("90s", Duration::from_secs(90)),
-            ("5m", Duration::from_secs(300)),
-            ("1h", Duration::from_secs(3600)),
-            ("7", Duration::from_secs(420)),
-        ] {
-            assert_eq!(
-                parse_delay(written).unwrap(),
-                Some(delay),
-                "--checkin {written}"
-            );
-        }
-
-        for (delay, printed) in [
-            (Duration::from_secs(90), "90s"),
-            (Duration::from_secs(300), "5m"),
-            (Duration::from_secs(3600), "1h"),
-        ] {
-            assert_eq!(describe_delay(delay), printed, "{}s armed", delay.as_secs());
-        }
-    }
-
-    #[test]
-    fn zero_and_off_arm_nothing() {
-        assert_eq!(parse_delay("0").unwrap(), None);
-        assert_eq!(parse_delay("0s").unwrap(), None);
-        assert_eq!(parse_delay("off").unwrap(), None);
-        assert_eq!(parse_delay("OFF").unwrap(), None);
-        assert_eq!(cadence(None, None).unwrap().delay, Some(DEFAULT_DELAY));
-    }
-
-    /// The precedence chain: the flag wins over the manifest, the manifest over the default. The
-    /// re-check policy is the manifest's either way, since it says what a *fire* does and not what
-    /// this dispatch waits.
-    #[test]
-    fn the_flag_beats_the_manifest_which_beats_the_default() {
-        let configured = manifest(Some("15m"), Some("30m"));
-
-        assert_eq!(
-            cadence(None, Some(&configured)).unwrap(),
-            Cadence {
-                delay: Some(Duration::from_secs(900)),
-                recheck: Recheck::Fixed(Duration::from_secs(1800)),
-            }
-        );
-        assert_eq!(
-            cadence(Some("90s"), Some(&configured)).unwrap(),
-            Cadence {
-                delay: Some(Duration::from_secs(90)),
-                recheck: Recheck::Fixed(Duration::from_secs(1800)),
-            }
-        );
-        // No flag and no manifest key is the five-minute default; a manifest that says nothing
-        // about re-checks gets the backoff.
-        assert_eq!(
-            cadence(None, Some(&manifest(None, None))).unwrap(),
-            Cadence {
-                delay: Some(DEFAULT_DELAY),
-                recheck: Recheck::Backoff,
-            }
-        );
-        // `--checkin off` is a decision about this dispatch and is not overridden by the manifest.
-        assert_eq!(cadence(Some("off"), Some(&configured)).unwrap().delay, None);
-    }
-
-    #[test]
-    fn a_malformed_manifest_value_is_refused_rather_than_defaulted_over() {
-        for (manifest, key) in [
-            (manifest(Some("soon"), None), "checkin"),
-            (manifest(None, Some("fast")), "recheck"),
-            (manifest(None, Some("off")), "recheck"),
-            (manifest(None, Some("daily")), "recheck"),
-        ] {
-            let err = format!("{:#}", cadence(None, Some(&manifest)).unwrap_err());
-            assert!(err.contains(key), "{err}");
-        }
-
-        for value in ["backoff", "BACKOFF", "10m", "1h", "7"] {
-            assert!(
-                cadence(None, Some(&manifest(None, Some(value)))).is_ok(),
-                "{value}"
-            );
-        }
-    }
-
-    /// A manifest typo names the file it is in, so the lead can go and fix it.
-    #[test]
-    fn a_manifest_typo_names_the_manifest() {
-        let err = format!(
-            "{:#}",
-            cadence(None, Some(&manifest(Some("soon"), None))).unwrap_err()
-        );
-
-        assert!(err.contains(manifest_file().as_str()), "{err}");
-        assert!(err.contains("is not a duration"), "{err}");
-    }
-
-    #[test]
-    fn a_malformed_delay_is_rejected_rather_than_guessed_at() {
-        for value in ["", "5x", "m", "-5", "1.5m", "99999h"] {
-            assert!(parse_delay(value).is_err(), "{value} should not parse");
-        }
-    }
+    use crate::test_support::{at, temp_test_path};
 
     #[test]
     fn a_delay_that_is_not_whole_minutes_is_reported_as_it_was_asked_for() {
-        // `--checkin 65s` used to nudge "no report ... in 2m" — a minute the check-in had not
-        // reached, in the one sentence whose job is to say how long it has been.
         let armed = Checkin::armed(Duration::from_secs(65), Recheck::Backoff, 0, at(1_000));
         assert_eq!(armed.elapsed_label(), "65s");
         assert_eq!(armed.rearmed(at(1_065)).elapsed_label(), "195s");
@@ -523,11 +205,6 @@ mod tests {
                 describe_delay(Duration::from_secs(step))
             );
         }
-
-        assert!(armed.answered_by(ActionableWake {
-            end: 43,
-            kind: crate::wake::WakeKind::Done
-        }));
     }
 
     /// A first delay already past the cap — an explicit `--checkin 2h` — is not shortened by it.
@@ -639,36 +316,27 @@ mod tests {
     }
 
     #[test]
-    fn an_incomplete_checkin_file_is_an_error_rather_than_a_default() {
-        let dir = temp_test_path("incomplete");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(CHECKIN_FILE),
-            "deadline=1970-01-01T00:16:40Z\nstep=300\n",
-        )
-        .unwrap();
+    fn malformed_checkin_files_are_errors_rather_than_defaults() {
+        for (label, body, expected) in [
+            (
+                "incomplete",
+                "deadline=1970-01-01T00:16:40Z\nstep=300\n",
+                "incomplete",
+            ),
+            (
+                "bad-recheck",
+                "deadline=1970-01-01T00:16:40Z\ndelay=300\nstep=300\nrecheck=soon\narmed_len=0\n",
+                "re-check",
+            ),
+        ] {
+            let dir = temp_test_path(label);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(CHECKIN_FILE), body).unwrap();
 
-        let err = Checkin::read(&dir).unwrap_err();
+            let err = Checkin::read(&dir).unwrap_err();
 
-        assert!(err.to_string().contains("incomplete"), "{err}");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A policy the state file cannot express is unreadable arm state rather than a policy to
-    /// guess at: the watcher fires what is armed and nothing else.
-    #[test]
-    fn an_unreadable_recheck_policy_is_an_error_rather_than_a_default() {
-        let dir = temp_test_path("bad-recheck");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(CHECKIN_FILE),
-            "deadline=1970-01-01T00:16:40Z\ndelay=300\nstep=300\nrecheck=soon\narmed_len=0\n",
-        )
-        .unwrap();
-
-        let err = Checkin::read(&dir).unwrap_err();
-
-        assert!(err.to_string().contains("re-check"), "{err}");
-        fs::remove_dir_all(&dir).unwrap();
+            assert!(err.to_string().contains(expected), "{err}");
+            fs::remove_dir_all(&dir).unwrap();
+        }
     }
 }

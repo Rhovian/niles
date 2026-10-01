@@ -1,6 +1,7 @@
 use std::{
     env, fs,
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    os::unix::fs::OpenOptionsExt,
     path::PathBuf,
 };
 
@@ -104,6 +105,7 @@ pub fn append_line(path: &Utf8Path, line: &str) -> Result<()> {
         .create(true)
         .read(true)
         .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .with_context(context)?;
     if needs_leading_newline(&mut file).with_context(context)? {
@@ -158,6 +160,8 @@ pub fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::symlink;
+
     use super::*;
 
     #[test]
@@ -175,6 +179,21 @@ mod tests {
             absolute_path(Utf8Path::new("relative/path")).unwrap(),
             cwd.join("relative/path")
         );
+    }
+
+    #[test]
+    fn appending_through_a_symlink_fails() {
+        let dir = temp_test_path("append-symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let link = dir.join("status.log");
+        fs::write(&target, "working: safe\n").unwrap();
+        symlink(&target, &link).unwrap();
+
+        assert!(append_line(&link, "done: redirected").is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "working: safe\n");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
