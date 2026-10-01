@@ -11,7 +11,8 @@ pub(crate) fn recognize(screen: &str, cursor: CursorPosition, marker: &str) -> C
         return ComposerState::Unknown;
     };
     if line.starts_with(marker) {
-        return match cursor.x.cmp(&2) {
+        // Both markers are single-cell characters, so their width in cells is their char count.
+        return match cursor.x.cmp(&marker.chars().count()) {
             std::cmp::Ordering::Equal => ComposerState::Empty,
             std::cmp::Ordering::Greater => ComposerState::Typed,
             std::cmp::Ordering::Less => ComposerState::Unknown,
