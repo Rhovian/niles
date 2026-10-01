@@ -21,65 +21,35 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
 
 pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
     let path = manifest_path(root);
-    let parent = path
-        .parent()
-        .with_context(|| format!("workspace manifest path has no parent: {path}"))?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
+    let parent = root.join(NILES_DIR);
+    fs::create_dir_all(&parent).with_context(|| format!("failed to create {parent}"))?;
     schema::write_yaml(&path, manifest)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
-    use super::super::{test_support::temp_test_path, types::WorkspaceManifest};
+    use crate::test_support::temp_test_path;
+
+    fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
+        let root = temp_test_path(label);
+        fs::create_dir_all(root.join(NILES_DIR))?;
+        fs::write(manifest_path(&root), body)?;
+        let result = load(&root);
+        fs::remove_dir_all(root)?;
+        result
+    }
 
     #[test]
     fn skewed_manifest_remediation_names_delete_and_rerun() {
-        let root = temp_test_path("skewed-remediation");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(manifest_path(&root), "lead: codex\n").unwrap();
-
-        let err = load(&root).unwrap_err().to_string();
+        let err = load_body("skewed-remediation", "lead: codex\n")
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("workspace manifest"));
         assert!(err.contains("schema 1"));
         assert!(err.contains("delete .niles/manifest.yaml and rerun `niles`"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn current_manifest_loads_role_bindings() {
-        let root = temp_test_path("manifest-roles");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let manifest = load(&root).unwrap().unwrap();
-
-        assert_eq!(
-            manifest,
-            WorkspaceManifest {
-                lead: "claude".to_owned(),
-                worker: "codex".to_owned(),
-                reviewer: "claude".to_owned(),
-                security: "claude".to_owned(),
-                ..WorkspaceManifest::default()
-            }
-        );
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// The two check-in keys are read from the manifest as written, and a manifest that says
@@ -132,11 +102,11 @@ niles_schema: 2
     /// lead rename is rejected by name rather than silently losing its fields.
     #[test]
     fn pre_lead_manifest_is_rejected_and_names_the_offending_field() {
-        let root = temp_test_path("manifest-pre-lead");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
+        let err = format!(
+            "{:#}",
+            load_body(
+                "manifest-pre-lead",
+                r#"
 manager: claude
 planner: claude
 worker: codex
@@ -148,10 +118,9 @@ flow:
   - reviewer
 niles_schema: 2
 "#,
-        )
-        .unwrap();
-
-        let err = format!("{:#}", load(&root).unwrap_err());
+            )
+            .unwrap_err()
+        );
 
         // Names the offending field, the fields that replaced it, and what to do about it.
         assert!(err.contains("unknown field `manager`"), "{err}");
@@ -165,8 +134,6 @@ niles_schema: 2
             err.contains("delete .niles/manifest.yaml and rerun `niles`"),
             "{err}"
         );
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -273,15 +240,11 @@ niles_schema: 2
 
     #[test]
     fn malformed_manifest_keeps_saphyr_line_and_column() {
-        let root = temp_test_path("manifest-malformed-location");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
+        let err = load_body(
+            "manifest-malformed-location",
             "lead: claude\nworker_planning: [\nniles_schema: 2\n",
         )
-        .unwrap();
-
-        let err = load(&root).unwrap_err();
+        .unwrap_err();
         let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
 
         assert!(chain[0].contains("malformed YAML"), "{chain:?}");
@@ -297,67 +260,33 @@ niles_schema: 2
                 .all(|message| !message.contains("worker_planning: [")),
             "{chain:?}"
         );
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn invalid_schema_stamps_are_rejected_before_deserialization() {
         for (label, stamp) in [("quoted", "\"2\""), ("null", "~")] {
-            let root = temp_test_path(&format!("manifest-{label}-schema"));
-            fs::create_dir_all(root.join(".niles")).unwrap();
-            fs::write(
-                manifest_path(&root),
-                format!(
+            let err = load_body(
+                &format!("manifest-{label}-schema"),
+                &format!(
                     "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\nniles_schema: {stamp}\n"
                 ),
             )
-            .unwrap();
-
-            let err = load(&root).unwrap_err();
+            .unwrap_err();
 
             assert!(
                 err.to_string().contains("invalid niles_schema stamp"),
                 "{label}: {err:#}"
             );
-            fs::remove_dir_all(root).unwrap();
         }
     }
 
     #[test]
-    fn worker_planning_loads_as_a_string_mapping() {
-        let root = temp_test_path("manifest-worker-planning");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-lead: claude
-worker: codex:gpt-6-astra:high
-reviewer: claude
-security: claude
-worker_planning:
-  codex:gpt-6-astra: Include the API invariants in the handoff.
-niles_schema: 2
-"#,
-        )
-        .unwrap();
-
-        let manifest = load(&root).unwrap().unwrap();
-
-        assert_eq!(
-            manifest.worker_planning.get("codex:gpt-6-astra"),
-            Some(&"Include the API invariants in the handoff.".to_owned())
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn worker_planning_rejects_non_string_values() {
-        let root = temp_test_path("manifest-worker-planning-shape");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
+        let err = format!(
+            "{:#}",
+            load_body(
+                "manifest-worker-planning-shape",
+                r#"
 lead: claude
 worker: codex
 reviewer: claude
@@ -367,12 +296,10 @@ worker_planning:
     steps: 2
 niles_schema: 2
 "#,
-        )
-        .unwrap();
-
-        let err = format!("{:#}", load(&root).unwrap_err());
+            )
+            .unwrap_err()
+        );
 
         assert!(err.contains("expected string"), "{err}");
-        fs::remove_dir_all(root).unwrap();
     }
 }

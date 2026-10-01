@@ -1,13 +1,13 @@
 use std::{
     env, fs,
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    os::unix::fs::OpenOptionsExt,
     path::PathBuf,
 };
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 
 pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     format!(
@@ -17,7 +17,7 @@ pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     )
 }
 
-pub fn utf8_path(path: PathBuf, description: &str) -> Result<Utf8PathBuf> {
+fn utf8_path(path: PathBuf, description: &str) -> Result<Utf8PathBuf> {
     Utf8PathBuf::from_path_buf(path)
         .map_err(|path| anyhow::anyhow!("{description} is not UTF-8: {}", path.display()))
 }
@@ -65,56 +65,27 @@ pub fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(current_dir_utf8()?.join(path))
 }
 
-#[cfg(test)]
-pub fn absolute_path_from(base: &Utf8Path, path: &Utf8Path) -> Utf8PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
-}
-
 pub fn absolute_existing_file(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
-    absolute_existing_path(path, description, "file", Utf8Path::is_file)
-}
-
-fn absolute_existing_path(
-    path: &Utf8Path,
-    description: &str,
-    kind: &str,
-    exists_as_kind: fn(&Utf8Path) -> bool,
-) -> Result<Utf8PathBuf> {
     let path = absolute_path(path)?;
-    if !exists_as_kind(&path) {
-        bail!("{description} path is not a {kind}: {path}");
+    if !path.is_file() {
+        bail!("{description} path is not a file: {path}");
     }
     Ok(path)
 }
 
-pub fn write_json_pretty<T>(path: &Utf8Path, value: &T) -> Result<()>
-where
-    T: Serialize + ?Sized,
-{
-    crate::schema::write_json(path, value)
-}
-
-pub fn append_line(
-    path: &Utf8Path,
-    line: &str,
-    open_context: impl FnOnce(&Utf8Path) -> String,
-    inspect_context: impl FnOnce(&Utf8Path) -> String,
-    write_context: impl Fn(&Utf8Path) -> String,
-) -> Result<()> {
+pub fn append_line(path: &Utf8Path, line: &str) -> Result<()> {
+    let context = || format!("failed to append to {path}");
     let mut file = fs::OpenOptions::new()
         .create(true)
         .read(true)
         .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .with_context(|| open_context(path))?;
-    if needs_leading_newline(&mut file).with_context(|| inspect_context(path))? {
-        file.write_all(b"\n").with_context(|| write_context(path))?;
+        .with_context(context)?;
+    if needs_leading_newline(&mut file).with_context(context)? {
+        file.write_all(b"\n").with_context(context)?;
     }
-    writeln!(file, "{line}").with_context(|| write_context(path))
+    writeln!(file, "{line}").with_context(context)
 }
 
 pub fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
@@ -163,7 +134,10 @@ pub fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::symlink;
+
     use super::*;
+    use crate::test_support::temp_test_path;
 
     #[test]
     fn absolute_path_keeps_absolute_paths() {
@@ -183,21 +157,18 @@ mod tests {
     }
 
     #[test]
-    fn absolute_path_from_joins_relative_paths_to_base() {
-        let base = Utf8Path::new("/tmp/niles-base");
+    fn appending_through_a_symlink_fails() {
+        let dir = temp_test_path("append-symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let link = dir.join("status.log");
+        fs::write(&target, "working: safe\n").unwrap();
+        symlink(&target, &link).unwrap();
 
-        assert_eq!(
-            absolute_path_from(base, Utf8Path::new("relative/path")),
-            base.join("relative/path")
-        );
-    }
+        assert!(append_line(&link, "done: redirected").is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "working: safe\n");
 
-    #[test]
-    fn absolute_path_from_keeps_absolute_paths() {
-        let base = Utf8Path::new("/tmp/niles-base");
-        let path = Utf8Path::new("/tmp/niles-absolute-path-test");
-
-        assert_eq!(absolute_path_from(base, path), path);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -260,18 +231,6 @@ mod tests {
             render_template("known={id} unknown={missing} tail={", &[("{id}", "run")]),
             "known=run unknown={missing} tail={"
         );
-    }
-
-    fn temp_test_path(label: &str) -> Utf8PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        utf8_path(
-            env::temp_dir().join(format!("niles-util-{label}-{}-{nanos}", std::process::id())),
-            "test temp path",
-        )
-        .unwrap()
     }
 
     #[test]

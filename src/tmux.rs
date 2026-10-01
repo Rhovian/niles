@@ -10,49 +10,30 @@ mod send;
 mod target;
 
 pub(crate) use send::send_line;
+use target::{LIVE_WINDOW_FORMAT, WindowPresence, window_presence};
 pub(crate) use target::{SessionName, TargetState, TmuxTarget, WindowTarget, target_state};
-
-fn collect_args<I, S>(args: I) -> Vec<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    args.into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect()
-}
 
 /// Runs a tmux command whose output nobody reads.
 ///
 /// Captured rather than inherited: the watcher types into the lead's pane from inside the lead's
 /// own process, so anything tmux printed here would land in the middle of the TUI it is nudging.
 /// tmux's own message belongs in the error either way — that is where the caller reads it.
-fn run<I, S>(args: I) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args = collect_args(args);
-    let output = output(&args)?;
+fn run(args: &[&str]) -> Result<()> {
+    let output = output(args)?;
     if !output.status.success() {
         bail!(
             "tmux {} exited with {}: {}",
             args.join(" "),
             output.status,
-            target::normalize_stderr(&output.stderr)
+            normalize_stderr(&output.stderr)
         );
     }
     Ok(())
 }
 
-fn output<I, S>(args: I) -> Result<Output>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args = collect_args(args);
+fn output(args: &[&str]) -> Result<Output> {
     Command::new("tmux")
-        .args(&args)
+        .args(args)
         .stdin(Stdio::null())
         .output()
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
@@ -61,26 +42,22 @@ where
 pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.as_str();
-    capture(target, ["capture-pane", "-p", "-t", arg, "-S", &start])
+    capture(target, &["capture-pane", "-p", "-t", arg, "-S", &start])
 }
 
 /// Captures only the pane's currently visible screen, excluding scrollback.
 pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
-    capture(target, ["capture-pane", "-p", "-J", "-t", target.as_str()])
+    capture(target, &["capture-pane", "-p", "-J", "-t", target.as_str()])
 }
 
-fn capture<I, S>(target: &TmuxTarget, args: I) -> Result<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
+fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     let output =
         output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
 
     if !output.status.success() {
         bail!(
             "tmux capture-pane failed for {target}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            normalize_stderr(&output.stderr)
         );
     }
 
@@ -107,30 +84,36 @@ pub(crate) fn current_session() -> Result<SessionName> {
         );
     }
 
-    let Some(name) = current_session_name()? else {
-        bail!("failed to determine the current tmux session name");
-    };
-    SessionName::new(name)
+    let output =
+        output(&["display-message", "-p", "#S"]).context("failed to query current tmux session")?;
+    if !output.status.success() {
+        bail!(
+            "tmux display-message failed: {}",
+            normalize_stderr(&output.stderr)
+        );
+    }
+    SessionName::new(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .context("failed to determine the current tmux session name")
 }
 
 pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) -> Result<()> {
-    let output = output([
+    let output = output(&[
         "list-windows",
         "-t",
         &target::exact(session.as_str()),
         "-F",
-        "#{window_name}",
+        LIVE_WINDOW_FORMAT,
     ])
     .with_context(|| format!("failed to list tmux windows in session {session}"))?;
 
     if !output.status.success() {
         bail!(
             "tmux list-windows failed for session {session}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            normalize_stderr(&output.stderr)
         );
     }
 
-    if window_name_taken(&output.stdout, window_name) {
+    if window_presence(&output.stdout, window_name) != WindowPresence::Absent {
         bail!("tmux window {session}:{window_name} already exists");
     }
 
@@ -144,38 +127,29 @@ pub(crate) fn new_window(
     command: &str,
 ) -> Result<()> {
     let session_target = new_window_session_target(session);
-    run(new_window_args(&session_target, window_name, cwd, command))
+    run(&[
+        "new-window",
+        "-d",
+        "-t",
+        &session_target,
+        "-n",
+        window_name,
+        "-c",
+        cwd.as_str(),
+        command,
+    ])
 }
 
 fn new_window_session_target(session: &SessionName) -> String {
     format!("{}:", target::exact(session.as_str()))
 }
 
-fn new_window_args<'a>(
-    session_target: &'a str,
-    window_name: &'a str,
-    cwd: &'a Utf8Path,
-    command: &'a str,
-) -> [&'a str; 9] {
-    [
-        "new-window",
-        "-d",
-        "-t",
-        session_target,
-        "-n",
-        window_name,
-        "-c",
-        cwd.as_str(),
-        command,
-    ]
-}
-
 pub(crate) fn kill_window(target: &WindowTarget) -> Result<()> {
-    run(["kill-window", "-t", &target.target_arg()])
+    run(&["kill-window", "-t", &target.target_arg()])
 }
 
 pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str) -> Result<()> {
-    run([
+    run(&[
         "set-option",
         "-w",
         "-t",
@@ -183,16 +157,6 @@ pub(crate) fn set_window_option(target: &WindowTarget, option: &str, value: &str
         option,
         value,
     ])
-}
-
-pub(crate) fn current_session_name() -> Result<Option<String>> {
-    let output =
-        output(["display-message", "-p", "#S"]).context("failed to query current tmux session")?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    Ok(session_name_from_stdout(&output.stdout))
 }
 
 fn format_capture(stdout: &[u8]) -> String {
@@ -206,31 +170,16 @@ fn format_capture(stdout: &[u8]) -> String {
     }
 }
 
-/// Whether a window of this name exists at all, live or dead. A worker window is kept after its
-/// agent exits, and it still occupies the name until the worker is closed — which is why this is
-/// a different question from [`target::live_window_present`].
-fn window_name_taken(stdout: &[u8], window_name: &str) -> bool {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .any(|line| line == window_name)
-}
-
-fn session_name_from_stdout(stdout: &[u8]) -> Option<String> {
-    let session = String::from_utf8_lossy(stdout).trim().to_owned();
-    (!session.is_empty()).then_some(session)
+fn normalize_stderr(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn collect_args_owns_argument_strings() {
-        assert_eq!(
-            collect_args(["send-keys", "-t", "niles:step", "C-m"]),
-            ["send-keys", "-t", "niles:step", "C-m"].map(str::to_owned)
-        );
-    }
 
     #[test]
     fn format_capture_trims_tmux_padding_and_restores_single_newline() {
@@ -245,46 +194,8 @@ mod tests {
     }
 
     #[test]
-    fn window_name_taken_matches_exact_window_names() {
-        let output = b"niles-run\nniles-run-extra\n";
-
-        assert!(window_name_taken(output, "niles-run"));
-        assert!(!window_name_taken(output, "run"));
-    }
-
-    #[test]
-    fn session_name_from_stdout_trims_and_ignores_empty_output() {
-        assert_eq!(
-            session_name_from_stdout(b"niles\n"),
-            Some("niles".to_owned())
-        );
-        assert_eq!(session_name_from_stdout(b" \n"), None);
-    }
-
-    #[test]
-    fn new_window_args_target_session_with_trailing_colon() {
+    fn new_windows_target_the_session_with_a_trailing_colon() {
         let session = SessionName::new("niles").unwrap();
-        let session_target = new_window_session_target(&session);
-        let args = new_window_args(
-            &session_target,
-            "niles-auth-fix",
-            Utf8Path::new("/tmp/workspace"),
-            "sh launch.sh",
-        );
-
-        assert_eq!(
-            args,
-            [
-                "new-window",
-                "-d",
-                "-t",
-                "=niles:",
-                "-n",
-                "niles-auth-fix",
-                "-c",
-                "/tmp/workspace",
-                "sh launch.sh"
-            ]
-        );
+        assert_eq!(new_window_session_target(&session), "=niles:");
     }
 }

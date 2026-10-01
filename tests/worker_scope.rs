@@ -2,37 +2,29 @@
 
 mod common;
 
-use common::{assert_command_success, niles_home, temp_workspace, write_executable};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::{Command, Output},
-};
+use common::*;
+use std::fs;
 
 #[test]
 fn by_id_commands_do_not_reach_worker_in_another_workspace() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let root = temp_workspace("niles-worker-scope-foreign-live");
-    let home = niles_home(&root);
-    let workspace_a = root.join("workspace-a");
-    let workspace_b = root.join("workspace-b");
+    let env = TestEnv::new("niles-worker-scope-foreign-live");
+    let workspace_a = env.root.join("workspace-a");
+    let workspace_b = env.root.join("workspace-b");
     fs::create_dir_all(&workspace_a).unwrap();
     fs::create_dir_all(&workspace_b).unwrap();
-    let (bin, tmux_log) = write_scope_test_bins(&root);
-    let path = path_with_bin(&bin);
-
-    spawn_worker(niles, &workspace_b, &home, &path, &tmux_log, "shared");
+    let spawn = env
+        .niles(
+            &workspace_b,
+            &["spawn", "shared", "--agent", "claude", "Fix"],
+        )
+        .output()
+        .unwrap();
+    assert_command_success("spawn scoped worker", &spawn);
     let worker_dir = workspace_b.join(".niles/worker/shared");
     fs::write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
     let status = worker_dir.join("status.log");
 
-    fs::create_dir_all(home.join("runs")).unwrap();
-    fs::write(home.join("runs/index.json"), "{ invalid global index").unwrap();
-
-    let foreign_workers = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .arg("workers")
-        .output()
-        .unwrap();
+    let foreign_workers = env.niles(&workspace_a, &["workers"]).output().unwrap();
     assert_command_success("foreign workers", &foreign_workers);
     let foreign_workers_stdout = String::from_utf8_lossy(&foreign_workers.stdout);
     assert!(
@@ -40,39 +32,39 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     );
     assert!(!foreign_workers_stdout.contains("shared"));
 
-    let owner_workers = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
-        .arg("workers")
-        .output()
-        .unwrap();
+    let owner_workers = env.niles(&workspace_b, &["workers"]).output().unwrap();
     assert_command_success("owner workers", &owner_workers);
     let owner_workers_stdout = String::from_utf8_lossy(&owner_workers.stdout);
     assert!(
         owner_workers_stdout.contains("workers[1]{id,agent,task,age,window,wake,last_status}:")
     );
     assert!(owner_workers_stdout.contains("\n  shared,"));
-    let tmux_before = fs::read_to_string(&tmux_log).unwrap();
+    let tmux_before = env.tmux_log();
 
-    let peek = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["peek", "shared"])
+    let peek = env
+        .niles(&workspace_a, &["peek", "shared"])
         .output()
         .unwrap();
     assert_failure_contains("foreign peek", &peek, "unknown worker id 'shared'");
     assert!(String::from_utf8_lossy(&peek.stdout).is_empty());
 
-    let send = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["send", "shared", "continue"])
+    let send = env
+        .niles(&workspace_a, &["send", "shared", "continue"])
         .output()
         .unwrap();
     assert_failure_contains("foreign send", &send, "unknown worker id 'shared'");
 
-    let wait = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["wait", "shared", "--interval", "0.01", "--timeout", "0"])
+    let wait = env
+        .niles(
+            &workspace_a,
+            &["wait", "shared", "--interval", "0.01", "--timeout", "0"],
+        )
         .output()
         .unwrap();
     assert_failure_contains("foreign wait", &wait, "unknown worker id 'shared'");
 
-    let report = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["report", "shared"])
+    let report = env
+        .niles(&workspace_a, &["report", "shared"])
         .output()
         .unwrap();
     assert_failure_contains(
@@ -82,13 +74,13 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     );
     assert!(String::from_utf8_lossy(&report.stdout).is_empty());
 
-    let close = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["close", "shared"])
+    let close = env
+        .niles(&workspace_a, &["close", "shared"])
         .output()
         .unwrap();
     assert_failure_contains("foreign close", &close, "no live worker 'shared'");
 
-    assert_eq!(fs::read_to_string(&tmux_log).unwrap(), tmux_before);
+    assert_eq!(env.tmux_log(), tmux_before);
     let status_body = fs::read_to_string(&status).unwrap();
     assert!(!status_body.contains("closed: shared"));
     // A command run from another workspace must not have touched this worker's wake state.
@@ -99,28 +91,30 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
 
 #[test]
 fn archived_reports_are_workspace_local() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let root = temp_workspace("niles-worker-scope-foreign-archive");
-    let home = niles_home(&root);
-    let workspace_a = root.join("workspace-a");
-    let workspace_b = root.join("workspace-b");
+    let env = TestEnv::new("niles-worker-scope-foreign-archive");
+    let workspace_a = env.root.join("workspace-a");
+    let workspace_b = env.root.join("workspace-b");
     fs::create_dir_all(&workspace_a).unwrap();
     fs::create_dir_all(&workspace_b).unwrap();
-    let (bin, tmux_log) = write_scope_test_bins(&root);
-    let path = path_with_bin(&bin);
-
-    spawn_worker(niles, &workspace_b, &home, &path, &tmux_log, "closed");
+    let spawn = env
+        .niles(
+            &workspace_b,
+            &["spawn", "closed", "--agent", "claude", "Fix"],
+        )
+        .output()
+        .unwrap();
+    assert_command_success("spawn scoped worker", &spawn);
     let worker_dir = workspace_b.join(".niles/worker/closed");
     fs::write(worker_dir.join("report.md"), "closed worker report\n").unwrap();
 
-    let close = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
-        .args(["close", "closed"])
+    let close = env
+        .niles(&workspace_b, &["close", "closed"])
         .output()
         .unwrap();
     assert_command_success("close worker in owner workspace", &close);
 
-    let local_report = scoped_command(niles, &workspace_b, &home, &path, &tmux_log)
-        .args(["report", "closed"])
+    let local_report = env
+        .niles(&workspace_b, &["report", "closed"])
         .output()
         .unwrap();
     assert_command_success("local archived report", &local_report);
@@ -129,8 +123,8 @@ fn archived_reports_are_workspace_local() {
         "closed worker report\n"
     );
 
-    let foreign_report = scoped_command(niles, &workspace_a, &home, &path, &tmux_log)
-        .args(["report", "closed"])
+    let foreign_report = env
+        .niles(&workspace_a, &["report", "closed"])
         .output()
         .unwrap();
     assert_failure_contains(
@@ -139,82 +133,4 @@ fn archived_reports_are_workspace_local() {
         "no report found for worker 'closed'",
     );
     assert!(String::from_utf8_lossy(&foreign_report.stdout).is_empty());
-}
-
-fn spawn_worker(niles: &str, workspace: &Path, home: &Path, path: &str, tmux_log: &Path, id: &str) {
-    let spawn = scoped_command(niles, workspace, home, path, tmux_log)
-        .args(["spawn", id, "--agent", "claude", "Fix"])
-        .output()
-        .unwrap();
-    assert_command_success("spawn scoped worker", &spawn);
-}
-
-fn scoped_command(
-    niles: &str,
-    workspace: &Path,
-    home: &Path,
-    path: &str,
-    tmux_log: &Path,
-) -> Command {
-    let mut command = Command::new(niles);
-    command
-        .current_dir(workspace)
-        .env("PATH", path)
-        .env("NILES_HOME", home)
-        .env("TMUX_LOG", tmux_log)
-        .env("TMUX", "/tmp/niles-test-tmux,0,0");
-    command
-}
-
-fn assert_failure_contains(label: &str, output: &Output, needle: &str) {
-    assert!(
-        !output.status.success(),
-        "{label} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(needle),
-        "{label} stderr did not contain {needle:?}\nstderr:\n{stderr}"
-    );
-}
-
-fn write_scope_test_bins(root: &Path) -> (PathBuf, PathBuf) {
-    let bin = root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let tmux_log = root.join("tmux.log");
-    write_executable(
-        &bin.join("tmux"),
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
-  has-session) exit 0 ;;
-  list-windows)
-    if [ -n "${TMUX_WINDOWS:-}" ]; then
-      printf '%s\n' "$TMUX_WINDOWS"
-    fi
-    exit 0
-    ;;
-  capture-pane) printf 'pane output\n'; exit 0 ;;
-  *) exit 0 ;;
-esac
-"#,
-    );
-    write_executable(
-        &bin.join("claude"),
-        r#"#!/bin/sh
-exit 0
-"#,
-    );
-    (bin, tmux_log)
-}
-
-fn path_with_bin(bin: &Path) -> String {
-    format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").expect("PATH must be set in the test environment")
-    )
 }

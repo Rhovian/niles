@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, os::unix::fs::OpenOptionsExt};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -71,28 +71,18 @@ pub fn spawn(
     // leave no half-built worker directory behind.
     let session = tmux::current_session()?;
 
-    let dir = store::workspace_worker_dir(&project, &id)?;
-    if dir.exists() {
-        archive_worker_dir(&id, &dir, Utc::now())?;
-    }
+    let dir = store::workers_dir(&project).join(&id);
+    archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
-    let brief_path = dir.join("brief.md");
-    write_brief(&BriefInputs {
-        dir: &dir,
-        path: &brief_path,
-        id: &id,
-        role,
-        task_label: task_label.as_deref(),
-        project: &project,
-        task: &task,
-    })?;
+    let brief_path = write_brief(&dir, &id, role, task_label.as_deref(), &project, &task)?;
 
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
     fs::OpenOptions::new()
         .create(true)
         .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&status_path)
         .with_context(|| format!("failed to create {status_path}"))?;
 
@@ -100,24 +90,24 @@ pub fn spawn(
     // The status log exists and is empty; read it as the check-in baseline *before* the window is
     // launched, so a line the worker writes on its way up can still answer this dispatch.
     let armed_len = status_log_len(&dir)?;
-    let target = match spawn_worker_window(
+    let target = match agent_window::launch_worker_window(
         &session,
         &window_name,
         &project,
         &invocation,
-        &brief_path,
-        &launch_path,
-        &status_path,
+        &agent_window::WorkerPaths {
+            brief: &brief_path,
+            launch: &launch_path,
+            status: &status_path,
+        },
     ) {
         Ok(target) => target,
         Err(err) => {
-            if let Err(cleanup_err) = cleanup_failed_spawn(&dir, None) {
-                return Err(err).context(format!(
-                    "failed to launch worker {id}; additionally failed to clean up partial worker at {dir}: {cleanup_err}"
-                ));
-            }
-            return Err(err).context(format!(
-                "failed to launch worker {id}; cleaned up partial worker at {dir}"
+            return Err(abandon_spawn(
+                err,
+                &dir,
+                None,
+                &format!("launch worker {id}"),
             ));
         }
     };
@@ -125,7 +115,7 @@ pub fn spawn(
     let meta = WorkerMeta {
         id: id.clone(),
         agent,
-        agent_family: agent_spec.tier().map(|tier| tier.family),
+        agent_family: agent_spec.tiered_family(),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
         task_label,
@@ -138,13 +128,11 @@ pub fn spawn(
     if let Err(err) =
         tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))
     {
-        if let Err(cleanup_err) = cleanup_failed_spawn(&dir, Some(&target)) {
-            return Err(err).context(format!(
-                "failed to finish launching worker {id}; additionally failed to clean up launched worker at {target}: {cleanup_err}"
-            ));
-        }
-        return Err(err).context(format!(
-            "failed to finish launching worker {id}; cleaned up launched worker at {target}"
+        return Err(abandon_spawn(
+            err,
+            &dir,
+            Some(&target),
+            &format!("finish launching worker {id}"),
         ));
     }
 
@@ -161,7 +149,6 @@ pub fn spawn(
         println!("task: {label}");
     }
     println!("brief: {}", meta.brief);
-    // wait first: it is the command the lead reaches for next, and it was the one omission here.
     println!("wait: niles wait {id}");
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
@@ -211,28 +198,6 @@ fn resolve_agent(project: &Utf8Path, role: WorkerRole, agent: Option<String>) ->
 #[path = "spawn_tests.rs"]
 mod tests;
 
-fn spawn_worker_window(
-    session: &tmux::SessionName,
-    window_name: &str,
-    project: &Utf8Path,
-    invocation: &agents::AgentInvocation,
-    brief_path: &Utf8Path,
-    launch_path: &Utf8Path,
-    status_path: &Utf8Path,
-) -> Result<WindowTarget> {
-    agent_window::spawn_agent_window_in_session(
-        session,
-        window_name,
-        project,
-        invocation,
-        &agent_window::WorkerPaths {
-            brief: brief_path,
-            launch: launch_path,
-            status: status_path,
-        },
-    )
-}
-
 fn tag_worker_window(target: &WindowTarget, project: &Utf8Path, id: &str) -> Result<()> {
     tmux::set_window_option(target, "@niles-project", project.as_str())?;
     tmux::set_window_option(target, "@niles-worker-id", id)?;
@@ -253,27 +218,15 @@ fn print_worker_tier(meta: &WorkerMeta) {
     }
 }
 
-/// Everything the worker brief interpolates.
-struct BriefInputs<'a> {
-    dir: &'a Utf8Path,
-    path: &'a Utf8Path,
-    id: &'a str,
+fn write_brief(
+    dir: &Utf8Path,
+    id: &str,
     role: WorkerRole,
-    task_label: Option<&'a str>,
-    project: &'a Utf8Path,
-    task: &'a str,
-}
-
-fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
-    let &BriefInputs {
-        dir,
-        path,
-        id,
-        role,
-        task_label,
-        project,
-        task,
-    } = inputs;
+    task_label: Option<&str>,
+    project: &Utf8Path,
+    task: &str,
+) -> Result<Utf8PathBuf> {
+    let path = dir.join("brief.md");
     let status_path = wake::status_log_path(dir);
     let report_file = report_path(dir);
     let task_label = match task_label {
@@ -294,13 +247,34 @@ fn write_brief(inputs: &BriefInputs<'_>) -> Result<()> {
             ("{task}", task),
         ],
     );
-    fs::write(path, body).with_context(|| format!("failed to write {path}"))
+    fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
+    Ok(path)
+}
+
+fn abandon_spawn(
+    err: anyhow::Error,
+    dir: &Utf8Path,
+    target: Option<&WindowTarget>,
+    failure: &str,
+) -> anyhow::Error {
+    let (cleaned, location) = match target {
+        Some(target) => ("launched worker", target.to_string()),
+        None => ("partial worker", dir.to_string()),
+    };
+    match cleanup_failed_spawn(dir, target) {
+        Ok(()) => err.context(format!(
+            "failed to {failure}; cleaned up {cleaned} at {location}"
+        )),
+        Err(cleanup_err) => err.context(format!(
+            "failed to {failure}; additionally failed to clean up {cleaned} at {location}: {cleanup_err}"
+        )),
+    }
 }
 
 fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result<()> {
     let mut failures = Vec::new();
     if let Some(target) = target
-        && let Err(err) = agent_window::close_target(target)
+        && let Err(err) = tmux::kill_window(target)
     {
         failures.push(format!("failed to kill tmux window {target}: {err:#}"));
     }

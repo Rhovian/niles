@@ -3,11 +3,7 @@
 mod common;
 
 use common::*;
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+use std::{fs, path::PathBuf, process::Output};
 
 /// A tmux stub that records its calls, models the pane `send_line` watches, and prints chatter on
 /// every command whose output niles does not read.
@@ -19,7 +15,6 @@ const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'niles-test-session\n'; exit 0 ;;
-  has-session) exit 1 ;;
   list-windows)
     if [ "$2" = "-a" ]; then
       exit 0
@@ -55,46 +50,25 @@ esac
 "#;
 
 struct Fixture {
-    workspace: PathBuf,
-    home: PathBuf,
-    path: String,
-    tmux_log: PathBuf,
+    env: TestEnv,
     pane_file: PathBuf,
 }
 
 fn fixture(prefix: &str) -> Fixture {
-    let workspace = temp_workspace(prefix);
-    let home = niles_home(&workspace);
-    let bin = workspace.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    write_executable(&bin.join("tmux"), STUB_TMUX);
-    write_executable(&bin.join("claude"), "#!/bin/sh\nexit 0\n");
-    write_workspace_manifest(&workspace, "claude", "claude", "claude", "claude");
+    let env = TestEnv::with_tmux(prefix, STUB_TMUX);
+    write_workspace_manifest(&env.root, "claude", "claude", "claude", "claude");
 
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").expect("PATH must be set in the test environment")
-    );
     Fixture {
-        tmux_log: workspace.join("tmux.log"),
-        pane_file: workspace.join("pane.txt"),
-        workspace,
-        home,
-        path,
+        pane_file: env.root.join("pane.txt"),
+        env,
     }
 }
 
 impl Fixture {
     fn niles(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_niles"))
-            .args(args)
-            .current_dir(&self.workspace)
-            .env("PATH", &self.path)
-            .env("NILES_HOME", &self.home)
-            .env("TMUX_LOG", &self.tmux_log)
+        self.env
+            .niles(&self.env.root, args)
             .env("TMUX_PANE_FILE", &self.pane_file)
-            .env("TMUX", "/tmp/niles-test-tmux,0,0")
             .env("TMUX_PANE", "%9")
             // Where the stub tmux writes the report that lands mid-send.
             .env("TMUX_WORKER_STATUS", self.status_log("impl"))
@@ -135,7 +109,7 @@ impl Fixture {
     /// cadence a test is about, and nothing else changed.
     fn write_manifest(&self, keys: &str) {
         fs::write(
-            self.workspace.join(".niles/manifest.yaml"),
+            self.env.root.join(".niles/manifest.yaml"),
             format!(
                 "lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\n{keys}niles_schema: 2\n"
             ),
@@ -148,21 +122,8 @@ impl Fixture {
     }
 
     fn worker_file(&self, id: &str, name: &str) -> PathBuf {
-        self.workspace.join(".niles/worker").join(id).join(name)
+        self.env.root.join(".niles/worker").join(id).join(name)
     }
-}
-
-/// Each test gets its own workspace, and the fixture takes it away again when it goes out of
-/// scope. That is every run, a failing one included: the drop runs while the test unwinds, so the
-/// temp directory keeps nothing but what a killed process left behind.
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.workspace);
-    }
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// The lead arms a check-in with the dispatch, and `quiet` is how it takes one back.
@@ -172,7 +133,7 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
 
     let spawn = fixture.spawn("impl");
     assert_command_success("spawn", &spawn);
-    let printed = stdout(&spawn);
+    let printed = stdout_of(&spawn);
     assert!(printed.contains("checkin: 5m"), "{printed}");
     assert!(printed.contains("quiet: niles quiet impl"), "{printed}");
 
@@ -188,7 +149,11 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
 
     let quiet = fixture.niles(&["quiet", "impl"]);
     assert_command_success("quiet", &quiet);
-    assert!(stdout(&quiet).contains("quiet: impl"), "{}", stdout(&quiet));
+    assert!(
+        stdout_of(&quiet).contains("quiet: impl"),
+        "{}",
+        stdout_of(&quiet)
+    );
     assert!(
         !fixture.checkin_path("impl").exists(),
         "quiet is the lead disarming a check-in by hand"
@@ -198,9 +163,9 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
     let again = fixture.niles(&["quiet", "impl"]);
     assert_command_success("quiet again", &again);
     assert!(
-        stdout(&again).contains("quiet: impl (no check-in armed)"),
+        stdout_of(&again).contains("quiet: impl (no check-in armed)"),
         "{}",
-        stdout(&again)
+        stdout_of(&again)
     );
 }
 
@@ -212,14 +177,14 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     let seconds = fixture.spawn_with_checkin("impl", "90s");
     assert_command_success("spawn --checkin 90s", &seconds);
     assert!(
-        stdout(&seconds).contains("checkin: 90s"),
+        stdout_of(&seconds).contains("checkin: 90s"),
         "{}",
-        stdout(&seconds)
+        stdout_of(&seconds)
     );
     assert!(fixture.checkin("impl").contains("step=90"));
     // The flag was written after the worker id, where clap hands it over as task text: it must not
     // reach the worker's brief.
-    let brief = fs::read_to_string(fixture.workspace.join(".niles/worker/impl/brief.md")).unwrap();
+    let brief = fs::read_to_string(fixture.env.root.join(".niles/worker/impl/brief.md")).unwrap();
     assert!(brief.contains("Fix auth"), "{brief}");
     assert!(!brief.contains("--checkin"), "{brief}");
 
@@ -227,9 +192,9 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     let minutes = fixture.spawn_with_checkin("review", "2");
     assert_command_success("spawn --checkin 2", &minutes);
     assert!(
-        stdout(&minutes).contains("checkin: 2m"),
+        stdout_of(&minutes).contains("checkin: 2m"),
         "{}",
-        stdout(&minutes)
+        stdout_of(&minutes)
     );
 
     // `send` is an assignment too, so it arms the same state.
@@ -241,7 +206,7 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
         fixture.checkin("impl")
     );
     // The flag came after the worker id here too, so the message that was typed is the message.
-    let log = fs::read_to_string(&fixture.tmux_log).unwrap();
+    let log = fixture.env.tmux_log();
     assert!(
         log.contains("send-keys -t =niles-test-session:=niles-impl -l again"),
         "the flag must not reach the worker as message text:\n{log}"
@@ -250,7 +215,11 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     // And `off` arms none at all.
     let off = fixture.spawn_with_checkin("docs", "off");
     assert_command_success("spawn --checkin off", &off);
-    assert!(stdout(&off).contains("checkin: off"), "{}", stdout(&off));
+    assert!(
+        stdout_of(&off).contains("checkin: off"),
+        "{}",
+        stdout_of(&off)
+    );
     assert!(!fixture.checkin_path("docs").exists());
 }
 
@@ -299,7 +268,11 @@ fn asking_for_no_check_in_takes_an_armed_one_with_it() {
 
     let off = fixture.niles(&["send", "impl", "--checkin", "off", "never mind"]);
     assert_command_success("send --checkin off", &off);
-    assert!(stdout(&off).contains("checkin: off"), "{}", stdout(&off));
+    assert!(
+        stdout_of(&off).contains("checkin: off"),
+        "{}",
+        stdout_of(&off)
+    );
     assert!(
         !fixture.checkin_path("impl").exists(),
         "the armed deadline must go with the printed `checkin: off`"
@@ -316,9 +289,9 @@ fn a_chatty_tmux_never_reaches_the_lead_streams() {
     assert_command_success("spawn", &spawn);
     // `spawn` drives tmux windows: every one of those calls is mergeable into the lead's screen.
     assert!(
-        !stdout(&spawn).contains("tmux chatter"),
+        !stdout_of(&spawn).contains("tmux chatter"),
         "tmux output reached stdout:\n{}",
-        stdout(&spawn)
+        stdout_of(&spawn)
     );
     assert!(
         !String::from_utf8_lossy(&spawn.stderr).contains("tmux chatter"),
@@ -328,16 +301,20 @@ fn a_chatty_tmux_never_reaches_the_lead_streams() {
     let send = fixture.niles(&["send", "impl", "continue"]);
     assert_command_success("send", &send);
     assert!(
-        !stdout(&send).contains("tmux chatter"),
+        !stdout_of(&send).contains("tmux chatter"),
         "tmux output reached stdout:\n{}",
-        stdout(&send)
+        stdout_of(&send)
     );
     // The send still told the lead what it did.
-    assert!(stdout(&send).contains("sent: impl"), "{}", stdout(&send));
+    assert!(
+        stdout_of(&send).contains("sent: impl"),
+        "{}",
+        stdout_of(&send)
+    );
 
     // The message really was typed into the worker's pane, so the chatter test is not passing
     // because nothing ran.
-    let log = fs::read_to_string(&fixture.tmux_log).unwrap();
+    let log = fixture.env.tmux_log();
     assert!(
         log.contains("send-keys -t =niles-test-session:=niles-impl -l continue"),
         "{log}"
@@ -367,7 +344,7 @@ fn an_omitted_checkin_flag_arms_the_manifests_default() {
 
     let spawn = fixture.spawn("impl");
     assert_command_success("spawn", &spawn);
-    let printed = stdout(&spawn);
+    let printed = stdout_of(&spawn);
     assert!(printed.contains("checkin: 15m"), "{printed}");
 
     let body = fixture.checkin("impl");
@@ -379,9 +356,9 @@ fn an_omitted_checkin_flag_arms_the_manifests_default() {
     let flagged = fixture.niles(&["send", "impl", "--checkin", "90s", "carry on"]);
     assert_command_success("send --checkin 90s", &flagged);
     assert!(
-        stdout(&flagged).contains("checkin: 90s"),
+        stdout_of(&flagged).contains("checkin: 90s"),
         "{}",
-        stdout(&flagged)
+        stdout_of(&flagged)
     );
     let body = fixture.checkin("impl");
     assert!(body.contains("delay=90"), "{body}");
@@ -411,13 +388,11 @@ fn a_malformed_manifest_checkin_key_fails_the_dispatch() {
             "the error must name the file: {stderr}"
         );
         assert!(
-            !fixture.workspace.join(".niles/worker/impl").exists(),
+            !fixture.env.root.join(".niles/worker/impl").exists(),
             "nothing was dispatched, so nothing was written"
         );
         // Nothing reached tmux either: a spawn that never got as far as launching a window leaves
         // no tmux log at all.
-        if let Ok(log) = fs::read_to_string(&fixture.tmux_log) {
-            assert!(!log.contains("new-window"), "{log}");
-        }
+        assert!(!fixture.env.tmux_log.exists());
     }
 }

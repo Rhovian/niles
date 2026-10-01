@@ -1,33 +1,27 @@
 use anyhow::{Result, bail};
 
+use crate::store::ARCHIVE_DIR;
+
 pub(super) fn validate_id(id: &str) -> Result<()> {
-    if id.is_empty() {
-        bail!("worker id cannot be empty");
-    }
-    if id == "archive" {
-        bail!("worker id 'archive' is reserved for closed worker archives");
-    }
-    if !id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        bail!("worker id may only contain ASCII letters, numbers, '-' and '_'");
-    }
-    Ok(())
+    validate_name("worker id", id)
 }
 
 pub(crate) fn validate_task_label(label: &str) -> Result<()> {
-    if label.is_empty() {
-        bail!("task label cannot be empty");
+    validate_name("task label", label)
+}
+
+fn validate_name(kind: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        bail!("{kind} cannot be empty");
     }
-    if label == "archive" {
-        bail!("task label 'archive' is reserved for closed worker archives");
+    if value == ARCHIVE_DIR {
+        bail!("{kind} '{ARCHIVE_DIR}' is reserved for closed worker archives");
     }
-    if !label
+    if !value
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
     {
-        bail!("task label may only contain ASCII letters, numbers, '-' and '_'");
+        bail!("{kind} may only contain ASCII letters, numbers, '-' and '_'");
     }
     Ok(())
 }

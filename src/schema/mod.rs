@@ -2,8 +2,6 @@ mod inspect;
 mod json;
 mod kind;
 mod status;
-#[cfg(test)]
-mod test_support;
 mod version;
 mod yaml;
 

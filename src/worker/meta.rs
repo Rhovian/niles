@@ -1,16 +1,11 @@
-use std::fs;
-
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    schema::{self, ArtifactKind},
-    util::write_json_pretty,
-};
+use crate::schema::{self, ArtifactKind};
 
-use super::{resolve::resolve_worker, validation::validate_id};
+use super::resolve::resolve_worker;
 
 const REPORT_FILE: &str = "report.md";
 
@@ -36,14 +31,10 @@ pub(super) struct WorkerMeta {
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
     let path = meta_path(worker_dir);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
-    }
-    write_json_pretty(&path, meta)
+    schema::write_json(&path, meta)
 }
 
 pub(super) fn read_meta(id: &str) -> Result<WorkerMeta> {
-    validate_id(id)?;
     let worker_dir = resolve_worker(id)?;
     let path = meta_path(&worker_dir);
     let meta = read_meta_if_exists(&worker_dir)?

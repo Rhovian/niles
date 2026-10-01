@@ -10,7 +10,3 @@ pub(crate) const CLAP_VERSION: &str = concat!(
     env!("NILES_BUILD_TIMESTAMP"),
     ")"
 );
-
-pub(crate) fn identity() -> String {
-    format!("niles {VERSION} ({GIT_HASH}, built {BUILD_TIMESTAMP})")
-}

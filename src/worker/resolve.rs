@@ -4,18 +4,12 @@ use camino::Utf8PathBuf;
 use crate::{
     store,
     tmux::{self, TargetState, WindowTarget},
-    wake,
 };
 
 use super::{
     meta::{WorkerMeta, read_meta_if_exists},
     validation::validate_id,
 };
-
-pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
-    validate_id(id)?;
-    Ok(wake::status_log_path(&resolve_worker(id)?))
-}
 
 /// Whether this worker's tmux window is definitively gone, so nothing can ever append to its
 /// status log again.
@@ -24,7 +18,6 @@ pub fn status_log_path(id: &str) -> Result<Utf8PathBuf> {
 /// a window found alive under a new name all report `false`: a wait that stops early on a healthy
 /// worker is a worse failure than one that waits out its timeout.
 pub fn window_is_gone(id: &str) -> Result<bool> {
-    validate_id(id)?;
     let Some(worker_dir) = resolve_worker_if_exists(id)? else {
         return Ok(false);
     };
@@ -56,7 +49,10 @@ pub(crate) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
 
 pub(super) fn resolve_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
     validate_id(id)?;
-    store::resolve_worker_location(id)
+    Ok(store::worker_location(
+        &crate::util::current_dir_utf8()?,
+        id,
+    ))
 }
 
 pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
@@ -70,18 +66,12 @@ pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<Utf8PathB
 
 pub(super) fn no_live_worker_message(id: &str) -> String {
     match latest_archive(id) {
-        Ok(Some(archive)) => format!(
-            "no live worker '{id}'; latest archive: {}",
-            archive.archive_dir
-        ),
+        Ok(Some(archive)) => format!("no live worker '{id}'; latest archive: {archive}"),
         Ok(None) => format!("no live worker '{id}'"),
         Err(err) => format!("no live worker '{id}'; failed to inspect archives: {err}"),
     }
 }
 
-pub(super) fn latest_archive(id: &str) -> Result<Option<store::WorkerArchive>> {
-    Ok(store::resolve_worker_archives(id)?
-        .into_iter()
-        .rev()
-        .find(|archive| archive.archive_dir.exists()))
+pub(super) fn latest_archive(id: &str) -> Result<Option<Utf8PathBuf>> {
+    store::latest_worker_archive(&crate::util::current_dir_utf8()?, id)
 }

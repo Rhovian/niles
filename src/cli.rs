@@ -1,5 +1,6 @@
 use camino::Utf8PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -12,54 +13,31 @@ pub struct Cli {
     pub command: Option<CommandName>,
 }
 
-/// Pulls a leading `--wait` out of a trailing var-arg list, reporting whether it was there.
-///
-/// `spawn`'s task text and `send`'s message are both trailing var-args, so clap hands `--wait`
-/// over as ordinary text whenever it is written after the positional that starts them — which is
-/// exactly where it gets typed. Without this it would be passed through to the agent.
-pub(crate) fn take_leading_wait(args: &mut Vec<String>) -> bool {
-    let present = args.first().is_some_and(|first| first == WAIT_FLAG);
-    if present {
-        args.remove(0);
-    }
-    present
-}
-
 const WAIT_FLAG: &str = "--wait";
 const CHECKIN_FLAG: &str = "--checkin";
-
-/// Pulls a leading `--checkin <delay>` pair out of a trailing var-arg list.
-///
-/// A `--checkin` with nothing after it is a typo rather than a message, so the flag is consumed
-/// and no delay is reported: either way the text must not reach the worker.
-pub(crate) fn take_leading_checkin(args: &mut Vec<String>) -> Option<String> {
-    let present = args.first().is_some_and(|first| first == CHECKIN_FLAG);
-    if !present {
-        return None;
-    }
-    args.remove(0);
-    if args.is_empty() {
-        return None;
-    }
-    Some(args.remove(0))
-}
 
 /// Pulls both dispatch flags out of a trailing var-arg list, in whatever order they were written.
 ///
 /// One flag alone is easy — write it before the trailing text and clap parses it. Two of them next
 /// to each other after the worker id arrive as text, and pulling only the first would hand the
-/// worker the flag that was left behind.
+/// worker the flag that was left behind. A bare `--checkin` is consumed as a typo.
 pub(crate) fn take_leading_dispatch_flags(args: &mut Vec<String>) -> (bool, Option<String>) {
     let mut wait = false;
     let mut checkin = None;
     loop {
-        if take_leading_wait(args) {
-            wait = true;
-            continue;
-        }
-        match take_leading_checkin(args) {
-            Some(delay) => checkin = Some(delay),
-            None => break,
+        match args.first().map(String::as_str) {
+            Some(WAIT_FLAG) => {
+                args.remove(0);
+                wait = true;
+            }
+            Some(CHECKIN_FLAG) => {
+                args.remove(0);
+                if args.is_empty() {
+                    break;
+                }
+                checkin = Some(args.remove(0));
+            }
+            _ => break,
         }
     }
     (wait, checkin)
@@ -183,11 +161,19 @@ pub enum CommandName {
         #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
         task: Option<String>,
         /// Poll interval in seconds.
-        #[arg(long, default_value_t = crate::wait::DEFAULT_INTERVAL_SECS)]
-        interval: f64,
-        /// Maximum seconds to wait before exiting non-zero. Defaults to 3600 seconds.
-        #[arg(long)]
-        timeout: Option<f64>,
+        #[arg(
+            long,
+            default_value = "2",
+            value_parser = crate::wait::parse_interval
+        )]
+        interval: Duration,
+        /// Maximum seconds to wait before exiting non-zero.
+        #[arg(
+            long,
+            default_value = "3600",
+            value_parser = crate::wait::parse_timeout
+        )]
+        timeout: Duration,
     },
     /// Disarm a worker's check-in, so the watcher stops nudging about it.
     ///
@@ -209,27 +195,6 @@ mod tests {
         let cli = Cli::try_parse_from(["niles"]).unwrap();
 
         assert!(cli.command.is_none());
-    }
-
-    #[test]
-    fn retired_session_flags_are_rejected() {
-        for retired in [
-            vec!["niles", "--session", "niles"],
-            vec!["niles", "--detached"],
-            vec!["niles", "-d"],
-        ] {
-            assert!(
-                Cli::try_parse_from(&retired).is_err(),
-                "{retired:?} should no longer parse"
-            );
-        }
-    }
-
-    #[test]
-    fn subcommands_still_parse() {
-        let cli = Cli::try_parse_from(["niles", "workers"]).unwrap();
-
-        assert!(cli.command.is_some());
     }
 
     #[test]

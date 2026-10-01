@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     util::{current_dir_utf8, print_structured_rows},
+    wait::cursor::{cursor_path, parse_cursor},
     wake,
 };
 
@@ -17,15 +18,13 @@ use super::{
 pub(super) const UNLABELED_TASK_LABEL: &str = "-";
 const EMPTY_STATUS_PLACEHOLDER: &str = "-";
 /// Shown for a worker holding an actionable line the lead has not collected with `niles wait`.
-/// Without it a worker that finished twenty minutes ago and one still working render identically,
-/// which is how a `done:` sat undelivered until a human asked about it.
+/// Without it a finished worker and one still working render identically.
 const PENDING_WAKE: &str = "pending";
 const NO_PENDING_WAKE: &str = "-";
 /// Shown for a worker whose `meta.json` could not be read; niles cannot reach it, so the lead must
 /// remove its directory by hand.
 const UNREADABLE_METADATA: &str = "unreadable";
 const UNKNOWN_AGE: &str = "?";
-const CURSOR_FILE: &str = "status.cursor";
 
 /// Renders the workspace's live workers.
 ///
@@ -159,18 +158,14 @@ fn worker_pending_wake(worker: &WorkerSnapshot) -> Result<String> {
 /// How far `niles wait` has delivered into this worker's status log. No cursor means no wait has
 /// ever consumed a line from it, which is position zero.
 fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
-    let path = worker_dir.join(CURSOR_FILE);
+    let path = cursor_path(worker_dir);
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
-    let body = body.trim();
-    if body.is_empty() {
-        return Ok(0);
-    }
-    body.parse()
-        .with_context(|| format!("invalid wake cursor in {path}; remove it to resume"))
+    usize::try_from(parse_cursor(&body, &path)?)
+        .with_context(|| format!("wake cursor in {path} exceeds this platform's address space"))
 }
 
 #[expect(

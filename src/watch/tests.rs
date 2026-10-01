@@ -1,24 +1,27 @@
 use std::{fs, sync::atomic::AtomicBool, time::Duration};
 
 use anyhow::{Result, bail};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
-use crate::{test_support::temp_test_path, tmux::TmuxTarget, worker::worker_snapshot};
+use crate::{
+    test_support::{at, temp_test_path},
+    tmux::TmuxTarget,
+    worker::worker_snapshot,
+};
 
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
-    checkin::{Cadence, Checkin, Recheck, resolve_cadence},
+    cadence::{Cadence, Recheck},
+    checkin::Checkin,
     quiet, read_checkins, tick,
     trust::claude_prompt,
 };
 
-/// A watcher that is still running: what every tick test but the stopping one wants.
 fn running() -> AtomicBool {
     AtomicBool::new(false)
 }
 
-/// A check-in armed the way `spawn` arms one: the delay it was asked for, doubling after that.
 fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin {
     Checkin::armed(
         Duration::from_secs(delay_secs),
@@ -28,14 +31,6 @@ fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin
     )
 }
 
-/// The cadence a dispatch arms with, resolved the way `spawn` resolves it: the flag, then a
-/// manifest, then the default. There is no manifest in these tests, so the flag or the default
-/// decides the delay and the policy is the backoff.
-fn cadence(flag: Option<&str>) -> Cadence {
-    resolve_cadence(flag, None, Utf8Path::new("/w/.niles/manifest.yaml")).unwrap()
-}
-
-/// A sink that records what the watcher asked of it, so a tick can be driven without tmux.
 #[derive(Debug, Default)]
 struct RecordingSink {
     attempts: Vec<String>,
@@ -70,50 +65,52 @@ impl Sink for RecordingSink {
     }
 }
 
-/// A throwaway directory: the crate's shared temp path, created.
-fn workspace(label: &str) -> Utf8PathBuf {
+pub(super) fn workspace(label: &str) -> Utf8PathBuf {
     let path = temp_test_path(label);
     fs::create_dir_all(&path).unwrap();
     path
 }
 
-fn at(seconds: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
-}
-
-fn worker_dir(workspace: &Utf8PathBuf, id: &str) -> Utf8PathBuf {
+pub(super) fn worker_dir(workspace: &Utf8PathBuf, id: &str) -> Utf8PathBuf {
     workspace.join(".niles/worker").join(id)
 }
 
-/// A live worker as `worker_snapshot` sees one: a directory with metadata and a status log.
 fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
+    write_meta(workspace, id, None);
+    let dir = worker_dir(workspace, id);
+    fs::write(dir.join("status.log"), log).unwrap();
+}
+
+fn write_meta(workspace: &Utf8PathBuf, id: &str, created_at: Option<DateTime<Utc>>) {
     let dir = worker_dir(workspace, id);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("status.log"), log).unwrap();
+    let (created_at, session) = match created_at {
+        Some(time) => (
+            format!(",\"created_at\":\"{}\"", time.to_rfc3339()),
+            "ambient",
+        ),
+        None => (String::new(), "niles-test"),
+    };
     fs::write(
         dir.join("meta.json"),
         format!(
-            "{{\"niles_schema\":2,\"id\":\"{id}\",\"agent\":\"claude\",\"project\":\"{workspace}\",\
-             \"window\":\"niles-test:niles-{id}\",\"brief\":\"{workspace}/brief.md\",\
+            "{{\"niles_schema\":2,\"id\":\"{id}\",\"agent\":\"claude\"{created_at},\
+             \"project\":\"{workspace}\",\"window\":\"{session}:niles-{id}\",\
+             \"brief\":\"{workspace}/brief.md\",\
              \"launch\":\"{workspace}/launch.sh\"}}"
         ),
     )
     .unwrap();
 }
 
-fn write_starting_worker(workspace: &Utf8PathBuf, id: &str, log: &str, now: DateTime<Utc>) {
-    write_worker(workspace, id, log);
-    fs::write(
-        worker_dir(workspace, id).join("meta.json"),
-        format!(
-            "{{\"niles_schema\":2,\"id\":\"{id}\",\"agent\":\"claude\",\
-             \"created_at\":\"{}\",\"project\":\"{workspace}\",\
-             \"window\":\"ambient:niles-{id}\",\"brief\":\"{workspace}/brief.md\",\
-             \"launch\":\"{workspace}/launch.sh\"}}",
-            now.to_rfc3339()
-        ),
-    )
-    .unwrap();
+pub(super) fn write_starting_worker(
+    workspace: &Utf8PathBuf,
+    id: &str,
+    log: &str,
+    now: DateTime<Utc>,
+) {
+    write_meta(workspace, id, Some(now));
+    fs::write(worker_dir(workspace, id).join("status.log"), log).unwrap();
 }
 
 fn append_log(workspace: &Utf8PathBuf, id: &str, line: &str) {
@@ -230,7 +227,6 @@ fn a_failed_nudge_is_retried_on_the_next_tick() {
         vec!["niles: impl reported (done) — check workers"]
     );
 
-    // The report has been handed over, so the third tick has nothing to say about it.
     let mut quiet_tick = RecordingSink::default();
     tick(&root, at(1002), &mut memory, &mut quiet_tick, &running());
     assert!(quiet_tick.attempts.is_empty(), "{quiet_tick:?}");
@@ -280,8 +276,6 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
         sink.sent,
         vec!["niles: no report from impl in 5m — check it"]
     );
-    // Written back with the delay doubled and the step advanced, so the same check-in does not
-    // fire again on the next tick — and does not fire every 3 minutes either.
     let rearmed = Checkin::read(&dir).unwrap().unwrap();
     assert_eq!(rearmed.deadline, at(1_900));
     assert_eq!(rearmed.delay, 600);
@@ -290,37 +284,6 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     let mut next = RecordingSink::default();
     tick(&root, at(1301), &mut memory, &mut next, &running());
     assert!(next.attempts.is_empty(), "{next:?}");
-
-    fs::remove_dir_all(&root).unwrap();
-}
-
-/// A workspace that asked for a flat re-check (`recheck: 10m`) re-arms at that delay. The policy
-/// is in the state the watcher read, so it did not have to go back to the manifest for it.
-#[test]
-fn a_fixed_recheck_re_arms_at_its_delay_on_disk() {
-    let root = workspace("rearm-fixed");
-    write_worker(&root, "impl", WINDOW);
-    let dir = worker_dir(&root, "impl");
-    Checkin::armed(
-        Duration::from_secs(300),
-        Recheck::Fixed(Duration::from_secs(600)),
-        WINDOW.len() as u64,
-        at(1_000),
-    )
-    .write(&dir)
-    .unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-
-    let mut sink = RecordingSink::default();
-    tick(&root, at(1300), &mut memory, &mut sink, &running());
-
-    assert_eq!(
-        sink.sent,
-        vec!["niles: no report from impl in 5m — check it"]
-    );
-    let rearmed = Checkin::read(&dir).unwrap().unwrap();
-    assert_eq!(rearmed.delay, 600);
-    assert_eq!(rearmed.deadline, at(1_900));
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -354,19 +317,33 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     let dir = worker_dir(&root, "impl");
     let baseline = (WINDOW.len() + DONE.len()) as u64;
 
-    let armed = arm_checkin(&dir, cadence(Some("90s")), baseline, at(1_000)).unwrap();
+    let armed = arm_checkin(
+        &dir,
+        Cadence {
+            delay: Some(Duration::from_secs(90)),
+            recheck: Recheck::Backoff,
+        },
+        baseline,
+        at(1_000),
+    )
+    .unwrap();
 
     assert_eq!(armed, Some(Duration::from_secs(90)));
     let checkin = Checkin::read(&dir).unwrap().unwrap();
-    // The length the caller read before dispatching, not one read here: that is what lets a report
-    // landing in the meantime answer the assignment it belongs to.
     assert_eq!(checkin.armed_len, baseline);
     assert_eq!(checkin.deadline, at(1_090));
 
-    // `--checkin off` is no check-in, and it takes an armed one with it rather than leaving the
-    // lead with a printed `checkin: off` over a live deadline.
     assert_eq!(
-        arm_checkin(&dir, cadence(Some("off")), baseline, at(1_000)).unwrap(),
+        arm_checkin(
+            &dir,
+            Cadence {
+                delay: None,
+                recheck: Recheck::Backoff,
+            },
+            baseline,
+            at(1_000)
+        )
+        .unwrap(),
         None
     );
     assert_eq!(Checkin::read(&dir).unwrap(), None);
@@ -381,8 +358,6 @@ fn quiet_is_a_lead_command_and_needs_a_worker_that_exists() {
     assert!(err.to_string().contains("unknown worker id"), "{err}");
 }
 
-/// Outside tmux there is no pane to type into: no thread at all, one line saying so, and every
-/// other thing niles does is untouched.
 #[test]
 fn a_session_with_no_lead_pane_starts_no_watcher() {
     let session = workspace("no-pane-session");
@@ -399,8 +374,6 @@ fn a_session_with_no_lead_pane_starts_no_watcher() {
     fs::remove_dir_all(&session).unwrap();
 }
 
-/// The thread's lifetime is the foreground process's lifetime: dropping the watcher stops and
-/// joins it, and the workspace here has no workers, so the tick that may run touches no tmux pane.
 #[test]
 fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
     let session = workspace("pane-session");
@@ -420,8 +393,6 @@ fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
     fs::remove_dir_all(&session).unwrap();
 }
 
-/// A lead that is exiting does not wait for the plan: anything not yet typed stays untyped and
-/// uncommitted, and the state it described is still on disk for next time.
 #[test]
 fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
     let root = workspace("stopping");
@@ -434,7 +405,6 @@ fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
     tick(&root, at(1_000), &mut memory, &mut stopping, &stop);
     assert!(stopping.attempts.is_empty(), "{stopping:?}");
 
-    // Nothing was recorded as delivered, so the next watcher picks the report up.
     let mut later = RecordingSink::default();
     tick(&root, at(1_001), &mut memory, &mut later, &running());
     assert_eq!(
@@ -445,9 +415,6 @@ fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
     fs::remove_dir_all(&root).unwrap();
 }
 
-/// A tick reads the check-in it judges, spends seconds typing the nudge, and only then touches the
-/// file. An assignment armed in that window belongs to work the tick has not seen: deleting it
-/// would leave the fresh assignment with no check-in at all, silently.
 #[test]
 fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     let root = workspace("re-read-disarm");
@@ -488,9 +455,6 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
     fs::remove_dir_all(&root).unwrap();
 }
 
-/// The same window, on the re-arm path: a fired check-in is rewritten at its next delay only if it is
-/// still the one this tick planned over, or the newer assignment would be scheduled by the older
-/// one's clock.
 #[test]
 fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
     let root = workspace("re-read-rearm");

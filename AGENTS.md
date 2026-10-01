@@ -58,13 +58,15 @@ say what they printed. Never mark done without that proof.
 Mechanically checkable rules live in `[lints.clippy]` in `Cargo.toml` and in `clippy.toml`, not in
 prose. The gate lints all targets. Suppress a lint with `#[expect(…, reason = "…")]`, not
 `#[allow]`. The one exception is test code, which allows `unwrap_used` and `expect_used` at the
-crate root.
+crate root; `tests/common` may use `#[allow(dead_code)]`, because each test binary uses a different
+subset of it.
 
 ## Invariants
 
 - Role prompts live in `src/templates/` and are compiled in with `include_str!`. They are the
   product's behavior, so edit them with the same care as code.
-- Agent families, models, and effort levels are defined in `src/agents/families.rs`.
+- Agent families and their launch mechanics are defined in `src/agents/families.rs`; models and
+  effort levels in `src/agents/roster.yaml`.
 - `niles wait` reserves stdout for wake lines; diagnostics go to stderr. Its exit codes (0, 10, 22)
   are a contract the lead relies on.
 - Changes that move a trust boundary (agent execution, workspace state, pane text) update the

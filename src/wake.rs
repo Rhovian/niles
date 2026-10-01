@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 use camino::{Utf8Path, Utf8PathBuf};
 
@@ -13,42 +13,39 @@ pub(crate) enum WakeKind {
 }
 
 impl WakeKind {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "done" => Some(Self::Done),
-            "failed" => Some(Self::Failed),
-            "blocked" => Some(Self::Blocked),
-            "needs-decision" => Some(Self::NeedsDecision),
-            "closed" => Some(Self::Closed),
-            "working" => Some(Self::Working),
-            _ => None,
-        }
-    }
+    const ALL: [Self; 6] = [
+        Self::Done,
+        Self::Failed,
+        Self::Blocked,
+        Self::NeedsDecision,
+        Self::Closed,
+        Self::Working,
+    ];
 
-    pub(crate) fn parse_line(line: &str) -> Option<Self> {
-        let (state, _) = line.split_once(':')?;
-        Self::parse(state)
-    }
-
-    pub(crate) fn is_actionable(self) -> bool {
-        !matches!(self, Self::Working)
-    }
-
-    pub(crate) fn is_terminal(self) -> bool {
-        matches!(self, Self::Closed)
-    }
-}
-
-impl fmt::Display for WakeKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+    const fn as_str(self) -> &'static str {
+        match self {
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Blocked => "blocked",
             Self::NeedsDecision => "needs-decision",
             Self::Closed => "closed",
             Self::Working => "working",
-        })
+        }
+    }
+
+    pub(crate) fn parse_line(line: &str) -> Option<Self> {
+        let (state, _) = line.split_once(':')?;
+        Self::ALL.into_iter().find(|kind| kind.as_str() == state)
+    }
+
+    pub(crate) fn actionable(line: &str) -> Option<Self> {
+        Self::parse_line(line).filter(|kind| *kind != Self::Working)
+    }
+}
+
+impl fmt::Display for WakeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -61,11 +58,21 @@ pub(crate) fn line(kind: WakeKind, detail: &str) -> String {
 }
 
 pub(crate) fn is_actionable_wake(line: &str) -> bool {
-    WakeKind::parse_line(line).is_some_and(WakeKind::is_actionable)
+    WakeKind::actionable(line).is_some()
 }
 
-pub(crate) fn is_closed_wake(line: &str) -> bool {
-    WakeKind::parse_line(line).is_some_and(WakeKind::is_terminal)
+pub(crate) fn complete_lines(log: &[u8]) -> impl Iterator<Item = (usize, Cow<'_, str>)> {
+    let mut end = 0;
+    log.split_inclusive(|byte| *byte == b'\n')
+        .take_while(|raw| raw.ends_with(b"\n"))
+        .map(move |raw| {
+            end += raw.len();
+            let mut raw = &raw[..raw.len() - 1];
+            while let Some(stripped) = raw.strip_suffix(b"\r") {
+                raw = stripped;
+            }
+            (end, String::from_utf8_lossy(raw))
+        })
 }
 
 #[cfg(test)]
@@ -89,17 +96,16 @@ mod tests {
     }
 
     #[test]
-    fn classifies_actionable_and_terminal_lines() {
+    fn classifies_actionable_lines() {
         assert!(is_actionable_wake("done: shipped"));
         assert!(is_actionable_wake("closed: auth-fix"));
         assert!(!is_actionable_wake("working: launch"));
         assert!(!is_actionable_wake("note: launch"));
-        assert!(is_closed_wake("closed: auth-fix"));
-        assert!(!is_closed_wake("failed: auth-fix"));
     }
 
     #[test]
-    fn formats_wake_lines() {
-        assert_eq!(line(WakeKind::Closed, "auth-fix"), "closed: auth-fix");
+    fn complete_lines_trim_all_carriage_returns_without_shifting_offsets() {
+        let lines = complete_lines(b"done: x\r\r\n").collect::<Vec<_>>();
+        assert_eq!(lines, vec![(10, Cow::Borrowed("done: x"))]);
     }
 }

@@ -10,19 +10,15 @@ use crate::{
 
 use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
 
-pub fn ensure_interactive(
-    root: &Utf8Path,
-    defaults: &WorkspaceManifest,
-) -> Result<WorkspaceManifest> {
+pub fn ensure_interactive(root: &Utf8Path) -> Result<WorkspaceManifest> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::stdout();
-    ensure_interactive_with_io(root, defaults, stdin.is_terminal(), &mut input, &mut output)
+    ensure_interactive_with_io(root, stdin.is_terminal(), &mut input, &mut output)
 }
 
 fn ensure_interactive_with_io<R: BufRead, W: Write>(
     root: &Utf8Path,
-    defaults: &WorkspaceManifest,
     interactive: bool,
     input: &mut R,
     output: &mut W,
@@ -62,12 +58,7 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
             output,
             "Choose the foreground lead agent. Press Enter to accept the default."
         )?;
-        let lead = picker::prompt_agent_value(
-            "Lead agent",
-            &manifest.lead,
-            &config.agents,
-            &config.models,
-        )?;
+        let lead = picker::prompt_agent_value("Lead agent", &manifest.lead, &config)?;
         let lead_changed = lead != manifest.lead;
         manifest.lead = lead;
         if lead_changed {
@@ -89,9 +80,9 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let lead =
-        picker::prompt_agent_value("Lead agent", &defaults.lead, &config.agents, &config.models)?;
-    let manifest = prompt_manifest_values(lead, defaults, &config)?;
+    let defaults = WorkspaceManifest::default();
+    let lead = picker::prompt_agent_value("Lead agent", &defaults.lead, &config)?;
+    let manifest = prompt_manifest_values(lead, &defaults, &config)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
@@ -106,7 +97,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
     manifest: &mut WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<()> {
-    print_manifest_roles(output, manifest, &config.agents, &config.models)?;
+    print_manifest_roles(output, manifest, config)?;
     if prompt_yes_no(input, output, "Change any manifest roles?", false)? {
         writeln!(
             output,
@@ -116,7 +107,7 @@ fn maybe_update_manifest_roles<R: BufRead, W: Write>(
         *manifest = prompt_manifest_values(lead, manifest, config)?;
         save(root, manifest)?;
         writeln!(output, "manifest: {path} (updated roles)")?;
-        print_manifest_roles(output, manifest, &config.agents, &config.models)?;
+        print_manifest_roles(output, manifest, config)?;
     }
 
     Ok(())
@@ -127,26 +118,12 @@ fn prompt_manifest_values(
     defaults: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<WorkspaceManifest> {
+    let pick = |label, default| picker::prompt_agent_value(label, default, config);
     Ok(WorkspaceManifest {
         lead,
-        worker: picker::prompt_agent_value(
-            "Worker agent",
-            &defaults.worker,
-            &config.agents,
-            &config.models,
-        )?,
-        reviewer: picker::prompt_agent_value(
-            "Reviewer agent",
-            &defaults.reviewer,
-            &config.agents,
-            &config.models,
-        )?,
-        security: picker::prompt_agent_value(
-            "Security agent",
-            &defaults.security,
-            &config.agents,
-            &config.models,
-        )?,
+        worker: pick("Worker agent", &defaults.worker)?,
+        reviewer: pick("Reviewer agent", &defaults.reviewer)?,
+        security: pick("Security agent", &defaults.security)?,
         // Hand-edited settings are not prompted for, so changing roles must preserve them.
         ..defaults.clone()
     })
@@ -186,7 +163,8 @@ mod tests {
 
     use std::{fs, io::Cursor};
 
-    use super::super::{io::manifest_path, test_support::temp_test_path};
+    use super::super::io::manifest_path;
+    use crate::test_support::temp_test_path;
 
     #[test]
     fn manifest_roles_are_printed_before_change_prompt() -> Result<()> {
@@ -241,14 +219,7 @@ niles_schema: 2
 
         let mut input = Cursor::new(Vec::<u8>::new());
         let mut output = Vec::new();
-        let err = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifest::default(),
-            false,
-            &mut input,
-            &mut output,
-        )
-        .unwrap_err();
+        let err = ensure_interactive_with_io(&root, false, &mut input, &mut output).unwrap_err();
 
         assert!(err.to_string().contains("stdin is not interactive"));
         assert!(err.to_string().contains("choose the lead agent"));
@@ -262,14 +233,7 @@ niles_schema: 2
         let mut input = Cursor::new(Vec::<u8>::new());
         let mut output = Vec::new();
 
-        let err = ensure_interactive_with_io(
-            &root,
-            &WorkspaceManifest::default(),
-            false,
-            &mut input,
-            &mut output,
-        )
-        .unwrap_err();
+        let err = ensure_interactive_with_io(&root, false, &mut input, &mut output).unwrap_err();
 
         assert!(err.to_string().contains("stdin is not interactive"));
         assert!(!manifest_path(&root).exists());

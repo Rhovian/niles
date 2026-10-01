@@ -4,11 +4,6 @@
 //! Pure apart from the bookkeeping of which workers it has seen before: no clock of its own (the
 //! tick passes `now`), no filesystem, no tmux. `watch.rs` reads the state, asks here, and delivers
 //! whatever comes back through the one edge it owns.
-//!
-//! Everything it decides is STATE, not an event. A nudge says where things stand and carries no
-//! status-line content, so the same answer twice is harmless and there is no cursor, lock or
-//! exactly-once rule anywhere in this module. Report detection keys on log LENGTH rather than the
-//! state word, so `done:` → follow-up → `done:` is two reports and not a replay of one.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -166,15 +161,12 @@ fn no_report_text(id: &str, elapsed: &str) -> String {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
-    use super::super::checkin::Recheck;
+    use super::super::cadence::Recheck;
     use super::*;
+    use crate::test_support::at;
 
     const WINDOW: &str = "working: launch\n";
     const DONE: &str = "done: shipped\n";
-
-    fn at(seconds: i64) -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
-    }
 
     fn worker(id: &str, log: &str) -> WorkerSnapshot {
         WorkerSnapshot::new(

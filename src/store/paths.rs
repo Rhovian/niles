@@ -1,19 +1,13 @@
-use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-
-use crate::util::{absolute_path, current_dir_utf8};
 
 pub(crate) const NILES_DIR: &str = ".niles";
 pub(crate) const WORKERS_DIR: &str = "worker";
+pub(crate) const ARCHIVE_DIR: &str = "archive";
 
-fn workspace_workers_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
-    Ok(absolute_path(workspace)?.join(NILES_DIR).join(WORKERS_DIR))
+pub(crate) fn workers_dir(workspace: &Utf8Path) -> Utf8PathBuf {
+    workspace.join(NILES_DIR).join(WORKERS_DIR)
 }
 
-pub(crate) fn workspace_worker_dir(workspace: &Utf8Path, worker: &str) -> Result<Utf8PathBuf> {
-    Ok(workspace_workers_dir(workspace)?.join(worker))
-}
-
-pub(super) fn current_workers_dir() -> Result<Utf8PathBuf> {
-    Ok(current_dir_utf8()?.join(NILES_DIR).join(WORKERS_DIR))
+pub(crate) fn archive_dir(workspace: &Utf8Path) -> Utf8PathBuf {
+    workers_dir(workspace).join(ARCHIVE_DIR)
 }

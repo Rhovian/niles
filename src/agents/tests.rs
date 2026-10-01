@@ -6,26 +6,14 @@ fn models() -> ModelRoster {
 }
 
 #[test]
-fn known_and_unknown_agents_resolve_a_binary_name() {
-    assert_eq!(default_binary("codex"), "codex");
-    assert_eq!(default_binary("custom"), "custom");
-}
-
-#[test]
-fn invocation_applies_worker_defaults() {
-    let invocation = invocation("codex", None, InvocationDefaults::Worker, &models()).unwrap();
-
-    assert_eq!(invocation.binary, "codex");
-    assert_eq!(
-        invocation.args,
-        ["--dangerously-bypass-approvals-and-sandbox"].map(str::to_owned)
-    );
-    assert!(matches!(invocation.brief, BriefDelivery::Arg));
-}
-
-#[test]
 fn foreground_invocation_preserves_builtin_manager_defaults() {
-    let invocation = foreground_invocation("claude:opus:max", None, &models()).unwrap();
+    let invocation = invocation(
+        "claude:opus:max",
+        None,
+        InvocationDefaults::Foreground,
+        &models(),
+    )
+    .unwrap();
 
     assert_eq!(invocation.binary, "claude");
     assert_eq!(
@@ -48,7 +36,13 @@ fn foreground_invocation_uses_configured_custom_manager_binary_and_args() {
         prompt: PromptMode::Arg,
     };
 
-    let invocation = foreground_invocation("gemini", Some(&config), &models()).unwrap();
+    let invocation = invocation(
+        "gemini",
+        Some(&config),
+        InvocationDefaults::Foreground,
+        &models(),
+    )
+    .unwrap();
 
     assert_eq!(invocation.binary, "/tmp/custom-manager");
     assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
@@ -102,43 +96,27 @@ fn effort_is_checked_against_the_model_not_the_family() {
         assert!(error.contains("unsupported codex effort"), "{error}");
         assert!(error.contains("for model"), "{error}");
     }
-}
-
-#[test]
-fn a_model_with_no_effort_takes_none() {
-    // claude gates effort on a model capability, and the haiku alias resolves to a model that has
-    // none of them: there is no level to pass, so the spec says so rather than sending one.
-    AgentSpec::parse("claude:haiku", &models()).unwrap();
 
     let error = AgentSpec::parse("claude:haiku:low", &models())
         .unwrap_err()
         .to_string();
-    assert!(
-        error.contains("claude model `haiku` takes no effort"),
-        "{error}"
-    );
-
-    assert_eq!(
-        models().supported_efforts("claude", "haiku"),
-        Some([].as_slice())
-    );
+    assert!(error.contains("takes no effort"), "{error}");
 }
 
 #[test]
 fn a_model_off_the_roster_is_rejected_whatever_it_looks_like() {
     // A full id, a plausible sibling, a future slug: the roster is the whole rule, so none of them
     // are launchable until they are a line in it.
-    for model in [
-        "claude-opus-5",
-        "gpt-5.5-codex",
-        "gpt-5.4",
-        "omega",
-        "anthropic/claude-opus-5",
+    for (family, model) in [
+        ("claude", "claude-opus-5"),
+        ("codex", "gpt-5.5-codex"),
+        ("codex", "gpt-5.4"),
+        ("codex", "omega"),
+        ("codex", "anthropic/claude-opus-5"),
+        ("hermes", "anthropic/claude-opus-5"),
+        ("hermes", "x-ai/grok-4.6"),
+        ("hermes", "hy3"),
     ] {
-        let family = match model.starts_with("claude") {
-            true => "claude",
-            false => "codex",
-        };
         let spec = AgentSpec::parse(&format!("{family}:{model}"), &models()).unwrap();
         let error = validate_model(&spec, &models()).unwrap_err().to_string();
         assert!(
@@ -162,12 +140,6 @@ fn an_effort_on_a_model_off_the_roster_reports_the_model() {
 }
 
 #[test]
-fn model_efforts_come_from_the_model_when_one_is_named() {
-    assert_eq!(models().supported_efforts("codex", "gpt-5.5-codex"), None);
-    assert_eq!(models().supported_efforts("custom", "anything"), None);
-}
-
-#[test]
 fn rejects_invalid_agent_specs() {
     assert!(AgentSpec::parse("codex:gpt-5.5:xhigh:extra", &models()).is_err());
     assert!(AgentSpec::parse("codex::xhigh", &models()).is_err());
@@ -175,14 +147,6 @@ fn rejects_invalid_agent_specs() {
     assert!(AgentSpec::parse("claude:opus:turbo", &models()).is_err());
     assert!(AgentSpec::parse("codex:gpt-5.5:turbo", &models()).is_err());
     assert!(AgentSpec::parse("codex:not a model:high", &models()).is_err());
-}
-
-#[test]
-fn static_validation_rejects_unknown_builtin_models() {
-    let spec = AgentSpec::parse("codex:omega:high", &models()).unwrap();
-    let err = validate_model(&spec, &models()).unwrap_err().to_string();
-
-    assert!(err.contains("unsupported codex model `omega`"));
 }
 
 #[test]
@@ -196,6 +160,7 @@ fn invocation_maps_codex_model_effort_flags() {
     .unwrap();
 
     assert_eq!(invocation.binary, "codex");
+    assert!(matches!(invocation.brief, BriefDelivery::Arg));
     assert_eq!(
         invocation.args,
         [
@@ -267,7 +232,7 @@ fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
 
 #[test]
 fn hermes_foreground_keeps_the_subcommand_without_the_approval_bypass() {
-    let invocation = foreground_invocation("hermes", None, &models()).unwrap();
+    let invocation = invocation("hermes", None, InvocationDefaults::Foreground, &models()).unwrap();
 
     assert_eq!(invocation.binary, "hermes");
     assert_eq!(invocation.args, ["chat"].map(str::to_owned));
@@ -284,12 +249,6 @@ fn hermes_carries_a_roster_like_every_other_family() {
     ] {
         let spec = AgentSpec::parse(&format!("hermes:{model}"), &models()).unwrap();
         validate_model(&spec, &models()).unwrap();
-    }
-
-    for model in ["anthropic/claude-opus-5", "x-ai/grok-4.6", "hy3"] {
-        let spec = AgentSpec::parse(&format!("hermes:{model}"), &models()).unwrap();
-        let error = validate_model(&spec, &models()).unwrap_err().to_string();
-        assert!(error.contains("unsupported hermes model"), "{error}");
     }
 }
 

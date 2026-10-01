@@ -6,26 +6,22 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     build_info, schema,
-    util::{absolute_path, current_dir_utf8},
+    util::{current_dir_utf8, print_structured_rows},
 };
 
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
+const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
 
 pub(crate) fn doctor() -> Result<()> {
     let workspace = current_dir_utf8()?;
-    println!("binary: {}", build_info::identity());
+    println!("binary: niles {}", build_info::CLAP_VERSION);
     println!("version: {}", build_info::VERSION);
     println!("git_hash: {}", build_info::GIT_HASH);
     println!("built_at: {}", build_info::BUILD_TIMESTAMP);
     println!("schema: {}", schema::CURRENT_SCHEMA);
     println!("workspace: {workspace}");
 
-    let mut observations = schema::scan_workspace(&workspace)?;
-    observations.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then_with(|| left.kind.cmp(&right.kind))
-    });
+    let observations = schema::scan_workspace(&workspace)?;
 
     let has_schema_problem = observations
         .iter()
@@ -33,15 +29,17 @@ pub(crate) fn doctor() -> Result<()> {
     if observations.is_empty() {
         println!("schemas: none");
     } else {
-        println!("schemas[{}]{{kind,path,status}}:", observations.len());
-        for observation in observations {
-            println!(
-                "  {},{},{}",
-                observation.kind.label(),
-                display_path(&workspace, &observation.path),
-                observation.status.summary()
-            );
-        }
+        let rows = observations
+            .iter()
+            .map(|observation| {
+                [
+                    observation.kind.label().to_owned(),
+                    display_path(&workspace, &observation.path),
+                    observation.status.summary().to_owned(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        print_structured_rows("schemas", ["kind", "path", "status"], &rows);
     }
 
     print_dev_mode(&workspace)?;
@@ -63,15 +61,17 @@ fn print_dev_mode(workspace: &Utf8Path) -> Result<()> {
     let dirty = worktree_dirty(workspace);
     println!(
         "source_head: {}",
-        source_hash
-            .as_deref()
-            .map_or(UNKNOWN_SOURCE_METADATA, |value| value)
+        match source_hash.as_deref() {
+            Some(value) => value,
+            None => UNKNOWN_SOURCE_METADATA,
+        }
     );
     println!(
         "source_head_time: {}",
-        source_time
-            .as_deref()
-            .map_or(UNKNOWN_SOURCE_METADATA, |value| value)
+        match source_time.as_deref() {
+            Some(value) => value,
+            None => UNKNOWN_SOURCE_METADATA,
+        }
     );
     println!("binary_head: {}", build_info::GIT_HASH);
     println!("binary_head_time: {}", build_info::BUILD_HEAD_TIMESTAMP);
@@ -118,16 +118,14 @@ fn stale_status(
         return "no".to_owned();
     }
 
-    let Some(source_time) = source_time.and_then(parse_time) else {
-        return "unknown (source HEAD differs from binary build)".to_owned();
-    };
-    let Some(build_time) = parse_time(build_info::BUILD_TIMESTAMP) else {
-        return "unknown (source HEAD differs from binary build)".to_owned();
-    };
-    if source_time > build_time {
-        "yes (source HEAD is newer than this binary)".to_owned()
-    } else {
-        "unknown (source HEAD differs from binary build)".to_owned()
+    match (
+        source_time.and_then(parse_time),
+        parse_time(build_info::BUILD_TIMESTAMP),
+    ) {
+        (Some(source), Some(build)) if source > build => {
+            "yes (source HEAD is newer than this binary)".to_owned()
+        }
+        _ => SOURCE_DIFFERS.to_owned(),
     }
 }
 
@@ -173,8 +171,7 @@ fn worktree_dirty(workspace: &Utf8Path) -> Option<bool> {
 }
 
 fn display_path(workspace: &Utf8Path, path: &Utf8Path) -> String {
-    let workspace = absolute_path(workspace).unwrap_or_else(|_| workspace.to_path_buf());
-    if let Ok(relative) = path.strip_prefix(&workspace) {
+    if let Ok(relative) = path.strip_prefix(workspace) {
         return relative.to_string();
     }
     path.to_string()

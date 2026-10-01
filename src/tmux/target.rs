@@ -69,12 +69,7 @@ impl WindowTarget {
     }
 }
 
-/// A tmux `-t` target: where the commands in this module are pointed.
-///
-/// A worker window is addressed as `session:window`, both halves anchored. The lead's own pane is
-/// a `%N` pane id, which tmux accepts as a complete target on its own: there is no session or
-/// window to spell, and inventing one would address a different thing — the lead is typed into
-/// through the pane it is running in, and that pane id is the only fact about it we have.
+/// A tmux `-t` target: an anchored worker window or the lead's `%N` pane id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TmuxTarget(String);
 
@@ -107,7 +102,7 @@ impl fmt::Display for TmuxTarget {
 /// it does so independently for the session and window halves. Unanchored,
 /// `-t niles:niles-auth` reaches `niles-auth-fix` once `niles-auth` is gone —
 /// exit 0, wrong window, no warning. `=` pins the component to an exact match.
-pub(crate) fn exact(name: &str) -> String {
+pub(super) fn exact(name: &str) -> String {
     format!("={name}")
 }
 
@@ -173,7 +168,7 @@ pub(crate) fn target_state(recorded: &WindowTarget, project: &Utf8Path, id: &str
 }
 
 fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
-    let output = match super::output([
+    let output = match super::output(&[
         "list-windows",
         "-t",
         &exact(recorded.session().as_str()),
@@ -195,7 +190,7 @@ fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
             WindowPresence::Absent => RecordedWindowState::WindowMissing,
         }
     } else {
-        let stderr = normalize_stderr(&output.stderr);
+        let stderr = super::normalize_stderr(&output.stderr);
         if is_missing_session_error(&stderr) {
             RecordedWindowState::SessionMissing
         } else {
@@ -239,13 +234,14 @@ fn recover_missing_target(
             };
         }
         [] => {}
-        [first, second, rest @ ..] => {
-            let mut targets = vec![first.render(), second.render()];
-            targets.extend(rest.iter().map(WindowTarget::render));
+        many => {
             return TargetState::Unknown {
                 error: format!(
                     "multiple tmux windows carry worker tags: {}",
-                    targets.join(", ")
+                    many.iter()
+                        .map(WindowTarget::render)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             };
         }
@@ -266,21 +262,20 @@ fn recover_missing_target(
         },
         [] if session_missing => TargetState::OrphanGone,
         [] => TargetState::WindowDead,
-        [first, second, rest @ ..] => {
-            let mut targets = vec![first.render(), second.render()];
-            targets.extend(rest.iter().map(WindowTarget::render));
-            TargetState::Unknown {
-                error: format!(
-                    "multiple untagged tmux windows match recorded name: {}",
-                    targets.join(", ")
-                ),
-            }
-        }
+        many => TargetState::Unknown {
+            error: format!(
+                "multiple untagged tmux windows match recorded name: {}",
+                many.iter()
+                    .map(WindowTarget::render)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        },
     }
 }
 
 fn list_tagged_windows() -> Result<Vec<TaggedWindow>> {
-    let output = super::output([
+    let output = super::output(&[
         "list-windows",
         "-a",
         "-F",
@@ -290,7 +285,7 @@ fn list_tagged_windows() -> Result<Vec<TaggedWindow>> {
     if !output.status.success() {
         bail!(
             "tmux list-windows across sessions failed: {}",
-            normalize_stderr(&output.stderr)
+            super::normalize_stderr(&output.stderr)
         );
     }
     parse_tagged_windows(&output.stdout)
@@ -332,7 +327,7 @@ fn parse_tagged_windows(stdout: &[u8]) -> Result<Vec<TaggedWindow>> {
 
 /// `name\tpane_dead`. Worker windows are kept after their agent exits so the pane stays
 /// readable, so presence in the listing is no longer the same question as being alive.
-const LIVE_WINDOW_FORMAT: &str = "#{window_name}\t#{pane_dead}";
+pub(super) const LIVE_WINDOW_FORMAT: &str = "#{window_name}\t#{pane_dead}";
 
 /// Whether the window is listed, and whether anything is still running in it. These are
 /// different questions: a window whose agent has exited is kept so its output stays readable,
@@ -354,8 +349,6 @@ pub(super) fn window_presence(stdout: &[u8], window_name: &str) -> WindowPresenc
                     WindowPresence::Live
                 };
             }
-            // A listing without the dead column predates this format; treat presence as live.
-            None if line == window_name => return WindowPresence::Live,
             _ => {}
         }
     }
@@ -364,13 +357,6 @@ pub(super) fn window_presence(stdout: &[u8], window_name: &str) -> WindowPresenc
 
 fn is_dead_pane(field: &str) -> bool {
     field.trim() == "1"
-}
-
-pub(super) fn normalize_stderr(stderr: &[u8]) -> String {
-    String::from_utf8_lossy(stderr)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn is_missing_session_error(stderr: &str) -> bool {
@@ -423,15 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_valid_window_target() {
-        let target = WindowTarget::parse("aquila:niles-auth-fix").unwrap();
-
-        assert_eq!(target.session().as_str(), "aquila");
-        assert_eq!(target.window(), "niles-auth-fix");
-        assert_eq!(target.render(), "aquila:niles-auth-fix");
-    }
-
-    #[test]
     fn rejects_missing_target_separator() {
         let err = WindowTarget::parse("niles-auth-fix").unwrap_err();
 
@@ -448,13 +425,7 @@ mod tests {
     #[test]
     fn rejects_empty_window() {
         let err = WindowTarget::parse("aquila:").unwrap_err();
-        let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
-
-        assert!(
-            chain
-                .iter()
-                .any(|message| message.contains("window name cannot be empty"))
-        );
+        assert!(format!("{err:#}").contains("window name cannot be empty"));
     }
 
     #[test]
@@ -472,8 +443,7 @@ mod tests {
         assert_eq!(rows[1].worker_id, None);
     }
 
-    /// Worker windows outlive their agent so the pane stays readable, so "listed" and "live"
-    /// are now different questions.
+    /// Worker windows outlive their agent, so listed and live are different states.
     #[test]
     fn a_dead_pane_is_present_but_not_live() {
         assert_eq!(

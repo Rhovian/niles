@@ -7,17 +7,12 @@ use std::{fs, path::Path, process::Command};
 
 #[test]
 fn doctor_reports_binary_identity_and_workspace_schema_state() {
-    let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-doctor-test");
     let home = niles_home(&workspace);
     write_workspace_manifest(&workspace, "claude", "codex", "claude", "claude");
-    fs::create_dir_all(home.join("runs")).unwrap();
-    fs::write(home.join("runs/index.json"), "{ invalid global index").unwrap();
 
-    let output = Command::new(niles)
+    let output = niles_bare(&workspace, &home)
         .arg("doctor")
-        .current_dir(&workspace)
-        .env("NILES_HOME", home)
         .output()
         .unwrap();
 
@@ -29,13 +24,11 @@ fn doctor_reports_binary_identity_and_workspace_schema_state() {
     assert!(stdout.contains("schema: 2"));
     assert!(stdout.contains("schemas[1]{kind,path,status}:"));
     assert!(stdout.contains("workspace manifest,.niles/manifest.yaml,current schema 2"));
-    assert!(!stdout.contains("global Niles index"));
     assert!(stdout.contains("dev_mode: no"));
 }
 
 #[test]
 fn doctor_reports_workspace_artifact_classes_nonzero() {
-    let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-doctor-artifacts-test");
     let home = niles_home(&workspace);
 
@@ -54,10 +47,8 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
     )
     .unwrap();
 
-    let output = Command::new(niles)
+    let output = niles_bare(&workspace, &home)
         .arg("doctor")
-        .current_dir(&workspace)
-        .env("NILES_HOME", &home)
         .output()
         .unwrap();
 
@@ -69,13 +60,11 @@ fn doctor_reports_workspace_artifact_classes_nonzero() {
     assert!(stdout.contains(
         "manager session metadata,.niles/sessions/session-1/session.json,older schema 1"
     ));
-    assert!(!stdout.contains("global Niles index"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("doctor found non-current"));
 }
 
 #[test]
 fn doctor_dirty_source_tree_never_reports_stale_no() {
-    let niles = env!("CARGO_BIN_EXE_niles");
     let workspace = temp_workspace("niles-doctor-dirty-test");
     fs::create_dir_all(workspace.join("src")).unwrap();
     fs::write(
@@ -108,10 +97,8 @@ edition = "2024"
     )
     .unwrap();
 
-    let output = Command::new(niles)
+    let output = niles_bare(&workspace, &niles_home(&workspace))
         .arg("doctor")
-        .current_dir(&workspace)
-        .env("NILES_HOME", niles_home(&workspace))
         .output()
         .unwrap();
 

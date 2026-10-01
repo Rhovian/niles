@@ -7,22 +7,20 @@ use super::{
     archive::final_pane_path,
     meta::report_path,
     resolve::{latest_archive, resolve_live_worker_if_exists},
-    validation::validate_id,
 };
 
 pub fn report(id: String) -> Result<()> {
-    validate_id(&id)?;
     if let Some(worker_dir) = resolve_live_worker_if_exists(&id)? {
-        return print_report(&id, &worker_dir, None);
+        return print_report(&id, &worker_dir, false);
     }
 
     let Some(archive) = latest_archive(&id)? else {
         bail!("no report found for worker '{id}': no live worker or archive found");
     };
-    print_report(&id, &archive.archive_dir, Some(&archive.archive_dir))
+    print_report(&id, &archive, true)
 }
 
-fn print_report(id: &str, dir: &Utf8Path, archive_dir: Option<&Utf8Path>) -> Result<()> {
+fn print_report(id: &str, dir: &Utf8Path, archived: bool) -> Result<()> {
     let path = report_path(dir);
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
@@ -39,8 +37,8 @@ fn print_report(id: &str, dir: &Utf8Path, archive_dir: Option<&Utf8Path>) -> Res
         }
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
-    if let Some(archive_dir) = archive_dir {
-        eprintln!("serving archived report from {path} (archive: {archive_dir})");
+    if archived {
+        eprintln!("serving archived report from {path} (archive: {dir})");
     }
     print!("{body}");
     Ok(())
