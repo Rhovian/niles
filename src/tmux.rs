@@ -47,12 +47,61 @@ pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> 
 
 /// Captures only the pane's currently visible screen, excluding scrollback.
 pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
-    capture(target, &["capture-pane", "-p", "-J", "-t", target.as_str()])
+    let args = &["capture-pane", "-p", "-t", target.as_str()];
+    let output =
+        output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
+    if !output.status.success() {
+        bail!(
+            "tmux capture-pane failed for {target}: {}",
+            normalize_stderr(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Keeps SGR styling so a composer placeholder can be distinguished from typed text.
-pub(crate) fn capture_styled_pane(target: &TmuxTarget) -> Result<String> {
-    capture(target, &["capture-pane", "-p", "-e", "-t", target.as_str()])
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CursorPosition {
+    pub x: usize,
+    pub y: usize,
+    pub visible: bool,
+}
+
+pub(crate) fn cursor_position(target: &TmuxTarget) -> Result<CursorPosition> {
+    let args = &[
+        "display",
+        "-p",
+        "-t",
+        target.as_str(),
+        "#{cursor_x} #{cursor_y} #{cursor_flag}",
+    ];
+    let output = output(args)?;
+    if !output.status.success() {
+        bail!(
+            "tmux display failed for {target}: {}",
+            normalize_stderr(&output.stderr)
+        );
+    }
+    let value = String::from_utf8(output.stdout).context("tmux cursor position was not UTF-8")?;
+    let mut parts = value.split_whitespace();
+    let x = parts
+        .next()
+        .context("tmux cursor x missing")?
+        .parse()
+        .context("invalid tmux cursor x")?;
+    let y = parts
+        .next()
+        .context("tmux cursor y missing")?
+        .parse()
+        .context("invalid tmux cursor y")?;
+    let visible = match parts.next() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => bail!("invalid tmux cursor flag: {value:?}"),
+    };
+    if parts.next().is_some() {
+        bail!("unexpected tmux cursor fields: {value:?}");
+    }
+    Ok(CursorPosition { x, y, visible })
 }
 
 fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {

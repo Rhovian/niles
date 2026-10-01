@@ -31,7 +31,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agents::{ComposerRecognizer, ComposerState},
+    agents::ComposerState,
     tmux::{self, TmuxTarget},
     worker::{self, WorkerSnapshot, worker_snapshot},
     workspace_manifest,
@@ -123,7 +123,7 @@ pub(crate) fn start(
     session_dir: &Utf8Path,
     workspace: &Utf8Path,
     lead_pane: Option<&str>,
-    composer: Option<ComposerRecognizer>,
+    composer: Option<&'static str>,
 ) -> Watcher {
     let log = WatchLog {
         path: session_dir.join(WATCH_LOG),
@@ -216,7 +216,7 @@ fn watch(
     workspace: Utf8PathBuf,
     log: WatchLog,
     target: TmuxTarget,
-    composer: Option<ComposerRecognizer>,
+    composer: Option<&'static str>,
     stop: Arc<AtomicBool>,
 ) {
     let pane = target.as_str().to_owned();
@@ -414,17 +414,19 @@ trait Sink {
 struct WatchSink {
     target: TmuxTarget,
     log: WatchLog,
-    composer: Option<ComposerRecognizer>,
+    composer: Option<&'static str>,
 }
 
 impl Sink for WatchSink {
     fn composer_state(&mut self) -> ComposerState {
-        let Some(recognize) = self.composer else {
+        let Some(marker) = self.composer else {
             return ComposerState::Unknown;
         };
-        match tmux::capture_styled_pane(&self.target) {
-            Ok(capture) => recognize(&capture),
-            Err(err) => {
+        let screen = tmux::capture_visible_pane(&self.target);
+        let cursor = tmux::cursor_position(&self.target);
+        match (screen, cursor) {
+            (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, marker),
+            (Err(err), _) | (_, Err(err)) => {
                 self.note(&format!("could not read lead composer: {err:#}"));
                 ComposerState::Unknown
             }

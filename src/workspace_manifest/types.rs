@@ -71,10 +71,7 @@ impl From<String> for ReviewerBinding {
 
 impl From<ReviewerBinding> for String {
     fn from(value: ReviewerBinding) -> Self {
-        match value {
-            ReviewerBinding::Lead => "lead".to_owned(),
-            ReviewerBinding::Agent(agent) => agent,
-        }
+        value.as_str().to_owned()
     }
 }
 

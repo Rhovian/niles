@@ -6,7 +6,7 @@ use dialoguer::{Select, console::Term};
 use crate::{
     agents,
     config::spec::{AgentConfig, ProjectConfig},
-    workspace_manifest::ReviewerBinding,
+    workspace_manifest::{ReviewerBinding, WorkspaceManifest},
 };
 
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
@@ -31,13 +31,16 @@ pub(crate) fn prompt_reviewer_value(
     let term = Term::stderr();
     let default_spec = match default {
         ReviewerBinding::Agent(agent) => agents::AgentSpec::parse(agent, &config.models)?,
-        ReviewerBinding::Lead => agents::AgentSpec::parse("claude", &config.models)?,
+        ReviewerBinding::Lead => agents::AgentSpec::parse(
+            WorkspaceManifest::default().reviewer.as_str(),
+            &config.models,
+        )?,
     };
     let choices = reviewer_choices(default, &default_spec, &config.agents);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
     match &choices[index].value {
-        ReviewerChoice::Lead => Ok(ReviewerBinding::Lead),
-        ReviewerChoice::Agent(agent) => {
+        ReviewerBinding::Lead => Ok(ReviewerBinding::Lead),
+        ReviewerBinding::Agent(agent) => {
             prompt_selected_agent(&term, agent, &default_spec, config).map(ReviewerBinding::Agent)
         }
     }
@@ -47,26 +50,21 @@ fn reviewer_choices(
     default: &ReviewerBinding,
     default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Vec<MenuChoice<ReviewerChoice>> {
+) -> Vec<MenuChoice<ReviewerBinding>> {
     let mut choices = agent_choices(default.as_str(), default_spec, agent_configs)
         .into_iter()
         .map(|choice| MenuChoice {
             label: choice.label,
-            value: ReviewerChoice::Agent(choice.value),
+            value: ReviewerBinding::Agent(choice.value),
             is_default: choice.is_default,
         })
         .collect::<Vec<_>>();
     choices.push(MenuChoice {
         label: "lead".to_owned(),
-        value: ReviewerChoice::Lead,
+        value: ReviewerBinding::Lead,
         is_default: matches!(default, ReviewerBinding::Lead),
     });
     choices
-}
-
-enum ReviewerChoice {
-    Lead,
-    Agent(String),
 }
 
 fn prompt_selected_agent(

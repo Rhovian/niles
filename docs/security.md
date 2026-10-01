@@ -96,10 +96,11 @@ empty, the watcher recognizes specific Claude and Codex workspace-trust prompts 
 exact workspace, appends a `blocked:` status, and never accepts the prompt or sends keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
-Before sending a lead nudge, the watcher also captures the lead pane with styling and holds the
-nudge only when the selected Claude or Codex composer recognizer sees typed text. Unrecognized
-screens and capture failures deliver; a continuous hold ends after five minutes. The recognizer
-reads terminal output as state only and never submits captured text.
+Before sending a lead nudge, the watcher captures the visible lead pane and queries its cursor.
+It holds the nudge only when the cursor is visible on a typed Claude or Codex composer row, or an
+indented continuation of one. An absent marker, hidden cursor, or failed query delivers; a
+continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
+as state only and never submits captured text.
 
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared

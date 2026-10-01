@@ -10,9 +10,7 @@ pub(crate) mod roster;
 #[cfg(test)]
 mod tests;
 
-pub use families::{
-    BriefDelivery, ComposerRecognizer, ComposerState, known_agent_ids, profile_for,
-};
+pub use families::{BriefDelivery, ComposerState, known_agent_ids, profile_for};
 pub use roster::ModelRoster;
 
 const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;
