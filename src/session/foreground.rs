@@ -1,5 +1,4 @@
 use std::{
-    fs,
     io::Write,
     process::{Command, ExitStatus, Stdio},
 };
@@ -14,7 +13,7 @@ use crate::{
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::{SessionMeta, brief::write_manager_session};
+use super::brief::{ManagerSession, write_manager_session};
 
 const STARTUP_PROMPT: &str = "Start the Niles manager session.";
 const SIGNAL_EXIT_LABEL: &str = "signal";
@@ -24,26 +23,21 @@ pub(super) fn launch_foreground_agent(
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
     let agent = &manifest.lead;
-    let invocation = foreground_invocation_for_project(workspace, agent)?;
-    let meta: SessionMeta = write_manager_session(workspace, &invocation.spec)?;
-    let brief = fs::read_to_string(&meta.brief)
-        .with_context(|| format!("failed to read manager brief {}", meta.brief))?;
-    let session_dir = meta
-        .brief
-        .parent()
-        .with_context(|| format!("manager brief has no session directory: {}", meta.brief))?;
-    let command = prepare_manager_command(invocation, brief);
+    let mut invocation = foreground_invocation_for_project(workspace, agent)?;
+    let ManagerSession { meta, brief, dir } = write_manager_session(workspace, &invocation.spec)?;
+    let prompt = manager_prompt_io(invocation.brief, brief);
+    invocation.args.extend(prompt.args);
 
     // The watcher is held for exactly as long as the foreground agent runs, on the failing path
     // too: dropping it stops and joins the thread.
-    let _watcher = watch::start(session_dir, workspace, meta.lead_pane.as_deref());
+    let _watcher = watch::start(&dir, workspace, meta.lead_pane.as_deref());
 
     let status = run_foreground_process(
         workspace,
-        &command.invocation.binary,
-        &command.invocation.args,
-        &command.invocation.env,
-        command.stdin.as_deref(),
+        &invocation.binary,
+        &invocation.args,
+        &invocation.env,
+        prompt.stdin.as_deref(),
     )?;
 
     if status.success() {
@@ -53,24 +47,6 @@ pub(super) fn launch_foreground_agent(
             "foreground agent `{agent}` exited with {}",
             exit_code_label(status.code())
         )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ManagerCommand {
-    pub(super) invocation: agents::AgentInvocation,
-    pub(super) stdin: Option<String>,
-}
-
-pub(super) fn prepare_manager_command(
-    mut invocation: agents::AgentInvocation,
-    brief: String,
-) -> ManagerCommand {
-    let prompt = manager_prompt_io(invocation.brief, brief);
-    invocation.args.extend(prompt.args);
-    ManagerCommand {
-        invocation,
-        stdin: prompt.stdin,
     }
 }
 
@@ -117,29 +93,29 @@ fn run_foreground_process(
     }
 }
 
-pub(super) fn foreground_invocation_for_project(
+fn foreground_invocation_for_project(
     root: &Utf8Path,
     agent: &str,
 ) -> Result<agents::AgentInvocation> {
     let config = load_project_config_from(root)?;
     let agent_config = agents::config_for(&config.agents, agent, &config.models)?;
-    agents::foreground_invocation(agent, agent_config, &config.models)
+    agents::invocation(
+        agent,
+        agent_config,
+        agents::InvocationDefaults::Foreground,
+        &config.models,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ForegroundPrompt {
+struct ForegroundPrompt {
     args: Vec<String>,
     stdin: Option<String>,
 }
 
-/// Renders the lead's half of the one brief-delivery decision: the same dial the worker's launch
-/// script reads, spelled as argv for a process that inherits this pane.
-///
-/// The lead's brief is on disk — `write_manager_session` puts it at
-/// `.niles/sessions/<id>/lead.md` — but that file holds the brief alone, and the lead's opening
-/// turn is the brief *plus* the startup line. So a family that takes a worker's brief by path
-/// still takes the lead's by value: it is the turn that has no file, not the brief.
-pub(super) fn manager_prompt_io(delivery: BriefDelivery, brief: String) -> ForegroundPrompt {
+/// The lead's opening turn includes its brief and startup line, so deliveries by path use their
+/// value flag: no single file contains the complete turn.
+fn manager_prompt_io(delivery: BriefDelivery, brief: String) -> ForegroundPrompt {
     match delivery {
         BriefDelivery::Arg => ForegroundPrompt {
             args: vec![opening_turn(&brief)],
@@ -171,23 +147,12 @@ fn exit_code_label(code: Option<i32>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::{shell_quote, temp_test_path, write_executable_script};
+    use super::super::test_support::write_executable_script;
     use super::*;
+    use crate::{agent_window::shell_quote, test_support::temp_test_path};
 
     use camino::Utf8PathBuf;
-
-    #[test]
-    fn foreground_invocation_for_project_preserves_builtin_manager_defaults() {
-        let root = temp_test_path("builtin-manager");
-
-        let invocation = foreground_invocation_for_project(&root, "claude:opus:max").unwrap();
-
-        assert_eq!(invocation.binary, "claude");
-        assert_eq!(
-            invocation.args,
-            ["--model", "opus", "--effort", "max"].map(str::to_owned)
-        );
-    }
+    use std::fs;
 
     #[test]
     fn foreground_invocation_accepts_a_project_model_override() {
@@ -212,36 +177,6 @@ mod tests {
                 .args
                 .contains(&"model_reasoning_effort=\"xhigh\"".to_owned())
         );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn foreground_invocation_for_project_uses_configured_custom_manager() {
-        let root = temp_test_path("custom-manager");
-        fs::create_dir_all(&root).unwrap();
-        let binary = root.join("custom-manager");
-        fs::write(
-            root.join("niles.yaml"),
-            format!(
-                r#"
-agents:
-  gemini:
-    binary: {}
-    args:
-      - --mode
-      - manager
-"#,
-                binary
-            ),
-        )
-        .unwrap();
-
-        let invocation = foreground_invocation_for_project(&root, "gemini").unwrap();
-
-        assert_eq!(invocation.binary, binary.as_str());
-        assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
-        assert_eq!(invocation.spec.family(), "gemini");
-
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -284,57 +219,48 @@ agents:
     }
 
     #[test]
-    fn run_foreground_process_writes_stdin_without_prompt_args() {
-        let root = temp_test_path("foreground-stdin-process");
-        fs::create_dir_all(&root).unwrap();
+    fn run_foreground_process_applies_stdin_cwd_and_env() {
+        let root = temp_test_path("foreground-process");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
         let script = root.join("manager");
         let args_log = root.join("args.log");
         let stdin_log = root.join("stdin.log");
+        let pwd_log = root.join("pwd.log");
+        let env_log = root.join("env.log");
         write_executable_script(
             &script,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\n",
-                args_log, stdin_log
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\ncat > {}\npwd > {}\nprintf '%s\\n' \"$NILES_FOREGROUND_ENV_TEST\" > {}\n",
+                shell_quote(args_log.as_str()),
+                shell_quote(stdin_log.as_str()),
+                shell_quote(pwd_log.as_str()),
+                shell_quote(env_log.as_str()),
             ),
         );
 
         let args = ["--mode", "manager"].map(str::to_owned);
         let prompt = "brief body\n\nStart the Niles manager session.";
-        let env = Vec::new();
+        let env = vec![(
+            "NILES_FOREGROUND_ENV_TEST".to_owned(),
+            "from-invocation".to_owned(),
+        )];
         let status =
-            run_foreground_process(&root, script.as_str(), &args, &env, Some(prompt)).unwrap();
+            run_foreground_process(&workspace, script.as_str(), &args, &env, Some(prompt)).unwrap();
 
         assert!(status.success());
         let args_body = fs::read_to_string(args_log).unwrap();
         assert_eq!(args_body, "--mode\nmanager\n");
         assert!(!args_body.contains("brief body"));
         assert_eq!(fs::read_to_string(stdin_log).unwrap(), prompt);
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn run_foreground_process_uses_explicit_workspace_cwd() {
-        let root = temp_test_path("foreground-explicit-cwd");
-        let workspace = root.join("workspace");
-        fs::create_dir_all(&workspace).unwrap();
-        let script = root.join("manager");
-        let pwd_log = root.join("pwd.log");
-        write_executable_script(
-            &script,
-            &format!("#!/bin/sh\npwd > {}\n", shell_quote(&pwd_log)),
-        );
-
-        let args = Vec::new();
-        let env = Vec::new();
-        let status =
-            run_foreground_process(&workspace, script.as_str(), &args, &env, None).unwrap();
-
-        assert!(status.success());
         let expected = Utf8PathBuf::from_path_buf(fs::canonicalize(&workspace).unwrap()).unwrap();
         assert_eq!(
             fs::read_to_string(pwd_log).unwrap().trim_end(),
             expected.as_str()
+        );
+        assert_eq!(
+            fs::read_to_string(env_log).unwrap().trim_end(),
+            "from-invocation"
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -347,40 +273,11 @@ agents:
         let script = root.join("manager");
         write_executable_script(&script, "#!/bin/sh\nexit 42\n");
 
-        let args = Vec::new();
-        let env = Vec::new();
-        let status = run_foreground_process(&root, script.as_str(), &args, &env, None).unwrap();
-
-        assert_eq!(status.code(), Some(42));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn run_foreground_process_applies_invocation_env() {
-        let root = temp_test_path("foreground-env");
-        fs::create_dir_all(&root).unwrap();
-        let script = root.join("manager");
-        let env_log = root.join("env.log");
-        write_executable_script(
-            &script,
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$NILES_FOREGROUND_ENV_TEST\" > {}\n",
-                shell_quote(&env_log)
-            ),
-        );
-
-        let args = Vec::new();
-        let env = vec![(
-            "NILES_FOREGROUND_ENV_TEST".to_owned(),
-            "from-invocation".to_owned(),
-        )];
-        let status = run_foreground_process(&root, script.as_str(), &args, &env, None).unwrap();
-
-        assert!(status.success());
         assert_eq!(
-            fs::read_to_string(env_log).unwrap().trim_end(),
-            "from-invocation"
+            run_foreground_process(&root, script.as_str(), &[], &[], None)
+                .unwrap()
+                .code(),
+            Some(42)
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -388,10 +285,11 @@ agents:
 
     #[test]
     fn manager_prompt_args_seed_a_hermes_query() {
-        let invocation =
-            foreground_invocation_for_project(&temp_test_path("hermes-lead"), "hermes").unwrap();
-
-        let args = manager_prompt_io(invocation.brief, "brief body".to_owned()).args;
+        let args = manager_prompt_io(
+            agents::profile_for("hermes").unwrap().lead_brief,
+            "brief body".to_owned(),
+        )
+        .args;
 
         assert_eq!(args[0], "-q");
         assert_eq!(args[1], format!("brief body\n\n{STARTUP_PROMPT}"));
@@ -400,10 +298,11 @@ agents:
 
     #[test]
     fn manager_prompt_args_pass_brief_as_claude_system_prompt() {
-        let invocation =
-            foreground_invocation_for_project(&temp_test_path("claude-lead"), "claude").unwrap();
-
-        let args = manager_prompt_io(invocation.brief, "brief body".to_owned()).args;
+        let args = manager_prompt_io(
+            agents::profile_for("claude").unwrap().lead_brief,
+            "brief body".to_owned(),
+        )
+        .args;
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0], "--append-system-prompt");

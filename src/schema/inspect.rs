@@ -2,25 +2,27 @@ use std::fs;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::Value as JsonValue;
 
-use crate::util::read_dir_utf8_paths;
+use crate::{
+    session::sessions_dir,
+    store::{self, ARCHIVE_DIR, paths::NILES_DIR},
+    util::read_dir_utf8_paths,
+};
 
 use super::{
     kind::ArtifactKind,
     status::{SchemaObservation, SchemaStatus},
-    version::schema_from_json,
+    version::{SchemaProbe, schema_from_json},
     yaml::probe_schema,
 };
-use crate::store::paths::NILES_DIR;
-use crate::store::{self, ARCHIVE_DIR};
 
-pub(crate) fn inspect_json(path: &Utf8Path, kind: ArtifactKind) -> SchemaObservation {
+fn inspect(
+    path: &Utf8Path,
+    kind: ArtifactKind,
+    probe: fn(&str) -> Option<SchemaProbe>,
+) -> SchemaObservation {
     let status = match fs::read_to_string(path) {
-        Ok(body) => match serde_json::from_str::<JsonValue>(&body) {
-            Ok(value) => schema_from_json(&value).into_status(),
-            Err(_) => SchemaStatus::Malformed,
-        },
+        Ok(body) => probe(&body).map_or(SchemaStatus::Malformed, SchemaProbe::into_status),
         Err(_) => SchemaStatus::Unreadable,
     };
     SchemaObservation {
@@ -30,19 +32,20 @@ pub(crate) fn inspect_json(path: &Utf8Path, kind: ArtifactKind) -> SchemaObserva
     }
 }
 
-pub(crate) fn inspect_yaml(path: &Utf8Path, kind: ArtifactKind) -> SchemaObservation {
-    let status = match fs::read_to_string(path) {
-        Ok(body) => match probe_schema(&body) {
-            Ok(probe) => probe.into_status(),
-            Err(_) => SchemaStatus::Malformed,
-        },
-        Err(_) => SchemaStatus::Unreadable,
+fn json_probe(body: &str) -> Option<SchemaProbe> {
+    let value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(_) => return None,
     };
-    SchemaObservation {
-        kind,
-        path: path.to_path_buf(),
-        status,
-    }
+    Some(schema_from_json(&value))
+}
+
+fn yaml_probe(body: &str) -> Option<SchemaProbe> {
+    let probe = match probe_schema(body) {
+        Ok(probe) => probe,
+        Err(_) => return None,
+    };
+    Some(probe)
 }
 
 pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> {
@@ -52,10 +55,11 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     }
 
     let mut observations = Vec::new();
-    push_yaml_if_file(
+    push_if_file(
         &mut observations,
         niles.join("manifest.yaml"),
         ArtifactKind::WorkspaceManifest,
+        yaml_probe,
     );
 
     // Archives nest one level deeper and carry no worker `meta.json`.
@@ -70,20 +74,22 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
         if name == ARCHIVE_DIR {
             continue;
         }
-        push_json_if_file(
+        push_if_file(
             &mut observations,
             path.join("meta.json"),
             ArtifactKind::WorkerMetadata,
+            json_probe,
         );
     }
 
-    let sessions = niles.join("sessions");
+    let sessions = sessions_dir(root);
     for path in read_dir_paths(&mut observations, &sessions) {
         if path.is_dir() {
-            push_json_if_file(
+            push_if_file(
                 &mut observations,
                 path.join("session.json"),
                 ArtifactKind::ManagerSession,
+                json_probe,
             );
         }
     }
@@ -96,23 +102,14 @@ pub(crate) fn scan_workspace(root: &Utf8Path) -> Result<Vec<SchemaObservation>> 
     Ok(observations)
 }
 
-fn push_json_if_file(
+fn push_if_file(
     observations: &mut Vec<SchemaObservation>,
     path: Utf8PathBuf,
     kind: ArtifactKind,
+    probe: fn(&str) -> Option<SchemaProbe>,
 ) {
     if path.is_file() {
-        observations.push(inspect_json(&path, kind));
-    }
-}
-
-fn push_yaml_if_file(
-    observations: &mut Vec<SchemaObservation>,
-    path: Utf8PathBuf,
-    kind: ArtifactKind,
-) {
-    if path.is_file() {
-        observations.push(inspect_yaml(&path, kind));
+        observations.push(inspect(&path, kind, probe));
     }
 }
 
@@ -133,9 +130,8 @@ fn read_dir_paths(observations: &mut Vec<SchemaObservation>, dir: &Utf8Path) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::test_support::temp_test_path;
+    use crate::test_support::temp_test_path;
 
-    #[cfg(unix)]
     #[test]
     fn worker_scan_excludes_the_archive_directory() {
         let root = temp_test_path("scan-excludes-archivedir");
@@ -162,7 +158,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn unreadable_directories_are_reported_without_aborting_scan() {
         use std::os::unix::fs::PermissionsExt;

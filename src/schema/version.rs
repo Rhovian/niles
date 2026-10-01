@@ -35,14 +35,9 @@ pub(in crate::schema) fn reject_incompatible_schema(
 ) -> Result<()> {
     match probe {
         SchemaProbe::Schema(schema) if schema <= CURRENT_SCHEMA => Ok(()),
-        SchemaProbe::Schema(schema) => {
-            bail!(
-                "{} {path} was written by a newer niles (schema {schema}, this binary expects {}); upgrade this binary, or use the newer binary that wrote it",
-                kind.label(),
-                CURRENT_SCHEMA
-            )
+        SchemaProbe::Schema(_) | SchemaProbe::Invalid => {
+            bail!("{}", deserialize_failure_message(path, kind, probe))
         }
-        SchemaProbe::Invalid => bail!("{}", deserialize_failure_message(path, kind, probe)),
     }
 }
 

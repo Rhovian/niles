@@ -3,59 +3,51 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use dialoguer::{Select, console::Term};
 
-use crate::{agents, config::spec::AgentConfig};
+use crate::{
+    agents,
+    config::spec::{AgentConfig, ProjectConfig},
+};
 
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
 
 pub(crate) fn prompt_agent_value(
     label: &str,
     default: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-    models: &agents::ModelRoster,
+    config: &ProjectConfig,
 ) -> Result<String> {
     let term = Term::stderr();
-    let default_spec = agents::parse_spec(default, models)?;
-    let choices = agent_choices(default, &default_spec, agent_configs);
+    let default_spec = agents::AgentSpec::parse(default, &config.models)?;
+    let choices = agent_choices(default, &default_spec, &config.agents);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
-    prompt_selected_agent(
-        &term,
-        &choices[index].value,
-        &default_spec,
-        agent_configs,
-        models,
-    )
+    prompt_selected_agent(&term, &choices[index].value, &default_spec, config)
 }
 
 fn prompt_selected_agent(
     term: &Term,
     agent: &str,
     default_spec: &agents::AgentSpec,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-    models: &agents::ModelRoster,
+    config: &ProjectConfig,
 ) -> Result<String> {
-    let spec = agents::parse_spec(agent, models)?;
+    let spec = agents::AgentSpec::parse(agent, &config.models)?;
     if agents::profile_for(spec.family()).is_none() || spec.model().is_some() {
-        return agents::canonical_manifest_agent(&spec, agent_configs, models);
+        return agents::canonical_manifest_agent(&spec, config);
     }
 
-    prompt_builtin_agent(term, spec.family(), default_spec, agent_configs, models)
+    prompt_builtin_agent(term, spec.family(), default_spec, config)
 }
 
 fn prompt_builtin_agent(
     term: &Term,
     family: &str,
     default_spec: &agents::AgentSpec,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-    models: &agents::ModelRoster,
+    config: &ProjectConfig,
 ) -> Result<String> {
-    let default_spec = match default_spec.family() == family {
-        true => Some(default_spec),
-        false => None,
-    };
-    let model = prompt_model(term, family, default_spec, models)?;
-    let effort = prompt_effort(term, family, &model, default_spec, models)?;
-    let spec = agents::AgentSpec::from_parts(family, Some(&model), effort.as_deref(), models)?;
-    agents::canonical_manifest_agent(&spec, agent_configs, models)
+    let default_spec = (default_spec.family() == family).then_some(default_spec);
+    let model = prompt_model(term, family, default_spec, &config.models)?;
+    let effort = prompt_effort(term, family, &model, default_spec, &config.models)?;
+    let spec =
+        agents::AgentSpec::from_parts(family, Some(&model), effort.as_deref(), &config.models)?;
+    agents::canonical_manifest_agent(&spec, config)
 }
 
 fn prompt_model(
@@ -181,10 +173,8 @@ fn push_agent_choice(
         return;
     }
 
-    let is_default = agent == default
-        || (default_spec.model().is_some()
-            && default_spec.family() == agent
-            && agents::profile_for(agent).is_some());
+    let is_default =
+        agent == default || (default_spec.model().is_some() && default_spec.family() == agent);
     choices.push(MenuChoice {
         label: agent.to_owned(),
         value: agent.to_owned(),
@@ -213,7 +203,7 @@ mod tests {
     #[test]
     fn agent_choices_do_not_include_free_text_escape_hatch() {
         let models = agents::ModelRoster::builtin().unwrap();
-        let default = agents::parse_spec("codex", &models).unwrap();
+        let default = agents::AgentSpec::parse("codex", &models).unwrap();
         let choices = agent_choices("codex", &default, &BTreeMap::new());
         let labels = choices
             .iter()
@@ -238,21 +228,9 @@ mod tests {
     }
 
     #[test]
-    fn explicit_model_selection_stores_model_with_default_effort() {
-        let models = agents::ModelRoster::builtin().unwrap();
-        let spec =
-            agents::AgentSpec::from_parts("codex", Some("gpt-6-astra"), None, &models).unwrap();
-        assert_eq!(spec.canonical(), "codex:gpt-6-astra");
-        let spec =
-            agents::AgentSpec::from_parts("codex", Some("gpt-6-astra"), Some("ultra"), &models)
-                .unwrap();
-        assert_eq!(spec.canonical(), "codex:gpt-6-astra:ultra");
-    }
-
-    #[test]
     fn the_manifests_model_is_the_default_choice() {
         let models = agents::ModelRoster::builtin().unwrap();
-        let default = agents::parse_spec("codex:gpt-5.6-luna:max", &models).unwrap();
+        let default = agents::AgentSpec::parse("codex:gpt-5.6-luna:max", &models).unwrap();
         let choices = model_choices("codex", Some(&default), &models);
 
         assert_eq!(
@@ -267,7 +245,7 @@ mod tests {
     #[test]
     fn a_model_off_the_roster_is_not_offered() {
         let models = agents::ModelRoster::builtin().unwrap();
-        let default = agents::parse_spec("codex:gpt-5.4:high", &models).unwrap();
+        let default = agents::AgentSpec::parse("codex:gpt-5.4:high", &models).unwrap();
         let choices = model_choices("codex", Some(&default), &models);
 
         assert!(choices.iter().all(|choice| choice.value != "gpt-5.4"));

@@ -1,11 +1,8 @@
-use std::{collections::BTreeMap, io::Write};
+use std::io::Write;
 
 use anyhow::Result;
 
-use crate::{
-    agents::{self, ModelRoster},
-    config::spec::AgentConfig,
-};
+use crate::{agents, config::spec::ProjectConfig};
 
 use super::WorkspaceManifest;
 
@@ -20,14 +17,13 @@ const MISSING: &str = "-";
 pub(super) fn print_manifest_roles<W: Write>(
     output: &mut W,
     manifest: &WorkspaceManifest,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-    models: &ModelRoster,
+    config: &ProjectConfig,
 ) -> Result<()> {
     let rows = [
-        role_row("lead", &manifest.lead, agent_configs, models),
-        role_row("worker", &manifest.worker, agent_configs, models),
-        role_row("reviewer", &manifest.reviewer, agent_configs, models),
-        role_row("security", &manifest.security, agent_configs, models),
+        role_row("lead", &manifest.lead, config),
+        role_row("worker", &manifest.worker, config),
+        role_row("reviewer", &manifest.reviewer, config),
+        role_row("security", &manifest.security, config),
     ];
 
     let role_width = rows.iter().map(|row| row.role.len()).fold(0, usize::max);
@@ -59,17 +55,11 @@ struct RoleRow {
     invalid_reason: Option<String>,
 }
 
-fn role_row(
-    role: &'static str,
-    value: &str,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-    models: &ModelRoster,
-) -> RoleRow {
+fn role_row(role: &'static str, value: &str, config: &ProjectConfig) -> RoleRow {
     // Validate through the same contract the picker writes with, so a binding
     // niles would refuse to launch is flagged here, where it can be fixed.
-    let spec = agents::parse_spec(value, models).and_then(|spec| {
-        agents::canonical_manifest_agent(&spec, agent_configs, models).map(|_| spec)
-    });
+    let spec = agents::AgentSpec::parse(value, &config.models)
+        .and_then(|spec| agents::canonical_manifest_agent(&spec, config).map(|_| spec));
 
     match spec {
         Ok(spec) => RoleRow {
@@ -102,9 +92,7 @@ fn clamp(value: &str, max: usize) -> String {
         .filter(|c| !c.is_control())
         .take(max)
         .collect();
-    let dropped_anything = cells(&kept) < value.chars().filter(|c| !c.is_control()).count()
-        || value.chars().any(char::is_control);
-    if dropped_anything {
+    if kept.len() != value.len() {
         format!("{kept}…")
     } else {
         kept
@@ -133,8 +121,11 @@ mod tests {
 
     fn render(manifest: &WorkspaceManifest) -> String {
         let mut output = Vec::new();
-        let models = ModelRoster::builtin().unwrap();
-        print_manifest_roles(&mut output, manifest, &BTreeMap::new(), &models).unwrap();
+        let config = ProjectConfig {
+            agents: Default::default(),
+            models: agents::ModelRoster::builtin().unwrap(),
+        };
+        print_manifest_roles(&mut output, manifest, &config).unwrap();
         String::from_utf8(output).unwrap()
     }
 

@@ -115,7 +115,8 @@ mod tests {
             args: vec!["--flag".to_owned()],
             brief,
             env: Vec::new(),
-            spec: agents::parse_spec("codex", &agents::ModelRoster::builtin().unwrap()).unwrap(),
+            spec: agents::AgentSpec::parse("codex", &agents::ModelRoster::builtin().unwrap())
+                .unwrap(),
         };
         launch_script(
             &invocation,

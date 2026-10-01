@@ -115,7 +115,7 @@ pub fn spawn(
     let meta = WorkerMeta {
         id: id.clone(),
         agent,
-        agent_family: agent_spec.tier().map(|tier| tier.family),
+        agent_family: agent_spec.tiered_family(),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
         task_label,

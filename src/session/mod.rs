@@ -7,7 +7,7 @@ mod test_support;
 use std::fs;
 
 use anyhow::{Context, Result};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     store, tmux,
@@ -16,8 +16,6 @@ use crate::{
 };
 
 use foreground::launch_foreground_agent;
-
-pub use brief::SessionMeta;
 
 /// Turns the current tmux pane into the manager agent.
 ///
@@ -35,6 +33,9 @@ fn launch_prelude(workspace: &Utf8Path) -> Result<WorkspaceManifest> {
     let worker_dir = store::workers_dir(workspace);
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 
-    let defaults = WorkspaceManifest::default();
-    workspace_manifest::ensure_interactive(workspace, &defaults)
+    workspace_manifest::ensure_interactive(workspace)
+}
+
+pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Utf8PathBuf {
+    workspace.join(store::paths::NILES_DIR).join("sessions")
 }

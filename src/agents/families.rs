@@ -97,18 +97,13 @@ const PROFILES: &[AgentProfile] = &[
         },
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
     },
-    // hermes puts the session behind a `chat` subcommand, and takes its opening turn behind a flag
-    // rather than as a positional argument. A worker's brief is a file already, so it goes over as
-    // `--query-file`: the brief stays verbatim, nothing in it is shell-interpreted, and unlike
-    // redirecting it on stdin the pane stays a real TTY, which is the difference between seeding
-    // an interactive session and answering once and exiting. The lead's turn is its brief plus the
-    // startup line, which no one file holds, so that one goes by value as `-q`.
     AgentProfile {
         id: "hermes",
         binary: "hermes",
         foreground_args: &["chat"],
         worker_args: &["chat", "--yolo"],
         worker_brief: HERMES_QUERY,
+        // The lead's turn has no single file, so it goes by value.
         lead_brief: HERMES_QUERY,
         default_model: "tencent/hy3",
         tier_args: TierArgs {

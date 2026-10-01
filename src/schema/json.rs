@@ -62,7 +62,7 @@ fn parse_json_value(path: &Utf8Path, kind: ArtifactKind, body: &str) -> Result<J
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::test_support::temp_test_path;
+    use crate::test_support::temp_test_path;
 
     #[derive(Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
     struct Example {

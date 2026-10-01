@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fs};
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{agents::ModelRoster, schema};
 
@@ -20,7 +20,7 @@ struct RawProjectConfig {
     models: crate::agents::roster::RawRoster,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     pub binary: Option<String>,
     #[serde(default)]
@@ -33,7 +33,7 @@ pub struct AgentConfig {
 ///
 /// Deliberately narrower than `agents::BriefDelivery`: the by-path and system-prompt deliveries
 /// need a flag spelling, and an agent configured here has no way to give one.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMode {
     #[default]

@@ -3,10 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    schema::{self, ArtifactKind},
-    util::write_json_pretty,
-};
+use crate::schema::{self, ArtifactKind};
 
 use super::resolve::resolve_worker;
 
@@ -34,7 +31,7 @@ pub(super) struct WorkerMeta {
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {
     let path = meta_path(worker_dir);
-    write_json_pretty(&path, meta)
+    schema::write_json(&path, meta)
 }
 
 pub(super) fn read_meta(id: &str) -> Result<WorkerMeta> {
