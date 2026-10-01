@@ -15,6 +15,7 @@ use crate::{
     workspace_manifest::{self, WorkspaceManifest},
 };
 
+pub(crate) use brief::{SessionMeta, live_lead};
 use foreground::launch_foreground_agent;
 
 /// Turns the current tmux pane into the manager agent.

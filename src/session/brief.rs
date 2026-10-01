@@ -3,11 +3,12 @@ use std::{env, fs};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
-    util::{render_template, timestamp_id},
+    telemetry::SessionLink,
+    util::{read_dir_utf8_paths, render_template, timestamp_id},
     workspace_manifest::{self, ReviewerBinding, WorkspaceManifest},
 };
 
@@ -21,8 +22,8 @@ const REVIEWER_STANDARD: &str = include_str!("../templates/role_reviewer.md");
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
 
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct SessionMeta {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionMeta {
     pub id: String,
     pub agent: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,6 +38,8 @@ pub(super) struct SessionMeta {
     /// The pane the lead is running in, recorded once from `$TMUX_PANE` at session start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lead_pane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_link: Option<SessionLink>,
 }
 
 pub(super) struct ManagerSession {
@@ -68,6 +71,7 @@ pub(super) fn write_manager_session(
         workspace: workspace.to_path_buf(),
         brief: path,
         lead_pane: recorded_lead_pane(),
+        session_link: agents::session_link(agent.family(), &format!("lead-{id}")),
     };
     write_session_meta(workspace, &meta)?;
     Ok(ManagerSession {
@@ -114,6 +118,26 @@ fn render_lead_brief(
 
 fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
     sessions_dir(workspace).join(id).join("session.json")
+}
+
+pub(crate) fn live_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
+    let Some(pane) = recorded_lead_pane() else {
+        return Ok(None);
+    };
+    let dirs = read_dir_utf8_paths(&sessions_dir(workspace))?;
+    for dir in dirs.into_iter().rev() {
+        if !dir.is_dir() {
+            continue;
+        }
+        let path = dir.join("session.json");
+        let Some(meta): Option<SessionMeta> = crate::store::read_optional_json(&path)? else {
+            continue;
+        };
+        if meta.lead_pane.as_deref() == Some(&pane) {
+            return Ok(Some(meta));
+        }
+    }
+    Ok(None)
 }
 
 /// `$TMUX_PANE` as tmux set it for the pane this process is running in: a `%N` pane id, which is a
@@ -172,6 +196,7 @@ mod tests {
             workspace: workspace.clone(),
             brief: workspace.join("lead.md"),
             lead_pane: Some("%7".to_owned()),
+            session_link: None,
         };
         let file = session_meta_path(&workspace, &meta.id);
         fs::create_dir_all(file.parent().unwrap()).unwrap();

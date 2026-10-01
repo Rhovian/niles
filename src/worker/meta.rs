@@ -3,7 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::store;
+use crate::{store, telemetry::SessionLink};
 
 use super::resolve::resolve_worker;
 use super::role::WorkerRole;
@@ -28,6 +28,8 @@ pub(super) struct WorkerMeta {
     pub(super) window: String,
     pub(super) brief: Utf8PathBuf,
     pub(super) launch: Utf8PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) session_link: Option<SessionLink>,
 }
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {

@@ -45,13 +45,17 @@ pub fn spawn(
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
-    let invocation = agents::invocation(
+    let mut invocation = agents::invocation(
         &agent,
         agent_config,
         agents::InvocationDefaults::Worker,
         &config.models,
     )?;
     let agent_spec = &invocation.spec;
+    let session_link = agents::session_link(agent_spec.family(), &id);
+    if let Some(link) = &session_link {
+        invocation.args.extend(link.args());
+    }
     if resolve_live_worker_if_exists(&id)?.is_some() {
         bail!("worker id '{id}' already exists");
     }
@@ -113,6 +117,7 @@ pub fn spawn(
         window: target.render(),
         brief: brief_path,
         launch: launch_path,
+        session_link,
     };
     if let Err(err) =
         tag_worker_window(&target, &project, &id).and_then(|()| write_meta(&dir, &meta))

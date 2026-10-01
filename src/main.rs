@@ -10,6 +10,7 @@ mod duration;
 mod models;
 mod session;
 mod store;
+mod telemetry;
 mod tmux;
 mod util;
 mod wait;
