@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
@@ -55,22 +55,6 @@ pub(crate) fn read_dir_utf8_paths(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
         .collect::<Result<Vec<_>>>()?;
     paths.sort();
     Ok(paths)
-}
-
-pub fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-
-    Ok(current_dir_utf8()?.join(path))
-}
-
-pub fn absolute_existing_file(path: &Utf8Path, description: &str) -> Result<Utf8PathBuf> {
-    let path = absolute_path(path)?;
-    if !path.is_file() {
-        bail!("{description} path is not a file: {path}");
-    }
-    Ok(path)
 }
 
 pub fn append_line(path: &Utf8Path, line: &str) -> Result<()> {
@@ -140,23 +124,6 @@ mod tests {
     use crate::test_support::temp_test_path;
 
     #[test]
-    fn absolute_path_keeps_absolute_paths() {
-        let path = Utf8Path::new("/tmp/niles-absolute-path-test");
-
-        assert_eq!(absolute_path(path).unwrap(), path);
-    }
-
-    #[test]
-    fn absolute_path_joins_relative_paths_to_current_dir() {
-        let cwd = current_dir_utf8().unwrap();
-
-        assert_eq!(
-            absolute_path(Utf8Path::new("relative/path")).unwrap(),
-            cwd.join("relative/path")
-        );
-    }
-
-    #[test]
     fn appending_through_a_symlink_fails() {
         let dir = temp_test_path("append-symlink");
         fs::create_dir_all(&dir).unwrap();
@@ -189,29 +156,6 @@ mod tests {
         let dir = temp_test_path("read-dir-missing");
 
         assert!(read_dir_utf8_paths(&dir).unwrap().is_empty());
-    }
-
-    #[test]
-    fn absolute_existing_file_accepts_existing_files() {
-        let dir = temp_test_path("file");
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("brief.md");
-        fs::write(&file, "brief").unwrap();
-
-        assert_eq!(absolute_existing_file(&file, "brief").unwrap(), file);
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn absolute_existing_file_rejects_directories() {
-        let dir = temp_test_path("file-dir");
-        fs::create_dir_all(&dir).unwrap();
-
-        let err = absolute_existing_file(&dir, "brief").unwrap_err();
-        assert!(err.to_string().contains("brief path is not a file"));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

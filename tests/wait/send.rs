@@ -40,9 +40,8 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
 
     let child = lab
         .niles(
-            // `--wait` written after the id, which is where clap's trailing var-arg would
-            // otherwise swallow it into the message and type it into the agent's pane.
-            &["send", "auth-fix", "--wait", "keep", "going"],
+            // Dispatch flags remain options even when they follow every message word.
+            &["send", "auth-fix", "keep", "going", "--wait"],
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

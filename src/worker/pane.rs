@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use chrono::Utc;
 
@@ -41,24 +41,13 @@ pub struct SendOutcome {
 pub fn send(
     wait: bool,
     checkin: Option<String>,
-    target_and_message: Vec<String>,
+    id: String,
+    message: String,
 ) -> Result<SendOutcome> {
-    let mut parts = target_and_message.into_iter();
-    let id = parts.next().context("send requires a worker id")?;
-    let mut message = parts.collect::<Vec<_>>();
-    // `--wait` or `--checkin <delay>` written after the worker id lands in the trailing message
-    // text instead of the flag.
-    let (trailing_wait, trailing_checkin) = crate::cli::take_leading_dispatch_flags(&mut message);
-    let wait_requested = wait | trailing_wait;
-    let checkin = checkin.or(trailing_checkin);
-    if message.is_empty() {
-        bail!("send requires a message");
-    }
     let target = worker_target(id)?;
     // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
     // fails a dispatch that has not happened yet rather than one already typed into the pane.
     let cadence = watch::checkin_cadence(&target.project, checkin.as_deref())?;
-    let message = message.join(" ");
     let id = target.id;
 
     for line in wait::advance_cursor(&id)? {
@@ -79,13 +68,16 @@ pub fn send(
         Some(delay) => println!("checkin: {}", watch::describe_delay(delay)),
         None => println!("checkin: off"),
     }
-    if !wait_requested {
+    if !wait {
         // wait first, as spawn prints it: the send has armed a wake, and collecting it is the
         // next move. `--wait` is already doing that, so it needs no pointer to itself.
         println!("wait: niles wait {id}");
         println!("peek: niles peek {id}");
     }
-    Ok(SendOutcome { id, wait_requested })
+    Ok(SendOutcome {
+        id,
+        wait_requested: wait,
+    })
 }
 
 fn worker_target(id: String) -> Result<WorkerPane> {

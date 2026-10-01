@@ -1,6 +1,6 @@
-use camino::Utf8PathBuf;
-use clap::{ArgAction, Parser, Subcommand};
-use std::time::Duration;
+use anyhow::{Context, Result, bail};
+use clap::{ArgAction, Args, Parser, Subcommand};
+use std::{io, time::Duration};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -13,34 +13,47 @@ pub struct Cli {
     pub command: Option<CommandName>,
 }
 
-const WAIT_FLAG: &str = "--wait";
-const CHECKIN_FLAG: &str = "--checkin";
+#[derive(Debug, Args)]
+pub struct MessageInput {
+    /// Message text. Repeat to join values with newlines.
+    #[arg(
+        short,
+        long,
+        value_name = "TEXT",
+        conflicts_with = "words",
+        allow_hyphen_values = true
+    )]
+    message: Vec<String>,
+    /// Message words, or `-` to read the message from stdin.
+    #[arg(value_name = "TEXT")]
+    words: Vec<String>,
+}
 
-/// Pulls both dispatch flags out of a trailing var-arg list, in whatever order they were written.
-///
-/// One flag alone is easy — write it before the trailing text and clap parses it. Two of them next
-/// to each other after the worker id arrive as text, and pulling only the first would hand the
-/// worker the flag that was left behind. A bare `--checkin` is consumed as a typo.
-pub(crate) fn take_leading_dispatch_flags(args: &mut Vec<String>) -> (bool, Option<String>) {
-    let mut wait = false;
-    let mut checkin = None;
-    loop {
-        match args.first().map(String::as_str) {
-            Some(WAIT_FLAG) => {
-                args.remove(0);
-                wait = true;
-            }
-            Some(CHECKIN_FLAG) => {
-                args.remove(0);
-                if args.is_empty() {
-                    break;
+impl MessageInput {
+    pub fn resolve(self) -> Result<String> {
+        let message = if self.message.is_empty() {
+            match self.words.as_slice() {
+                [stdin] if stdin == "-" => {
+                    let mut text = io::read_to_string(io::stdin())
+                        .context("failed to read message from stdin")?;
+                    if text.ends_with('\n') {
+                        text.pop();
+                    }
+                    text
                 }
-                checkin = Some(args.remove(0));
+                words if words.iter().any(|word| word == "-") => {
+                    bail!("'-' cannot be combined with other message words");
+                }
+                words => words.join(" "),
             }
-            _ => break,
+        } else {
+            self.message.join("\n")
+        };
+        if message.trim().is_empty() {
+            bail!("a message is required");
         }
+        Ok(message)
     }
-    (wait, checkin)
 }
 
 #[derive(Debug, Subcommand)]
@@ -72,16 +85,12 @@ pub enum CommandName {
         /// Agent id to launch; defaults to this role's workspace manifest binding.
         #[arg(short, long)]
         agent: Option<String>,
-        /// Read the task text from a file instead of arguments.
-        #[arg(long, value_name = "PATH", conflicts_with = "task")]
-        task_file: Option<Utf8PathBuf>,
         /// Check-in delay for this worker: `90s`, `5m`, `1h`, or bare minutes. Defaults to this
         /// workspace's manifest `checkin`, then 5 minutes. `0`/`off` arms none.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
-        /// Task text used to create the worker brief.
-        #[arg(num_args = 0.., trailing_var_arg = true)]
-        task: Vec<String>,
+        #[command(flatten)]
+        message: MessageInput,
     },
     /// Close spawned worker windows and archive their metadata.
     ///
@@ -137,9 +146,10 @@ pub enum CommandName {
         /// Defaults to the manifest `checkin`, then 5 minutes.
         #[arg(long, value_name = "DELAY")]
         checkin: Option<String>,
-        /// Worker task id followed by message.
-        #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_name = "ID_OR_MESSAGE")]
-        target_and_message: Vec<String>,
+        /// Worker task id.
+        id: String,
+        #[command(flatten)]
+        message: MessageInput,
     },
     /// Wait for the next actionable status-log wake and print it.
     ///
@@ -198,59 +208,45 @@ mod tests {
     }
 
     #[test]
-    fn task_file_conflicts_with_task_arguments() {
-        let error = Cli::try_parse_from([
-            "niles",
-            "spawn",
-            "worker",
-            "--task-file",
-            "task.md",
-            "inline task",
-        ])
-        .unwrap_err();
-
-        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
-
-    /// The lead writes these after the worker id, where the trailing var-arg positional hands them
-    /// over as text. In whatever order they come, the message that reaches the worker is the
-    /// message alone.
-    #[test]
-    fn trailing_dispatch_flags_are_taken_out_of_the_message() {
-        fn taken(written: &[&str]) -> (Vec<String>, bool, Option<String>) {
-            let mut args = written
-                .iter()
-                .map(|arg| (*arg).to_owned())
-                .collect::<Vec<_>>();
-            let (wait, checkin) = take_leading_dispatch_flags(&mut args);
-            (args, wait, checkin)
-        }
-        fn left(rest: &[&str]) -> Vec<String> {
-            rest.iter().map(|arg| (*arg).to_owned()).collect()
+    fn message_input_parses_options_and_rejects_invalid_sources() {
+        fn message(args: &[&str]) -> MessageInput {
+            let command = Cli::try_parse_from(args).unwrap().command;
+            if let Some(CommandName::Spawn { message, .. }) = command {
+                return message;
+            }
+            if let Some(CommandName::Send { message, .. }) = command {
+                return message;
+            }
+            panic!("expected spawn or send command");
         }
 
-        let both = |delay: &str| (left(&["carry on"]), true, Some(delay.to_owned()));
-        assert_eq!(
-            taken(&["--wait", "--checkin", "5m", "carry on"]),
-            both("5m")
-        );
-        assert_eq!(
-            taken(&["--checkin", "90s", "--wait", "carry on"]),
-            both("90s")
-        );
+        for command in ["spawn", "send"] {
+            let conflict = ["niles", command, "job", "-m", "one", "two"];
+            let error = Cli::try_parse_from(conflict).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
 
-        assert_eq!(
-            taken(&["--checkin", "1h"]),
-            (left(&[]), false, Some("1h".to_owned()))
-        );
-        assert_eq!(taken(&["--wait"]), (left(&[]), true, None));
-        // A `--checkin` with nothing after it is a typo: the flag goes, no delay is invented, and
-        // the text must not reach the worker either way.
-        assert_eq!(taken(&["--checkin"]), (left(&[]), false, None));
-        // Not leading: this is the message, and the flags in it are the worker's business.
-        assert_eq!(
-            taken(&["carry on", "--wait"]),
-            (left(&["carry on", "--wait"]), false, None)
-        );
+            for (args, expected) in [
+                (
+                    vec!["niles", command, "job", "-", "two"],
+                    "'-' cannot be combined with other message words",
+                ),
+                (vec!["niles", command, "job"], "a message is required"),
+                (
+                    vec!["niles", command, "job", "-m", " \t"],
+                    "a message is required",
+                ),
+            ] {
+                assert_eq!(message(&args).resolve().unwrap_err().to_string(), expected);
+            }
+        }
+
+        let cli =
+            Cli::try_parse_from(["niles", "send", "job", "-m", "- item", "-m", "b", "--wait"])
+                .unwrap();
+        let Some(CommandName::Send { wait, message, .. }) = cli.command else {
+            panic!("expected send command");
+        };
+        assert!(wait);
+        assert_eq!(message.resolve().unwrap(), "- item\nb");
     }
 }
