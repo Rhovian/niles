@@ -34,7 +34,7 @@ fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RecordingSink {
     attempts: Vec<String>,
     sent: Vec<String>,
@@ -43,12 +43,16 @@ struct RecordingSink {
     fail: bool,
     capture_failure: bool,
     screen: String,
-    composer: ComposerState,
+    typed: bool,
 }
 
 impl Sink for RecordingSink {
     fn composer_state(&mut self) -> ComposerState {
-        self.composer
+        if self.typed {
+            ComposerState::Typed
+        } else {
+            ComposerState::Empty
+        }
     }
     fn nudge(&mut self, text: &str) -> Result<()> {
         self.attempts.push(text.to_owned());

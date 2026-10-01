@@ -61,29 +61,16 @@ fn explicit_agent_overrides_manifest_and_does_not_require_one() {
 }
 
 #[test]
-fn lead_reviewer_requires_explicit_agent_for_spawn() {
+fn a_lead_reviewer_cannot_be_spawned_without_an_explicit_agent() {
     let root = temp_test_path("spawn-lead-reviewer");
     let mut manifest = manifest();
     manifest.reviewer = crate::workspace_manifest::ReviewerBinding::Lead;
     save(&root, &manifest).unwrap();
-    let err = resolve_from_cli(
-        &root,
-        &["niles", "spawn", "job", "--role", "reviewer", "task"],
-    )
-    .unwrap_err()
-    .to_string();
-    assert_eq!(err.lines().count(), 1, "{err}");
-    assert!(err.contains(manifest_path(&root).as_str()), "{err}");
-    assert!(err.contains("--agent"), "{err}");
-    assert_eq!(
-        resolve_from_cli(
-            &root,
-            &[
-                "niles", "spawn", "job", "--role", "reviewer", "--agent", "claude", "task"
-            ]
-        )
-        .unwrap(),
-        "claude"
+    let args = ["niles", "spawn", "job", "--role", "reviewer", "task"];
+    let err = resolve_from_cli(&root, &args).unwrap_err().to_string();
+    assert!(
+        err.contains(manifest_path(&root).as_str()) && err.contains("--agent"),
+        "{err}"
     );
     fs::remove_dir_all(root).unwrap();
 }

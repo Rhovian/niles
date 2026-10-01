@@ -38,40 +38,29 @@ mod tests {
 
     #[test]
     fn cursor_identifies_drafts_for_both_families() {
+        use ComposerState::{Empty, Typed, Unknown};
         for marker in ["❯\u{a0}", "› "] {
-            let cursor = |x, y, visible| CursorPosition { x, y, visible };
             let empty = format!("header\n{marker}placeholder\nfooter\n");
             let typed = format!("header\n{marker}hello\nfooter\n");
             let wrapped = format!("header\n{marker}hello\n  world\nfooter\n");
             let dialog = format!("{marker}hello\n╭ dialog\n  option\n");
-            assert_eq!(
-                recognize(&empty, cursor(2, 1, true), marker),
-                ComposerState::Empty
-            );
-            assert_eq!(
-                recognize(&typed, cursor(7, 1, true), marker),
-                ComposerState::Typed
-            );
-            assert_eq!(
-                recognize(&wrapped, cursor(7, 2, true), marker),
-                ComposerState::Typed
-            );
-            assert_eq!(
-                recognize(&typed, cursor(4, 0, true), marker),
-                ComposerState::Unknown
-            );
-            assert_eq!(
-                recognize(&dialog, cursor(4, 2, true), marker),
-                ComposerState::Unknown
-            );
-            assert_eq!(
-                recognize(&typed, cursor(7, 1, false), marker),
-                ComposerState::Unknown
-            );
-            assert_eq!(
-                recognize(&typed, cursor(7, 3, true), marker),
-                ComposerState::Unknown
-            );
+            let cases = [
+                (&empty, 2, 1, true, Empty),
+                (&typed, 7, 1, true, Typed),
+                (&wrapped, 7, 2, true, Typed),
+                (&typed, 4, 0, true, Unknown),
+                (&dialog, 4, 2, true, Unknown),
+                (&typed, 7, 1, false, Unknown),
+                (&typed, 7, 3, true, Unknown),
+            ];
+            for (screen, x, y, visible, expected) in cases {
+                let cursor = CursorPosition { x, y, visible };
+                assert_eq!(
+                    recognize(screen, cursor, marker),
+                    expected,
+                    "{screen:?} at {x},{y}"
+                );
+            }
         }
     }
 }
