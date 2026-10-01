@@ -22,9 +22,12 @@ named const. Where a site truly owns it, use `#[expect(…, reason = "…")]` an
 
 ## Releases
 
-Before 1.0, breaking changes bump the minor version. This includes removing or renaming CLI
-commands or flags, changing the manifest format or `--json` output, or changing `niles wait`'s
-exit codes. All other changes bump the patch version.
+From 1.0, follow semantic versioning. Bump the major version for any breaking change, including
+removing or renaming CLI commands or flags, changing `--json` output in a way that breaks
+consumers, or changing `niles wait`'s exit codes. Bump the minor version when adding a command,
+flag, manifest key, or `--json` field. All other changes bump the patch version. On-disk state,
+including the manifest, is not a compatibility surface; document how to update manifests in the
+release notes when their format changes.
 
 1. Bump `version` in `Cargo.toml` through a normal PR.
 2. After merge, tag `vX.Y.Z` on `main` and push the tag.
