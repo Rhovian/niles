@@ -19,7 +19,7 @@ fn manifest() -> WorkspaceManifest {
     WorkspaceManifest {
         lead: "leadbot".into(),
         worker: "codex:gpt-5.5:xhigh".into(),
-        reviewer: "claude:opus:high".into(),
+        reviewer: crate::workspace_manifest::ReviewerBinding::Agent("claude:opus:high".to_owned()),
         security: "auditbot".into(),
         ..WorkspaceManifest::default()
     }
@@ -32,7 +32,7 @@ fn omitted_agent_uses_each_roles_manifest_binding() {
     save(&root, &manifest).unwrap();
     for (role, expected) in [
         ("worker", manifest.worker),
-        ("reviewer", manifest.reviewer),
+        ("reviewer", manifest.reviewer.as_agent().unwrap().to_owned()),
         ("security", manifest.security),
     ] {
         let agent =
@@ -57,6 +57,21 @@ fn explicit_agent_overrides_manifest_and_does_not_require_one() {
     assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
     fs::write(manifest_path(&root), "invalid: [").unwrap();
     assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_lead_reviewer_cannot_be_spawned_without_an_explicit_agent() {
+    let root = temp_test_path("spawn-lead-reviewer");
+    let mut manifest = manifest();
+    manifest.reviewer = crate::workspace_manifest::ReviewerBinding::Lead;
+    save(&root, &manifest).unwrap();
+    let args = ["niles", "spawn", "job", "--role", "reviewer", "task"];
+    let err = resolve_from_cli(&root, &args).unwrap_err().to_string();
+    assert!(
+        err.contains(manifest_path(&root).as_str()) && err.contains("--agent"),
+        "{err}"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

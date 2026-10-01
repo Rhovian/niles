@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{agents, config::spec::ProjectConfig};
 
-use super::WorkspaceManifest;
+use super::{ReviewerBinding, WorkspaceManifest};
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -19,10 +19,20 @@ pub(super) fn print_manifest_roles<W: Write>(
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<()> {
+    let reviewer = match &manifest.reviewer {
+        ReviewerBinding::Lead => RoleRow {
+            role: "reviewer",
+            family: "lead".to_owned(),
+            model: MISSING.to_owned(),
+            effort: MISSING.to_owned(),
+            invalid_reason: None,
+        },
+        ReviewerBinding::Agent(agent) => role_row("reviewer", agent, config),
+    };
     let rows = [
         role_row("lead", &manifest.lead, config),
         role_row("worker", &manifest.worker, config),
-        role_row("reviewer", &manifest.reviewer, config),
+        reviewer,
         role_row("security", &manifest.security, config),
     ];
 
@@ -113,7 +123,11 @@ mod tests {
         WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: reviewer.to_owned(),
+            reviewer: if reviewer == "lead" {
+                ReviewerBinding::Lead
+            } else {
+                ReviewerBinding::Agent(reviewer.to_owned())
+            },
             security: "claude:opus:max".to_owned(),
             ..WorkspaceManifest::default()
         }

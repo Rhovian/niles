@@ -121,7 +121,7 @@ flow:
         let manifest = WorkspaceManifest {
             lead: "claude".to_owned(),
             worker: "codebot".to_owned(),
-            reviewer: "reviewbot".to_owned(),
+            reviewer: super::super::ReviewerBinding::Agent("reviewbot".to_owned()),
             security: "auditbot".to_owned(),
             ..WorkspaceManifest::default()
         };
@@ -166,6 +166,20 @@ flow:
     }
 
     #[test]
+    fn lead_reviewer_round_trips_as_scalar() {
+        let root = temp_test_path("manifest-lead-reviewer");
+        let manifest = WorkspaceManifest {
+            reviewer: super::super::ReviewerBinding::Lead,
+            ..WorkspaceManifest::default()
+        };
+        save(&root, &manifest).unwrap();
+        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert!(body.contains("reviewer: lead\n"), "{body}");
+        assert_eq!(load(&root).unwrap(), Some(manifest));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn legacy_yaml_formatted_manifest_still_round_trips() {
         let root = temp_test_path("manifest-serde-yaml-format");
         fs::create_dir_all(root.join(".niles")).unwrap();
@@ -188,7 +202,7 @@ worker_planning:
         let expected = WorkspaceManifest {
             lead: "claude:opus:medium".to_owned(),
             worker: "codex:gpt-5.6-sol:medium".to_owned(),
-            reviewer: "claude:opus:medium".to_owned(),
+            reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned()),
             security: "hermes:tencent/hy3:high".to_owned(),
             worker_planning: [
                 (

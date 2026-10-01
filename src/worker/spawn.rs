@@ -172,7 +172,9 @@ fn resolve_agent(project: &Utf8Path, role: WorkerRole, agent: Option<String>) ->
         })?;
     let agent = match role {
         WorkerRole::Worker => manifest.worker,
-        WorkerRole::Reviewer => manifest.reviewer,
+        WorkerRole::Reviewer => manifest.reviewer.as_agent().map(str::to_owned).with_context(|| {
+            format!("reviewer is bound to the lead in manifest {path}; specify --agent to spawn a reviewer")
+        })?,
         WorkerRole::Security => manifest.security,
     };
     if agent.trim().is_empty() {

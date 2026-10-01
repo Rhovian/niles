@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 pub struct WorkspaceManifest {
     pub lead: String,
     pub worker: String,
-    pub reviewer: String,
+    pub reviewer: ReviewerBinding,
     pub security: String,
     /// Planning guidance keyed by an exact `family:model` pair. The lead consults this only for
     /// implementation assignments; Niles does not interpret models or infer capabilities.
@@ -36,12 +36,31 @@ pub struct WorkspaceManifest {
     pub recheck: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewerBinding {
+    #[serde(rename = "lead")]
+    Lead,
+    #[serde(untagged)]
+    Agent(String),
+}
+
+pub(crate) const DEFAULT_REVIEWER_AGENT: &str = "claude";
+
+impl ReviewerBinding {
+    pub fn as_agent(&self) -> Option<&str> {
+        match self {
+            Self::Lead => None,
+            Self::Agent(agent) => Some(agent),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceManifestWire {
     lead: String,
     worker: String,
-    reviewer: String,
+    reviewer: ReviewerBinding,
     security: String,
     #[serde(default)]
     worker_planning: BTreeMap<String, String>,
@@ -70,7 +89,7 @@ impl Default for WorkspaceManifest {
         Self {
             lead: "claude".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: "claude".to_owned(),
+            reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned()),
             security: "claude".to_owned(),
             worker_planning: BTreeMap::new(),
             checkin: None,

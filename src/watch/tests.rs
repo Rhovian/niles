@@ -10,6 +10,8 @@ use crate::{
     worker::worker_snapshot,
 };
 
+mod hold;
+
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
     cadence::{Cadence, Recheck},
@@ -40,9 +42,13 @@ struct RecordingSink {
     fail: bool,
     capture_failure: bool,
     screen: String,
+    typed: bool,
 }
 
 impl Sink for RecordingSink {
+    fn has_draft(&mut self) -> bool {
+        self.typed
+    }
     fn nudge(&mut self, text: &str) -> Result<()> {
         self.attempts.push(text.to_owned());
         if self.fail {
@@ -363,7 +369,7 @@ fn a_session_with_no_lead_pane_starts_no_watcher() {
     let root = workspace("no-pane-workspace");
     write_worker(&root, "impl", &format!("{WINDOW}{DONE}"));
 
-    drop(super::start(&session, &root, None));
+    drop(super::start(&session, &root, None, None));
 
     let log = fs::read_to_string(session.join("watch.log")).unwrap();
     assert!(log.contains("recorded no lead pane"), "{log}");
@@ -378,7 +384,7 @@ fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
     let session = workspace("pane-session");
     let root = workspace("pane-workspace");
 
-    let watcher = super::start(&session, &root, Some("%7"));
+    let watcher = super::start(&session, &root, Some("%7"), None);
     drop(watcher);
 
     let log = fs::read_to_string(session.join("watch.log")).unwrap();

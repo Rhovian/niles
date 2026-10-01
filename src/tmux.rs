@@ -50,6 +50,32 @@ pub(crate) fn capture_visible_pane(target: &TmuxTarget) -> Result<String> {
     capture(target, &["capture-pane", "-p", "-J", "-t", target.as_str()])
 }
 
+/// The visible screen with wrapped lines left unjoined, so each row lines up with `cursor_y`.
+pub(crate) fn capture_visible_rows(target: &TmuxTarget) -> Result<String> {
+    capture(target, &["capture-pane", "-p", "-t", target.as_str()])
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CursorPosition {
+    pub x: usize,
+    pub y: usize,
+    pub visible: bool,
+}
+
+pub(crate) fn cursor_position(target: &TmuxTarget) -> Result<CursorPosition> {
+    let value = display(target, "#{cursor_x} #{cursor_y} #{cursor_flag}")?;
+    let [x, y, flag] = value.split_whitespace().collect::<Vec<_>>()[..] else {
+        bail!("unexpected tmux cursor position {value:?}");
+    };
+    Ok(CursorPosition {
+        x: x.parse()
+            .with_context(|| format!("unexpected tmux cursor position {value:?}"))?,
+        y: y.parse()
+            .with_context(|| format!("unexpected tmux cursor position {value:?}"))?,
+        visible: flag == "1",
+    })
+}
+
 fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     let output =
         output(args).with_context(|| format!("failed to run tmux capture-pane for {target}"))?;
@@ -62,6 +88,17 @@ fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     }
 
     Ok(format_capture(&output.stdout))
+}
+
+fn display(target: &TmuxTarget, format: &str) -> Result<String> {
+    let output = output(&["display", "-p", "-t", target.as_str(), format])?;
+    if !output.status.success() {
+        bail!(
+            "tmux display failed for {target}: {}",
+            normalize_stderr(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn capture_start(lines: usize) -> String {

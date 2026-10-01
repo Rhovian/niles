@@ -24,13 +24,19 @@ pub(super) fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = &manifest.lead;
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
-    let ManagerSession { meta, brief, dir } = write_manager_session(workspace, &invocation.spec)?;
+    let ManagerSession { meta, brief, dir } =
+        write_manager_session(workspace, &invocation.spec, manifest)?;
     let prompt = manager_prompt_io(invocation.brief, brief);
     invocation.args.extend(prompt.args);
 
     // The watcher is held for exactly as long as the foreground agent runs, on the failing path
     // too: dropping it stops and joins the thread.
-    let _watcher = watch::start(&dir, workspace, meta.lead_pane.as_deref());
+    let _watcher = watch::start(
+        &dir,
+        workspace,
+        meta.lead_pane.as_deref(),
+        agents::profile_for(invocation.spec.family()).and_then(|profile| profile.composer),
+    );
 
     let status = run_foreground_process(
         workspace,

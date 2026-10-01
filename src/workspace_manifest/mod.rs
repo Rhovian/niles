@@ -5,4 +5,5 @@ mod types;
 
 pub use interactive::ensure_interactive;
 pub use io::{load, manifest_path, save};
-pub use types::WorkspaceManifest;
+pub(crate) use types::DEFAULT_REVIEWER_AGENT;
+pub use types::{ReviewerBinding, WorkspaceManifest};

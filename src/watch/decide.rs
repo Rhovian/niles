@@ -8,11 +8,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::{wake::WakeKind, worker::WorkerSnapshot};
 
 use super::checkin::Checkin;
+
+const MAX_NUDGE_HOLD: TimeDelta = TimeDelta::minutes(5);
 
 /// What one tick should do, in the order the edge does it.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -63,9 +65,18 @@ pub(crate) enum Commit {
 #[derive(Debug, Default)]
 pub(crate) struct WatchMemory {
     seen: BTreeMap<String, u64>,
+    held_since: Option<DateTime<Utc>>,
 }
 
 impl WatchMemory {
+    pub(crate) fn hold_nudge(&mut self, has_draft: bool, now: DateTime<Utc>) -> bool {
+        if !has_draft {
+            self.held_since = None;
+            return false;
+        }
+        let since = *self.held_since.get_or_insert(now);
+        now - since < MAX_NUDGE_HOLD
+    }
     /// Memory for a watcher that is starting now.
     ///
     /// Everything already in a live worker's log is history: a `done:` written before this lead
@@ -76,6 +87,7 @@ impl WatchMemory {
                 .iter()
                 .map(|worker| (worker.id.clone(), worker.log_len))
                 .collect(),
+            ..Self::default()
         }
     }
 

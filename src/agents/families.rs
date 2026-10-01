@@ -11,6 +11,7 @@ pub struct AgentProfile {
     pub default_model: &'static str,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
+    pub composer: Option<&'static str>,
 }
 
 /// How an agent receives its brief.
@@ -82,6 +83,7 @@ const PROFILES: &[AgentProfile] = &[
             },
         },
         launch_env: &[],
+        composer: Some("› "),
     },
     AgentProfile {
         id: "claude",
@@ -96,6 +98,7 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--effort"),
         },
         launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+        composer: Some("❯\u{a0}"),
     },
     AgentProfile {
         id: "hermes",
@@ -111,6 +114,7 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--reasoning"),
         },
         launch_env: &[],
+        composer: None,
     },
 ];
 

@@ -40,6 +40,7 @@ use crate::{
 
 mod cadence;
 mod checkin;
+pub(crate) mod composer;
 mod decide;
 #[cfg(test)]
 mod tests;
@@ -150,6 +151,7 @@ pub(crate) fn start(
     session_dir: &Utf8Path,
     workspace: &Utf8Path,
     lead_pane: Option<&str>,
+    composer: Option<&'static str>,
 ) -> Watcher {
     let log = WatchLog {
         path: session_dir.join(WATCH_LOG),
@@ -169,6 +171,11 @@ pub(crate) fn start(
         }
     };
 
+    let sink = WatchSink {
+        target,
+        log: log.clone(),
+        composer,
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let workspace = workspace.to_path_buf();
     let spawned = thread::Builder::new()
@@ -178,7 +185,7 @@ pub(crate) fn start(
             let log = log.clone();
             move || {
                 install_panic_hook(log.clone());
-                watch(workspace, log, target, stop);
+                watch(workspace, sink, stop);
             }
         });
 
@@ -238,9 +245,8 @@ pub(crate) fn quiet(id: &str) -> Result<bool> {
     Checkin::disarm(&worker::worker_dir(id)?)
 }
 
-fn watch(workspace: Utf8PathBuf, log: WatchLog, target: TmuxTarget, stop: Arc<AtomicBool>) {
-    let pane = target.as_str().to_owned();
-    let mut sink = WatchSink { target, log };
+fn watch(workspace: Utf8PathBuf, mut sink: WatchSink, stop: Arc<AtomicBool>) {
+    let pane = sink.target.as_str().to_owned();
     let mut memory = match worker_snapshot(&workspace) {
         Ok(snapshot) => WatchMemory::at_start(&snapshot),
         Err(err) => {
@@ -291,7 +297,11 @@ fn tick(
     };
     trust::inspect_starting_workers(&snapshot, now, sink);
     let checkins = read_checkins(&snapshot, sink);
-    let plan = memory.plan(&snapshot, &checkins, now);
+    let mut plan = memory.plan(&snapshot, &checkins, now);
+    let has_draft = !plan.nudges.is_empty() && sink.has_draft();
+    if memory.hold_nudge(has_draft, now) {
+        plan.nudges.clear();
+    }
     apply(&plan, memory, sink, stop);
 }
 
@@ -410,6 +420,7 @@ fn read_checkins(snapshot: &[WorkerSnapshot], sink: &mut dyn Sink) -> BTreeMap<S
 /// The edge: read worker panes, send lead nudges, and record diagnostics without using stdout.
 trait Sink {
     fn nudge(&mut self, text: &str) -> Result<()>;
+    fn has_draft(&mut self) -> bool;
     fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String>;
     fn note(&mut self, line: &str);
 }
@@ -417,9 +428,24 @@ trait Sink {
 struct WatchSink {
     target: TmuxTarget,
     log: WatchLog,
+    composer: Option<&'static str>,
 }
 
 impl Sink for WatchSink {
+    fn has_draft(&mut self) -> bool {
+        let Some(marker) = self.composer else {
+            return false;
+        };
+        let screen = tmux::capture_visible_rows(&self.target);
+        let cursor = tmux::cursor_position(&self.target);
+        match (screen, cursor) {
+            (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, marker),
+            (Err(err), _) | (_, Err(err)) => {
+                self.note(&format!("could not read lead composer: {err:#}"));
+                false
+            }
+        }
+    }
     fn nudge(&mut self, text: &str) -> Result<()> {
         // Deliberately not `nudge_line` or a hand-rolled send-keys: `send_line` is the one place
         // that knows how to confirm a submit took, and a nudge that silently sat in the lead's

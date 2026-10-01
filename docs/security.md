@@ -96,6 +96,11 @@ empty, the watcher recognizes specific Claude and Codex workspace-trust prompts 
 exact workspace, appends a `blocked:` status, and never accepts the prompt or sends keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
+Before sending a lead nudge, the watcher captures the visible lead pane and queries its cursor.
+It holds the nudge only when the cursor is visible on a typed Claude or Codex composer row, or an
+indented continuation of one. An absent marker, hidden cursor, or failed query delivers; a
+continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
+as state only and never submits captured text.
 
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
@@ -106,6 +111,8 @@ status content from nudges, and using tmux literal-key mode do not establish sem
 ordinary text can still instruct or mislead an agent or operator. Startup trust-prompt detection is
 bounded and recognizes only known exact-workspace Claude and Codex prompt shapes; it is not general
 prompt or injection detection.
+Composer recognition depends on the CLIs' current screen layout and styling. A keystroke between
+capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
 

@@ -125,6 +125,9 @@ mod tests {
     }
 
     impl Sink for ReplacingSink {
+        fn has_draft(&mut self) -> bool {
+            false
+        }
         fn nudge(&mut self, _: &str) -> Result<()> {
             bail!("startup inspection does not nudge")
         }
