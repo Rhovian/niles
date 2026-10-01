@@ -19,7 +19,7 @@ fn manifest() -> WorkspaceManifest {
     WorkspaceManifest {
         lead: "leadbot".into(),
         worker: "codex:gpt-5.5:xhigh".into(),
-        reviewer: "claude:opus:high".to_owned().into(),
+        reviewer: crate::workspace_manifest::ReviewerBinding::Agent("claude:opus:high".to_owned()),
         security: "auditbot".into(),
         ..WorkspaceManifest::default()
     }

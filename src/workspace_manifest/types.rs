@@ -37,11 +37,14 @@ pub struct WorkspaceManifest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "String", into = "String")]
 pub enum ReviewerBinding {
+    #[serde(rename = "lead")]
     Lead,
+    #[serde(untagged)]
     Agent(String),
 }
+
+pub(crate) const DEFAULT_REVIEWER_AGENT: &str = "claude";
 
 impl ReviewerBinding {
     pub fn as_agent(&self) -> Option<&str> {
@@ -49,29 +52,6 @@ impl ReviewerBinding {
             Self::Lead => None,
             Self::Agent(agent) => Some(agent),
         }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Lead => "lead",
-            Self::Agent(agent) => agent,
-        }
-    }
-}
-
-impl From<String> for ReviewerBinding {
-    fn from(value: String) -> Self {
-        if value == "lead" {
-            Self::Lead
-        } else {
-            Self::Agent(value)
-        }
-    }
-}
-
-impl From<ReviewerBinding> for String {
-    fn from(value: ReviewerBinding) -> Self {
-        value.as_str().to_owned()
     }
 }
 
@@ -109,7 +89,7 @@ impl Default for WorkspaceManifest {
         Self {
             lead: "claude".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: ReviewerBinding::Agent("claude".to_owned()),
+            reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned()),
             security: "claude".to_owned(),
             worker_planning: BTreeMap::new(),
             checkin: None,

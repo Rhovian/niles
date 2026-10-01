@@ -6,7 +6,7 @@ use dialoguer::{Select, console::Term};
 use crate::{
     agents,
     config::spec::{AgentConfig, ProjectConfig},
-    workspace_manifest::{ReviewerBinding, WorkspaceManifest},
+    workspace_manifest::{DEFAULT_REVIEWER_AGENT, ReviewerBinding},
 };
 
 const FIRST_MENU_CHOICE_INDEX: usize = 0;
@@ -18,7 +18,7 @@ pub(crate) fn prompt_agent_value(
 ) -> Result<String> {
     let term = Term::stderr();
     let default_spec = agents::AgentSpec::parse(default, &config.models)?;
-    let choices = agent_choices(default, &default_spec, &config.agents);
+    let choices = agent_choices(default, &default_spec, &config.agents, str::to_owned);
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
     prompt_selected_agent(&term, &choices[index].value, &default_spec, config)
 }
@@ -29,14 +29,19 @@ pub(crate) fn prompt_reviewer_value(
     config: &ProjectConfig,
 ) -> Result<ReviewerBinding> {
     let term = Term::stderr();
-    let default_spec = match default {
-        ReviewerBinding::Agent(agent) => agents::AgentSpec::parse(agent, &config.models)?,
-        ReviewerBinding::Lead => agents::AgentSpec::parse(
-            WorkspaceManifest::default().reviewer.as_str(),
-            &config.models,
-        )?,
+    let (default_agent, default_choice) = match default {
+        ReviewerBinding::Lead => (DEFAULT_REVIEWER_AGENT, "lead"),
+        ReviewerBinding::Agent(agent) => (agent.as_str(), agent.as_str()),
     };
-    let choices = reviewer_choices(default, &default_spec, &config.agents);
+    let default_spec = agents::AgentSpec::parse(default_agent, &config.models)?;
+    let mut choices = agent_choices(default_choice, &default_spec, &config.agents, |agent| {
+        ReviewerBinding::Agent(agent.to_owned())
+    });
+    choices.push(MenuChoice {
+        label: "lead".to_owned(),
+        value: ReviewerBinding::Lead,
+        is_default: matches!(default, ReviewerBinding::Lead),
+    });
     let index = select_choice(&term, label, &choices, default_choice_index(&choices))?;
     match &choices[index].value {
         ReviewerBinding::Lead => Ok(ReviewerBinding::Lead),
@@ -44,27 +49,6 @@ pub(crate) fn prompt_reviewer_value(
             prompt_selected_agent(&term, agent, &default_spec, config).map(ReviewerBinding::Agent)
         }
     }
-}
-
-fn reviewer_choices(
-    default: &ReviewerBinding,
-    default_spec: &agents::AgentSpec,
-    agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Vec<MenuChoice<ReviewerBinding>> {
-    let mut choices = agent_choices(default.as_str(), default_spec, agent_configs)
-        .into_iter()
-        .map(|choice| MenuChoice {
-            label: choice.label,
-            value: ReviewerBinding::Agent(choice.value),
-            is_default: choice.is_default,
-        })
-        .collect::<Vec<_>>();
-    choices.push(MenuChoice {
-        label: "lead".to_owned(),
-        value: ReviewerBinding::Lead,
-        is_default: matches!(default, ReviewerBinding::Lead),
-    });
-    choices
 }
 
 fn prompt_selected_agent(
@@ -189,30 +173,46 @@ fn select_choice<T>(
         .with_context(|| format!("failed to select {title}"))
 }
 
-fn agent_choices(
+fn agent_choices<T>(
     default: &str,
     default_spec: &agents::AgentSpec,
     agent_configs: &BTreeMap<String, AgentConfig>,
-) -> Vec<MenuChoice<String>> {
+    value: impl Fn(&str) -> T,
+) -> Vec<MenuChoice<T>> {
     let mut seen = BTreeSet::new();
     let mut choices = Vec::new();
 
     for family in agents::known_agent_ids() {
-        push_agent_choice(&mut choices, &mut seen, family, default, default_spec);
+        push_agent_choice(
+            &mut choices,
+            &mut seen,
+            family,
+            default,
+            default_spec,
+            &value,
+        );
     }
     for agent in agent_configs.keys() {
-        push_agent_choice(&mut choices, &mut seen, agent, default, default_spec);
+        push_agent_choice(
+            &mut choices,
+            &mut seen,
+            agent,
+            default,
+            default_spec,
+            &value,
+        );
     }
 
     choices
 }
 
-fn push_agent_choice(
-    choices: &mut Vec<MenuChoice<String>>,
+fn push_agent_choice<T>(
+    choices: &mut Vec<MenuChoice<T>>,
     seen: &mut BTreeSet<String>,
     agent: &str,
     default: &str,
     default_spec: &agents::AgentSpec,
+    value: &impl Fn(&str) -> T,
 ) {
     if !seen.insert(agent.to_owned()) {
         return;
@@ -222,7 +222,7 @@ fn push_agent_choice(
         agent == default || (default_spec.model().is_some() && default_spec.family() == agent);
     choices.push(MenuChoice {
         label: agent.to_owned(),
-        value: agent.to_owned(),
+        value: value(agent),
         is_default,
     });
 }
@@ -249,7 +249,7 @@ mod tests {
     fn agent_choices_do_not_include_free_text_escape_hatch() {
         let models = agents::ModelRoster::builtin().unwrap();
         let default = agents::AgentSpec::parse("codex", &models).unwrap();
-        let choices = agent_choices("codex", &default, &BTreeMap::new());
+        let choices = agent_choices("codex", &default, &BTreeMap::new(), str::to_owned);
         let labels = choices
             .iter()
             .map(|choice| choice.label.as_str())
@@ -257,9 +257,6 @@ mod tests {
 
         assert_eq!(labels, ["codex", "claude", "hermes"]);
         assert_eq!(default_choice_index(&choices), 0);
-        let reviewer = reviewer_choices(&ReviewerBinding::Lead, &default, &BTreeMap::new());
-        assert_eq!(reviewer.last().unwrap().label, "lead");
-        assert_eq!(default_choice_index(&reviewer), reviewer.len() - 1);
     }
 
     #[test]

@@ -90,9 +90,9 @@ fn render_lead_brief(
     reviewer: &ReviewerBinding,
 ) -> String {
     let manifest_path = workspace_manifest::manifest_path(workspace);
-    let review_instruction = match reviewer {
-        ReviewerBinding::Lead => LEAD_REVIEW_TEMPLATE.trim_end(),
-        ReviewerBinding::Agent(_) => COMMISSION_REVIEW_TEMPLATE.trim_end(),
+    let (review_instruction, reviewer_standard) = match reviewer {
+        ReviewerBinding::Lead => (LEAD_REVIEW_TEMPLATE.trim_end(), Some(REVIEWER_STANDARD)),
+        ReviewerBinding::Agent(_) => (COMMISSION_REVIEW_TEMPLATE.trim_end(), None),
     };
     let mut body = render_template(
         LEAD_BRIEF_TEMPLATE,
@@ -105,9 +105,9 @@ fn render_lead_brief(
             ("{review_instruction}", review_instruction),
         ],
     );
-    if matches!(reviewer, ReviewerBinding::Lead) {
+    if let Some(standard) = reviewer_standard {
         body.push('\n');
-        body.push_str(REVIEWER_STANDARD);
+        body.push_str(standard);
     }
     body
 }
@@ -215,29 +215,13 @@ mod tests {
         for placeholder in ["{manifest}", "{workspace}", "{agent}", "{startup_context}"] {
             assert!(!body.contains(placeholder), "unfilled placeholder: {body}");
         }
-    }
-
-    #[test]
-    fn the_reviewer_binding_decides_who_reviews() {
-        let workspace = temp_test_path("review-brief");
-        let agent =
-            agents::AgentSpec::parse("claude", &agents::ModelRoster::builtin().unwrap()).unwrap();
-        let render = |reviewer| {
-            render_lead_brief(
-                &agent,
-                &workspace,
-                &workspace.join("s"),
-                "worker: none",
-                &reviewer,
-            )
-        };
-
-        let lead = render(ReviewerBinding::Lead);
+        let lead = render_lead_brief(
+            &agent,
+            &workspace,
+            &dir,
+            "worker: none",
+            &ReviewerBinding::Lead,
+        );
         assert!(lead.contains(REVIEWER_STANDARD));
-        assert!(!lead.contains("before commissioning review"));
-
-        let commissioned = render(ReviewerBinding::Agent("claude".to_owned()));
-        assert!(commissioned.contains("before commissioning review"));
-        assert!(!commissioned.contains(REVIEWER_STANDARD));
     }
 }

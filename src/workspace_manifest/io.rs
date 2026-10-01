@@ -121,7 +121,7 @@ flow:
         let manifest = WorkspaceManifest {
             lead: "claude".to_owned(),
             worker: "codebot".to_owned(),
-            reviewer: "reviewbot".to_owned().into(),
+            reviewer: super::super::ReviewerBinding::Agent("reviewbot".to_owned()),
             security: "auditbot".to_owned(),
             ..WorkspaceManifest::default()
         };
@@ -202,7 +202,7 @@ worker_planning:
         let expected = WorkspaceManifest {
             lead: "claude:opus:medium".to_owned(),
             worker: "codex:gpt-5.6-sol:medium".to_owned(),
-            reviewer: "claude:opus:medium".to_owned().into(),
+            reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned()),
             security: "hermes:tencent/hy3:high".to_owned(),
             worker_planning: [
                 (

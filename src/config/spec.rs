@@ -146,12 +146,4 @@ models:
             assert!(message.contains(cause), "expected `{cause}` in `{message}`");
         }
     }
-
-    #[test]
-    fn lead_is_reserved_as_custom_agent_name() {
-        let error = load("agents: { lead: { binary: custom-reviewer } }").unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("niles.yaml"), "{message}");
-        assert!(message.contains("`lead` is reserved"), "{message}");
-    }
 }

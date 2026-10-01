@@ -117,7 +117,9 @@ mod tests {
         let manifest = WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: "claude:opus:max".to_owned().into(),
+            reviewer: crate::workspace_manifest::ReviewerBinding::Agent(
+                "claude:opus:max".to_owned(),
+            ),
             security: "claude:opus:max".to_owned(),
             worker_planning: [("codex".to_owned(), "Plan carefully.".to_owned())].into(),
             ..WorkspaceManifest::default()

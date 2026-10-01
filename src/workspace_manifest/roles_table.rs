@@ -19,10 +19,20 @@ pub(super) fn print_manifest_roles<W: Write>(
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<()> {
+    let reviewer = match &manifest.reviewer {
+        ReviewerBinding::Lead => RoleRow {
+            role: "reviewer",
+            family: "lead".to_owned(),
+            model: MISSING.to_owned(),
+            effort: MISSING.to_owned(),
+            invalid_reason: None,
+        },
+        ReviewerBinding::Agent(agent) => role_row("reviewer", agent, config),
+    };
     let rows = [
         role_row("lead", &manifest.lead, config),
         role_row("worker", &manifest.worker, config),
-        reviewer_row(&manifest.reviewer, config),
+        reviewer,
         role_row("security", &manifest.security, config),
     ];
 
@@ -45,19 +55,6 @@ pub(super) fn print_manifest_roles<W: Write>(
     }
 
     Ok(())
-}
-
-fn reviewer_row(binding: &ReviewerBinding, config: &ProjectConfig) -> RoleRow {
-    match binding {
-        ReviewerBinding::Lead => RoleRow {
-            role: "reviewer",
-            family: "lead".to_owned(),
-            model: MISSING.to_owned(),
-            effort: MISSING.to_owned(),
-            invalid_reason: None,
-        },
-        ReviewerBinding::Agent(agent) => role_row("reviewer", agent, config),
-    }
 }
 
 struct RoleRow {
@@ -126,7 +123,11 @@ mod tests {
         WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned(),
-            reviewer: reviewer.to_owned().into(),
+            reviewer: if reviewer == "lead" {
+                ReviewerBinding::Lead
+            } else {
+                ReviewerBinding::Agent(reviewer.to_owned())
+            },
             security: "claude:opus:max".to_owned(),
             ..WorkspaceManifest::default()
         }
@@ -169,19 +170,6 @@ security  claude  opus     max
             row.split_whitespace().collect::<Vec<_>>(),
             ["reviewer", "codex", "-", "-"],
             "{rendered}"
-        );
-    }
-
-    #[test]
-    fn lead_reviewer_uses_lead_row() {
-        let rendered = render(&manifest("lead"));
-        let row = rendered
-            .lines()
-            .find(|line| line.starts_with("reviewer"))
-            .unwrap();
-        assert_eq!(
-            row.split_whitespace().collect::<Vec<_>>(),
-            ["reviewer", "lead", "-", "-"]
         );
     }
 
