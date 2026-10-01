@@ -2,6 +2,7 @@ use std::fmt;
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
+use serde::{Serialize, Serializer};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SessionName(String);
@@ -30,6 +31,15 @@ impl fmt::Display for SessionName {
 pub(crate) struct WindowTarget {
     session: SessionName,
     window: String,
+}
+
+impl Serialize for WindowTarget {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.render())
+    }
 }
 
 impl WindowTarget {
@@ -112,7 +122,8 @@ impl fmt::Display for WindowTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
 pub(crate) enum TargetState {
     Live,
     /// The recorded window is still there, but its agent has exited. The pane is kept so its
@@ -120,10 +131,12 @@ pub(crate) enum TargetState {
     PaneExited,
     WindowDead,
     OrphanRecovered {
+        #[serde(rename = "target")]
         actual: WindowTarget,
     },
     OrphanGone,
     OrphanLegacyCandidate {
+        #[serde(rename = "target")]
         candidate: WindowTarget,
     },
     Unknown {

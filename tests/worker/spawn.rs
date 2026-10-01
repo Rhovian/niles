@@ -52,7 +52,10 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     assert!(codex_stdout.contains("effort: xhigh"));
 
     let codex_meta = fs::read_to_string(env.root.join(".niles/worker/codex-hi/meta.json")).unwrap();
+    let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
     assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
+    assert!(codex_meta.contains(r#""role": "worker""#));
+    chrono::DateTime::parse_from_rfc3339(codex_meta_json["created_at"].as_str().unwrap()).unwrap();
     assert!(codex_meta.contains(r#""agent_family": "codex""#));
     assert!(codex_meta.contains(r#""model": "gpt-5.7""#));
     assert!(codex_meta.contains(r#""effort": "xhigh""#));

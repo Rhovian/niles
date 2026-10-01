@@ -16,9 +16,8 @@ fn leftover_worker_json_file_is_inert() {
         .output()
         .unwrap();
     assert_command_success("workers ignores leftover json", &workers);
-    let stdout = String::from_utf8_lossy(&workers.stdout);
-    assert!(stdout.contains("workers[0]{id,agent,task,age,window,wake,last_status}:"));
-    assert!(!stdout.contains("auth-fix"));
+    let stdout = stdout_of(&workers);
+    assert_eq!(stdout, "{\"workers\":[]}\n");
 
     let peek = niles_bare(&workspace, &home)
         .args(["peek", "auth-fix"])

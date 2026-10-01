@@ -10,7 +10,7 @@ Work these four, in order:
 
 - **Correctness.** Does it do what it claims? Give a concrete input and say what goes wrong. A finding you cannot make fail is a guess.
 - **Idiom.** Does it read like the code around it? Match the surrounding naming, error handling and structure — not your preferences.
-- **Economy.** Could this have been done in less code? Does something in the repo already do it? Duplication and a reimplemented helper are findings. That includes the design: a requirement that drives disproportionate code is a finding for the lead, ranked apart from defects.
+- **Economy.** Could this have been done in less code? Does something in the repo already do it? Duplication and a reimplemented helper are findings. That includes the design: a requirement that drives disproportionate code is a finding for the lead. This holds even when the lead's brief calls the design settled: report design-level cuts first, ranked above code findings.
 - **Tests.** Do they test behaviour or phrasing? Redundant cases, verbose setup, and assertions that restate the implementation are findings too.
 
 Review the delta and the code it touches; re-deriving the whole design is the worker's job done twice.

@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 
 /// The part of a worker brief that does not depend on the role: what it is, where its report
 /// goes, and how it wakes the lead. Kept here rather than in a fourth template so the three
@@ -40,7 +41,8 @@ const ROLE_SECURITY_TEMPLATE: &str = include_str!("../templates/role_security.md
 /// A worker's brief is the shared reporting contract plus exactly one of these fragments. The
 /// split exists so a role is never handed instructions addressed to a different one — most
 /// importantly, so only the worker is told to run the project's checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum WorkerRole {
     /// Owns the change: implements it and runs the gate.
     Worker,

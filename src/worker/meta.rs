@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::schema::{self, ArtifactKind};
 
 use super::resolve::resolve_worker;
+use super::role::WorkerRole;
 
 const REPORT_FILE: &str = "report.md";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct WorkerMeta {
     pub(super) id: String,
+    pub(super) role: WorkerRole,
     pub(super) agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) agent_family: Option<String>,
@@ -21,8 +23,7 @@ pub(super) struct WorkerMeta {
     pub(super) effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) task_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) created_at: Option<DateTime<Utc>>,
+    pub(super) created_at: DateTime<Utc>,
     pub(super) project: Utf8PathBuf,
     pub(super) window: String,
     pub(super) brief: Utf8PathBuf,

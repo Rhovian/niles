@@ -15,13 +15,14 @@ use crate::{
 
 use super::{
     archive::archive_worker_dir,
-    list::UNLABELED_TASK_LABEL,
     meta::{WorkerMeta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
     role::WorkerRole,
     snapshot::status_log_len,
     validation::{validate_id, validate_task_label},
 };
+
+const UNLABELED_TASK_LABEL: &str = "-";
 
 pub fn spawn(
     id: String,
@@ -101,12 +102,13 @@ pub fn spawn(
 
     let meta = WorkerMeta {
         id: id.clone(),
+        role,
         agent,
         agent_family: agent_spec.tiered_family(),
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
         task_label,
-        created_at: Some(Utc::now()),
+        created_at: Utc::now(),
         project: project.clone(),
         window: target.render(),
         brief: brief_path,
