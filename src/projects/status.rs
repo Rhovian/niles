@@ -75,7 +75,11 @@ fn session_segments(session_name: &str, now: DateTime<Utc>) -> Result<Vec<Segmen
                     .as_ref()
                     .map(|lead| lead.model.clone().unwrap_or_else(|| lead.agent.clone()));
                 let usage = lead.as_ref().map(worker::lead_usage).transpose()?.flatten();
-                let (glyph, tokens) = usage_fields(usage.as_ref(), true);
+                let alert_when_waiting = !workers.iter().any(|worker| {
+                    worker.usage.as_ref().and_then(|usage| usage.state)
+                        == Some(SessionState::Working)
+                });
+                let (glyph, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
                 ("lead".to_owned(), model, glyph, tokens, None)
             } else if let Some(worker) = workers
                 .iter()
@@ -104,12 +108,15 @@ fn session_segments(session_name: &str, now: DateTime<Utc>) -> Result<Vec<Segmen
         .collect()
 }
 
-fn usage_fields(usage: Option<&Usage>, lead: bool) -> (Option<&'static str>, Option<u64>) {
+fn usage_fields(
+    usage: Option<&Usage>,
+    alert_when_waiting: bool,
+) -> (Option<&'static str>, Option<u64>) {
     match usage {
         Some(usage) => (
             usage.state.map(|state| match state {
                 SessionState::Working => "●",
-                SessionState::Waiting if lead => "⚠",
+                SessionState::Waiting if alert_when_waiting => "⚠",
                 SessionState::Waiting => "○",
             }),
             Some(usage.total_tokens()),

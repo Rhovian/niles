@@ -39,7 +39,17 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
                 .transpose()?
                 .flatten();
             match usage {
-                Some(usage) => (lead_state(&usage), Some(usage.total_tokens())),
+                Some(usage) => {
+                    let workers_working = usage.state == Some(SessionState::Waiting)
+                        && worker::status_workers(&entry.path)?.iter().any(|worker| {
+                            worker.usage.as_ref().and_then(|usage| usage.state)
+                                == Some(SessionState::Working)
+                        });
+                    (
+                        lead_state(&usage, workers_working),
+                        Some(usage.total_tokens()),
+                    )
+                }
                 None => (State::Running, None),
             }
         };
@@ -62,9 +72,10 @@ fn sort_rows(rows: &mut [Row]) {
     });
 }
 
-fn lead_state(usage: &Usage) -> State {
+fn lead_state(usage: &Usage, workers_working: bool) -> State {
     match usage.state {
-        Some(SessionState::Waiting) => State::Waiting(usage.last_turn_at),
+        Some(SessionState::Waiting) if !workers_working => State::Waiting(usage.last_turn_at),
+        Some(SessionState::Waiting) => State::Running,
         Some(SessionState::Working) | None => State::Running,
     }
 }
@@ -133,6 +144,7 @@ mod tests {
             state: Some(SessionState::Waiting),
             estimated_cost_usd: None,
         };
-        assert!(matches!(lead_state(&usage), State::Waiting(None)));
+        assert!(matches!(lead_state(&usage, false), State::Waiting(None)));
+        assert!(matches!(lead_state(&usage, true), State::Running));
     }
 }
