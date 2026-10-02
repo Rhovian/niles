@@ -33,6 +33,15 @@ pub(crate) struct Usage {
     pub estimated_cost_usd: Option<f64>,
 }
 
+impl Usage {
+    pub(crate) fn total_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens.into_iter().sum::<u64>()
+            + self.output_tokens
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum SessionState {
@@ -125,7 +134,7 @@ mod tests {
         };
         let lines = parse_lines::<CodexLine>(&format!(
             "{meta}\n{injected}\n{user}\n{}\n{}\n",
-            count(1),
+            count(4),
             count(9)
         ))
         .unwrap();
@@ -134,7 +143,7 @@ mod tests {
             Utf8Path::new("/w"),
             Utf8Path::new("/w/report.md")
         ));
-        assert_eq!(codex_usage(&lines).unwrap().input_tokens, 9);
+        assert_eq!(codex_usage(&lines).unwrap().input_tokens, 6);
         let lines =
             parse_lines::<CodexLine>(&format!("{meta}\n{injected}\n{other}\n{user}\n")).unwrap();
         assert!(!codex_matches(

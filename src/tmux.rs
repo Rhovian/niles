@@ -7,7 +7,10 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 mod send;
+mod session;
 mod target;
+
+pub(crate) use session::{lead_running, open_session, project_session, switch_or_attach};
 
 pub(crate) use send::send_line;
 use target::{LIVE_WINDOW_FORMAT, WindowPresence, window_presence};
@@ -63,7 +66,7 @@ pub(crate) struct CursorPosition {
 }
 
 pub(crate) fn cursor_position(target: &TmuxTarget) -> Result<CursorPosition> {
-    let value = display(target, "#{cursor_x} #{cursor_y} #{cursor_flag}")?;
+    let value = display(target.as_str(), "#{cursor_x} #{cursor_y} #{cursor_flag}")?;
     let [x, y, flag] = value.split_whitespace().collect::<Vec<_>>()[..] else {
         bail!("unexpected tmux cursor position {value:?}");
     };
@@ -90,8 +93,8 @@ fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     Ok(format_capture(&output.stdout))
 }
 
-fn display(target: &TmuxTarget, format: &str) -> Result<String> {
-    let output = output(&["display", "-p", "-t", target.as_str(), format])?;
+fn display(target: &str, format: &str) -> Result<String> {
+    let output = output(&["display", "-p", "-t", target, format])?;
     if !output.status.success() {
         bail!(
             "tmux display failed for {target}: {}",
@@ -111,13 +114,12 @@ fn capture_start(lines: usize) -> String {
 
 /// The tmux session this process is running in.
 ///
-/// Niles places manager and worker windows in the session the operator is already attached to.
-/// Being outside tmux is therefore an error, not a cue to invent a session: a window created in
-/// a session nobody is watching is indistinguishable from a worker that never started.
+/// Project leads and workers run in the session named after their registry entry and tagged with
+/// the project path. Agent commands require that tmux session.
 pub(crate) fn current_session() -> Result<SessionName> {
     if env::var_os("TMUX").is_none() {
         bail!(
-            "niles must run inside tmux. Start one with `tmux new -s niles`, or attach an existing session, then rerun."
+            "niles agent commands must run inside tmux. Run bare `niles` to open a project session."
         );
     }
 
@@ -133,7 +135,7 @@ pub(crate) fn current_session() -> Result<SessionName> {
         .context("failed to determine the current tmux session name")
 }
 
-pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) -> Result<()> {
+fn window_presence_in(session: &SessionName, window: &str) -> Result<WindowPresence> {
     let output = output(&[
         "list-windows",
         "-t",
@@ -142,18 +144,19 @@ pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) 
         LIVE_WINDOW_FORMAT,
     ])
     .with_context(|| format!("failed to list tmux windows in session {session}"))?;
-
     if !output.status.success() {
         bail!(
             "tmux list-windows failed for session {session}: {}",
             normalize_stderr(&output.stderr)
         );
     }
+    Ok(window_presence(&output.stdout, window))
+}
 
-    if window_presence(&output.stdout, window_name) != WindowPresence::Absent {
+pub(crate) fn ensure_window_available(session: &SessionName, window_name: &str) -> Result<()> {
+    if window_presence_in(session, window_name)? != WindowPresence::Absent {
         bail!("tmux window {session}:{window_name} already exists");
     }
-
     Ok(())
 }
 

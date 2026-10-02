@@ -15,7 +15,13 @@ use std::{
 const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
+  display-message)
+    if [ "$3" = "-t" ]; then printf '%s\n' "${TMUX_PROJECT_TAG:-}"; else printf 'niles-test-session\n'; fi
+    exit 0 ;;
+  display) printf '%s\n' "${TMUX_PROJECT_TAG:-}"; exit 0 ;;
+  has-session)
+    if [ "${TMUX_SESSION_EXISTS:-}" = 1 ]; then exit 0; fi
+    printf "can't find session\n" >&2; exit 1 ;;
   list-windows)
     if [ "${TMUX_LIST_WINDOWS_FAIL:-}" = 1 ]; then
       printf 'server unreachable\nretry later\n' >&2

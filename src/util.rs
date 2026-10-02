@@ -17,7 +17,7 @@ pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     )
 }
 
-fn utf8_path(path: PathBuf, description: &str) -> Result<Utf8PathBuf> {
+pub(crate) fn utf8_path(path: PathBuf, description: &str) -> Result<Utf8PathBuf> {
     Utf8PathBuf::from_path_buf(path)
         .map_err(|path| anyhow::anyhow!("{description} is not UTF-8: {}", path.display()))
 }

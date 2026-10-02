@@ -372,8 +372,11 @@ fn is_dead_pane(field: &str) -> bool {
     field.trim() == "1"
 }
 
-fn is_missing_session_error(stderr: &str) -> bool {
+pub(super) fn is_missing_session_error(stderr: &str) -> bool {
     stderr.contains("can't find session")
+        || stderr.contains("no server running")
+        || (stderr.starts_with("error connecting to ")
+            && stderr.ends_with("(No such file or directory)"))
 }
 
 fn nonempty(value: &str) -> Option<String> {

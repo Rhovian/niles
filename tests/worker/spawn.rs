@@ -15,7 +15,7 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
 
     assert_failure_contains("spawn outside tmux", &spawn, "must run inside tmux");
     let stderr = String::from_utf8_lossy(&spawn.stderr);
-    assert!(stderr.contains("tmux new -s niles"), "{stderr}");
+    assert!(stderr.contains("bare `niles`"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
     assert!(!env.root.join(".niles/worker/auth-fix").exists());
     assert!(!env.tmux_log.exists());
