@@ -65,12 +65,13 @@ fn run() -> Result<ExitCode> {
             role,
             task_label,
             agent,
+            tree,
             checkin,
             message,
         }) => {
             let task = message.resolve()?;
             let worker_id = id.clone();
-            worker::spawn(id, role, task_label, agent, task, checkin)?;
+            worker::spawn(id, role, task_label, agent, task, checkin, tree)?;
             if wait {
                 return Ok(wait::wait(
                     wait::WaitOn::Workers(vec![worker_id]),

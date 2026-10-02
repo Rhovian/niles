@@ -25,11 +25,22 @@ pub(super) struct WorkerMeta {
     pub(super) task_label: Option<String>,
     pub(super) created_at: DateTime<Utc>,
     pub(super) project: Utf8PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) tree: Option<Utf8PathBuf>,
     pub(super) window: String,
     pub(super) brief: Utf8PathBuf,
     pub(super) launch: Utf8PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) session_link: Option<SessionLink>,
+}
+
+impl WorkerMeta {
+    pub(super) fn agent_dir(&self) -> &Utf8Path {
+        match &self.tree {
+            Some(tree) => tree,
+            None => &self.project,
+        }
+    }
 }
 
 pub(super) fn write_meta(worker_dir: &Utf8Path, meta: &WorkerMeta) -> Result<()> {

@@ -1,6 +1,40 @@
 use super::support::*;
 
 #[test]
+fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
+    let env = TestEnv::new("niles-worker-tree");
+    let tree = env.root.join("other-tree");
+    fs::create_dir(&tree).unwrap();
+    let tree_arg = tree.to_str().unwrap();
+    let spawn = env.run(&[
+        "spawn", "other", "--agent", "claude", "--tree", tree_arg, "Fix",
+    ]);
+    assert_command_success("spawn in another tree", &spawn);
+    assert!(env.tmux_log().contains(&format!("-c {tree_arg} ")));
+    let workers = env.run(&["workers"]);
+    assert_command_success("workers with tree", &workers);
+    let listing: serde_json::Value = serde_json::from_slice(&workers.stdout).unwrap();
+    assert_eq!(listing["workers"][0]["tree"], tree_arg);
+}
+
+#[test]
+fn spawn_rejects_missing_tree_without_worker_state() {
+    let env = TestEnv::new("niles-worker-missing-tree");
+    let missing = env.root.join("missing");
+    let spawn = env.run(&[
+        "spawn",
+        "other",
+        "--agent",
+        "claude",
+        "--tree",
+        missing.to_str().unwrap(),
+        "Fix",
+    ]);
+    assert_failure_contains("missing tree", &spawn, "failed to resolve tree");
+    assert!(!env.root.join(".niles/worker/other").exists());
+}
+
+#[test]
 fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let env = TestEnv::new("niles-worker-no-tmux");
 

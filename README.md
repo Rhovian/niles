@@ -33,26 +33,60 @@ Pairing a frontier lead with a cheaper worker may also reduce cost.
 
 ## Quickstart
 
-Bare `niles` opens the project list. Press `n` to register a directory, then Niles creates or
-opens that project's named tmux session and starts the lead there. The new lead prompts for all
-four roles when creating `.niles/manifest.yaml`; later launches show the roles before starting.
-Bare `niles` no longer starts a lead in the current pane.
-
-Niles project sessions show a two-line status bar with live projects above the current session's windows and agent activity.
-
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
 niles
 ```
 
-To open the list in a tmux popup, add one optional binding to `~/.tmux.conf`:
-
-```tmux
-bind-key <key> display-popup -E niles
-```
-
 Alternatively, install with `cargo install niles`, or build from source with
 `cargo install --git https://github.com/Rhovian/niles`.
+
+Bare `niles` opens the project list. Type a project's number to open it, `n` to register a
+directory, or `q` to quit, then press Enter. Opening a project creates or switches to its own tmux
+session with the lead running in a window named `niles`. The first launch in a workspace prompts
+for all four roles and writes `.niles/manifest.yaml`; later launches show the roles before
+starting.
+
+To open the list from anywhere in tmux, bind it to a popup:
+
+```tmux
+bind-key -n M-n display-popup -E niles
+```
+
+## Projects and the status bar
+
+Each project is a tmux session, and each worker is a window in it. Project sessions show a
+two-line status bar at the top:
+
+- **Projects:** every live project and its lead's state. `●` the lead or one of its workers is
+  working; `⚠` the lead is idle with no worker working, so it is waiting for you, with how long
+  it has waited.
+- **Windows:** the current project's lead and workers, with each agent's model, state (`●`
+  working, `○` idle, `⚠` lead waiting for you), token total, and for workers, time since spawn.
+
+Switch projects and windows with tmux's own keys (`switch-client -n/-p`, `next-window`,
+`previous-window`), or bind them, for example:
+
+```tmux
+bind -n M-[ switch-client -p
+bind -n M-] switch-client -n
+bind -n M-\; previous-window
+bind -n "M-'" next-window
+```
+
+## Parallel implementation
+
+Workers in a workspace share one working tree, so two workers editing the same files overwrite
+each other. To run a second implementation at once, give it its own tree:
+
+```sh
+git worktree add ../repo-b -b feature-b
+niles spawn b --tree ../repo-b "Implement feature B"
+```
+
+The worker runs in `../repo-b`, while `niles workers`, `wait`, `close`, and the watcher still
+track it from the lead's workspace. Niles never creates, cleans, or removes the tree; that stays
+with `git worktree`.
 
 ## Roles
 
@@ -73,7 +107,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | --- | --- |
 | `niles` | List, register, and open projects |
 | `niles doctor` | Show binary identity and dev-build staleness |
-| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
+| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; `--tree` runs it in another working tree, `--wait` awaits its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
 | `niles workers` | Print this workspace's live workers, window health, and pending wakes as JSON |
 | `niles usage` | Print usage for live lead and worker sessions as JSON |
@@ -119,15 +153,15 @@ An empty `efforts: []` marks a model that takes no effort qualifier.
 
 Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
 `--agent` overrides a role binding. Built-in families are `codex`, `claude`, and `hermes`.
-Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer session, but the lead reviews its own plan and must question its design during the economy pass.
+Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer
+session, but the lead reviews its own plan and must question its design during the economy pass.
 Run `niles models` to list the effective models and effort levels for the current workspace.
 
 Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
 planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
-to five minutes, then back off to hourly reminders. `checkin` and fixed `recheck` values use the
-same duration grammar: a non-negative integer followed by `ms`, `s`, `m`, or `h`. Plain `0` and
-`off` disable a check-in; a fixed recheck must be greater than zero, while `recheck: backoff`
-selects backoff instead. Per-command `--checkin` overrides the manifest.
+to five minutes, then back off to hourly reminders. Both take a duration as above; `0` and `off`
+disable a check-in, a fixed recheck must be greater than zero, and `recheck: backoff` selects
+backoff. Per-command `--checkin` overrides the manifest.
 
 ## Contributing and security
 
