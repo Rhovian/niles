@@ -102,6 +102,9 @@ indented continuation of one. An absent marker, hidden cursor, or failed query d
 continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
 as state only and never submits captured text.
 
+Agent-written session telemetry gates due worker check-ins. Agents can delay their own check-ins
+by writing to their own logs.
+
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
 universal sanitizer. See [`src/worker/list.rs`](../src/worker/list.rs),

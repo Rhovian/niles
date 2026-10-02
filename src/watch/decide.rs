@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::{wake::WakeKind, worker::WorkerSnapshot};
+use crate::{telemetry::SessionState, wake::WakeKind, worker::WorkerSnapshot};
 
 use super::checkin::Checkin;
 
@@ -66,6 +66,7 @@ pub(crate) enum Commit {
 pub(crate) struct WatchMemory {
     seen: BTreeMap<String, u64>,
     held_since: Option<DateTime<Utc>>,
+    pub(super) activity: BTreeMap<String, (DateTime<Utc>, Option<SessionState>)>,
 }
 
 impl WatchMemory {
@@ -122,7 +123,13 @@ impl WatchMemory {
                     _ if now >= checkin.deadline => plan.nudges.push(Nudge {
                         id: worker.id.clone(),
                         worker_dir: worker.worker_dir.clone(),
-                        text: no_report_text(&worker.id, &checkin.elapsed_label()),
+                        text: no_report_text(
+                            &worker.id,
+                            self.activity
+                                .get(&worker.id)
+                                .filter(|(deadline, _)| *deadline == checkin.deadline)
+                                .and_then(|(_, state)| *state),
+                        ),
                         commit: Commit::Checkin {
                             planned: *checkin,
                             next: checkin.rearmed(now),
@@ -148,6 +155,7 @@ impl WatchMemory {
         // A worker that is gone takes its arm state with it: the check-in file lives in the
         // directory that was archived or removed.
         self.seen.retain(|id, _| live.contains(id));
+        self.activity.retain(|id, _| live.contains(id));
         plan
     }
 
@@ -164,9 +172,11 @@ fn report_text(id: &str, kind: WakeKind) -> String {
     format!("niles: {id} reported ({kind}) — check workers")
 }
 
-/// `niles: no report from impl in 5m — check it`
-fn no_report_text(id: &str, elapsed: &str) -> String {
-    format!("niles: no report from {id} in {elapsed} — check it")
+fn no_report_text(id: &str, state: Option<SessionState>) -> String {
+    match state {
+        Some(SessionState::Waiting) => format!("niles: {id} stopped without a report — check it"),
+        Some(SessionState::Working) | None => format!("niles: no report from {id} — check it"),
+    }
 }
 
 #[cfg(test)]
@@ -300,18 +310,26 @@ mod tests {
         let early = memory.plan(&[busy()], &armed, at(1299));
         assert!(early.nudges.is_empty(), "{early:?}");
 
+        memory.activity.insert(
+            "impl".to_owned(),
+            (armed["impl"].deadline, Some(SessionState::Waiting)),
+        );
+        assert_eq!(
+            memory.plan(&[busy()], &armed, at(1300)).nudges[0].text,
+            "niles: impl stopped without a report — check it"
+        );
+
+        memory.activity.clear();
         // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
         // nudge every three minutes at a worker nobody has heard from.
-        for (offset, minutes, next_minutes) in [(300, 5, 15), (900, 15, 35), (2_100, 35, 75)] {
+        for offset in [300, 900, 2_100] {
             let plan = memory.plan(&[busy()], &armed, at(1_000 + offset));
             assert_eq!(
                 plan.nudges
                     .iter()
                     .map(|nudge| nudge.text.as_str())
                     .collect::<Vec<_>>(),
-                vec![format!(
-                    "niles: no report from impl in {minutes}m — check it"
-                )],
+                vec!["niles: no report from impl — check it"],
                 "at {offset}s"
             );
             assert!(plan.disarms.is_empty());
@@ -323,7 +341,6 @@ mod tests {
             let Commit::Checkin { next, .. } = nudge.commit else {
                 panic!("a check-in nudge must carry its re-arm");
             };
-            assert_eq!(next.elapsed_label(), format!("{next_minutes}m"));
             armed = BTreeMap::from([("impl".to_owned(), next)]);
         }
     }

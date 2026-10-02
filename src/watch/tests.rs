@@ -197,7 +197,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
 
     sink = RecordingSink::default();
     tick(&root, at(1_090), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent, ["niles: no report from armed in 90s — check it"]);
+    assert_eq!(sink.sent, ["niles: no report from armed — check it"]);
     assert!(Checkin::read(&armed_dir).unwrap().is_some());
 
     append_log(&root, "armed", DONE);
@@ -277,14 +277,10 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     let mut sink = RecordingSink::default();
     tick(&root, at(1300), &mut memory, &mut sink, &running());
 
-    assert_eq!(
-        sink.sent,
-        vec!["niles: no report from impl in 5m — check it"]
-    );
+    assert_eq!(sink.sent, vec!["niles: no report from impl — check it"]);
     let rearmed = Checkin::read(&dir).unwrap().unwrap();
     assert_eq!(rearmed.deadline, at(1_900));
     assert_eq!(rearmed.delay, 600);
-    assert_eq!(rearmed.elapsed_label(), "15m");
 
     let mut next = RecordingSink::default();
     tick(&root, at(1301), &mut memory, &mut next, &running());

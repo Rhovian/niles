@@ -42,6 +42,7 @@ mod cadence;
 mod checkin;
 pub(crate) mod composer;
 mod decide;
+mod due;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -296,7 +297,8 @@ fn tick(
         }
     };
     trust::inspect_starting_workers(&snapshot, now, sink);
-    let checkins = read_checkins(&snapshot, sink);
+    let mut checkins = read_checkins(&snapshot, sink);
+    due::check_due(&snapshot, &mut checkins, now, memory, sink);
     let mut plan = memory.plan(&snapshot, &checkins, now);
     let has_draft = !plan.nudges.is_empty() && sink.has_draft();
     if memory.hold_nudge(has_draft, now) {

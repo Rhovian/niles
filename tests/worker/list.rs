@@ -12,7 +12,7 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
     );
     fs::write(
         readable.join("checkin"),
-        "deadline=2026-02-03T04:05:06Z\ndelay=300\nstep=300\nrecheck=backoff\narmed_len=0\n",
+        "deadline=2026-02-03T04:05:06Z\ndelay=300\nrecheck=backoff\narmed_len=0\n",
     )
     .unwrap();
     write_worker(&env.root, "b-clear", "old:niles-b-clear", None, b"");
