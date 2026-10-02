@@ -28,7 +28,6 @@ pub(crate) struct Usage {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
-    pub model: Option<String>,
     pub last_turn_at: Option<DateTime<Utc>>,
     pub state: Option<SessionState>,
     pub estimated_cost_usd: Option<f64>,
@@ -98,11 +97,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_deduplicates_and_keeps_main_model() {
+    fn claude_deduplicates_usage() {
         let main = "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T00:00:00Z\",\"message\":{\"id\":\"a\",\"model\":\"opus\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":5}}}\n";
-        let sub = main
-            .replace("\"id\":\"a\"", "\"id\":\"b\"")
-            .replace("opus", "haiku");
+        let sub = main.replace("\"id\":\"a\"", "\"id\":\"b\"");
         let usage = claude_usage(&format!("{main}{main}"), &[sub]).unwrap();
         assert_eq!(
             (
@@ -113,7 +110,6 @@ mod tests {
             ),
             (4, 6, 8, Some(10))
         );
-        assert_eq!(usage.model.as_deref(), Some("opus"));
         assert!(claude_usage("bad\n", &[]).is_none());
         assert_eq!(
             claude_usage(&format!("{main}partial"), &[])
@@ -135,9 +131,8 @@ mod tests {
                 r#"{{"type":"event_msg","timestamp":"2026-10-01T00:00:00Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{n},"output_tokens":2,"cached_input_tokens":3,"reasoning_output_tokens":4}}}}}}}}"#
             )
         };
-        let context = r#"{"type":"turn_context","timestamp":"2026-10-01T00:00:00Z","payload":{"model":"gpt-6-sol"}}"#;
         let lines = parse_lines::<CodexLine>(&format!(
-            "{meta}\n{injected}\n{user}\n{context}\n{}\n{}\n",
+            "{meta}\n{injected}\n{user}\n{}\n{}\n",
             count(1),
             count(9)
         ))
@@ -148,10 +143,6 @@ mod tests {
             Utf8Path::new("/w/report.md")
         ));
         assert_eq!(codex_usage(&lines).unwrap().input_tokens, 9);
-        assert_eq!(
-            codex_usage(&lines).unwrap().model.as_deref(),
-            Some("gpt-6-sol")
-        );
         let lines =
             parse_lines::<CodexLine>(&format!("{meta}\n{injected}\n{other}\n{user}\n")).unwrap();
         assert!(!codex_matches(

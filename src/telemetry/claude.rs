@@ -39,7 +39,6 @@ enum ClaudeLine {
 #[derive(Deserialize)]
 struct ClaudeMessage {
     id: String,
-    model: String,
     usage: ClaudeCounters,
     stop_reason: Option<String>,
 }
@@ -63,7 +62,7 @@ struct ClaudeDetails {
 pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
     let mut seen = HashSet::new();
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut reasoning, mut model, mut last_turn, mut state) = (None, None, None, None);
+    let (mut reasoning, mut last_turn, mut state) = (None, None, None);
     for (body, main_file) in
         std::iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
     {
@@ -113,9 +112,6 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
             if let Some(details) = message.usage.output_tokens_details {
                 *reasoning.get_or_insert(0) += details.thinking_tokens;
             }
-            if main_file {
-                model = Some(message.model);
-            }
             last_turn =
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
@@ -129,7 +125,6 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
         cache_read_tokens: cache_read,
         cache_write_tokens: Some(cache_write),
         reasoning_tokens: reasoning,
-        model,
         last_turn_at: last_turn,
         state,
         estimated_cost_usd: None,

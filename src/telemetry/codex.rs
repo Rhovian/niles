@@ -66,19 +66,12 @@ pub(super) enum CodexLine {
         timestamp: DateTime<Utc>,
         payload: CodexEvent,
     },
-    TurnContext {
-        payload: CodexTurn,
-    },
     #[serde(other)]
     Other,
 }
 #[derive(Deserialize)]
 pub(super) struct CodexMeta {
     cwd: Utf8PathBuf,
-}
-#[derive(Deserialize)]
-pub(super) struct CodexTurn {
-    model: String,
 }
 #[derive(Deserialize)]
 pub(super) struct CodexResponse {
@@ -129,10 +122,7 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
                     }
                 }
             }
-            CodexLine::ResponseItem { .. }
-            | CodexLine::EventMsg { .. }
-            | CodexLine::TurnContext { .. }
-            | CodexLine::Other => {}
+            CodexLine::ResponseItem { .. } | CodexLine::EventMsg { .. } | CodexLine::Other => {}
         }
     }
     false
@@ -140,12 +130,8 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
 
 pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
     let mut last = None;
-    let mut model = None;
     let mut state = None;
     for line in lines {
-        if let CodexLine::TurnContext { payload } = line {
-            model = Some(payload.model.clone());
-        }
         let CodexLine::EventMsg { timestamp, payload } = line else {
             continue;
         };
@@ -170,14 +156,12 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
             cache_read_tokens: counts.cached_input_tokens,
             cache_write_tokens: counts.cache_write_input_tokens,
             reasoning_tokens: Some(counts.reasoning_output_tokens),
-            model: None,
             last_turn_at: Some(*timestamp),
             state: None,
             estimated_cost_usd: None,
         });
     }
     last.map(|mut usage: Usage| {
-        usage.model = model;
         usage.state = state;
         usage
     })

@@ -58,7 +58,6 @@ struct HermesSession {
     cache_read_tokens: u64,
     cache_write_tokens: u64,
     reasoning_tokens: u64,
-    model: String,
     ended_at: Option<f64>,
     last_activity_at: f64,
     #[serde(default)]
@@ -92,7 +91,6 @@ pub(super) fn hermes_usage(body: &str) -> Option<Usage> {
         cache_read_tokens: row.cache_read_tokens,
         cache_write_tokens: Some(row.cache_write_tokens),
         reasoning_tokens: Some(row.reasoning_tokens),
-        model: Some(row.model),
         last_turn_at: DateTime::from_timestamp_micros(
             (row.last_activity_at * 1_000_000.0).round() as i64
         ),
