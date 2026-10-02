@@ -59,7 +59,7 @@ pub(crate) fn read(
     let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
-        SessionLink::Hermes { source } => read_hermes(source),
+        SessionLink::Hermes { source } => read_hermes(&home, source),
         SessionLink::Codex => read_codex(&home, workspace, needle, created_at),
     }
 }
@@ -82,18 +82,10 @@ mod tests {
     use super::{
         claude::claude_usage,
         codex::{CodexLine, codex_matches, codex_usage},
-        hermes::{hermes_session_id, hermes_usage},
     };
 
     fn state(usage: Option<Usage>) -> Option<SessionState> {
         usage.and_then(|usage| usage.state)
-    }
-
-    #[test]
-    fn hermes_list_finds_live_session_id() {
-        let list = "Title                        Workspace          Last Active   ID\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────\nRun telemetry smoke test t   —                  18m ago       20261001_182645_ca601d\n  … more not shown (use --limit 4 to see more)\n";
-        assert_eq!(hermes_session_id(list), Some("20261001_182645_ca601d"));
-        assert_eq!(hermes_session_id("No sessions found.\n"), None);
     }
 
     #[test]
@@ -186,31 +178,5 @@ mod tests {
         assert_eq!(state(codex_usage(&lines)), Some(SessionState::Working));
         let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n{complete}\n")).unwrap();
         assert_eq!(state(codex_usage(&lines)), Some(SessionState::Waiting));
-    }
-
-    #[test]
-    fn hermes_messages_classify_both_states() {
-        let base = r#"{"input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"model":"hermes","last_activity_at":1790812800.0,"messages":[{"role":"assistant","finish_reason":"stop","timestamp":1790812800.0}]}"#;
-        assert_eq!(
-            state(hermes_usage(&format!("{base}\n"))),
-            Some(SessionState::Waiting)
-        );
-        let working = base.replace("\"finish_reason\":\"stop\"", "\"tool_calls\":[{}]");
-        assert_eq!(
-            state(hermes_usage(&format!("{working}\n"))),
-            Some(SessionState::Working)
-        );
-    }
-
-    #[test]
-    fn hermes_epoch_time_and_estimated_cost() {
-        let row = "{\"input_tokens\":102144,\"output_tokens\":3913,\"cache_read_tokens\":277248,\"cache_write_tokens\":0,\"reasoning_tokens\":1938,\"model\":\"deepseek/deepseek-v4.1-flash\",\"last_activity_at\":1790694525.47223,\"estimated_cost_usd\":0.03}\n";
-        let usage = hermes_usage(row).unwrap();
-        assert_eq!(usage.input_tokens, 102144);
-        assert_eq!(usage.estimated_cost_usd, Some(0.03));
-        assert_eq!(
-            usage.last_turn_at.unwrap().timestamp_micros(),
-            1790694525472230
-        );
     }
 }
