@@ -121,6 +121,9 @@ capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
 
+With `--tree`, the worker agent runs in a directory chosen by the lead; Niles validates only that it
+exists and is a directory.
+
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.
 

@@ -104,6 +104,9 @@ pub enum CommandName {
         /// Agent id to launch; defaults to this role's workspace manifest binding.
         #[arg(short, long)]
         agent: Option<String>,
+        /// Run the agent in this directory while Niles tracks it from this workspace.
+        #[arg(long, value_name = "PATH")]
+        tree: Option<camino::Utf8PathBuf>,
         /// Check-in delay for this worker: a duration such as 1s, 90s, 5m or 1h. Defaults to
         /// this workspace's manifest `checkin`, then 5m. `0` or `off` arms none.
         #[arg(long, value_name = "DELAY")]

@@ -87,7 +87,7 @@ impl WorkerSnapshot {
         let meta = self.meta.as_ref()?;
         let created_at = meta.created_at;
         let age = now.signed_duration_since(created_at);
-        (age >= TimeDelta::zero() && age <= window).then_some((&meta.window, &meta.project))
+        (age >= TimeDelta::zero() && age <= window).then_some((&meta.window, meta.agent_dir()))
     }
 }
 

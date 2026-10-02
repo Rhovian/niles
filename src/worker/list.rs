@@ -1,7 +1,7 @@
 use std::{fs, io::Write};
 
 use anyhow::{Context, Result};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -53,6 +53,7 @@ struct WorkerOutput {
     id: String,
     role: Option<super::WorkerRole>,
     agent: Option<String>,
+    tree: Option<Utf8PathBuf>,
     task_label: Option<String>,
     started_at: Option<DateTime<Utc>>,
     window: Option<TargetState>,
@@ -78,6 +79,7 @@ impl WorkerOutput {
             id: worker.id.clone(),
             role: meta.map(|meta| meta.role),
             agent: meta.map(|meta| meta.agent.clone()),
+            tree: meta.and_then(|meta| meta.tree.clone()),
             task_label: meta.and_then(|meta| meta.task_label.clone()),
             started_at: meta.map(|meta| meta.created_at),
             window: meta.map(super::resolve::window_state),

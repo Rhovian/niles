@@ -58,7 +58,7 @@ pub(crate) fn worker_usage(worker: &WorkerSnapshot) -> Result<Option<telemetry::
     };
     telemetry::read(
         link,
-        &meta.project,
+        meta.agent_dir(),
         &report_path(&worker.worker_dir),
         meta.created_at,
     )

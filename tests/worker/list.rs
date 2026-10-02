@@ -40,7 +40,7 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
     assert_eq!(
         stdout_of(&output),
         format!(
-            "{{\"workers\":[{{\"id\":\"a-readable\",\"role\":\"worker\",\"agent\":\"codex\",\"task_label\":\"json\",\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"live\"}},\"wake\":\"pending\",\"last_status\":\"done: complete\",\"checkin\":{{\"deadline\":\"2026-02-03T04:05:06Z\"}},\"error\":null}},{{\"id\":\"b-clear\",\"role\":\"worker\",\"agent\":\"codex\",\"task_label\":null,\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"orphan-recovered\",\"target\":\"recovered:niles-renamed\"}},\"wake\":\"clear\",\"last_status\":null,\"checkin\":null,\"error\":null}},{{\"id\":\"z-unreadable\",\"role\":null,\"agent\":null,\"task_label\":null,\"started_at\":null,\"window\":null,\"wake\":null,\"last_status\":null,\"checkin\":null,\"error\":{error}}}]}}\n"
+            "{{\"workers\":[{{\"id\":\"a-readable\",\"role\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":\"json\",\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"live\"}},\"wake\":\"pending\",\"last_status\":\"done: complete\",\"checkin\":{{\"deadline\":\"2026-02-03T04:05:06Z\"}},\"error\":null}},{{\"id\":\"b-clear\",\"role\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":null,\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"orphan-recovered\",\"target\":\"recovered:niles-renamed\"}},\"wake\":\"clear\",\"last_status\":null,\"checkin\":null,\"error\":null}},{{\"id\":\"z-unreadable\",\"role\":null,\"agent\":null,\"tree\":null,\"task_label\":null,\"started_at\":null,\"window\":null,\"wake\":null,\"last_status\":null,\"checkin\":null,\"error\":{error}}}]}}\n"
         )
     );
 }

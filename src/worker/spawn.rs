@@ -31,12 +31,28 @@ pub fn spawn(
     agent: Option<String>,
     task: String,
     checkin: Option<String>,
+    tree: Option<Utf8PathBuf>,
 ) -> Result<()> {
     validate_id(&id)?;
     if let Some(label) = &task_label {
         validate_task_label(label)?;
     }
     let project = current_dir_utf8()?;
+    let tree = tree
+        .map(|path| {
+            let canonical = path
+                .canonicalize_utf8()
+                .with_context(|| format!("failed to resolve tree {path}"))?;
+            if !canonical.is_dir() {
+                bail!("tree is not a directory: {canonical}");
+            }
+            Ok(canonical)
+        })
+        .transpose()?;
+    let agent_dir = match &tree {
+        Some(tree) => tree.as_path(),
+        None => &project,
+    };
     let agent = resolve_agent(&project, role, agent)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
@@ -67,7 +83,7 @@ pub fn spawn(
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
-    let brief_path = write_brief(&dir, &id, role, task_label.as_deref(), &project, &task)?;
+    let brief_path = write_brief(&dir, &id, role, task_label.as_deref(), agent_dir, &task)?;
 
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
@@ -85,7 +101,7 @@ pub fn spawn(
     let target = match agent_window::launch_worker_window(
         &session,
         &window_name,
-        &project,
+        agent_dir,
         &invocation,
         &agent_window::WorkerPaths {
             brief: &brief_path,
@@ -114,6 +130,7 @@ pub fn spawn(
         task_label,
         created_at: Utc::now(),
         project: project.clone(),
+        tree,
         window: target.render(),
         brief: brief_path,
         launch: launch_path,
