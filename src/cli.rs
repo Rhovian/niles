@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use std::{io, time::Duration};
 
 #[derive(Debug, Parser)]
@@ -11,6 +11,12 @@ use std::{io, time::Duration};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<CommandName>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum StatusLine {
+    Projects,
+    Sessions,
 }
 
 #[derive(Debug, Args)]
@@ -58,6 +64,12 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
+    #[command(hide = true)]
+    Status {
+        #[arg(value_enum)]
+        line: StatusLine,
+        session_name: String,
+    },
     /// Start the lead in a project session.
     #[command(hide = true)]
     Lead,

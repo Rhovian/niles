@@ -60,6 +60,14 @@ fn create_registers_and_switches() {
     ];
     let positions = steps.map(|step| log.find(step).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{log}");
+    assert!(log.contains("set-option -t =scratch: status 2 ; set-option -t =scratch: status-position top ; set-option -t =scratch: status-interval 5 ; set-option -t =scratch: status-format[0] #("), "{log}");
+    assert!(
+        log.contains(
+            "status projects #{session_name}) ; set-option -t =scratch: status-format[1] #("
+        ),
+        "{log}"
+    );
+    assert!(log.contains("status sessions #{session_name})"), "{log}");
 }
 
 #[test]
