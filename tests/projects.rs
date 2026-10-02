@@ -56,7 +56,7 @@ fn create_registers_and_switches() {
         "new-session -d -s scratch -c",
         "; set-option -t =scratch: @niles-project",
         "set-option -w -t =scratch:=niles remain-on-exit failed",
-        "switch-client -t =scratch",
+        "switch-client -t =scratch:=niles",
     ];
     let positions = steps.map(|step| log.find(step).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{log}");
@@ -90,7 +90,7 @@ fn live_session_only_switches() {
         String::from_utf8_lossy(&result.stderr)
     );
     let log = env.tmux_log();
-    assert!(log.contains("switch-client -t =live"), "{log}");
+    assert!(log.contains("switch-client -t =live:=niles"), "{log}");
     assert!(!log.contains("new-session"), "{log}");
 }
 

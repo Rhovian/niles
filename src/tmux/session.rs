@@ -167,12 +167,15 @@ fn executable() -> Result<String> {
         .context("niles executable path is not UTF-8")?
         .to_owned())
 }
+
+/// Targets the lead window, not just the session, so tmux also selects it: a lead window that
+/// `open_session` just created in the background would otherwise stay out of view.
 pub(crate) fn switch_or_attach(session: &SessionName) -> Result<()> {
-    let name = target::exact(session.as_str());
+    let lead = format!("{}:=niles", target::exact(session.as_str()));
     if env::var_os("TMUX").is_some() {
-        run(&["switch-client", "-t", &name])
+        run(&["switch-client", "-t", &lead])
     } else {
-        let error = Command::new("tmux").args(["attach", "-t", &name]).exec();
+        let error = Command::new("tmux").args(["attach", "-t", &lead]).exec();
         Err(error).context("failed to attach to tmux session")
     }
 }
