@@ -69,21 +69,50 @@ fn read_claude(home: &Utf8Path, session_id: &str) -> Result<Option<Usage>> {
 }
 
 fn read_hermes(source: &str) -> Result<Option<Usage>> {
+    let list = hermes(&["sessions", "list", "--source", source, "--limit", "1"])?;
+    let Some(session_id) = hermes_session_id(&list) else {
+        return Ok(None);
+    };
+    let export = hermes(&[
+        "sessions",
+        "export",
+        "-",
+        "--format",
+        "jsonl",
+        "--session-id",
+        session_id,
+    ])?;
+    Ok(hermes_usage(&export))
+}
+
+fn hermes(args: &[&str]) -> Result<String> {
     let output = Command::new("hermes")
-        .args([
-            "sessions", "export", "-", "--format", "jsonl", "--source", source,
-        ])
+        .args(args)
         .output()
-        .context("run hermes sessions export")?;
+        .with_context(|| format!("run hermes {}", args.join(" ")))?;
     if !output.status.success() {
         bail!(
-            "hermes sessions export failed: {}",
+            "hermes {} failed: {}",
+            args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(hermes_usage(
-        &String::from_utf8(output.stdout).context("hermes export is not UTF-8")?,
-    ))
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("hermes {} is not UTF-8", args.join(" ")))
+}
+
+fn hermes_session_id(list: &str) -> Option<&str> {
+    list.lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .find(|id| {
+            let bytes = id.as_bytes();
+            bytes.len() == 22
+                && bytes[..8].iter().all(u8::is_ascii_digit)
+                && bytes[8] == b'_'
+                && bytes[9..15].iter().all(u8::is_ascii_digit)
+                && bytes[15] == b'_'
+                && bytes[16..].iter().all(u8::is_ascii_hexdigit)
+        })
 }
 
 fn read_codex(
@@ -370,6 +399,13 @@ fn hermes_usage(body: &str) -> Option<Usage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hermes_list_finds_live_session_id() {
+        let list = "Title                        Workspace          Last Active   ID\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────\nRun telemetry smoke test t   —                  18m ago       20261001_182645_ca601d\n  … more not shown (use --limit 4 to see more)\n";
+        assert_eq!(hermes_session_id(list), Some("20261001_182645_ca601d"));
+        assert_eq!(hermes_session_id("No sessions found.\n"), None);
+    }
 
     #[test]
     fn claude_deduplicates_and_keeps_main_model() {

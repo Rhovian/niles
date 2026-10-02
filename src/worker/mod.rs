@@ -8,6 +8,7 @@ mod resolve;
 mod role;
 mod snapshot;
 mod spawn;
+mod usage;
 mod validation;
 
 pub use close::worker_close;
@@ -17,6 +18,7 @@ pub use report::report;
 pub use resolve::window_is_gone;
 pub use role::WorkerRole;
 pub use spawn::spawn;
+pub use usage::usage;
 
 pub(crate) use close::select_worker_ids_by_task;
 pub(crate) use pane::DEFAULT_PEEK_LINES;

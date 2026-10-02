@@ -114,6 +114,8 @@ pub enum CommandName {
     },
     /// Print live spawned workers as JSON.
     Workers,
+    /// Print usage for live lead and worker sessions as JSON.
+    Usage,
     /// List effective built-in and workspace model rosters.
     Models,
     /// Print a worker's durable report file.
