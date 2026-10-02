@@ -14,10 +14,12 @@ input at that point. That is different from an adversary who already controls th
 workspace, or another process running as the operator: such an adversary already has authority
 outside the boundary Niles can provide.
 
-Niles coordinates processes in the operator's tmux session and writes orchestration state beneath
-the workspace's `.niles` directory. It does not create an isolation boundary between the operator,
-agents, and workspace. Agent permissions ultimately depend on the selected CLI, its launch flags,
-and operating-system controls.
+Niles keeps only operator-added projects as symlinks in `~/.niles/projects/`. Opening a
+registered project creates its named tmux session and starts the lead in that path; workers run
+in the same session. Niles writes orchestration state beneath the workspace's `.niles` directory.
+It never accepts an agent CLI workspace-trust prompt. Niles does not create an isolation boundary
+between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
+CLI, its launch flags, and operating-system controls.
 
 ## Boundaries
 
@@ -102,6 +104,9 @@ indented continuation of one. An absent marker, hidden cursor, or failed query d
 continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
 as state only and never submits captured text.
 
+Agent-written session telemetry gates due worker check-ins. Agents can delay their own check-ins
+by writing to their own logs.
+
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
 universal sanitizer. See [`src/worker/list.rs`](../src/worker/list.rs),
@@ -132,6 +137,7 @@ values. These are launch-integrity measures, not containment. See
 
 Niles reads Claude, Codex, and Hermes session stores to report agent token usage. It uses
 read-only access to those stores and links sessions through launch identifiers or a Codex brief.
+For Hermes, it opens the local `state.db` read-only to read session usage and state.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
 `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`, and

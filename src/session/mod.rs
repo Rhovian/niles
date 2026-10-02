@@ -15,13 +15,13 @@ use crate::{
     workspace_manifest::{self, WorkspaceManifest},
 };
 
-pub(crate) use brief::live_lead;
+pub(crate) use brief::{SessionMeta, latest_lead, live_lead};
 use foreground::launch_foreground_agent;
 
-/// Turns the current tmux pane into the manager agent.
+/// Turns the current project's lead pane into the manager agent.
 ///
-/// Niles does not create, name, pin or attach tmux sessions. The operator's current session is
-/// the session, which is what lets worker placement be a fact rather than a resolution strategy.
+/// Niles creates one session per project, named after its registry entry and tagged with its path.
+/// Its lead and workers run in that session.
 pub fn run() -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.

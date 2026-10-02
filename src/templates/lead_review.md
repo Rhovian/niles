@@ -1,1 +1,1 @@
-reviewing the diff inline to the reviewer standard below. You are reviewing your own plan, so the economy pass must question the design rather than defend it.
+run the economy pass yourself: your own best design, its production and test line counts, and what in this diff exceeds them, line by line. Do not spawn a reviewer. Send back the excess before reviewing the diff inline to the reviewer standard below. You are reviewing your own plan, so the economy pass must question the design rather than defend it.

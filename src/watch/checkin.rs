@@ -9,9 +9,9 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
-use crate::worker::ActionableWake;
+use crate::{telemetry::SessionState, worker::ActionableWake};
 
-use super::cadence::{Recheck, describe_delay, parse_recheck};
+use super::cadence::{Recheck, parse_recheck};
 
 const CHECKIN_FILE: &str = "checkin";
 
@@ -26,8 +26,6 @@ pub(crate) struct Checkin {
     /// The delay this arm waits, in seconds: the one `--checkin` asked for, or the one the last
     /// fire re-armed at. Carried because a re-arm doubles *it*, not the schedule's first step.
     pub(crate) delay: u64,
-    /// Seconds since arming at which this check-in is due: 300, then 900, then 2100…
-    pub(crate) step: u64,
     /// The policy this arm follows, so the watcher re-arms from the state alone.
     pub(crate) recheck: Recheck,
     /// Status-log byte length at the moment of arming. An actionable line past it is the worker
@@ -46,10 +44,16 @@ impl Checkin {
         Self {
             deadline: fire_at(now, delay),
             delay,
-            step: delay,
             recheck,
             armed_len,
         }
+    }
+
+    pub(crate) fn held(&self, now: DateTime<Utc>, state: Option<SessionState>) -> Option<Self> {
+        (state == Some(SessionState::Working)).then_some(Self {
+            deadline: fire_at(now, self.delay),
+            ..*self
+        })
     }
 
     /// The check-in that follows this one, once it has fired.
@@ -61,19 +65,9 @@ impl Checkin {
         Self {
             deadline: fire_at(now, delay),
             delay,
-            step: self.step + delay,
             recheck: self.recheck,
             armed_len: self.armed_len,
         }
-    }
-
-    /// How long since arming this check-in is due at, as the nudge words it.
-    ///
-    /// Rendered by the same speller `--checkin` echoes back, so a check-in armed at `65s` is
-    /// reported as `65s` rather than rounded up to a minute it has not reached. The nudge's whole
-    /// job is to say how long it has been.
-    pub(crate) fn elapsed_label(&self) -> String {
-        describe_delay(Duration::from_secs(self.step))
     }
 
     /// Whether `wake` answers the assignment this check-in was armed for.
@@ -99,7 +93,6 @@ impl Checkin {
                 DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Utc))
             })?,
             delay: field(&fields, "delay", "delay", &path, str::parse::<u64>)?,
-            step: field(&fields, "step", "step", &path, str::parse::<u64>)?,
             recheck: field(&fields, "recheck", "re-check", &path, parse_recheck)?,
             armed_len: field(&fields, "armed_len", "log length", &path, str::parse::<u64>)?,
         }))
@@ -111,10 +104,9 @@ impl Checkin {
     pub(crate) fn write(&self, worker_dir: &Utf8Path) -> Result<()> {
         let path = worker_dir.join(CHECKIN_FILE);
         let body = format!(
-            "deadline={}\ndelay={}\nstep={}\nrecheck={}\narmed_len={}\n",
+            "deadline={}\ndelay={}\nrecheck={}\narmed_len={}\n",
             self.deadline.to_rfc3339_opts(SecondsFormat::Secs, true),
             self.delay,
-            self.step,
             self.recheck.spelling(),
             self.armed_len
         );
@@ -166,16 +158,22 @@ mod tests {
     use crate::test_support::{at, temp_test_path};
 
     #[test]
-    fn a_delay_that_is_not_whole_minutes_is_reported_as_it_was_asked_for() {
-        let armed = Checkin::armed(Duration::from_secs(65), Recheck::Backoff, 0, at(1_000));
-        assert_eq!(armed.elapsed_label(), "65s");
-        assert_eq!(armed.rearmed(at(1_065)).elapsed_label(), "195s");
+    fn working_holds_and_waiting_or_unknown_fires() {
+        let checkin = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 0, at(1_000));
+        let held = checkin
+            .held(at(1_300), Some(SessionState::Working))
+            .unwrap();
+        assert_eq!(held.deadline, at(1_600));
+        assert!(
+            checkin
+                .held(at(1_300), Some(SessionState::Waiting))
+                .is_none()
+        );
+        assert!(checkin.held(at(1_300), None).is_none());
     }
 
     /// The re-check schedule: each fire arms at twice the delay that just fired, so the gap grows
-    /// instead of the nudge repeating. The step is what the nudge words, and it stays the silence
-    /// since the assignment — 5m, then 15m, then 35m — so a slower cadence does not make the lead
-    /// read a smaller number than the worker has been quiet for.
+    /// instead of the nudge repeating.
     #[test]
     fn arming_keeps_the_log_length_and_doubles_each_fire_up_to_the_cap() {
         let now = at(1_000);
@@ -183,27 +181,21 @@ mod tests {
 
         assert_eq!(armed.deadline, at(1_300));
         assert_eq!(armed.delay, 300);
-        assert_eq!(armed.elapsed_label(), "5m");
         assert_eq!(armed.armed_len, 42);
 
         // deadline, delay, silence so far: 5m -> 10m -> 20m -> 40m -> 60m, then 60m forever.
-        for (deadline, delay, step) in [
-            (1_900, 600, 900),
-            (3_100, 1_200, 2_100),
-            (5_500, 2_400, 4_500),
-            (9_100, 3_600, 8_100),
-            (12_700, 3_600, 11_700),
+        for (deadline, delay) in [
+            (1_900, 600),
+            (3_100, 1_200),
+            (5_500, 2_400),
+            (9_100, 3_600),
+            (12_700, 3_600),
         ] {
             let fired = armed;
             armed = fired.rearmed(fired.deadline);
 
             assert_eq!(armed.deadline, at(deadline), "{delay}s arm");
             assert_eq!(armed.delay, delay);
-            assert_eq!(armed.step, step);
-            assert_eq!(
-                armed.elapsed_label(),
-                describe_delay(Duration::from_secs(step))
-            );
         }
     }
 
@@ -221,8 +213,7 @@ mod tests {
         assert_eq!(armed.rearmed(at(8_200)).delay, 2 * 60 * 60);
     }
 
-    /// `recheck: 10m` in the manifest: the same delay after every fire, so only the silence the
-    /// nudge reports keeps growing.
+    /// `recheck: 10m` in the manifest: the same delay after every fire.
     #[test]
     fn a_fixed_recheck_arms_the_same_delay_every_fire() {
         let armed = Checkin::armed(
@@ -235,7 +226,6 @@ mod tests {
         let fired = armed.rearmed(at(1_300));
         assert_eq!(fired.deadline, at(1_900));
         assert_eq!(fired.delay, 600);
-        assert_eq!(fired.elapsed_label(), "15m");
         assert_eq!(fired.rearmed(at(1_900)).deadline, at(2_500));
     }
 
@@ -320,12 +310,12 @@ mod tests {
         for (label, body, expected) in [
             (
                 "incomplete",
-                "deadline=1970-01-01T00:16:40Z\nstep=300\n",
+                "deadline=1970-01-01T00:16:40Z\n",
                 "incomplete",
             ),
             (
                 "bad-recheck",
-                "deadline=1970-01-01T00:16:40Z\ndelay=300\nstep=300\nrecheck=soon\narmed_len=0\n",
+                "deadline=1970-01-01T00:16:40Z\ndelay=300\nrecheck=soon\narmed_len=0\n",
                 "re-check",
             ),
         ] {

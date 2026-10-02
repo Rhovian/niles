@@ -136,7 +136,6 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
     assert!(printed.contains("quiet: niles quiet impl"), "{printed}");
 
     let body = fixture.checkin("impl");
-    assert!(body.contains("step=300"), "{body}");
     // A worker that has not written a line yet: nothing in its log can answer this check-in.
     assert!(body.contains("armed_len=0"), "{body}");
     assert!(body.contains("deadline="), "{body}");
@@ -179,7 +178,6 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
         "{}",
         stdout_of(&seconds)
     );
-    assert!(fixture.checkin("impl").contains("step=90"));
     // The flag was written after the worker id, where clap hands it over as task text: it must not
     // reach the worker's brief.
     let brief = fs::read_to_string(fixture.env.root.join(".niles/worker/impl/brief.md")).unwrap();
@@ -190,7 +188,7 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     let send = fixture.niles(&["send", "impl", "--checkin", "1h", "again"]);
     assert_command_success("send --checkin 1h", &send);
     assert!(
-        fixture.checkin("impl").contains("step=3600"),
+        fixture.checkin("impl").contains("delay=3600"),
         "{}",
         fixture.checkin("impl")
     );
@@ -339,7 +337,6 @@ fn an_omitted_checkin_flag_arms_the_manifests_default() {
 
     let body = fixture.checkin("impl");
     assert!(body.contains("delay=900"), "{body}");
-    assert!(body.contains("step=900"), "{body}");
     assert!(body.contains("recheck=30m"), "{body}");
 
     // The flag decides the delay and the manifest still decides the policy behind it.
@@ -352,7 +349,6 @@ fn an_omitted_checkin_flag_arms_the_manifests_default() {
     );
     let body = fixture.checkin("impl");
     assert!(body.contains("delay=90"), "{body}");
-    assert!(body.contains("step=90"), "{body}");
     assert!(body.contains("recheck=30m"), "{body}");
 }
 

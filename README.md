@@ -33,14 +33,22 @@ Pairing a frontier lead with a cheaper worker may also reduce cost.
 
 ## Quickstart
 
-Bare `niles` prompts for all four roles when creating `.niles/manifest.yaml`. On later launches it
-shows the current roles and lets you change them before starting the lead in the current tmux pane.
+Bare `niles` opens the project list. Press `n` to register a directory, then Niles creates or
+opens that project's named tmux session and starts the lead there. The new lead prompts for all
+four roles when creating `.niles/manifest.yaml`; later launches show the roles before starting.
+Bare `niles` no longer starts a lead in the current pane.
+
+Niles project sessions show a two-line status bar with live projects above the current session's windows and agent activity.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
-cd /path/to/your/project
-tmux new-session -s niles # skip if already in tmux
 niles
+```
+
+To open the list in a tmux popup, add one optional binding to `~/.tmux.conf`:
+
+```tmux
+bind-key <key> display-popup -E niles
 ```
 
 Alternatively, install with `cargo install niles`, or build from source with
@@ -63,7 +71,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 
 | Command | Purpose |
 | --- | --- |
-| `niles` | Show or configure workspace roles, then start the foreground lead |
+| `niles` | List, register, and open projects |
 | `niles doctor` | Show binary identity and dev-build staleness |
 | `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; add `--wait` to await its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |

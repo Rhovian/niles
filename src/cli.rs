@@ -13,6 +13,17 @@ pub struct Cli {
     pub command: Option<CommandName>,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum StatusLine {
+    Projects {
+        session_name: String,
+    },
+    Sessions {
+        session_name: String,
+        window_index: u32,
+    },
+}
+
 #[derive(Debug, Args)]
 pub struct MessageInput {
     /// Message text. Repeat to join values with newlines.
@@ -58,6 +69,14 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
+    #[command(hide = true)]
+    Status {
+        #[command(subcommand)]
+        line: StatusLine,
+    },
+    /// Start the lead in a project session.
+    #[command(hide = true)]
+    Lead,
     /// Report binary identity and dev-mode staleness.
     Doctor,
     /// Spawn a worker agent in a tmux window.
@@ -204,7 +223,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bare_niles_runs_the_manager_with_no_subcommand() {
+    fn bare_niles_has_no_subcommand() {
         let cli = Cli::try_parse_from(["niles"]).unwrap();
 
         assert!(cli.command.is_none());

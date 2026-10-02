@@ -1,1 +1,1 @@
-commissioning review. A review brief may say what matters; it must not put your design beyond question.
+spawn a fresh reviewer with only the problem statement and the diff, not your brief or rationale, and ask for the best design, its production and test line counts, and what in this diff exceeds them. Do not judge whether your own design is lean; you chose it. Send back the excess before commissioning review. A review brief may say what matters; it must not put your design beyond question.
