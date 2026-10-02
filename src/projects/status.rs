@@ -22,11 +22,16 @@ pub(crate) struct Segment {
     pub highlighted: bool,
 }
 
-pub(crate) fn run(line: StatusLine, session_name: &str) -> Result<String> {
+pub(crate) fn run(line: StatusLine) -> Result<String> {
     let now = Utc::now();
     let segments = match line {
-        StatusLine::Projects => from_rows(&rows::collect(registry::entries()?)?, session_name, now),
-        StatusLine::Sessions => session_segments(session_name, now)?,
+        StatusLine::Projects { session_name } => {
+            from_rows(&rows::collect(registry::entries()?)?, &session_name, now)
+        }
+        StatusLine::Sessions {
+            session_name,
+            window_index,
+        } => session_segments(&session_name, window_index, now)?,
     };
     Ok(render(&segments))
 }
@@ -58,8 +63,8 @@ fn from_rows(rows: &[Row], session_name: &str, now: DateTime<Utc>) -> Vec<Segmen
         .collect()
 }
 
-fn session_segments(session_name: &str, now: DateTime<Utc>) -> Result<Vec<Segment>> {
-    let session_name = tmux::SessionName::new(session_name)?;
+fn session_segments(name: &str, active_index: u32, now: DateTime<Utc>) -> Result<Vec<Segment>> {
+    let session_name = tmux::SessionName::new(name)?;
     let windows = tmux::windows(&session_name)?;
     let project = project(session_name.as_str())?;
     let (lead, workers) = match &project {
@@ -102,7 +107,7 @@ fn session_segments(session_name: &str, now: DateTime<Utc>) -> Result<Vec<Segmen
                 glyph,
                 tokens,
                 age,
-                highlighted: window.active,
+                highlighted: window.index == active_index,
             })
         })
         .collect()

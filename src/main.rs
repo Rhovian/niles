@@ -46,8 +46,8 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         None => projects::list::run()?,
         Some(CommandName::Lead) => session::run()?,
-        Some(CommandName::Status { line, session_name }) => {
-            return Ok(match projects::status::run(line, &session_name) {
+        Some(CommandName::Status { line }) => {
+            return Ok(match projects::status::run(line) {
                 Ok(text) => {
                     println!("{text}");
                     ExitCode::SUCCESS

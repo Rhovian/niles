@@ -28,7 +28,6 @@ pub(crate) fn lead_running(session: &SessionName) -> Result<bool> {
 pub(crate) struct Window {
     pub index: u32,
     pub name: String,
-    pub active: bool,
 }
 
 pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
@@ -38,7 +37,7 @@ pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
         "-t",
         &target,
         "-F",
-        "#{window_index}\t#{window_name}\t#{window_active}",
+        "#{window_index}\t#{window_name}",
     ])?;
     if !output.status.success() {
         bail!(
@@ -50,7 +49,7 @@ pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
     let windows = body
         .lines()
         .map(|line| {
-            let [index, name, active] = line.split('\t').collect::<Vec<_>>()[..] else {
+            let [index, name] = line.split('\t').collect::<Vec<_>>()[..] else {
                 bail!("invalid tmux window line {line:?}");
             };
             Ok(Window {
@@ -58,11 +57,6 @@ pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
                     .parse()
                     .with_context(|| format!("invalid window index {index:?}"))?,
                 name: name.to_owned(),
-                active: match active {
-                    "1" => true,
-                    "0" => false,
-                    _ => bail!("invalid window active flag {active:?}"),
-                },
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -73,7 +67,7 @@ pub(crate) fn configure_status(session: &SessionName) -> Result<()> {
     let quoted = shell_quote(&executable()?).replace('#', "##");
     let target = format!("{}:", target::exact(session.as_str()));
     let projects = format!("#({quoted} status projects #{{session_name}})");
-    let sessions = format!("#({quoted} status sessions #{{session_name}})");
+    let sessions = format!("#({quoted} status sessions #{{session_name}} #{{window_index}})");
     let options = [
         ("status", "2"),
         ("status-position", "top"),

@@ -67,7 +67,10 @@ fn create_registers_and_switches() {
         ),
         "{log}"
     );
-    assert!(log.contains("status sessions #{session_name})"), "{log}");
+    assert!(
+        log.contains("status sessions #{session_name} #{window_index})"),
+        "{log}"
+    );
 }
 
 #[test]
