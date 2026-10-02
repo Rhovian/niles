@@ -46,6 +46,18 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         None => projects::list::run()?,
         Some(CommandName::Lead) => session::run()?,
+        Some(CommandName::Status { line, session_name }) => {
+            return Ok(match projects::status::run(line, &session_name) {
+                Ok(text) => {
+                    println!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    println!("niles: {}", format!("{error:#}").replace('\n', " "));
+                    ExitCode::FAILURE
+                }
+            });
+        }
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
             wait,

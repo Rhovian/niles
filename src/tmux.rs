@@ -10,7 +10,9 @@ mod send;
 mod session;
 mod target;
 
-pub(crate) use session::{lead_running, open_session, project_session, switch_or_attach};
+pub(crate) use session::{
+    configure_status, lead_running, open_session, project_session, switch_or_attach, windows,
+};
 
 pub(crate) use send::send_line;
 use target::{LIVE_WINDOW_FORMAT, WindowPresence, window_presence};

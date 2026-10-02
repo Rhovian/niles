@@ -69,7 +69,7 @@ fn lead_state(usage: &Usage) -> State {
     }
 }
 
-pub(super) fn abbreviate(tokens: u64) -> String {
+pub(crate) fn abbreviate(tokens: u64) -> String {
     if tokens < 1_000 {
         return tokens.to_string();
     }

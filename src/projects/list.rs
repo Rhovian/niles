@@ -51,6 +51,7 @@ pub fn run() -> Result<()> {
 fn open(entry: &Entry) -> Result<()> {
     let session = entry.name.session()?;
     tmux::open_session(&session, &entry.path)?;
+    tmux::configure_status(&session)?;
     tmux::switch_or_attach(&session)
 }
 

@@ -38,6 +38,8 @@ opens that project's named tmux session and starts the lead there. The new lead 
 four roles when creating `.niles/manifest.yaml`; later launches show the roles before starting.
 Bare `niles` no longer starts a lead in the current pane.
 
+Niles project sessions show a two-line status bar with live projects above the current session's windows and agent activity.
+
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
 niles
