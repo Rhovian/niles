@@ -8,6 +8,7 @@ mod config;
 mod doctor;
 mod duration;
 mod models;
+mod projects;
 mod session;
 mod store;
 mod telemetry;
@@ -43,7 +44,8 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => session::run()?,
+        None => projects::list::run()?,
+        Some(CommandName::Lead) => session::run()?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Spawn {
             wait,

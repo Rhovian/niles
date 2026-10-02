@@ -150,8 +150,9 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
         else {
             continue;
         };
+        debug_assert!(counts.cached_input_tokens <= counts.input_tokens);
         last = Some(Usage {
-            input_tokens: counts.input_tokens,
+            input_tokens: counts.input_tokens - counts.cached_input_tokens,
             output_tokens: counts.output_tokens,
             cache_read_tokens: counts.cached_input_tokens,
             cache_write_tokens: counts.cache_write_input_tokens,

@@ -14,10 +14,12 @@ input at that point. That is different from an adversary who already controls th
 workspace, or another process running as the operator: such an adversary already has authority
 outside the boundary Niles can provide.
 
-Niles coordinates processes in the operator's tmux session and writes orchestration state beneath
-the workspace's `.niles` directory. It does not create an isolation boundary between the operator,
-agents, and workspace. Agent permissions ultimately depend on the selected CLI, its launch flags,
-and operating-system controls.
+Niles keeps only operator-added projects as symlinks in `~/.niles/projects/`. Opening a
+registered project creates its named tmux session and starts the lead in that path; workers run
+in the same session. Niles writes orchestration state beneath the workspace's `.niles` directory.
+It never accepts an agent CLI workspace-trust prompt. Niles does not create an isolation boundary
+between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
+CLI, its launch flags, and operating-system controls.
 
 ## Boundaries
 

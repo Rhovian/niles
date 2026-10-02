@@ -124,16 +124,17 @@ pub(crate) fn live_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
     let Some(pane) = recorded_lead_pane() else {
         return Ok(None);
     };
-    let dirs = read_dir_utf8_paths(&sessions_dir(workspace))?;
-    for dir in dirs.into_iter().rev() {
-        if !dir.is_dir() {
-            continue;
-        }
-        let path = dir.join("session.json");
-        let Some(meta): Option<SessionMeta> = crate::store::read_optional_json(&path)? else {
-            continue;
-        };
-        if meta.lead_pane.as_deref() == Some(&pane) {
+    Ok(latest_lead(workspace)?.filter(|meta| meta.lead_pane.as_deref() == Some(&pane)))
+}
+
+pub(crate) fn latest_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
+    for dir in read_dir_utf8_paths(&sessions_dir(workspace))?
+        .into_iter()
+        .rev()
+    {
+        if dir.is_dir()
+            && let Some(meta) = crate::store::read_optional_json(&dir.join("session.json"))?
+        {
             return Ok(Some(meta));
         }
     }

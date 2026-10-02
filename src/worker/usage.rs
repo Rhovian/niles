@@ -38,15 +38,7 @@ pub fn usage() -> Result<()> {
         });
     }
     if let Some(meta) = session::live_lead(&workspace)? {
-        let usage = match &meta.session_link {
-            Some(link) => telemetry::read(
-                link,
-                &meta.workspace,
-                meta.brief.parent().context("lead brief has no parent")?,
-                meta.created_at,
-            )?,
-            None => None,
-        };
+        let usage = lead_usage(&meta)?;
         sessions.push(SessionUsage {
             id: meta.id,
             role: "lead",
@@ -70,4 +62,16 @@ pub(crate) fn worker_usage(worker: &WorkerSnapshot) -> Result<Option<telemetry::
         &report_path(&worker.worker_dir),
         meta.created_at,
     )
+}
+
+pub(crate) fn lead_usage(meta: &session::SessionMeta) -> Result<Option<telemetry::Usage>> {
+    match &meta.session_link {
+        Some(link) => telemetry::read(
+            link,
+            &meta.workspace,
+            meta.brief.parent().context("lead brief has no parent")?,
+            meta.created_at,
+        ),
+        None => Ok(None),
+    }
 }
