@@ -135,6 +135,7 @@ values. These are launch-integrity measures, not containment. See
 
 Niles reads Claude, Codex, and Hermes session stores to report agent token usage. It uses
 read-only access to those stores and links sessions through launch identifiers or a Codex brief.
+For Hermes, it opens the local `state.db` read-only to read session usage and state.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
 `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`, and

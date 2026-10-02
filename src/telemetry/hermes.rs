@@ -1,100 +1,183 @@
-use super::{SessionState, Usage, parse_lines};
-use anyhow::{Context, Result, bail};
+use super::{SessionState, Usage};
+use anyhow::{Context, Result};
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::DateTime;
-use serde::Deserialize;
-use std::process::Command;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::{env, fs};
 
-pub(super) fn read_hermes(source: &str) -> Result<Option<Usage>> {
-    let list = hermes(&["sessions", "list", "--source", source, "--limit", "1"])?;
-    let Some(session_id) = hermes_session_id(&list) else {
-        return Ok(None);
-    };
-    let export = hermes(&[
-        "sessions",
-        "export",
-        "-",
-        "--format",
-        "jsonl",
-        "--session-id",
-        session_id,
-    ])?;
-    Ok(hermes_usage(&export))
+const SESSION: &str = "
+    SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+        estimated_cost_usd, last_activity_at, ended_at IS NOT NULL AS ended,
+        (SELECT role = 'assistant' AND tool_calls IS NULL FROM messages
+         WHERE session_id = s.id AND active = 1 ORDER BY id DESC LIMIT 1) AS replied
+    FROM sessions s
+    WHERE source = ?1 AND json_extract(model_config, '$._delegate_from') IS NULL
+    ORDER BY started_at DESC LIMIT 1";
+
+fn hermes_home(home: &Utf8Path, configured: Option<&str>) -> Result<Utf8PathBuf> {
+    if let Some(path) = configured.map(str::trim).filter(|path| !path.is_empty()) {
+        return Ok(match path.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None if path == "~" => home.to_owned(),
+            None => Utf8PathBuf::from(path),
+        });
+    }
+    let root = home.join(".hermes");
+    let active = root.join("active_profile");
+    if active.exists() {
+        let profile = fs::read_to_string(&active)
+            .with_context(|| format!("read Hermes active profile {active}"))?;
+        let profile = profile.trim();
+        if !profile.is_empty() && profile != "default" {
+            return Ok(root.join("profiles").join(profile));
+        }
+    }
+    Ok(root)
 }
 
-fn hermes(args: &[&str]) -> Result<String> {
-    let output = Command::new("hermes")
-        .args(args)
-        .output()
-        .with_context(|| format!("run hermes {}", args.join(" ")))?;
-    if !output.status.success() {
-        bail!(
-            "hermes {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
+pub(super) fn read_hermes(home: &Utf8Path, source: &str) -> Result<Option<Usage>> {
+    let configured = match env::var("HERMES_HOME") {
+        Ok(path) => Some(path),
+        Err(env::VarError::NotPresent) => None,
+        Err(error) => return Err(error).context("HERMES_HOME is invalid"),
+    };
+    let path = hermes_home(home, configured.as_deref())?.join("state.db");
+    let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open Hermes database {path}"))?;
+    read_session(&db, source)
+}
+
+fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
+    db.query_row(SESSION, params![source], |row| {
+        let ended: bool = row.get("ended")?;
+        let replied: Option<bool> = row.get("replied")?;
+        let last_activity_at: Option<f64> = row.get("last_activity_at")?;
+        Ok(Usage {
+            input_tokens: row.get("input_tokens")?,
+            output_tokens: row.get("output_tokens")?,
+            cache_read_tokens: row.get("cache_read_tokens")?,
+            cache_write_tokens: Some(row.get("cache_write_tokens")?),
+            reasoning_tokens: Some(row.get("reasoning_tokens")?),
+            estimated_cost_usd: row.get("estimated_cost_usd")?,
+            last_turn_at: last_activity_at.and_then(|seconds| {
+                DateTime::from_timestamp_micros((seconds * 1_000_000.0).round() as i64)
+            }),
+            state: if ended {
+                Some(SessionState::Waiting)
+            } else {
+                replied.map(|waiting| {
+                    if waiting {
+                        SessionState::Waiting
+                    } else {
+                        SessionState::Working
+                    }
+                })
+            },
+        })
+    })
+    .optional()
+    .context("query Hermes session")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            r#"CREATE TABLE sessions (id TEXT, source TEXT, started_at REAL,
+            model_config TEXT, input_tokens INTEGER, output_tokens INTEGER,
+            cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+            estimated_cost_usd REAL, last_activity_at REAL, ended_at REAL);
+            CREATE TABLE messages (id INTEGER, session_id TEXT, active INTEGER,
+            role TEXT, tool_calls TEXT);
+            INSERT INTO sessions VALUES
+            ('old', 'niles:test', 1, NULL, 1, 2, 3, 4, 5, NULL, NULL, NULL),
+            ('main', 'niles:test', 2, NULL, 11, 22, 33, 44, 55,
+             0.03, 1790694525.47223, NULL),
+            ('delegate', 'niles:test', 3, '{"_delegate_from":"main"}',
+             91, 92, 93, 94, 95, NULL, NULL, NULL);
+            INSERT INTO messages VALUES (1, 'main', 1, 'assistant', NULL);"#,
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn selects_latest_non_delegate_with_all_counters_and_epoch_time() {
+        let db = fixture();
+        assert!(read_session(&db, "missing").unwrap().is_none());
+        let usage = read_session(&db, "niles:test").unwrap().unwrap();
+        assert_eq!(
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_write_tokens,
+                usage.reasoning_tokens
+            ),
+            (11, 22, 33, Some(44), Some(55))
+        );
+        assert_eq!(usage.estimated_cost_usd, Some(0.03));
+        assert_eq!(
+            usage.last_turn_at.unwrap().timestamp_micros(),
+            1790694525472230
         );
     }
-    String::from_utf8(output.stdout)
-        .with_context(|| format!("hermes {} is not UTF-8", args.join(" ")))
-}
 
-pub(super) fn hermes_session_id(list: &str) -> Option<&str> {
-    list.lines()
-        .filter_map(|line| line.split_whitespace().last())
-        .find(|id| {
-            let bytes = id.as_bytes();
-            bytes.len() == 22
-                && bytes[..8].iter().all(u8::is_ascii_digit)
-                && bytes[8] == b'_'
-                && bytes[9..15].iter().all(u8::is_ascii_digit)
-                && bytes[15] == b'_'
-                && bytes[16..].iter().all(u8::is_ascii_hexdigit)
-        })
-}
+    #[test]
+    fn waiting_working_and_ended_states() {
+        let db = fixture();
+        assert_eq!(
+            read_session(&db, "niles:test").unwrap().unwrap().state,
+            Some(SessionState::Waiting)
+        );
+        db.execute("UPDATE messages SET tool_calls = '[{}]' WHERE id = 1", [])
+            .unwrap();
+        assert_eq!(
+            read_session(&db, "niles:test").unwrap().unwrap().state,
+            Some(SessionState::Working)
+        );
+        db.execute("UPDATE sessions SET ended_at = 4 WHERE id = 'main'", [])
+            .unwrap();
+        assert_eq!(
+            read_session(&db, "niles:test").unwrap().unwrap().state,
+            Some(SessionState::Waiting)
+        );
+    }
 
-#[derive(Deserialize)]
-struct HermesSession {
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_write_tokens: u64,
-    reasoning_tokens: u64,
-    ended_at: Option<f64>,
-    last_activity_at: f64,
-    #[serde(default)]
-    messages: Vec<HermesMessage>,
-    estimated_cost_usd: Option<f64>,
-}
+    #[test]
+    fn no_active_message_has_no_state_or_activity_time() {
+        let db = fixture();
+        db.execute_batch(
+            "UPDATE messages SET active = 0;
+            UPDATE sessions SET last_activity_at = NULL WHERE id = 'main';",
+        )
+        .unwrap();
+        let usage = read_session(&db, "niles:test").unwrap().unwrap();
+        assert_eq!(usage.state, None);
+        assert_eq!(usage.last_turn_at, None);
+    }
 
-#[derive(Deserialize)]
-struct HermesMessage {
-    role: String,
-    tool_calls: Option<Vec<serde_json::Value>>,
-}
-
-pub(super) fn hermes_usage(body: &str) -> Option<Usage> {
-    let row: HermesSession = parse_lines(body)?.into_iter().next()?;
-    let state = if row.ended_at.is_some() {
-        Some(SessionState::Waiting)
-    } else {
-        row.messages.last().map(|message| {
-            if message.role == "assistant" && message.tool_calls.as_ref().is_none_or(Vec::is_empty)
-            {
-                SessionState::Waiting
-            } else {
-                SessionState::Working
-            }
-        })
-    };
-    Some(Usage {
-        input_tokens: row.input_tokens,
-        output_tokens: row.output_tokens,
-        cache_read_tokens: row.cache_read_tokens,
-        cache_write_tokens: Some(row.cache_write_tokens),
-        reasoning_tokens: Some(row.reasoning_tokens),
-        last_turn_at: DateTime::from_timestamp_micros(
-            (row.last_activity_at * 1_000_000.0).round() as i64
-        ),
-        state,
-        estimated_cost_usd: row.estimated_cost_usd,
-    })
+    #[test]
+    fn resolves_configured_home_and_active_profile() {
+        let home = crate::test_support::temp_test_path("hermes-home");
+        let root = home.join(".hermes");
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(
+            hermes_home(&home, Some(" ~/custom ")).unwrap(),
+            home.join("custom")
+        );
+        assert_eq!(hermes_home(&home, Some("~")).unwrap(), home);
+        assert_eq!(hermes_home(&home, None).unwrap(), root);
+        fs::write(root.join("active_profile"), " team \n").unwrap();
+        assert_eq!(
+            hermes_home(&home, Some(" ")).unwrap(),
+            root.join("profiles/team")
+        );
+        fs::write(root.join("active_profile"), " default \n").unwrap();
+        assert_eq!(hermes_home(&home, None).unwrap(), root);
+        fs::remove_dir_all(&home).unwrap();
+    }
 }
