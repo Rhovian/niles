@@ -6,8 +6,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::{
-    session, telemetry,
-    telemetry::Usage,
     tmux::TargetState,
     util::current_dir_utf8,
     wait::cursor::{cursor_path, parse_cursor},
@@ -22,8 +20,7 @@ use super::snapshot::{WorkerSnapshot, worker_snapshot};
 /// enumerated workers its own way would be a second answer to "which workers are live", and the
 /// two would drift.
 pub fn workers() -> Result<()> {
-    let workspace = current_dir_utf8()?;
-    let snapshots = worker_snapshot(&workspace)?;
+    let snapshots = worker_snapshot(&current_dir_utf8()?)?;
     for worker in &snapshots {
         if let Some(error) = &worker.read_error {
             eprintln!(
@@ -32,21 +29,18 @@ pub fn workers() -> Result<()> {
             );
         }
     }
-    let mut workers = snapshots
+    let workers = snapshots
         .iter()
         .map(WorkerOutput::read)
         .collect::<Result<Vec<_>>>()?;
-    if let Some(meta) = session::live_lead(&workspace)? {
-        workers.push(WorkerOutput::read_lead(meta)?);
-    }
     print_json(&WorkersOutput { workers })
 }
 
-fn print_json(value: &WorkersOutput) -> Result<()> {
+pub(super) fn print_json(value: &impl Serialize) -> Result<()> {
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
-    serde_json::to_writer(&mut output, value).context("failed to serialize workers JSON")?;
-    writeln!(output).context("failed to write workers JSON")
+    serde_json::to_writer(&mut output, value).context("failed to serialize JSON")?;
+    writeln!(output).context("failed to write JSON")
 }
 
 #[derive(Serialize)]
@@ -54,10 +48,10 @@ struct WorkersOutput {
     workers: Vec<WorkerOutput>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Serialize)]
 struct WorkerOutput {
     id: String,
-    role: Option<String>,
+    role: Option<super::WorkerRole>,
     agent: Option<String>,
     task_label: Option<String>,
     started_at: Option<DateTime<Utc>>,
@@ -66,25 +60,11 @@ struct WorkerOutput {
     last_status: Option<String>,
     checkin: Option<CheckinOutput>,
     error: Option<String>,
-    usage: Option<Usage>,
 }
 
 impl WorkerOutput {
     fn read(worker: &WorkerSnapshot) -> Result<Self> {
         let meta = worker.meta.as_ref();
-        let usage = meta
-            .and_then(|meta| {
-                meta.session_link.as_ref().map(|link| {
-                    telemetry::read(
-                        link,
-                        &meta.project,
-                        &super::meta::report_path(&worker.worker_dir),
-                        meta.created_at,
-                    )
-                })
-            })
-            .transpose()?
-            .flatten();
         let wake = match meta {
             Some(_) if has_pending_wake(worker)? => Some(WakeState::Pending),
             Some(_) => Some(WakeState::Clear),
@@ -96,7 +76,7 @@ impl WorkerOutput {
 
         Ok(Self {
             id: worker.id.clone(),
-            role: meta.map(|meta| meta.role.as_str().to_owned()),
+            role: meta.map(|meta| meta.role),
             agent: meta.map(|meta| meta.agent.clone()),
             task_label: meta.and_then(|meta| meta.task_label.clone()),
             started_at: meta.map(|meta| meta.created_at),
@@ -105,31 +85,6 @@ impl WorkerOutput {
             last_status: meta.and(worker.last_status_line()),
             checkin,
             error: worker.read_error.clone(),
-            usage,
-        })
-    }
-
-    fn read_lead(meta: session::SessionMeta) -> Result<Self> {
-        let usage = meta
-            .session_link
-            .as_ref()
-            .map(|link| {
-                telemetry::read(
-                    link,
-                    &meta.workspace,
-                    meta.brief.parent().context("lead brief has no parent")?,
-                    meta.created_at,
-                )
-            })
-            .transpose()?
-            .flatten();
-        Ok(Self {
-            id: meta.id,
-            role: Some("lead".to_owned()),
-            agent: Some(meta.agent),
-            started_at: Some(meta.created_at),
-            usage,
-            ..Self::default()
         })
     }
 }

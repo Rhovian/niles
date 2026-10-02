@@ -72,6 +72,7 @@ fn run() -> Result<ExitCode> {
             all,
         }) => worker::worker_close(id, task_label, all)?,
         Some(CommandName::Workers) => worker::workers()?,
+        Some(CommandName::Usage) => worker::usage()?,
         Some(CommandName::Models) => models::models()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
