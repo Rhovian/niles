@@ -16,10 +16,10 @@
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
-**Your coding agent, promoted to tech lead.**
+**Run Claude Code, Codex and Hermes as one team in tmux.**
 
-Talk to one Claude or Codex session. It plans the change, hands it to a worker, often from another
-model family, and reviews the diff against its own estimate, sending back anything over budget.
+You talk to one agent. It plans the change, hands the work to others, often from another model
+family, and reviews what comes back before it reaches you.
 
 - **Independent review.** One model family writes the change and another reviews it.
 - **Nothing goes quiet.** Niles checks in on quiet workers, wakes the lead when they report, and
