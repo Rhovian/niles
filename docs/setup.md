@@ -28,3 +28,30 @@ bind -n M-] switch-client -n
 bind -n M-\; previous-window
 bind -n "M-'" next-window
 ```
+
+## Pi with OpenRouter
+
+Install `@mariozechner/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
+key in `~/.pi/agent/auth.json`. Pi never reads `.env` files. An exported `OPENROUTER_API_KEY`
+only reaches niles workers if the tmux server started after the export; `/login` avoids that
+requirement.
+
+Pi's bundled model catalog lags these models. Add them to `~/.pi/agent/models.json`, which
+merges into the built-in OpenRouter provider:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "models": [
+        { "id": "deepseek/deepseek-v4.1-flash", "reasoning": true },
+        { "id": "tencent/hy3", "reasoning": true },
+        { "id": "z-ai/glm-5.3-flash", "reasoning": true }
+      ]
+    }
+  }
+}
+```
+
+These entries omit prices, so pi reports their cost as zero. Niles reports token usage and
+leaves estimated cost unavailable.

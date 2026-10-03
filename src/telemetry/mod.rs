@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 mod claude;
 mod codex;
 mod hermes;
+mod pi;
 
 use claude::read_claude;
 use codex::read_codex;
 use hermes::read_hermes;
+use pi::read_pi;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "lowercase")]
@@ -19,6 +21,7 @@ pub(crate) enum SessionLink {
     Claude { session_id: String },
     Hermes { source: String },
     Codex,
+    Pi { session_dir: Utf8PathBuf },
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +58,7 @@ impl SessionLink {
             Self::Claude { session_id } => vec!["--session-id".into(), session_id.clone()],
             Self::Hermes { source } => vec!["--source".into(), source.clone()],
             Self::Codex => Vec::new(),
+            Self::Pi { session_dir } => vec!["--session-dir".into(), session_dir.to_string()],
         }
     }
 }
@@ -70,6 +74,7 @@ pub(crate) fn read(
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
         SessionLink::Hermes { source } => read_hermes(&home, source),
         SessionLink::Codex => read_codex(&home, workspace, needle, created_at),
+        SessionLink::Pi { session_dir } => read_pi(session_dir),
     }
 }
 
@@ -176,6 +181,50 @@ mod tests {
             state(claude_usage(&format!("{assistant}\n{tool_result}\n"), &[])),
             Some(SessionState::Working)
         );
+    }
+
+    #[test]
+    fn pi_message_lines_classify_both_states() {
+        let assistant = r#"{"type":"message","timestamp":"2026-10-01T00:00:00Z","message":{"role":"assistant","stopReason":"stop","usage":{"input":2,"output":3,"cacheRead":4,"cacheWrite":5}}}"#;
+        let next = assistant.replace("00:00:00", "00:01:00");
+        let body = format!("{assistant}\n{next}\n");
+        let waiting = pi::pi_usage(&body).unwrap();
+        assert_eq!(waiting.state, Some(SessionState::Waiting));
+        assert_eq!(
+            (
+                waiting.input_tokens,
+                waiting.output_tokens,
+                waiting.cache_read_tokens,
+                waiting.cache_write_tokens
+            ),
+            (4, 6, 8, Some(10))
+        );
+        assert_eq!(
+            waiting.last_turn_at,
+            Some("2026-10-01T00:01:00Z".parse().unwrap())
+        );
+        assert!(waiting.reasoning_tokens.is_none());
+        assert!(waiting.estimated_cost_usd.is_none());
+        for role in ["user", "toolResult", "custom"] {
+            let message = format!(
+                r#"{{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{{"role":"{role}"}}}}"#
+            );
+            let working = pi::pi_usage(&format!("{body}{message}\n")).unwrap();
+            assert_eq!(working.state, Some(SessionState::Working));
+            assert_eq!(working.last_turn_at, waiting.last_turn_at);
+            assert!(pi::pi_usage(&format!("{message}\n")).is_none());
+        }
+        assert_eq!(
+            state(pi::pi_usage(&body.replace("\"stop\"", "\"toolUse\""))),
+            Some(SessionState::Working)
+        );
+        assert_eq!(
+            state(pi::pi_usage(&format!(
+                "{body}{{\"type\":\"model_change\"}}\npartial"
+            ))),
+            Some(SessionState::Waiting)
+        );
+        assert!(pi::pi_usage("bad\n").is_none());
     }
 
     #[test]

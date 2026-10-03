@@ -256,7 +256,7 @@ mod tests {
             .map(|choice| choice.label.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels, ["codex", "claude", "hermes"]);
+        assert_eq!(labels, ["codex", "claude", "hermes", "pi"]);
         assert_eq!(default_choice_index(&choices), 0);
     }
 
@@ -267,6 +267,7 @@ mod tests {
             ("codex", "gpt-5.5"),
             ("claude", "opus"),
             ("hermes", "tencent/hy3"),
+            ("pi", "tencent/hy3"),
         ] {
             let choices = model_choices(family, None, &models);
             assert_eq!(choices[default_choice_index(&choices)].value, expected);

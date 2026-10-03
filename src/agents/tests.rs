@@ -84,6 +84,19 @@ fn parses_agent_model_effort_specs() {
 }
 
 #[test]
+fn model_names_may_contain_colons() {
+    let models = roster::parse("pi:\n  nvidia/nemotron:free:\n    efforts: [low, high]\n").unwrap();
+    let bare = AgentSpec::parse("pi:nvidia/nemotron:free", &models).unwrap();
+    assert_eq!(
+        (bare.model(), bare.effort()),
+        (Some("nvidia/nemotron:free"), None)
+    );
+    let tiered = AgentSpec::parse("pi:nvidia/nemotron:free:high", &models).unwrap();
+    assert_eq!(tiered.canonical(), "pi:nvidia/nemotron:free:high");
+    assert!(AgentSpec::parse("codex::high", &models).is_err());
+}
+
+#[test]
 fn effort_is_checked_against_the_model_not_the_family() {
     // The ladders the codex CLI reports: astra climbs to `ultra`, luna stops at `max`, and 5.5
     // stops at `xhigh`. One family-wide list could not tell these apart.
@@ -271,8 +284,8 @@ fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
 
 #[test]
 fn hermes_sources_are_unique_per_launch() {
-    let first = super::session_link("hermes", "worker").unwrap();
-    let second = super::session_link("hermes", "worker").unwrap();
+    let first = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
+    let second = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
     let (
         crate::telemetry::SessionLink::Hermes { source: a },
         crate::telemetry::SessionLink::Hermes { source: b },

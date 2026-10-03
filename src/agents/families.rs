@@ -1,4 +1,5 @@
 use crate::{config::spec::PromptMode, telemetry::SessionLink};
+use camino::Utf8Path;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +70,7 @@ const HERMES_QUERY: BriefDelivery = BriefDelivery::Flag {
 };
 
 /// The session niles can read usage back from, chosen at launch. A family not listed has none.
-pub(crate) fn session_link(family: &str, source: &str) -> Option<SessionLink> {
+pub(crate) fn session_link(family: &str, source: &str, dir: &Utf8Path) -> Option<SessionLink> {
     Some(match profile_for(family)?.id {
         "claude" => SessionLink::Claude {
             session_id: Uuid::new_v4().to_string(),
@@ -77,6 +78,9 @@ pub(crate) fn session_link(family: &str, source: &str) -> Option<SessionLink> {
         "codex" => SessionLink::Codex,
         "hermes" => SessionLink::Hermes {
             source: format!("niles:{source}:{}", Uuid::new_v4()),
+        },
+        "pi" => SessionLink::Pi {
+            session_dir: dir.join("pi"),
         },
         _ => return None,
     })
@@ -133,6 +137,22 @@ const PROFILES: &[AgentProfile] = &[
             effort: EffortArg::Flag("--reasoning"),
         },
         launch_env: &[],
+        composer: None,
+    },
+    AgentProfile {
+        id: "pi",
+        binary: "pi",
+        tested_version: "0.73.1",
+        foreground_args: &[],
+        worker_args: &[],
+        worker_brief: BriefDelivery::Arg,
+        lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
+        default_model: "tencent/hy3",
+        tier_args: TierArgs {
+            model_flag: "--model",
+            effort: EffortArg::Flag("--thinking"),
+        },
+        launch_env: &[("PI_OFFLINE", "1")],
         composer: None,
     },
 ];

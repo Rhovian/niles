@@ -57,7 +57,8 @@ pub fn spawn(
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let agent_spec = &invocation.spec;
-    let session_link = agents::session_link(agent_spec.family(), &id);
+    let dir = store::workers_dir(&project).join(&id);
+    let session_link = agents::session_link(agent_spec.family(), &id, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }
@@ -87,7 +88,6 @@ pub fn spawn(
     };
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
-    let dir = store::workers_dir(&project).join(&id);
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 

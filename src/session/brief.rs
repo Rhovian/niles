@@ -71,7 +71,7 @@ pub(super) fn write_manager_session(
         workspace: workspace.to_path_buf(),
         brief: path,
         lead_pane: recorded_lead_pane(),
-        session_link: agents::session_link(agent.family(), &format!("lead-{id}")),
+        session_link: agents::session_link(agent.family(), &format!("lead-{id}"), &dir),
     };
     write_session_meta(workspace, &meta)?;
     Ok(ManagerSession {

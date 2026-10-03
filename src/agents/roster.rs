@@ -102,12 +102,12 @@ pub(crate) fn normalize_model(family: &str, model: &str) -> Result<String> {
     if !normalized.is_empty()
         && normalized
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/'))
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/' | ':'))
     {
         return Ok(normalized);
     }
 
-    bail!("invalid {family} model `{model}`; expected letters, digits, '.', '_', '-', or '/'")
+    bail!("invalid {family} model `{model}`; expected letters, digits, '.', '_', '-', '/', or ':'")
 }
 
 pub(crate) fn normalize_effort(effort: &str) -> String {
