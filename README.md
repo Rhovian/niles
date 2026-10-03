@@ -111,28 +111,6 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 - **Security** asks what an attacker can do with the change. The lead commissions it only when the
   change is itself a security boundary, so ordinary work is not hardened against an unnamed attacker.
 
-## Command reference
-
-| Command | Purpose |
-| --- | --- |
-| `niles` | List, register, and open projects |
-| `niles doctor` | Show binary identity and dev-build staleness |
-| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; `--worktree` creates or joins a managed tree, `--tree` uses an existing tree, `--wait` awaits its first wake |
-| `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
-| `niles workers` | Print this workspace's live workers, window health, and pending wakes as JSON |
-| `niles usage` | Print usage for live lead and worker sessions as JSON |
-| `niles models` | List the effective model and effort roster for this workspace |
-| `niles report <id>` | Print a live or most recently archived worker report |
-| `niles peek <id>` | Print recent pane output; `--lines 0` captures all history |
-| `niles send [options] <id> (<text...> \| - \| -m <text>...)` | Steer a worker; add `--wait` to await its next wake |
-| `niles wait [options] <id...>` | Consume the next wake; also supports `--task` and `--timeout` |
-| `niles quiet <id>` | Disarm an intentionally idle worker's check-in |
-
-Every duration is a non-negative integer followed by `ms`, `s`, `m`, or `h`, such as `500ms`,
-`90s`, `5m`, or `1h`; plain `0` is also accepted. `spawn` and `send` accept `off` for
-`--checkin`, whose nonzero delays must be at least `1s`. For one worker, their `--wait` forms fold
-in `wait`; for a fleet, dispatch first and use `niles wait --task LABEL`.
-
 ## Configuration
 
 The workspace manifest binds roles. This is the minimal valid `.niles/manifest.yaml`:
@@ -169,9 +147,10 @@ Run `niles models` to list the effective models and effort levels for the curren
 
 Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
 planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
-to five minutes, then back off to hourly reminders. Both take a duration as above; `0` and `off`
-disable a check-in, a fixed recheck must be greater than zero, and `recheck: backoff` selects
-backoff. Per-command `--checkin` overrides the manifest.
+to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
+followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
+fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
+`--checkin` overrides the manifest.
 
 ## Contributing and security
 
