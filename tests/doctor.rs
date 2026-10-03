@@ -33,11 +33,11 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     write_executable(
         &env.bin.join("claude"),
-        "#!/bin/sh\nprintf 'Claude CLI 2.1.288\\nsecond line\\n'\n",
+        "#!/bin/sh\nprintf 'Claude CLI 1.0.0\\nsecond line\\n'\n",
     );
     write_executable(
         &env.bin.join("codex"),
-        "#!/bin/sh\nprintf 'Codex CLI 0.160.0\\n'\n",
+        "#!/bin/sh\nprintf 'Codex CLI 1.0.0\\n'\n",
     );
 
     let output = env.run(&["doctor"]);
@@ -46,11 +46,11 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     let stdout = stdout_of(&output);
     assert!(stdout.contains("tmux: tmux 3.5\n"), "{stdout}");
     assert!(stdout.contains(&format!(
-        "agent claude: {} — Claude CLI 2.1.288; tested 2.1.288",
+        "agent claude: {} — Claude CLI 1.0.0; tested ",
         env.bin.join("claude").display()
     )));
     assert!(stdout.contains(&format!(
-        "agent codex: {} — Codex CLI 0.160.0; tested 0.160.0",
+        "agent codex: {} — Codex CLI 1.0.0; tested ",
         env.bin.join("codex").display()
     )));
     assert_eq!(stdout.matches("agent claude:").count(), 1);
