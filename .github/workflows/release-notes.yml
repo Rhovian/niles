@@ -1,0 +1,28 @@
+# Called by release.yml (cargo-dist) after the GitHub release is announced.
+name: Add tested CLI versions to release notes
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          gh release view "$TAG" --json body -q .body > body.md
+          if grep -q '^## Tested agent CLIs' body.md; then exit 0; fi
+          {
+            printf '## Tested agent CLIs\n\n'
+            awk '/^\| CLI \| Tested version \|/{t=1} t&&/^\|/{print;next} t{exit}' README.md
+            printf '\n'
+            cat body.md
+          } > notes.md
+          gh release edit "$TAG" --notes-file notes.md

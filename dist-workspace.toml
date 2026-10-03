@@ -17,3 +17,6 @@ install-path = "CARGO_HOME"
 install-updater = false
 # Custom publish jobs, run after the GitHub release is created
 publish-jobs = ["./publish-crates"]
+
+# Custom jobs run after the release is announced
+post-announce-jobs = ["./release-notes"]
