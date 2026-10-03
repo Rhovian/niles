@@ -12,6 +12,7 @@ mod snapshot;
 mod spawn;
 mod usage;
 mod validation;
+mod worktree;
 
 pub use close::worker_close;
 pub use list::workers;
@@ -21,6 +22,7 @@ pub use resolve::window_is_gone;
 pub use role::WorkerRole;
 pub use spawn::spawn;
 pub use usage::usage;
+pub use worktree::SpawnTree;
 
 pub(crate) use close::select_worker_ids_by_task;
 pub(crate) use pane::DEFAULT_PEEK_LINES;

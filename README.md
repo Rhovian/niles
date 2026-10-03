@@ -80,13 +80,14 @@ Workers in a workspace share one working tree, so two workers editing the same f
 each other. To run a second implementation at once, give it its own tree:
 
 ```sh
-git worktree add ../repo-b -b feature-b
-niles spawn b --tree ../repo-b "Implement feature B"
+niles spawn b --worktree feature-b --base origin/main "Implement feature B"
 ```
 
-The worker runs in `../repo-b`, while `niles workers`, `wait`, `close`, and the watcher still
-track it from the lead's workspace. Niles never creates, cleans, or removes the tree; that stays
-with `git worktree`.
+The worker runs in `../repo-trees/feature-b`, while `niles workers`, `wait`, `close`, and the
+watcher still track it from the lead's workspace. A second worker using `--worktree feature-b`
+joins the tree. After pushing, close all its workers to remove a clean tree. Close keeps trees
+with uncommitted files or commits absent from every remote. The branch remains. Use `--tree`
+for an existing tree that you manage yourself.
 
 ## Roles
 
@@ -107,7 +108,7 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
 | --- | --- |
 | `niles` | List, register, and open projects |
 | `niles doctor` | Show binary identity and dev-build staleness |
-| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; `--tree` runs it in another working tree, `--wait` awaits its first wake |
+| `niles spawn [options] <id> (<text...> \| - \| -m <text>...)` | Start a worker window; `--worktree` creates or joins a managed tree, `--tree` uses an existing tree, `--wait` awaits its first wake |
 | `niles close [options] [id]` | Close and archive workers by ID, `--task`, or `--all` |
 | `niles workers` | Print this workspace's live workers, window health, and pending wakes as JSON |
 | `niles usage` | Print usage for live lead and worker sessions as JSON |

@@ -105,8 +105,14 @@ pub enum CommandName {
         #[arg(short, long)]
         agent: Option<String>,
         /// Run the agent in this directory while Niles tracks it from this workspace.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", conflicts_with = "worktree")]
         tree: Option<camino::Utf8PathBuf>,
+        /// Create or join a managed git worktree on this branch.
+        #[arg(long, value_name = "BRANCH")]
+        worktree: Option<String>,
+        /// Create the worktree branch from this ref without tracking it.
+        #[arg(long, value_name = "REF", requires = "worktree")]
+        base: Option<String>,
         /// Check-in delay for this worker: a duration such as 1s, 90s, 5m or 1h. Defaults to
         /// this workspace's manifest `checkin`, then 5m. `0` or `off` arms none.
         #[arg(long, value_name = "DELAY")]

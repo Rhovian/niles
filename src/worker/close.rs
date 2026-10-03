@@ -14,6 +14,7 @@ use super::{
     meta::{meta_path, read_meta_if_exists},
     resolve::{no_live_worker_message, resolve_worker_if_exists},
     validation::validate_task_label,
+    worktree,
 };
 
 struct WorkerCloseOutcome {
@@ -21,6 +22,7 @@ struct WorkerCloseOutcome {
     archive_dir: Utf8PathBuf,
     pane_path: Option<Utf8PathBuf>,
     pane_error: Option<String>,
+    tree: Option<String>,
     window: WindowCloseOutcome,
 }
 
@@ -151,6 +153,9 @@ fn print_single_close_outcome(outcome: &WorkerCloseOutcome) {
         println!("pane not captured for worker {}: {err}", outcome.id);
     }
     print_window_close_detail(outcome);
+    if let Some(tree) = &outcome.tree {
+        println!("tree: {tree}");
+    }
     println!("archive: {}", outcome.archive_dir);
     println!("closed: {}", outcome.id);
 }
@@ -165,6 +170,9 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
     }
     if let Some(state) = outcome.window.state() {
         println!("  {},window-state,{state}", outcome.id);
+    }
+    if let Some(tree) = &outcome.tree {
+        println!("  {},tree,{tree}", outcome.id);
     }
 }
 
@@ -220,11 +228,18 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
         finished_at,
     )?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
+    let tree = if let Some(tree) = meta.tree.as_deref() {
+        worktree::retire(&meta.project, tree)
+            .with_context(|| format!("worker {id} closed but the tree was not retired"))?
+    } else {
+        None
+    };
     Ok(WorkerCloseOutcome {
         id: id.to_owned(),
         archive_dir,
         pane_path,
         pane_error,
+        tree,
         window,
     })
 }
