@@ -21,6 +21,8 @@
 You talk to one agent. It plans the change, hands the work to others, often from another model
 family, and reviews what comes back before it reaches you.
 
+- **Diffs stay small.** Every handoff carries a line budget. A worker that passes it stops, and the
+  overrun is trimmed line by line before review.
 - **Independent review.** One model family writes the change and another reviews it.
 - **Nothing goes quiet.** Niles checks in on quiet workers, wakes the lead when they report, and
   shows ⚠ in your status bar when a lead is waiting on you.
