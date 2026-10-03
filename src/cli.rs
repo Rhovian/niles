@@ -79,6 +79,15 @@ pub enum CommandName {
     Lead,
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
+    /// Remove dated metadata across registered projects (preview unless --apply)
+    Prune {
+        /// Minimum age in days.
+        #[arg(long, default_value_t = 14, value_name = "DAYS")]
+        older_than: u32,
+        /// Delete the listed paths.
+        #[arg(long)]
+        apply: bool,
+    },
     /// Spawn a worker agent in a tmux window
     ///
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
