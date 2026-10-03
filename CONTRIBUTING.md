@@ -28,9 +28,11 @@ change, including adding, removing, or renaming commands or flags, changing `--j
 a removed or renamed flag or a manifest format change, the release notes say what to update.
 Major releases are reserved for a fundamental change in what niles is; there is no fixed trigger.
 
-1. Bump `version` in `Cargo.toml` through a normal PR.
+1. Bump `version` in `Cargo.toml` through a normal PR, and update the README's tested agent CLI
+   versions from each CLI's `--version`.
 2. After merge, tag `vX.Y.Z` on `main` and push the tag.
 3. The release workflow builds the binaries and publishes the GitHub release.
+   Add the tested CLI versions to its notes.
 4. Run `cargo publish`.
 
 ## Legal and security
