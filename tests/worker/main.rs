@@ -14,3 +14,4 @@ mod spawn;
 mod spawn_failures;
 mod support;
 mod usage;
+mod worktree;

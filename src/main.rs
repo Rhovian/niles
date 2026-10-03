@@ -66,11 +66,17 @@ fn run() -> Result<ExitCode> {
             task_label,
             agent,
             tree,
+            worktree,
+            base,
             checkin,
             message,
         }) => {
             let task = message.resolve()?;
             let worker_id = id.clone();
+            let tree = match worktree {
+                Some(branch) => Some(worker::SpawnTree::Worktree { branch, base }),
+                None => tree.map(worker::SpawnTree::Path),
+            };
             worker::spawn(id, role, task_label, agent, task, checkin, tree)?;
             if wait {
                 return Ok(wait::wait(

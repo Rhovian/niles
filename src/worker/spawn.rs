@@ -20,6 +20,7 @@ use super::{
     role::WorkerRole,
     snapshot::status_log_len,
     validation::{validate_id, validate_task_label},
+    worktree::{self, SpawnTree},
 };
 
 const UNLABELED_TASK_LABEL: &str = "-";
@@ -31,28 +32,13 @@ pub fn spawn(
     agent: Option<String>,
     task: String,
     checkin: Option<String>,
-    tree: Option<Utf8PathBuf>,
+    tree: Option<SpawnTree>,
 ) -> Result<()> {
     validate_id(&id)?;
     if let Some(label) = &task_label {
         validate_task_label(label)?;
     }
     let project = current_dir_utf8()?;
-    let tree = tree
-        .map(|path| {
-            let canonical = path
-                .canonicalize_utf8()
-                .with_context(|| format!("failed to resolve tree {path}"))?;
-            if !canonical.is_dir() {
-                bail!("tree is not a directory: {canonical}");
-            }
-            Ok(canonical)
-        })
-        .transpose()?;
-    let agent_dir = match &tree {
-        Some(tree) => tree.as_path(),
-        None => &project,
-    };
     let agent = resolve_agent(&project, role, agent)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
@@ -78,6 +64,25 @@ pub fn spawn(
     // Resolved before any worker state is written: a spawn that cannot place a window should
     // leave no half-built worker directory behind.
     let session = tmux::current_session()?;
+
+    let tree = match tree {
+        None => None,
+        Some(SpawnTree::Path(path)) => {
+            let canonical = path
+                .canonicalize_utf8()
+                .with_context(|| format!("failed to resolve tree {path}"))?;
+            if !canonical.is_dir() {
+                bail!("tree is not a directory: {canonical}");
+            }
+            Some(canonical)
+        }
+        Some(SpawnTree::Worktree { branch, base }) => Some(worktree::create_or_join(
+            &project,
+            &branch,
+            base.as_deref(),
+        )?),
+    };
+    let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
     let dir = store::workers_dir(&project).join(&id);
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
@@ -190,7 +195,7 @@ fn resolve_agent(project: &Utf8Path, role: WorkerRole, agent: Option<String>) ->
     let manifest = workspace_manifest::load(project)
         .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?
         .with_context(|| {
-            format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest")
+            format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere")
         })?;
     let agent = match role {
         WorkerRole::Worker => manifest.worker,
