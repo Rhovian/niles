@@ -31,7 +31,7 @@ family, and reviews what comes back before it reaches you.
 
 ## Requirements
 
-- `tmux`. Rust 1.85+ is required when installing with Cargo or building from source.
+- `tmux`. Rust 1.89+ is required when installing with Cargo or building from source.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
   One CLI is enough: bind every role to `claude` or to `codex`. Mixing families adds independent
   review.

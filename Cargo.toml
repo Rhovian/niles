@@ -2,6 +2,7 @@
 name = "niles"
 version = "1.4.0"
 edition = "2024"
+rust-version = "1.89"
 description = "Coordinate coding agents from different model families in tmux."
 readme = "README.md"
 keywords = ["ai", "agents", "tmux", "claude", "codex"]
