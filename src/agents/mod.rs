@@ -124,20 +124,39 @@ fn configured_or_default_binary(configured: Option<&str>, default: String) -> St
 
 impl AgentSpec {
     pub fn parse(agent: &str, models: &ModelRoster) -> Result<Self> {
-        let parts = agent.split(':').collect::<Vec<_>>();
-        if parts.is_empty() || parts.len() > 3 {
-            bail!("invalid agent spec `{agent}`; expected family[:model[:effort]]");
-        }
-        if parts.iter().any(|part| part.trim().is_empty()) {
+        let (family, rest) = match agent.split_once(':') {
+            Some((family, rest)) => (family, Some(rest)),
+            None => (agent, None),
+        };
+        // A model name may itself contain `:` (OpenRouter's `:free` variants). Such a name must be
+        // on the roster, which is what tells its colon from the one before an effort.
+        let listed = |model: &str| {
+            canonical_family(family).is_some_and(|family| {
+                models
+                    .supported_efforts(&family, &model.to_ascii_lowercase())
+                    .is_some()
+            })
+        };
+        let (model, effort) = match rest {
+            Some(rest) if listed(rest) => (Some(rest), None),
+            Some(rest) => match rest.rsplit_once(':') {
+                Some((model, effort)) if listed(model) || !model.contains(':') => {
+                    (Some(model), Some(effort))
+                }
+                Some(_) => bail!("invalid agent spec `{agent}`; expected family[:model[:effort]]"),
+                None => (Some(rest), None),
+            },
+            None => (None, None),
+        };
+        if [Some(family), model, effort]
+            .into_iter()
+            .flatten()
+            .any(|part| part.trim().is_empty())
+        {
             bail!("invalid agent spec `{agent}`; family, model, and effort cannot be empty");
         }
 
-        Self::from_parts(
-            parts[0],
-            parts.get(1).copied(),
-            parts.get(2).copied(),
-            models,
-        )
+        Self::from_parts(family, model, effort, models)
     }
 
     pub fn from_parts(
