@@ -35,8 +35,8 @@ model family, and reviews the diff against its own estimate, sending back anythi
   review.
 - Unix only.
 
-Each release is tested with the agent CLI versions below. Other versions usually work; when one
-doesn't, the version that broke is the first thing to report.
+Niles tracks the agent CLIs closely and bumps its tested versions as often as it can. These are the
+latest tested; if a newer release breaks something, report it with that version.
 
 | CLI | Tested version |
 | --- | --- |
@@ -49,61 +49,23 @@ doesn't, the version that broke is the first thing to report.
 
 ## Quickstart
 
+Install with the shell installer or with Cargo:
+
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
-niles
 ```
 
-Alternatively, install with `cargo install niles`, or build from source with
-`cargo install --git https://github.com/Rhovian/niles`.
+```sh
+cargo install niles
+```
 
-Bare `niles` opens the project list. Type a project's number to open it, `n` to register a
+Then run `niles`. It opens the project list: type a project's number to open it, `n` to register a
 directory, or `q` to quit, then press Enter. Opening a project creates or switches to its own tmux
 session with the lead running in a window named `niles`. The first launch in a workspace prompts
 for all four roles and writes `.niles/manifest.yaml`; later launches show the roles before
 starting.
 
-To open the list from anywhere in tmux, bind it to a popup:
-
-```tmux
-bind-key -n M-n display-popup -E niles
-```
-
-## Projects and the status bar
-
-Each project is a tmux session, and each worker is a window in it. Project sessions show a
-two-line status bar at the top:
-
-- **Projects:** every live project and its lead's state. `●` the lead or one of its workers is
-  working; `⚠` the lead is idle with no worker working, so it is waiting for you, with how long
-  it has waited.
-- **Windows:** the current project's lead and workers, with each agent's model, state (`●`
-  working, `○` idle, `⚠` lead waiting for you), token total, and for workers, time since spawn.
-
-Switch projects and windows with tmux's own keys (`switch-client -n/-p`, `next-window`,
-`previous-window`), or bind them, for example:
-
-```tmux
-bind -n M-[ switch-client -p
-bind -n M-] switch-client -n
-bind -n M-\; previous-window
-bind -n "M-'" next-window
-```
-
-## Parallel implementation
-
-Workers in a workspace share one working tree, so two workers editing the same files overwrite
-each other. To run a second implementation at once, give it its own tree:
-
-```sh
-niles spawn b --worktree feature-b --base origin/main "Implement feature B"
-```
-
-The worker runs in `../repo-trees/feature-b`, while `niles workers`, `wait`, `close`, and the
-watcher still track it from the lead's workspace. A second worker using `--worktree feature-b`
-joins the tree. After pushing, close all its workers to remove a clean tree. Close keeps trees
-with uncommitted files or commits absent from every remote. The branch remains. Use `--tree`
-for an existing tree that you manage yourself.
+See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
