@@ -38,6 +38,36 @@ mod tests {
         result
     }
 
+    #[test]
+    fn groups_load_and_scalar_saves_as_scalar() {
+        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: lead\nsecurity: claude\n";
+        let manifest = load_body("manifest-groups", body).unwrap().unwrap();
+        assert_eq!(
+            manifest.worker.agents().collect::<Vec<_>>(),
+            ["codex:gpt-6-sol", "claude:opus"]
+        );
+        let root = temp_test_path("manifest-scalar-roundtrip");
+        save(&root, &WorkspaceManifest::default()).unwrap();
+        let saved = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert!(saved.contains("worker: codex"), "{saved}");
+        fs::remove_dir_all(root).unwrap();
+        for (name, worker) in [
+            ("empty", "  - when: Standard\n    models: []"),
+            (
+                "unknown",
+                "  - when: Standard\n    models: [codex]\n    extra: no",
+            ),
+            (
+                "empty-efforts",
+                "  - when: Standard\n    models: [codex]\n    efforts: []",
+            ),
+        ] {
+            let body =
+                format!("lead: claude\nworker:\n{worker}\nreviewer: lead\nsecurity: claude\n");
+            assert!(load_body(name, &body).is_err());
+        }
+    }
+
     /// The two check-in keys are read from the manifest as written, and a manifest that says
     /// nothing about them carries no default of its own: the cadence resolver owns that decision.
     #[test]
@@ -120,9 +150,9 @@ flow:
         let root = temp_test_path("manifest-save");
         let manifest = WorkspaceManifest {
             lead: "claude".to_owned(),
-            worker: "codebot".to_owned(),
-            reviewer: super::super::ReviewerBinding::Agent("reviewbot".to_owned()),
-            security: "auditbot".to_owned(),
+            worker: "codebot".to_owned().into(),
+            reviewer: super::super::ReviewerBinding::Agent("reviewbot".to_owned().into()),
+            security: "auditbot".to_owned().into(),
             ..WorkspaceManifest::default()
         };
 
@@ -201,9 +231,9 @@ worker_planning:
         .unwrap();
         let expected = WorkspaceManifest {
             lead: "claude:opus:medium".to_owned(),
-            worker: "codex:gpt-5.6-sol:medium".to_owned(),
-            reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned()),
-            security: "hermes:tencent/hy3:high".to_owned(),
+            worker: "codex:gpt-5.6-sol:medium".to_owned().into(),
+            reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned().into()),
+            security: "hermes:tencent/hy3:high".to_owned().into(),
             worker_planning: [
                 (
                     "claude:haiku".to_owned(),

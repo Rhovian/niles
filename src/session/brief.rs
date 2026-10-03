@@ -227,7 +227,7 @@ mod tests {
             &workspace,
             &dir,
             "worker: none",
-            &ReviewerBinding::Agent("claude".to_owned()),
+            &ReviewerBinding::Agent("claude".to_owned().into()),
         );
 
         assert!(body.contains(&format!(

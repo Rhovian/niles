@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize, Serializer};
+
+use crate::agents::{AgentSpec, ModelRoster, roster};
 
 /// Which agent plays each role, plus operator-authored planning and check-in settings.
 ///
@@ -14,9 +17,9 @@ use serde::{Deserialize, Serialize};
 #[serde(from = "WorkspaceManifestWire")]
 pub struct WorkspaceManifest {
     pub lead: String,
-    pub worker: String,
+    pub worker: RoleBinding,
     pub reviewer: ReviewerBinding,
-    pub security: String,
+    pub security: RoleBinding,
     /// Planning guidance keyed by an exact `family:model` pair. The lead consults this only for
     /// implementation assignments; Niles does not interpret models or infer capabilities.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -41,13 +44,170 @@ pub enum ReviewerBinding {
     #[serde(rename = "lead")]
     Lead,
     #[serde(untagged)]
-    Agent(String),
+    Agent(RoleBinding),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "RoleBindingWire")]
+pub struct RoleBinding(pub Vec<AgentGroup>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGroup {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    pub models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RoleBindingWire {
+    Scalar(String),
+    Groups(Vec<AgentGroup>),
+}
+
+impl TryFrom<RoleBindingWire> for RoleBinding {
+    type Error = String;
+
+    fn try_from(wire: RoleBindingWire) -> std::result::Result<Self, Self::Error> {
+        let groups = match wire {
+            RoleBindingWire::Scalar(value) => return Ok(Self::from(value)),
+            RoleBindingWire::Groups(groups) => groups,
+        };
+        if groups.is_empty()
+            || groups.iter().any(|group| {
+                group.models.is_empty() || group.efforts.as_ref().is_some_and(Vec::is_empty)
+            })
+        {
+            return Err("a role needs at least one group, each with models, and efforts non-empty when present".into());
+        }
+        Ok(Self(groups))
+    }
+}
+
+impl Serialize for RoleBinding {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        if let [
+            AgentGroup {
+                when: None,
+                models,
+                efforts,
+            },
+        ] = self.0.as_slice()
+            && let [model] = models.as_slice()
+        {
+            match efforts.as_deref() {
+                None => return serializer.serialize_str(model),
+                Some([effort]) => return serializer.serialize_str(&format!("{model}:{effort}")),
+                Some(_) => {}
+            }
+        }
+        self.0.serialize(serializer)
+    }
+}
+
+impl From<String> for RoleBinding {
+    fn from(value: String) -> Self {
+        let (model, effort) = match value.match_indices(':').nth(1) {
+            Some((index, _)) => (&value[..index], Some(&value[index + 1..])),
+            None => (value.as_str(), None),
+        };
+        Self(vec![AgentGroup {
+            when: None,
+            models: vec![model.to_owned()],
+            efforts: effort.map(|effort| vec![effort.to_owned()]),
+        }])
+    }
+}
+
+fn listed_spec(model: &str, roster: &ModelRoster) -> Result<AgentSpec> {
+    let spec = AgentSpec::parse(model, roster)?;
+    if spec.effort().is_some() {
+        bail!("listed model `{model}` must not carry an effort; list it under efforts");
+    }
+    Ok(spec)
+}
+
+impl RoleBinding {
+    pub fn default_model(&self) -> &str {
+        &self.0[0].models[0]
+    }
+
+    pub fn default_agent(&self, models: &ModelRoster) -> Result<String> {
+        let group = &self.0[0];
+        let spec = listed_spec(&group.models[0], models)?;
+        let (Some(model), Some(efforts)) = (spec.model(), &group.efforts) else {
+            return Ok(spec.canonical());
+        };
+        let Some(supported) = models
+            .supported_efforts(spec.family(), model)
+            .filter(|supported| !supported.is_empty())
+        else {
+            return Ok(spec.canonical());
+        };
+        let effort = roster::normalize_effort(&efforts[0]);
+        if supported.contains(&effort) {
+            return Ok(format!("{}:{effort}", spec.canonical()));
+        }
+        bail!(
+            "model {model} does not support listed effort {effort}; listed efforts: {}",
+            efforts.join(", ")
+        )
+    }
+
+    pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {
+        for group in &self.0 {
+            for model in &group.models {
+                let listed = listed_spec(model, models)?;
+                if listed.family() != requested.family() || listed.model() != requested.model() {
+                    continue;
+                }
+                let allowed = match (&group.efforts, requested.effort()) {
+                    (None, _) => true,
+                    (Some(efforts), Some(effort)) => efforts
+                        .iter()
+                        .any(|listed| roster::normalize_effort(listed) == effort),
+                    (Some(_), None) => listed.model().is_none_or(|model| {
+                        models
+                            .supported_efforts(listed.family(), model)
+                            .is_some_and(<[String]>::is_empty)
+                    }),
+                };
+                if allowed {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn agents(&self) -> impl Iterator<Item = &str> {
+        self.0
+            .iter()
+            .flat_map(|group| group.models.iter().map(String::as_str))
+    }
+
+    pub fn allowed_agents(&self) -> String {
+        self.0
+            .iter()
+            .map(|group| {
+                let models = group.models.join(", ");
+                match &group.efforts {
+                    Some(efforts) => format!("{models} [{}]", efforts.join(", ")),
+                    None => models,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
 }
 
 pub(crate) const DEFAULT_REVIEWER_AGENT: &str = "claude";
 
 impl ReviewerBinding {
-    pub fn as_agent(&self) -> Option<&str> {
+    pub fn as_agent(&self) -> Option<&RoleBinding> {
         match self {
             Self::Lead => None,
             Self::Agent(agent) => Some(agent),
@@ -59,9 +219,9 @@ impl ReviewerBinding {
 #[serde(deny_unknown_fields)]
 struct WorkspaceManifestWire {
     lead: String,
-    worker: String,
+    worker: RoleBinding,
     reviewer: ReviewerBinding,
-    security: String,
+    security: RoleBinding,
     #[serde(default)]
     worker_planning: BTreeMap<String, String>,
     #[serde(default)]
@@ -88,9 +248,9 @@ impl Default for WorkspaceManifest {
     fn default() -> Self {
         Self {
             lead: "claude".to_owned(),
-            worker: "codex".to_owned(),
-            reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned()),
-            security: "claude".to_owned(),
+            worker: "codex".to_owned().into(),
+            reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned().into()),
+            security: "claude".to_owned().into(),
             worker_planning: BTreeMap::new(),
             checkin: None,
             recheck: None,

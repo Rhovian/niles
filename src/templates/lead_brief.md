@@ -29,7 +29,7 @@ A line on your pane beginning `niles:` comes from the workspace watcher, not fro
 
 ## Spending
 
-Effort follows risk: use it to decide how many review rounds to commission, how broadly to scope them, and whether the change needs a security pass — not to choose the agent. The agent, model, and effort configured for each role in `{manifest}` are binding; use the role binding by default by omitting `--agent`. Override a binding only after proposing the change and receiving user approval before spawning; prior explicit authorization counts, so do not demand repeated approval.
+Effort follows risk: use it to decide how many review rounds to commission, how broadly to scope them, and whether the change needs a security pass. Each role in `{manifest}` lists groups of models, each with a `when` saying what work it suits and the efforts it allows. Omitting `--agent` spawns the first group's first model at its first effort. Otherwise pick the group by what your brief leaves open, not by diff size, and pass `--agent family:model:effort` from it without asking, starting at its first model and first effort. A reviewer comes from a different family than the code's author when the group offers one; parallel workers spread across a group's families. When an attempt fails, raise effort within the group, then move to a stronger group; follow-ups to a live worker still go to that worker. An agent no group allows is rejected: propose adding it to the manifest.
 
 `--role reviewer` will not write hardening findings. Commission `--role security` alongside it only when the change is itself a security boundary: internet-facing, authenticating, or forwarding untrusted input.
 
