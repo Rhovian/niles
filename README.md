@@ -16,16 +16,23 @@
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
-Niles coordinates coding agents from different model families, keeping work moving and allowing
-for workflows where each model does what it does best.
+**Your coding agent, promoted to tech lead.**
 
-Using one model family for implementation and another for review can add independent judgment.
-Pairing a frontier lead with a cheaper worker may also reduce cost.
+Talk to one Claude or Codex session. It plans the change, hands it to a worker, often from another
+model family, and reviews the diff against its own estimate, sending back anything over budget.
+
+- **Independent review.** One model family writes the change and another reviews it.
+- **Nothing goes quiet.** Niles checks in on quiet workers, wakes the lead when they report, and
+  shows ⚠ in your status bar when a lead is waiting on you.
+- **One Rust binary.** tmux and plain files: no server, no plugins, and your agent CLIs run
+  unmodified.
 
 ## Requirements
 
 - `tmux`. Rust 1.85+ is required when installing with Cargo or building from source.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
+  One CLI is enough: bind every role to `claude` or to `codex`. Mixing families adds independent
+  review.
 - Unix only.
 
 Each release is tested with the agent CLI versions below. Other versions usually work; when one
@@ -97,6 +104,15 @@ watcher still track it from the lead's workspace. A second worker using `--workt
 joins the tree. After pushing, close all its workers to remove a clean tree. Close keeps trees
 with uncommitted files or commits absent from every remote. The branch remains. Use `--tree`
 for an existing tree that you manage yourself.
+
+## What niles changes on your machine
+
+- `.niles/` in each workspace: the role manifest, worker briefs, status logs, and reports.
+- `~/.niles/projects`: the list of registered projects.
+- One tmux session per project, with its status bar options set on that session only.
+- `../<repo>-trees/<branch>` when you spawn with `--worktree`.
+
+Niles does not edit your agent CLIs' configuration or your tmux config.
 
 ## Roles
 
