@@ -1,10 +1,16 @@
-use std::{fs, process::Command};
+use std::{collections::BTreeMap, fs, process::Command};
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
-use crate::{build_info, util::current_dir_utf8};
+use crate::{
+    agents::{self, InvocationDefaults},
+    build_info,
+    config::spec::load_project_config_from,
+    util::{current_dir_utf8, find_on_path},
+    workspace_manifest,
+};
 
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
 const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
@@ -17,7 +23,75 @@ pub(crate) fn doctor() -> Result<()> {
     println!("built_at: {}", build_info::BUILD_TIMESTAMP);
     println!("workspace: {workspace}");
     print_dev_mode(&workspace)?;
+    print_setup(&workspace)?;
     Ok(())
+}
+
+fn print_setup(workspace: &Utf8Path) -> Result<()> {
+    match find_on_path("tmux") {
+        Some(path) => println!("tmux: {}", version_line(&path, "-V")),
+        None => println!("tmux: not found on PATH"),
+    }
+
+    let Some(manifest) = workspace_manifest::load(workspace)? else {
+        println!("agents: no workspace manifest");
+        return Ok(());
+    };
+    let config = load_project_config_from(workspace)?;
+    let bindings = [
+        Some(manifest.lead.as_str()),
+        Some(manifest.worker.as_str()),
+        manifest.reviewer.as_agent(),
+        Some(manifest.security.as_str()),
+    ];
+    let mut binaries = BTreeMap::new();
+    for agent in bindings.into_iter().flatten() {
+        let agent_config = agents::config_for(&config.agents, agent, &config.models)?;
+        let invocation = agents::invocation(
+            agent,
+            agent_config,
+            InvocationDefaults::Worker,
+            &config.models,
+        )?;
+        let tested =
+            agents::profile_for(invocation.spec.family()).map(|profile| profile.tested_version);
+        binaries.entry(invocation.binary).or_insert(tested);
+    }
+    for (binary, tested) in binaries {
+        match find_on_path(&binary) {
+            Some(path) => {
+                print!(
+                    "agent {binary}: {path} — {}",
+                    version_line(&path, "--version")
+                );
+                if let Some(tested) = tested {
+                    print!("; tested {tested}");
+                }
+                println!();
+            }
+            None => println!("agent {binary}: not found on PATH"),
+        }
+    }
+    Ok(())
+}
+
+fn version_line(path: &Utf8Path, flag: &str) -> String {
+    let (line, prefix) = match Command::new(path).arg(flag).output() {
+        Ok(output) if output.status.success() => (first_line(&output.stdout), ""),
+        Ok(output) => (first_line(&output.stderr), "version unavailable: "),
+        Err(err) => return format!("version unavailable: {err}"),
+    };
+    match line {
+        Some(line) => format!("{prefix}{line}"),
+        None => "version unavailable".to_owned(),
+    }
+}
+
+fn first_line(bytes: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .next()
+        .map(str::to_owned)
 }
 
 fn print_dev_mode(workspace: &Utf8Path) -> Result<()> {

@@ -25,6 +25,74 @@ fn doctor_reports_binary_identity() {
 }
 
 #[test]
+fn doctor_reports_manifest_binaries_once_with_versions() {
+    let env = TestEnv::with_tmux(
+        "niles-doctor-agents",
+        "#!/bin/sh\nprintf 'tmux 3.5\\nsecond line\\n'\n",
+    );
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
+    write_executable(
+        &env.bin.join("claude"),
+        "#!/bin/sh\nprintf 'Claude CLI 2.1.280\\nsecond line\\n'\n",
+    );
+    write_executable(
+        &env.bin.join("codex"),
+        "#!/bin/sh\nprintf 'Codex CLI 0.159.2\\n'\n",
+    );
+
+    let output = env.run(&["doctor"]);
+
+    assert_command_success("doctor agents", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("tmux: tmux 3.5\n"), "{stdout}");
+    assert!(stdout.contains(&format!(
+        "agent claude: {} — Claude CLI 2.1.280; tested 2.1.280",
+        env.bin.join("claude").display()
+    )));
+    assert!(stdout.contains(&format!(
+        "agent codex: {} — Codex CLI 0.159.2; tested 0.159.2",
+        env.bin.join("codex").display()
+    )));
+    assert_eq!(stdout.matches("agent claude:").count(), 1);
+    assert!(!stdout.contains("second line"));
+}
+
+#[test]
+fn doctor_reports_custom_missing_and_unavailable_versions() {
+    let env = TestEnv::new("niles-doctor-custom");
+    write_workspace_manifest(&env.root, "custom", "codex", "lead", "claude");
+    fs::write(
+        env.root.join("niles.yaml"),
+        "agents:\n  custom:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",
+    )
+    .unwrap();
+    write_executable(
+        &env.bin.join("custom-cli"),
+        "#!/bin/sh\nprintf 'version failed\\n' >&2\nexit 1\n",
+    );
+
+    let output = env.run(&["doctor"]);
+
+    assert_command_success("doctor custom", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains(&format!(
+        "agent custom-cli: {} — version unavailable: version failed",
+        env.bin.join("custom-cli").display()
+    )));
+    assert!(stdout.contains("agent missing-cli: not found on PATH"));
+    assert!(!stdout.contains("agent lead:"));
+    assert!(!stdout.contains("version failed; tested"));
+}
+
+#[test]
+fn doctor_without_manifest_reports_absence() {
+    let env = TestEnv::new("niles-doctor-no-manifest");
+    let output = env.run(&["doctor"]);
+    assert_command_success("doctor no manifest", &output);
+    assert!(stdout_of(&output).contains("agents: no workspace manifest"));
+}
+
+#[test]
 fn doctor_dirty_source_tree_never_reports_stale_no() {
     let workspace = temp_workspace("niles-doctor-dirty-test");
     fs::create_dir_all(workspace.join("src")).unwrap();

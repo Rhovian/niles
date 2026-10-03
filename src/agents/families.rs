@@ -5,6 +5,7 @@ use uuid::Uuid;
 pub struct AgentProfile {
     pub id: &'static str,
     pub binary: &'static str,
+    pub tested_version: &'static str,
     pub foreground_args: &'static [&'static str],
     pub worker_args: &'static [&'static str],
     pub worker_brief: BriefDelivery,
@@ -85,6 +86,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
+        tested_version: "0.159.2",
         foreground_args: &[],
         worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
         worker_brief: BriefDelivery::Arg,
@@ -103,6 +105,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
+        tested_version: "2.1.280",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         worker_brief: BriefDelivery::Arg,
@@ -118,6 +121,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "hermes",
         binary: "hermes",
+        tested_version: "0.21.3",
         foreground_args: &["chat"],
         worker_args: &["chat", "--yolo"],
         worker_brief: HERMES_QUERY,
@@ -158,4 +162,18 @@ pub fn tier_args(profile: AgentProfile, model: Option<&str>, effort: Option<&str
         }
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PROFILES;
+
+    #[test]
+    fn readme_lists_tested_versions() {
+        let readme = include_str!("../../README.md");
+        for profile in PROFILES {
+            let tested_version = format!("| {} |", profile.tested_version);
+            assert!(readme.contains(&tested_version), "{}", profile.id);
+        }
+    }
 }

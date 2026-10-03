@@ -1,6 +1,32 @@
 use super::support::*;
 
 #[test]
+fn missing_agent_binary_leaves_no_worker_state() {
+    let env = TestEnv::new("niles-worker-missing-binary");
+    fs::write(
+        env.root.join("niles.yaml"),
+        "agents:\n  claude:\n    binary: absent-agent-cli\n",
+    )
+    .unwrap();
+
+    let output = env.run(&[
+        "spawn",
+        "missing-cli",
+        "--agent",
+        "claude",
+        "Check",
+        "setup",
+    ]);
+
+    assert_failure_contains(
+        "missing agent binary",
+        &output,
+        "agent binary absent-agent-cli not found on PATH",
+    );
+    assert!(!env.root.join(".niles/worker/missing-cli").exists());
+}
+
+#[test]
 fn leftover_worker_json_file_is_inert() {
     let workspace = temp_workspace("niles-worker-json-inert");
     let home = niles_home(&workspace);

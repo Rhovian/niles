@@ -77,9 +77,9 @@ pub enum CommandName {
     /// Start the lead in a project session.
     #[command(hide = true)]
     Lead,
-    /// Report binary identity and dev-mode staleness.
+    /// Report binary identity, tmux, and agent CLI versions
     Doctor,
-    /// Spawn a worker agent in a tmux window.
+    /// Spawn a worker agent in a tmux window
     ///
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
     /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy, and
@@ -120,7 +120,7 @@ pub enum CommandName {
         #[command(flatten)]
         message: MessageInput,
     },
-    /// Close spawned worker windows and archive their metadata.
+    /// Close spawned worker windows and archive their metadata
     ///
     /// `done:` is a handback, not a finish: a worker that reported it is waiting for a follow-up,
     /// not asking to exit. Keep workers warm through the send/wait loop and close at integration
@@ -159,7 +159,7 @@ pub enum CommandName {
         #[arg(short, long, default_value_t = crate::worker::DEFAULT_PEEK_LINES)]
         lines: usize,
     },
-    /// Send a message to a worker tmux pane.
+    /// Send a message to a worker tmux pane
     ///
     /// Advances the worker's wake cursor first, so a status line written before the message
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
@@ -181,7 +181,7 @@ pub enum CommandName {
         #[command(flatten)]
         message: MessageInput,
     },
-    /// Wait for the next actionable status-log wake and print it.
+    /// Wait for the next actionable status-log wake and print it
     ///
     /// Each wait consumes one actionable line and records how far it read, so after a wake and a
     /// follow-up you run it again for the next one. Waiting on several workers returns the first
@@ -216,7 +216,7 @@ pub enum CommandName {
         )]
         timeout: Duration,
     },
-    /// Disarm a worker's check-in, so the watcher stops nudging about it.
+    /// Disarm a worker's check-in, so the watcher stops nudging about it
     ///
     /// `spawn` and `send` arm one, and the watcher nudges when it comes due with no report since.
     /// Quiet a worker that is idle on purpose, so its check-ins do not keep calling the lead back.
