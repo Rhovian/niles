@@ -82,7 +82,8 @@ Niles does not edit your agent CLIs' configuration or your tmux config.
 
 The lead is the agent you talk to. It owns the outcome: it reads the code, settles the plan, and
 decides who does what. Anything cheaper to do than to delegate, it does itself, including reviewing
-a diff. The rest it hands to other roles, commissioning as much review as the risk warrants.
+a diff. The rest it hands to other roles, commissioning as much review as the risk warrants,
+which may be none.
 
 - **Worker** implements the change and owns the gate: it runs the project's checks before reporting
   `done:` and says what printed, so nobody else re-runs them.
