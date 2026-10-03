@@ -35,6 +35,7 @@ Report uncertainty as uncertainty. `blocked:` and `needs-decision:` are far chea
 const ROLE_WORKER_TEMPLATE: &str = include_str!("../templates/role_worker.md");
 const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../templates/role_reviewer.md");
 const ROLE_SECURITY_TEMPLATE: &str = include_str!("../templates/role_security.md");
+const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../templates/role_research.md");
 
 /// Which role a spawned worker is playing.
 ///
@@ -50,6 +51,8 @@ pub enum WorkerRole {
     Reviewer,
     /// Owns the adversarial pass, commissioned only when the change is a security boundary.
     Security,
+    /// Answers one question with cited evidence. Edits nothing and does not run the gate.
+    Research,
 }
 
 impl WorkerRole {
@@ -58,6 +61,7 @@ impl WorkerRole {
             Self::Worker => "worker",
             Self::Reviewer => "reviewer",
             Self::Security => "security",
+            Self::Research => "research",
         }
     }
 
@@ -71,6 +75,7 @@ impl WorkerRole {
             Self::Worker => ROLE_WORKER_TEMPLATE,
             Self::Reviewer => ROLE_REVIEWER_TEMPLATE,
             Self::Security => ROLE_SECURITY_TEMPLATE,
+            Self::Research => ROLE_RESEARCH_TEMPLATE,
         }
     }
 }
@@ -79,17 +84,22 @@ impl WorkerRole {
 mod tests {
     use super::*;
 
-    const ALL: [WorkerRole; 3] = [
+    const ALL: [WorkerRole; 4] = [
         WorkerRole::Worker,
         WorkerRole::Reviewer,
         WorkerRole::Security,
+        WorkerRole::Research,
     ];
 
     /// The whole point of the split: the gate belongs to exactly one role.
     #[test]
     fn only_the_worker_is_told_to_run_the_gate() {
         assert!(WorkerRole::Worker.fragment().contains("You own the gate"));
-        for other in [WorkerRole::Reviewer, WorkerRole::Security] {
+        for other in [
+            WorkerRole::Reviewer,
+            WorkerRole::Security,
+            WorkerRole::Research,
+        ] {
             assert!(
                 other.fragment().contains("Do not run the gate"),
                 "{} should be told not to run the gate",

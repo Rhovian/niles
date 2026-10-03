@@ -91,6 +91,8 @@ which may be none.
   does security review; it flags anything security-relevant in one line.
 - **Security** asks what an attacker can do with the change. The lead commissions it only when the
   change is itself a security boundary, so ordinary work is not hardened against an unnamed attacker.
+- **Research** answers one question with a source for every claim. It edits nothing and runs no
+  checks, so the lead keeps the answer without spending its own context on the reading.
 
 ## Configuration
 
