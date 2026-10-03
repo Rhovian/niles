@@ -28,6 +28,15 @@ Pairing a frontier lead with a cheaper worker may also reduce cost.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
 - Unix only.
 
+Each release is tested with the agent CLI versions below. Other versions usually work; when one
+doesn't, the version that broke is the first thing to report.
+
+| CLI | Tested version |
+| --- | --- |
+| Claude Code | 2.1.280 |
+| Codex | 0.159.2 |
+| Hermes Agent | 0.21.3 |
+
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
 
