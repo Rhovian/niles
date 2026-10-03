@@ -12,15 +12,17 @@ fn resolve_from_cli(project: &Utf8Path, args: &[&str]) -> Result<String> {
     let Some(CommandName::Spawn { role, agent, .. }) = cli.command else {
         panic!("expected spawn");
     };
-    resolve_agent(project, role, agent)
+    resolve_agent(project, role, agent, &load_project_config_from(project)?)
 }
 
 fn manifest() -> WorkspaceManifest {
     WorkspaceManifest {
         lead: "leadbot".into(),
-        worker: "codex:gpt-5.5:xhigh".into(),
-        reviewer: crate::workspace_manifest::ReviewerBinding::Agent("claude:opus:high".to_owned()),
-        security: "auditbot".into(),
+        worker: "codex:gpt-5.5:xhigh".to_owned().into(),
+        reviewer: crate::workspace_manifest::ReviewerBinding::Agent(
+            "claude:opus:high".to_owned().into(),
+        ),
+        security: "auditbot".to_owned().into(),
         ..WorkspaceManifest::default()
     }
 }
@@ -31,9 +33,9 @@ fn omitted_agent_uses_each_roles_manifest_binding() {
     let manifest = manifest();
     save(&root, &manifest).unwrap();
     for (role, expected) in [
-        ("worker", manifest.worker),
-        ("reviewer", manifest.reviewer.as_agent().unwrap().to_owned()),
-        ("security", manifest.security),
+        ("worker", "codex:gpt-5.5:xhigh"),
+        ("reviewer", "claude:opus:high"),
+        ("security", "auditbot"),
     ] {
         let agent =
             resolve_from_cli(&root, &["niles", "spawn", "job", "--role", role, "task"]).unwrap();
@@ -47,17 +49,47 @@ fn omitted_agent_uses_each_roles_manifest_binding() {
 }
 
 #[test]
-fn explicit_agent_overrides_manifest_and_does_not_require_one() {
+fn explicit_agent_requires_membership_when_manifest_exists() {
     let root = temp_test_path("spawn-explicit-agent");
     let args = [
         "niles", "spawn", "job", "--role", "reviewer", "--agent", "custom", "task",
     ];
     assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
     save(&root, &manifest()).unwrap();
-    assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
-    fs::write(manifest_path(&root), "invalid: [").unwrap();
-    assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
+    let err = resolve_from_cli(&root, &args).unwrap_err().to_string();
+    assert!(
+        err.contains("reviewer")
+            && err.contains(manifest_path(&root).as_str())
+            && err.contains("claude:opus [high]"),
+        "{err}"
+    );
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn groups_choose_default_effort_or_report_unsupported_effort() {
+    let models = agents::ModelRoster::builtin().unwrap();
+    let mut binding =
+        crate::workspace_manifest::RoleBinding(vec![crate::workspace_manifest::AgentGroup {
+            when: Some("standard".into()),
+            models: vec!["claude:haiku".into()],
+            efforts: Some(vec!["medium".into()]),
+        }]);
+    assert_eq!(binding.default_agent(&models).unwrap(), "claude:haiku");
+    binding.0[0].models = vec!["codex:gpt-6-sol".into()];
+    assert_eq!(
+        binding.default_agent(&models).unwrap(),
+        "codex:gpt-6-sol:medium"
+    );
+    binding.0[0].efforts = Some(vec!["veryhigh".into()]);
+    let err = binding.default_agent(&models).unwrap_err().to_string();
+    assert!(
+        err.contains("gpt-6-sol") && err.contains("veryhigh"),
+        "{err}"
+    );
+    binding.0[0].models = vec!["codex:gpt-6-sol:high".into()];
+    let err = binding.default_agent(&models).unwrap_err().to_string();
+    assert!(err.contains("must not carry an effort"), "{err}");
 }
 
 #[test]
@@ -78,7 +110,8 @@ fn a_lead_reviewer_cannot_be_spawned_without_an_explicit_agent() {
 #[test]
 fn omitted_agent_requires_a_manifest() {
     let root = temp_test_path("spawn-no-manifest");
-    let err = resolve_agent(&root, WorkerRole::Reviewer, None)
+    let config = load_project_config_from(&root).unwrap();
+    let err = resolve_agent(&root, WorkerRole::Reviewer, None, &config)
         .unwrap_err()
         .to_string();
     assert!(err.contains(manifest_path(&root).as_str()), "{err}");
@@ -89,6 +122,7 @@ fn omitted_agent_requires_a_manifest() {
 #[test]
 fn omitted_agent_requires_the_roles_entry() {
     let root = temp_test_path("spawn-missing-role");
+    let config = load_project_config_from(&root).unwrap();
     for role in [
         WorkerRole::Worker,
         WorkerRole::Reviewer,
@@ -103,24 +137,13 @@ fn omitted_agent_requires_the_roles_entry() {
             .collect::<Vec<_>>()
             .join("\n");
         fs::write(&path, body).unwrap();
-        let err = format!("{:#}", resolve_agent(&root, role, None).unwrap_err());
+        let err = format!(
+            "{:#}",
+            resolve_agent(&root, role, None, &config).unwrap_err()
+        );
         assert!(err.contains(path.as_str()), "{err}");
         assert!(err.contains(&format!("role '{}'", role.as_str())), "{err}");
         assert!(err.contains("missing field"), "{err}");
     }
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn omitted_agent_rejects_an_empty_role_binding() {
-    let root = temp_test_path("spawn-empty-role");
-    let mut manifest = manifest();
-    manifest.security = " ".into();
-    save(&root, &manifest).unwrap();
-    let err = resolve_agent(&root, WorkerRole::Security, None)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains(manifest_path(&root).as_str()), "{err}");
-    assert!(err.contains("role 'security'"), "{err}");
     fs::remove_dir_all(root).unwrap();
 }

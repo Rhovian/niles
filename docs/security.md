@@ -37,7 +37,7 @@ assignments. See
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`src/templates/lead_brief.md`](../src/templates/lead_brief.md).
 
-**Existing mitigations.** Deserializing YAML does not itself execute shell commands. Unknown
+**Existing mitigations.** The manifest's listed agents bound what spawn will launch. Deserializing YAML does not itself execute shell commands. Unknown
 manifest fields are rejected, and built-in agent families reject unsupported model names. Worker
 launch scripts quote the selected binary and arguments, while foreground launches pass them as
 separate `Command` arguments; these measures prevent incidental shell parsing. See

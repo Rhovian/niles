@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{agents, config::spec::ProjectConfig};
 
-use super::{ReviewerBinding, WorkspaceManifest};
+use super::{ReviewerBinding, RoleBinding, WorkspaceManifest};
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -27,13 +27,13 @@ pub(super) fn print_manifest_roles<W: Write>(
             effort: MISSING.to_owned(),
             invalid_reason: None,
         },
-        ReviewerBinding::Agent(agent) => role_row("reviewer", agent, config),
+        ReviewerBinding::Agent(agent) => binding_row("reviewer", agent, config),
     };
     let rows = [
         role_row("lead", &manifest.lead, config),
-        role_row("worker", &manifest.worker, config),
+        binding_row("worker", &manifest.worker, config),
         reviewer,
-        role_row("security", &manifest.security, config),
+        binding_row("security", &manifest.security, config),
     ];
 
     let role_width = rows.iter().map(|row| row.role.len()).fold(0, usize::max);
@@ -63,6 +63,19 @@ struct RoleRow {
     model: String,
     effort: String,
     invalid_reason: Option<String>,
+}
+
+fn binding_row(role: &'static str, binding: &RoleBinding, config: &ProjectConfig) -> RoleRow {
+    match binding.default_agent(&config.models) {
+        Ok(agent) => role_row(role, &agent, config),
+        Err(err) => RoleRow {
+            role,
+            family: cell(binding.default_model()),
+            model: MISSING.to_owned(),
+            effort: MISSING.to_owned(),
+            invalid_reason: Some(clamp(&err.to_string(), MAX_REASON)),
+        },
+    }
 }
 
 fn role_row(role: &'static str, value: &str, config: &ProjectConfig) -> RoleRow {
@@ -122,13 +135,13 @@ mod tests {
     fn manifest(reviewer: &str) -> WorkspaceManifest {
         WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
-            worker: "codex".to_owned(),
+            worker: "codex".to_owned().into(),
             reviewer: if reviewer == "lead" {
                 ReviewerBinding::Lead
             } else {
-                ReviewerBinding::Agent(reviewer.to_owned())
+                ReviewerBinding::Agent(reviewer.to_owned().into())
             },
-            security: "claude:opus:max".to_owned(),
+            security: "claude:opus:max".to_owned().into(),
             ..WorkspaceManifest::default()
         }
     }

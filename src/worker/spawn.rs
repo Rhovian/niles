@@ -39,11 +39,11 @@ pub fn spawn(
         validate_task_label(label)?;
     }
     let project = current_dir_utf8()?;
-    let agent = resolve_agent(&project, role, agent)?;
+    let config = load_project_config_from(&project)?;
+    let agent = resolve_agent(&project, role, agent, &config)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
     let cadence = watch::checkin_cadence(&project, checkin.as_deref())?;
-    let config = load_project_config_from(&project)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
@@ -188,31 +188,38 @@ pub fn spawn(
     Ok(())
 }
 
-fn resolve_agent(project: &Utf8Path, role: WorkerRole, agent: Option<String>) -> Result<String> {
-    if let Some(agent) = agent {
-        return Ok(agent);
-    }
-
+fn resolve_agent(
+    project: &Utf8Path,
+    role: WorkerRole,
+    agent: Option<String>,
+    config: &crate::config::spec::ProjectConfig,
+) -> Result<String> {
     let path = workspace_manifest::manifest_path(project);
     let role_name = role.as_str();
     let manifest = workspace_manifest::load(project)
-        .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?
-        .with_context(|| {
-            format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere")
-        })?;
-    let agent = match role {
-        WorkerRole::Worker => manifest.worker,
-        WorkerRole::Reviewer => manifest.reviewer.as_agent().map(str::to_owned).with_context(|| {
-            format!("reviewer is bound to the lead in manifest {path}; specify --agent to spawn a reviewer")
-        })?,
-        WorkerRole::Security => manifest.security,
+        .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?;
+    let Some(manifest) = manifest else {
+        return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
-    if agent.trim().is_empty() {
-        bail!(
-            "no agent configured for role '{role_name}' in manifest {path}; specify --agent or configure the role"
-        );
+    let binding = match role {
+        WorkerRole::Worker => &manifest.worker,
+        WorkerRole::Reviewer => match &manifest.reviewer {
+            workspace_manifest::ReviewerBinding::Lead => return agent.with_context(|| format!("reviewer is bound to the lead in manifest {path}; specify --agent to spawn a reviewer")),
+            workspace_manifest::ReviewerBinding::Agent(binding) => binding,
+        },
+        WorkerRole::Security => &manifest.security,
+    };
+    if let Some(agent) = agent {
+        let requested = agents::AgentSpec::parse(&agent, &config.models)?;
+        if !binding.allows(&requested, &config.models)? {
+            bail!(
+                "agent {agent} is not allowed for role '{role_name}' in manifest {path}; allowed agents: {}",
+                binding.allowed_agents()
+            );
+        }
+        return Ok(agent);
     }
-    Ok(agent)
+    binding.default_agent(&config.models)
 }
 
 #[cfg(test)]
