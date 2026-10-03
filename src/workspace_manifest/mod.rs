@@ -5,5 +5,7 @@ mod types;
 
 pub use interactive::ensure_interactive;
 pub use io::{load, manifest_path, save};
+#[cfg(test)]
+pub use types::AgentGroup;
 pub(crate) use types::DEFAULT_REVIEWER_AGENT;
-pub use types::{ReviewerBinding, WorkspaceManifest};
+pub use types::{ReviewerBinding, RoleBinding, WorkspaceManifest};

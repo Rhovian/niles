@@ -38,14 +38,18 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
         return Ok(());
     };
     let config = load_project_config_from(workspace)?;
-    let bindings = [
-        Some(manifest.lead.as_str()),
-        Some(manifest.worker.as_str()),
-        manifest.reviewer.as_agent(),
-        Some(manifest.security.as_str()),
-    ];
+    let bindings = std::iter::once(manifest.lead.as_str())
+        .chain(manifest.worker.agents())
+        .chain(
+            manifest
+                .reviewer
+                .as_agent()
+                .into_iter()
+                .flat_map(|binding| binding.agents()),
+        )
+        .chain(manifest.security.agents());
     let mut binaries = BTreeMap::new();
-    for agent in bindings.into_iter().flatten() {
+    for agent in bindings {
         let agent_config = agents::config_for(&config.agents, agent, &config.models)?;
         let invocation = agents::invocation(
             agent,

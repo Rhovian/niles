@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     format!(
@@ -15,6 +15,15 @@ pub fn timestamp_id(now: &DateTime<Utc>) -> String {
         now.format("%Y%m%dT%H%M%S"),
         now.timestamp_subsec_nanos()
     )
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "metadata discovery skips names that are not timestamp IDs"
+)]
+pub(crate) fn parse_timestamp_id(value: &str) -> Option<DateTime<Utc>> {
+    let timestamp = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S%fZ").ok()?;
+    Some(DateTime::from_naive_utc_and_offset(timestamp, Utc))
 }
 
 pub(crate) fn utf8_path(path: PathBuf, description: &str) -> Result<Utf8PathBuf> {
@@ -198,5 +207,12 @@ mod tests {
         let now = DateTime::<Utc>::from_timestamp(0, 42).expect("valid timestamp");
 
         assert_eq!(timestamp_id(&now), "19700101T000000000000042Z");
+    }
+
+    #[test]
+    fn timestamp_id_round_trips() {
+        let now = DateTime::<Utc>::from_timestamp(1_758_341_218, 290_814_000).unwrap();
+        assert_eq!(parse_timestamp_id(&timestamp_id(&now)), Some(now));
+        assert_eq!(parse_timestamp_id("latest"), None);
     }
 }

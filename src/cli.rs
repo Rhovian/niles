@@ -79,11 +79,20 @@ pub enum CommandName {
     Lead,
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
+    /// Remove dated metadata across registered projects (preview unless --apply)
+    Prune {
+        /// Minimum age in days.
+        #[arg(long, default_value_t = 14, value_name = "DAYS")]
+        older_than: u32,
+        /// Delete the listed paths.
+        #[arg(long)]
+        apply: bool,
+    },
     /// Spawn a worker agent in a tmux window
     ///
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
-    /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy, and
-    /// `security` is the adversarial pass.
+    /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy,
+    /// `security` is the adversarial pass, and `research` answers one question with cited evidence.
     ///
     /// `--wait` then blocks for this worker's first actionable line, so a single-worker turn does
     /// not need a separate `niles wait`. Leave it off when spawning a fleet and block on the group

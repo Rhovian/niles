@@ -94,9 +94,9 @@ fn render_lead_brief(
     reviewer: &ReviewerBinding,
 ) -> String {
     let manifest_path = workspace_manifest::manifest_path(workspace);
-    let (review_instruction, reviewer_standard) = match reviewer {
-        ReviewerBinding::Lead => (LEAD_REVIEW_TEMPLATE.trim_end(), Some(REVIEWER_STANDARD)),
-        ReviewerBinding::Agent(_) => (COMMISSION_REVIEW_TEMPLATE.trim_end(), None),
+    let review_instruction = match reviewer {
+        ReviewerBinding::Lead => LEAD_REVIEW_TEMPLATE.trim_end(),
+        ReviewerBinding::Agent(_) => COMMISSION_REVIEW_TEMPLATE.trim_end(),
     };
     let mut body = render_template(
         LEAD_BRIEF_TEMPLATE,
@@ -109,10 +109,8 @@ fn render_lead_brief(
             ("{review_instruction}", review_instruction),
         ],
     );
-    if let Some(standard) = reviewer_standard {
-        body.push('\n');
-        body.push_str(standard);
-    }
+    body.push('\n');
+    body.push_str(REVIEWER_STANDARD);
     body
 }
 
@@ -227,7 +225,7 @@ mod tests {
             &workspace,
             &dir,
             "worker: none",
-            &ReviewerBinding::Agent("claude".to_owned()),
+            &ReviewerBinding::Agent("claude".to_owned().into()),
         );
 
         assert!(body.contains(&format!(
@@ -238,6 +236,7 @@ mod tests {
         assert!(body.contains("worker: none"));
         assert!(body.contains(&format!("workspace: {workspace}\n")));
         assert!(body.contains(&format!("session_dir: {dir}\n")));
+        assert!(body.contains(REVIEWER_STANDARD));
         for placeholder in ["{manifest}", "{workspace}", "{agent}", "{startup_context}"] {
             assert!(!body.contains(placeholder), "unfilled placeholder: {body}");
         }

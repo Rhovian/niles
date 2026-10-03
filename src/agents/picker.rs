@@ -31,11 +31,11 @@ pub(crate) fn prompt_reviewer_value(
     let term = Term::stderr();
     let (default_agent, default_choice) = match default {
         ReviewerBinding::Lead => (DEFAULT_REVIEWER_AGENT, "lead"),
-        ReviewerBinding::Agent(agent) => (agent.as_str(), agent.as_str()),
+        ReviewerBinding::Agent(agent) => (agent.default_model(), agent.default_model()),
     };
     let default_spec = agents::AgentSpec::parse(default_agent, &config.models)?;
     let mut choices = agent_choices(default_choice, &default_spec, &config.agents, |agent| {
-        ReviewerBinding::Agent(agent.to_owned())
+        ReviewerBinding::Agent(agent.to_owned().into())
     });
     choices.push(MenuChoice {
         label: "lead".to_owned(),
@@ -46,7 +46,8 @@ pub(crate) fn prompt_reviewer_value(
     match &choices[index].value {
         ReviewerBinding::Lead => Ok(ReviewerBinding::Lead),
         ReviewerBinding::Agent(agent) => {
-            prompt_selected_agent(&term, agent, &default_spec, config).map(ReviewerBinding::Agent)
+            prompt_selected_agent(&term, agent.default_model(), &default_spec, config)
+                .map(|value| ReviewerBinding::Agent(value.into()))
         }
     }
 }

@@ -15,6 +15,8 @@ codex:
     efforts: [low, medium, high, xhigh, max]
   gpt-6-sol:
     efforts: [low, medium, high, xhigh, max, ultra]
+  gpt-6.1-sol:
+    efforts: [low, medium, high, xhigh, max, ultra]
 
 # Claude gates effort levels on model capabilities. Haiku has no effort capability, so its empty
 # ladder means Niles does not pass an effort flag for it.

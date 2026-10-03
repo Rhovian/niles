@@ -37,7 +37,7 @@ assignments. See
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`src/templates/lead_brief.md`](../src/templates/lead_brief.md).
 
-**Existing mitigations.** Deserializing YAML does not itself execute shell commands. Unknown
+**Existing mitigations.** The manifest's listed agents bound what spawn will launch. Deserializing YAML does not itself execute shell commands. Unknown
 manifest fields are rejected, and built-in agent families reject unsupported model names. Worker
 launch scripts quote the selected binary and arguments, while foreground launches pass them as
 separate `Command` arguments; these measures prevent incidental shell parsing. See
@@ -69,6 +69,12 @@ creation, and the open of `status.cursor` use `O_NOFOLLOW`. An exclusive advisor
 `status.cursor` covers the cursor read, status scan, and cursor advance, serializing concurrent
 waiters. See
 [`src/worker/validation.rs`](../src/worker/validation.rs) and [`src/wait.rs`](../src/wait.rs).
+
+`niles prune` previews deletions unless `--apply` is supplied. It removes registry links whose
+targets are not directories, and dated archive and session directories, always retaining the
+newest session. Archive and session entries are checked with `symlink_metadata`, so symlinks and
+files are left alone. Unparseable names are also retained. See
+[`src/projects/prune.rs`](../src/projects/prune.rs).
 
 **Known gaps.** `O_NOFOLLOW` protects only those final path components; parent directories and
 other filesystem operations are not protected globally against symlink traversal or replacement.

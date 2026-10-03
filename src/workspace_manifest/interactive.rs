@@ -69,9 +69,9 @@ fn prompt_manifest_values(
     let pick = |label, default| picker::prompt_agent_value(label, default, config);
     Ok(WorkspaceManifest {
         lead: pick("Lead agent", &defaults.lead)?,
-        worker: pick("Worker agent", &defaults.worker)?,
+        worker: pick("Worker agent", defaults.worker.default_model())?.into(),
         reviewer: picker::prompt_reviewer_value("Reviewer agent", &defaults.reviewer, config)?,
-        security: pick("Security agent", &defaults.security)?,
+        security: pick("Security agent", defaults.security.default_model())?.into(),
         // Hand-edited settings are not prompted for, so changing roles must preserve them.
         ..defaults.clone()
     })
@@ -116,11 +116,11 @@ mod tests {
     fn existing_manifest(root: &Utf8Path) -> Result<WorkspaceManifest> {
         let manifest = WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
-            worker: "codex".to_owned(),
+            worker: "codex".to_owned().into(),
             reviewer: crate::workspace_manifest::ReviewerBinding::Agent(
-                "claude:opus:max".to_owned(),
+                "claude:opus:max".to_owned().into(),
             ),
-            security: "claude:opus:max".to_owned(),
+            security: "claude:opus:max".to_owned().into(),
             worker_planning: [("codex".to_owned(), "Plan carefully.".to_owned())].into(),
             ..WorkspaceManifest::default()
         };

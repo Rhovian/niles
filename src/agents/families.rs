@@ -90,7 +90,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
-        tested_version: "0.159.2",
+        tested_version: "0.160.0",
         foreground_args: &[],
         worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
         worker_brief: BriefDelivery::Arg,
@@ -109,7 +109,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
-        tested_version: "2.1.280",
+        tested_version: "2.1.288",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         worker_brief: BriefDelivery::Arg,

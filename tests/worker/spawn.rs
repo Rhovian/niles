@@ -1,6 +1,33 @@
 use super::support::*;
 
 #[test]
+fn manifest_groups_bound_spawn_before_worker_state() {
+    let env = TestEnv::new("niles-worker-groups");
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
+    let path = env.root.join(".niles/manifest.yaml");
+    let body = fs::read_to_string(&path).unwrap().replace(
+        "worker: codex",
+        "worker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:haiku]\n    efforts: [medium, high]",
+    );
+    fs::write(&path, body).unwrap();
+    let default = env.run(&["spawn", "default", "Task"]);
+    assert_command_success("group default", &default);
+    let meta = fs::read_to_string(env.root.join(".niles/worker/default/meta.json")).unwrap();
+    assert!(meta.contains("codex:gpt-6-sol:medium"), "{meta}");
+    let listed = env.run(&["spawn", "listed", "--agent", "claude:haiku", "Task"]);
+    assert_command_success("group listed", &listed);
+    for (id, agent) in [
+        ("unlisted", "codex:gpt-6-luna:medium"),
+        ("effort", "codex:gpt-6-sol:low"),
+        ("missing", "codex:gpt-6-sol"),
+    ] {
+        let result = env.run(&["spawn", id, "--agent", agent, "Task"]);
+        assert_failure_contains(id, &result, "allowed agents");
+        assert!(!env.root.join(".niles/worker").join(id).exists());
+    }
+}
+
+#[test]
 fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
     let env = TestEnv::new("niles-worker-tree");
     let tree = env.root.join("other-tree");

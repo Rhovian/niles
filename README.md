@@ -42,8 +42,8 @@ latest tested; if a newer release breaks something, report it with that version.
 
 | CLI | Tested version |
 | --- | --- |
-| Claude Code | 2.1.280 |
-| Codex | 0.159.2 |
+| Claude Code | 2.1.288 |
+| Codex | 0.160.0 |
 | Hermes Agent | 0.21.3 |
 | pi coding agent | 0.73.1 |
 
@@ -83,7 +83,8 @@ Niles does not edit your agent CLIs' configuration or your tmux config.
 
 The lead is the agent you talk to. It owns the outcome: it reads the code, settles the plan, and
 decides who does what. Anything cheaper to do than to delegate, it does itself, including reviewing
-a diff. The rest it hands to other roles, commissioning as much review as the risk warrants.
+a diff. The rest it hands to other roles, commissioning as much review as the risk warrants,
+which may be none.
 
 - **Worker** implements the change and owns the gate: it runs the project's checks before reporting
   `done:` and says what printed, so nobody else re-runs them.
@@ -91,6 +92,8 @@ a diff. The rest it hands to other roles, commissioning as much review as the ri
   does security review; it flags anything security-relevant in one line.
 - **Security** asks what an attacker can do with the change. The lead commissions it only when the
   change is itself a security boundary, so ordinary work is not hardened against an unnamed attacker.
+- **Research** answers one question with a source for every claim. It edits nothing and runs no
+  checks, so the lead keeps the answer without spending its own context on the reading.
 
 ## Configuration
 
@@ -120,8 +123,23 @@ models:
 Model entries extend the built-in roster; listing an existing model replaces its effort list.
 An empty `efforts: []` marks a model that takes no effort qualifier.
 
-Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
-`--agent` overrides a role binding. Built-in families are `codex`, `claude`, `hermes`, and `pi`.
+Bindings accept `family[:model[:effort]]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`. Built-in families are `codex`, `claude`, `hermes`, and `pi`. Scalar role bindings still work. When a manifest exists, an `--agent` the role does not list is rejected.
+
+Worker, reviewer, and security roles can list model groups with a `when` for the work they suit and allowed efforts. The first model in the first group is the default when `--agent` is omitted. For example:
+
+```yaml
+worker:
+  - when: Implementing a settled plan contained to one module or a well-tested seam.
+    models: [codex:gpt-6-sol, claude:opus, codex:gpt-5.6-terra, hermes:z-ai/glm-5.3-flash, hermes:deepseek/deepseek-v4.1-flash]
+    efforts: [medium, high]
+  - when: Every edit is specified, or the task is read-only.
+    models: [codex:gpt-6-luna, claude:sonnet, claude:haiku, hermes:tencent/hy3]
+    efforts: [low, medium]
+  - when: Mechanics stay risky with the design settled — crossing modules, concurrency, on-disk state, a contract like `wait`'s exit codes — or a failure's cause is unknown. Also the retry after a standard attempt failed.
+    models: [claude:opus, codex:gpt-6-astra, codex:gpt-6-sol, claude:fable]
+    efforts: [high, xhigh]
+```
+
 Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer
 session, but the lead reviews its own plan and must question its design during the economy pass.
 Run `niles models` to list the effective models and effort levels for the current workspace.
