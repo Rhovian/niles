@@ -32,7 +32,7 @@ Major releases are reserved for a fundamental change in what niles is; there is 
    in `src/agents/families.rs` and the README from each CLI's `--version`.
 2. After merge, tag `vX.Y.Z` on `main` and push the tag.
 3. The release workflow builds the binaries, publishes the GitHub release, then publishes the crate
-   to crates.io. Add the tested CLI versions to the release notes.
+   to crates.io. It then adds the tested CLI versions from the README to the release notes.
 
 ## Legal and security
 
