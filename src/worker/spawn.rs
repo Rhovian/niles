@@ -202,7 +202,8 @@ fn resolve_agent(
         return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
     let binding = match role {
-        WorkerRole::Worker => &manifest.worker,
+        // Research changes nothing, so it draws on the worker binding rather than a role of its own.
+        WorkerRole::Worker | WorkerRole::Research => &manifest.worker,
         WorkerRole::Reviewer => match &manifest.reviewer {
             workspace_manifest::ReviewerBinding::Lead => return agent.with_context(|| format!("reviewer is bound to the lead in manifest {path}; specify --agent to spawn a reviewer")),
             workspace_manifest::ReviewerBinding::Agent(binding) => binding,
