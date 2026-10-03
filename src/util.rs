@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::PathBuf,
 };
 
@@ -27,6 +27,22 @@ pub fn current_dir_utf8() -> Result<Utf8PathBuf> {
         env::current_dir().context("failed to read current directory")?,
         "current directory",
     )
+}
+
+pub(crate) fn find_on_path(binary: &str) -> Option<Utf8PathBuf> {
+    let executable = |path: &Utf8Path| {
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => return None,
+        };
+        (metadata.is_file() && metadata.permissions().mode() & 0o111 != 0).then(|| path.to_owned())
+    };
+    if binary.contains('/') {
+        return executable(Utf8Path::new(binary));
+    }
+    env::split_paths(&env::var_os("PATH")?)
+        .flat_map(Utf8PathBuf::from_path_buf)
+        .find_map(|dir| executable(&dir.join(binary)))
 }
 
 pub(crate) fn print_structured_rows<const COLUMNS: usize>(

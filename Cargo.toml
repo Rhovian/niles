@@ -2,7 +2,10 @@
 name = "niles"
 version = "1.3.0"
 edition = "2024"
-description = "A Rust CLI orchestration harness for coordinating agent CLIs."
+description = "Coordinate coding agents from different model families in tmux."
+readme = "README.md"
+keywords = ["ai", "agents", "tmux", "claude", "codex"]
+categories = ["command-line-utilities", "development-tools"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Rhovian/niles"
 exclude = [".github/**"]

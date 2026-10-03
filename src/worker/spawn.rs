@@ -9,7 +9,7 @@ use crate::{
     config::spec::load_project_config_from,
     store,
     tmux::{self, WindowTarget},
-    util::{current_dir_utf8, remove_dir_all_if_exists, render_template},
+    util::{current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template},
     wake, watch, workspace_manifest,
 };
 
@@ -53,6 +53,9 @@ pub fn spawn(
         agents::InvocationDefaults::Worker,
         &config.models,
     )?;
+    if find_on_path(&invocation.binary).is_none() {
+        bail!("agent binary {} not found on PATH", invocation.binary);
+    }
     let agent_spec = &invocation.spec;
     let session_link = agents::session_link(agent_spec.family(), &id);
     if let Some(link) = &session_link {
