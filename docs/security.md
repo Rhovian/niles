@@ -70,6 +70,12 @@ creation, and the open of `status.cursor` use `O_NOFOLLOW`. An exclusive advisor
 waiters. See
 [`src/worker/validation.rs`](../src/worker/validation.rs) and [`src/wait.rs`](../src/wait.rs).
 
+`niles prune` previews deletions unless `--apply` is supplied. It removes registry links whose
+targets are not directories, and dated archive and session directories, always retaining the
+newest session. Archive and session entries are checked with `symlink_metadata`, so symlinks and
+files are left alone. Unparseable names are also retained. See
+[`src/projects/prune.rs`](../src/projects/prune.rs).
+
 **Known gaps.** `O_NOFOLLOW` protects only those final path components; parent directories and
 other filesystem operations are not protected globally against symlink traversal or replacement.
 The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
