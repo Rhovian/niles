@@ -77,7 +77,10 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
 
 fn version_line(path: &Utf8Path, flag: &str) -> String {
     let (line, prefix) = match Command::new(path).arg(flag).output() {
-        Ok(output) if output.status.success() => (first_line(&output.stdout), ""),
+        Ok(output) if output.status.success() => (
+            first_line(&output.stdout).or_else(|| first_line(&output.stderr)),
+            "",
+        ),
         Ok(output) => (first_line(&output.stderr), "version unavailable: "),
         Err(err) => return format!("version unavailable: {err}"),
     };

@@ -28,7 +28,7 @@ models:
 
     assert_command_success("models", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with("models[15]{family,model,efforts}:\n"));
+    assert!(stdout.starts_with("models[18]{family,model,efforts}:\n"));
     assert!(stdout.contains("  codex,gpt-5.5,\n"));
     assert!(stdout.contains("  codex,gpt-5.7,low medium xhigh\n"));
 }

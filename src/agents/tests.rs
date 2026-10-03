@@ -271,8 +271,8 @@ fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
 
 #[test]
 fn hermes_sources_are_unique_per_launch() {
-    let first = super::session_link("hermes", "worker").unwrap();
-    let second = super::session_link("hermes", "worker").unwrap();
+    let first = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
+    let second = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
     let (
         crate::telemetry::SessionLink::Hermes { source: a },
         crate::telemetry::SessionLink::Hermes { source: b },

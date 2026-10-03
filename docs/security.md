@@ -142,13 +142,17 @@ values. These are launch-integrity measures, not containment. See
 [`src/agent_window.rs`](../src/agent_window.rs), and
 [`src/agents/families.rs`](../src/agents/families.rs).
 
-Niles reads Claude, Codex, and Hermes session stores to report agent token usage. It uses
+Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage. It uses
 read-only access to those stores and links sessions through launch identifiers or a Codex brief.
 For Hermes, it opens the local `state.db` read-only to read session usage and state.
+For pi, Niles chooses transcript directories under its own `.niles` worker and lead session
+state directories using `--session-dir`, and reads the newest JSONL transcript there.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
 `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`, and
-Hermes `chat` with `--yolo`. Foreground defaults differ, and project configuration can replace
+Hermes `chat` with `--yolo`. Pi runs with no permission prompts in either launch path, like
+Hermes with `--yolo`. Niles launches pi with `PI_OFFLINE=1`, which disables its startup update
+check and install telemetry only. Foreground defaults differ, and project configuration can replace
 default arguments for either launch path. Actual access therefore depends on the agent CLI, launch
 flags, credentials, and OS permissions. Niles adds no sandbox or process isolation. Agents share
 the workspace tree and inherited environment, and `.niles` artifacts, reports, pane captures, and

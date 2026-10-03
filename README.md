@@ -16,7 +16,7 @@
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
-**Run Claude Code, Codex and Hermes as one team in tmux.**
+**Run Claude Code, Codex, Hermes and pi as one team in tmux.**
 
 You talk to one agent. It plans the change, hands the work to others, often from another model
 family, and reviews what comes back before it reaches you.
@@ -45,6 +45,7 @@ latest tested; if a newer release breaks something, report it with that version.
 | Claude Code | 2.1.280 |
 | Codex | 0.159.2 |
 | Hermes Agent | 0.21.3 |
+| pi coding agent | 0.73.1 |
 
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
@@ -120,7 +121,7 @@ Model entries extend the built-in roster; listing an existing model replaces its
 An empty `efforts: []` marks a model that takes no effort qualifier.
 
 Bindings accept `family:model[:effort]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`;
-`--agent` overrides a role binding. Built-in families are `codex`, `claude`, and `hermes`.
+`--agent` overrides a role binding. Built-in families are `codex`, `claude`, `hermes`, and `pi`.
 Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer
 session, but the lead reviews its own plan and must question its design during the economy pass.
 Run `niles models` to list the effective models and effort levels for the current workspace.
