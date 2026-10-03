@@ -42,8 +42,8 @@ latest tested; if a newer release breaks something, report it with that version.
 
 | CLI | Tested version |
 | --- | --- |
-| Claude Code | 2.1.280 |
-| Codex | 0.159.2 |
+| Claude Code | 2.1.288 |
+| Codex | 0.160.0 |
 | Hermes Agent | 0.21.3 |
 
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
