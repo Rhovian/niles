@@ -8,7 +8,7 @@ use crate::agent_window::shell_quote;
 /// The session that holds the explorer. `+` is outside a project name's charset, so no project
 /// session can take this name.
 const HOME_SESSION: &str = "niles+home";
-const SHELL_LINES: &str = "8";
+const SHELL_LINES: &str = "4";
 const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";

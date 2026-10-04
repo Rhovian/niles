@@ -18,7 +18,7 @@ fn bare_niles_creates_the_home_session_and_switches() {
     let steps = [
         format!("new-session -d -x 160 -y 45 -s niles+home -c {}", cwd.display()),
         "explorer ; set-option -t =niles+home: status off ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
-        format!("; split-window -d -f -v -l 8 -t =niles+home: -c {}", cwd.display()),
+        format!("; split-window -d -f -v -l 4 -t =niles+home: -c {}", cwd.display()),
         "switch-client -t =niles+home:".to_owned(),
     ];
     let positions = steps.map(|step| log.find(&step).unwrap_or_else(|| panic!("{step}\n{log}")));

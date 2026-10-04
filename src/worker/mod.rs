@@ -10,7 +10,7 @@ mod resolve;
 mod role;
 mod snapshot;
 mod spawn;
-mod usage;
+pub(crate) mod usage;
 mod validation;
 mod worktree;
 
