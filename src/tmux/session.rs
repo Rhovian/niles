@@ -1,19 +1,26 @@
-use super::{SessionName, WindowPresence, output, run, target};
+use super::{SessionName, TmuxTarget, WindowPresence, output, run, target};
 use crate::agent_window::shell_quote;
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use std::{env, os::unix::process::CommandExt, process::Command};
 
-pub(crate) fn project_session(session: &SessionName) -> Result<Option<String>> {
-    let name = target::exact(session.as_str());
-    let probe = output(&["has-session", "-t", &name])?;
+pub(super) fn has_session(session: &SessionName) -> Result<bool> {
+    let probe = output(&["has-session", "-t", &target::exact(session.as_str())])?;
     if !probe.status.success() {
         let error = super::normalize_stderr(&probe.stderr);
         if target::is_missing_session_error(&error) {
-            return Ok(None);
+            return Ok(false);
         }
         bail!("tmux has-session failed: {error}");
     }
+    Ok(true)
+}
+
+pub(crate) fn project_session(session: &SessionName) -> Result<Option<String>> {
+    if !has_session(session)? {
+        return Ok(None);
+    }
+    let name = target::exact(session.as_str());
     Ok(Some(
         super::display(&format!("{name}:"), "#{@niles-project}")?
             .trim_end()
@@ -154,7 +161,7 @@ pub(crate) fn open_session(session: &SessionName, path: &Utf8Path) -> Result<()>
     Ok(())
 }
 
-fn executable() -> Result<String> {
+pub(super) fn executable() -> Result<String> {
     Ok(env::current_exe()
         .context("failed to find niles executable")?
         .to_str()
@@ -162,14 +169,14 @@ fn executable() -> Result<String> {
         .to_owned())
 }
 
-/// Targets the lead window, not just the session, so tmux also selects it: a lead window that
-/// `open_session` just created in the background would otherwise stay out of view.
-pub(crate) fn switch_or_attach(session: &SessionName) -> Result<()> {
-    let lead = format!("{}:=niles", target::exact(session.as_str()));
+/// Takes the client this process runs in, or the terminal it runs on, to `target`.
+pub(crate) fn switch_or_attach(target: &TmuxTarget) -> Result<()> {
     if env::var_os("TMUX").is_some() {
-        run(&["switch-client", "-t", &lead])
+        run(&["switch-client", "-t", target.as_str()])
     } else {
-        let error = Command::new("tmux").args(["attach", "-t", &lead]).exec();
+        let error = Command::new("tmux")
+            .args(["attach", "-t", target.as_str()])
+            .exec();
         Err(error).context("failed to attach to tmux session")
     }
 }

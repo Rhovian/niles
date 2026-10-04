@@ -79,11 +79,15 @@ impl WindowTarget {
     }
 }
 
-/// A tmux `-t` target: an anchored worker window or the lead's `%N` pane id.
+/// A tmux `-t` target: an anchored session or window, or a `%N` pane id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TmuxTarget(String);
 
 impl TmuxTarget {
+    pub(crate) fn session(session: &SessionName) -> Self {
+        Self(format!("{}:", exact(session.as_str())))
+    }
+
     pub(crate) fn window(target: &WindowTarget) -> Self {
         Self(target.target_arg())
     }

@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 
 use super::registry::Entry;
 use crate::{
-    session, store,
+    session,
     telemetry::{SessionState, Usage},
     tmux, worker,
 };
@@ -12,7 +12,6 @@ pub(super) struct Row {
     pub entry: Entry,
     pub state: State,
     pub lead_tokens: Option<u64>,
-    pub workers: usize,
 }
 
 pub(super) enum State {
@@ -25,7 +24,6 @@ pub(super) enum State {
 pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     for entry in entries {
-        let workers = store::worker_locations(&entry.path)?.len();
         let session = entry.name.session()?;
         let (state, lead_tokens) = if !entry.path.is_dir() {
             (State::Missing, None)
@@ -57,7 +55,6 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
             entry,
             state,
             lead_tokens,
-            workers,
         });
     }
     sort_rows(&mut rows);
@@ -114,7 +111,6 @@ mod tests {
             entry: entry(name),
             state,
             lead_tokens: None,
-            workers: 0,
         };
         let now = Utc::now();
         let mut rows = [
