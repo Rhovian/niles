@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use camino::Utf8Path;
 use serde::Serialize;
 
 use crate::{session, telemetry, util::current_dir_utf8};
@@ -6,11 +7,11 @@ use crate::{session, telemetry, util::current_dir_utf8};
 use super::{WorkerSnapshot, list::print_json, meta::report_path, snapshot::worker_snapshot};
 
 #[derive(Serialize)]
-struct SessionUsage {
-    id: String,
-    role: &'static str,
-    agent: String,
-    usage: Option<telemetry::Usage>,
+pub(crate) struct SessionUsage {
+    pub(crate) id: String,
+    pub(crate) role: &'static str,
+    pub(crate) agent: String,
+    pub(crate) usage: Option<telemetry::Usage>,
 }
 
 #[derive(Serialize)]
@@ -20,8 +21,17 @@ struct UsageOutput {
 
 pub fn usage() -> Result<()> {
     let workspace = current_dir_utf8()?;
+    print_json(&UsageOutput {
+        sessions: collect(&workspace, session::live_lead(&workspace)?)?,
+    })
+}
+
+pub(crate) fn collect(
+    workspace: &Utf8Path,
+    lead: Option<session::SessionMeta>,
+) -> Result<Vec<SessionUsage>> {
     let mut sessions = Vec::new();
-    for worker in worker_snapshot(&workspace)? {
+    for worker in worker_snapshot(workspace)? {
         let Some(meta) = worker.meta.as_ref() else {
             let error = worker.read_error.context("missing worker metadata error")?;
             bail!(
@@ -37,7 +47,7 @@ pub fn usage() -> Result<()> {
             usage,
         });
     }
-    if let Some(meta) = session::live_lead(&workspace)? {
+    if let Some(meta) = lead {
         let usage = lead_usage(&meta)?;
         sessions.push(SessionUsage {
             id: meta.id,
@@ -46,7 +56,7 @@ pub fn usage() -> Result<()> {
             usage,
         });
     }
-    print_json(&UsageOutput { sessions })
+    Ok(sessions)
 }
 
 pub(crate) fn worker_usage(worker: &WorkerSnapshot) -> Result<Option<telemetry::Usage>> {

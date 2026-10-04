@@ -38,14 +38,12 @@ Open the home view from anywhere in tmux with a popup:
 bind-key -n M-n display-popup -E niles
 ```
 
-Switch projects and windows with tmux's own keys (`switch-client -n/-p`, `next-window`,
-`previous-window`), or bind them, for example:
+In the explorer, `]` and `[` cycle the view through every running agent. To cycle from any pane
+of the home view, send those keys to the explorer:
 
 ```tmux
-bind -n M-[ switch-client -p
-bind -n M-] switch-client -n
-bind -n M-\; previous-window
-bind -n "M-'" next-window
+bind -n M-] send-keys -t '=niles+home:{start}.{top-left}' ]
+bind -n M-[ send-keys -t '=niles+home:{start}.{top-left}' [
 ```
 
 ## Pi with OpenRouter

@@ -41,9 +41,11 @@ pub enum PromptMode {
     Stdin,
 }
 
+pub(crate) const PROJECT_CONFIG_FILES: [&str; 2] = ["niles.yaml", ".niles.yaml"];
+
 pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
     let models = ModelRoster::builtin().context("failed to parse embedded model roster")?;
-    for path in [Utf8Path::new("niles.yaml"), Utf8Path::new(".niles.yaml")] {
+    for path in PROJECT_CONFIG_FILES {
         let path = root.join(path);
         if path.exists() {
             let body =

@@ -30,7 +30,7 @@ use crate::{
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: &str = "↵ open · r register · q quiet · c close";
+const KEYS: &str = "↵ open · [ ] cycle · r register · q quiet · c close";
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
@@ -104,17 +104,22 @@ impl Explorer {
             (Mode::Browse, KeyCode::Down) => self.tree.down(),
             (Mode::Browse, KeyCode::Right) => self.tree.expand(),
             (Mode::Browse, KeyCode::Left) => self.tree.collapse(),
-            (Mode::Browse, KeyCode::Enter) => self.footer = Some(shown(self.open())),
+            (Mode::Browse, KeyCode::Enter) => self.footer = shown(self.open()),
+            (Mode::Browse, KeyCode::Char(key @ ('[' | ']'))) => {
+                if self.tree.cycle(if key == ']' { 1 } else { -1 }) {
+                    self.footer = shown(self.open());
+                }
+            }
             (Mode::Browse, KeyCode::Char('r')) => self.mode = Mode::Directory(String::new()),
             (Mode::Browse, KeyCode::Char(key @ ('q' | 'c'))) => match self.selected_worker() {
                 Some((id, project)) if key == 'q' => {
-                    self.footer = Some(shown(niles(&["quiet", &id], &project)));
+                    self.footer = shown(niles(&["quiet", &id], &project).map(Some));
                 }
                 Some((id, project)) => self.mode = Mode::Close { id, project },
                 None => self.footer = Some("select a worker".to_owned()),
             },
             (Mode::Close { id, project }, KeyCode::Char('y')) => {
-                self.footer = Some(shown(niles(&["close", id.as_str()], project)));
+                self.footer = shown(niles(&["close", id.as_str()], project).map(Some));
                 self.mode = Mode::Browse;
                 self.tree.replace(collect()?);
             }
@@ -159,30 +164,38 @@ impl Explorer {
         Ok(())
     }
 
-    fn open(&self) -> Result<String> {
+    fn open(&self) -> Result<Option<String>> {
         let Some(item) = self.tree.selected() else {
-            return Ok("no projects; r registers one".to_owned());
+            return Ok(None);
         };
-        let entry = &item.project().row.entry;
-        let session = entry.name.session()?;
-        let window = match item {
-            Item::Project(project) => match project.row.state {
-                State::Missing => {
-                    return Ok(format!("rm ~/.niles/projects/{}", entry.name.as_str()));
+        let target = match item {
+            Item::Header => return Ok(None),
+            Item::Panel(panel) => tmux::open_panel(panel.name())?,
+            Item::Project(project) => {
+                let entry = &project.row.entry;
+                let session = entry.name.session()?;
+                match project.row.state {
+                    State::Missing => {
+                        return Ok(Some(format!(
+                            "rm ~/.niles/projects/{}",
+                            entry.name.as_str()
+                        )));
+                    }
+                    State::NotRunning => {
+                        tmux::open_session(&session, &entry.path)?;
+                        tmux::configure_status(&session)?;
+                    }
+                    State::Running | State::Waiting(_) => {}
                 }
-                State::NotRunning => {
-                    tmux::open_session(&session, &entry.path)?;
-                    tmux::configure_status(&session)?;
-                    LEAD_WINDOW
-                }
-                State::Running | State::Waiting(_) => LEAD_WINDOW,
-            },
-            Item::Window(_, window) => &window.name,
-            Item::Lost(_, id) => return Ok(format!("{id}: window lost")),
+                WindowTarget::new(session, LEAD_WINDOW)?
+            }
+            Item::Window(project, window) => {
+                WindowTarget::new(project.row.entry.name.session()?, &window.name)?
+            }
+            Item::Lost(_, id) => return Ok(Some(format!("{id}: window lost"))),
         };
-        let target = WindowTarget::new(session, window)?;
         tmux::show_in_view(&self.pane, &target)?;
-        Ok(format!("showing {target}"))
+        Ok(Some(format!("showing {target}")))
     }
 
     fn selected_worker(&self) -> Option<(String, Utf8PathBuf)> {
@@ -192,7 +205,7 @@ impl Explorer {
                 Role::Lead | Role::Plain => return None,
             },
             Item::Lost(project, id) => (project, id),
-            Item::Project(_) => return None,
+            Item::Project(_) | Item::Header | Item::Panel(_) => return None,
         };
         Some((id.to_owned(), project.row.entry.path.clone()))
     }
@@ -227,10 +240,10 @@ impl Explorer {
 }
 
 /// An action's outcome as the footer shows it.
-fn shown(outcome: Result<String>) -> String {
+fn shown(outcome: Result<Option<String>>) -> Option<String> {
     match outcome {
         Ok(message) => message,
-        Err(error) => format!("{error:#}"),
+        Err(error) => Some(format!("{error:#}")),
     }
 }
 

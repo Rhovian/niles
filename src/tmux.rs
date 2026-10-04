@@ -7,11 +7,13 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 mod home;
+mod panels;
 mod send;
 mod session;
 mod target;
 
 pub(crate) use home::{open_home, show_in_view};
+pub(crate) use panels::open_panel;
 pub(crate) use session::{
     configure_status, lead_running, open_session, project_session, switch_or_attach, windows,
 };

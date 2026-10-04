@@ -80,6 +80,11 @@ pub enum CommandName {
     /// Run the project explorer in the home session.
     #[command(hide = true)]
     Explorer,
+    #[command(hide = true)]
+    Panel {
+        #[arg(value_enum)]
+        panel: crate::projects::panels::Panel,
+    },
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
     /// Remove dated metadata across registered projects (preview unless --apply)
