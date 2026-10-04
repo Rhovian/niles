@@ -16,6 +16,10 @@ pub(super) fn has_session(session: &SessionName) -> Result<bool> {
     Ok(true)
 }
 
+pub(crate) fn kill_session(session: &SessionName) -> Result<()> {
+    run(&["kill-session", "-t", &target::exact(session.as_str())])
+}
+
 pub(crate) fn project_session(session: &SessionName) -> Result<Option<String>> {
     if !has_session(session)? {
         return Ok(None);

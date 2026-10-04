@@ -38,12 +38,16 @@ Open the home view from anywhere in tmux with a popup:
 bind-key -n M-n display-popup -E niles
 ```
 
-In the explorer, `]` and `[` cycle the view through every running agent. To cycle from any pane
-of the home view, send those keys to the explorer:
+In the explorer, `[` and `]` cycle the view through running projects, and `;` and `'` through
+the shown project's windows. To cycle from any pane of the home view, send those keys to the
+explorer. tmux has no per-session bindings, so each binding checks the session itself; elsewhere
+the keys keep the command you choose (here, switching sessions and windows):
 
 ```tmux
-bind -n M-] send-keys -t '=niles+home:{start}.{top-left}' ]
-bind -n M-[ send-keys -t '=niles+home:{start}.{top-left}' [
+bind -n M-[ if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' [ } { switch-client -p }
+bind -n M-] if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' ] } { switch-client -n }
+bind -n M-\; if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' \; } { previous-window }
+bind -n "M-'" if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' "'" } { next-window }
 ```
 
 ## Pi with OpenRouter

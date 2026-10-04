@@ -42,7 +42,7 @@ const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../templates/role_research.md
 /// A worker's brief is the shared reporting contract plus exactly one of these fragments. The
 /// split exists so a role is never handed instructions addressed to a different one — most
 /// importantly, so only the worker is told to run the project's checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkerRole {
     /// Owns the change: implements it and runs the gate.
