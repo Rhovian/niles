@@ -11,7 +11,6 @@ use crate::{
 pub(super) struct Row {
     pub entry: Entry,
     pub state: State,
-    pub lead_tokens: Option<u64>,
 }
 
 pub(super) enum State {
@@ -25,12 +24,12 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     for entry in entries {
         let session = entry.name.session()?;
-        let (state, lead_tokens) = if !entry.path.is_dir() {
-            (State::Missing, None)
+        let state = if !entry.path.is_dir() {
+            State::Missing
         } else if tmux::project_session(&session)?.as_deref() != Some(entry.path.as_str())
             || !tmux::lead_running(&session)?
         {
-            (State::NotRunning, None)
+            State::NotRunning
         } else {
             let usage = session::latest_lead(&entry.path)?
                 .map(|meta| worker::lead_usage(&meta))
@@ -43,19 +42,12 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
                             worker.usage.as_ref().and_then(|usage| usage.state)
                                 == Some(SessionState::Working)
                         });
-                    (
-                        lead_state(&usage, workers_working),
-                        Some(usage.total_tokens()),
-                    )
+                    lead_state(&usage, workers_working)
                 }
-                None => (State::Running, None),
+                None => State::Running,
             }
         };
-        rows.push(Row {
-            entry,
-            state,
-            lead_tokens,
-        });
+        rows.push(Row { entry, state });
     }
     sort_rows(&mut rows);
     Ok(rows)
@@ -110,7 +102,6 @@ mod tests {
         let row = |name, state| Row {
             entry: entry(name),
             state,
-            lead_tokens: None,
         };
         let now = Utc::now();
         let mut rows = [

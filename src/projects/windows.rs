@@ -15,7 +15,7 @@ pub(super) const LEAD_WINDOW: &str = "niles";
 
 pub(super) enum Role {
     Lead,
-    Worker(String),
+    Worker(String, worker::WorkerRole),
     Plain,
 }
 
@@ -32,7 +32,7 @@ pub(super) struct AgentWindow {
 pub(super) struct SessionAgents {
     pub windows: Vec<AgentWindow>,
     /// Ids of live workers whose recorded window is not in the session.
-    pub lost: Vec<String>,
+    pub lost: Vec<(String, worker::WorkerRole)>,
 }
 
 pub(super) fn session_agents(
@@ -53,7 +53,7 @@ pub(super) fn session_agents(
                 .iter()
                 .any(|window| worker.window == recorded(&window.name))
         })
-        .map(|worker| worker.id.clone())
+        .map(|worker| (worker.id.clone(), worker.role))
         .collect();
     let windows = windows
         .into_iter()
@@ -76,7 +76,7 @@ pub(super) fn session_agents(
                 {
                     let (glyph, tokens) = usage_fields(worker.usage.as_ref(), false);
                     (
-                        Role::Worker(worker.id.clone()),
+                        Role::Worker(worker.id.clone(), worker.role),
                         Some(worker.model.clone()),
                         glyph,
                         tokens,
@@ -87,7 +87,7 @@ pub(super) fn session_agents(
                 };
             let label = match &role {
                 Role::Lead => "lead".to_owned(),
-                Role::Worker(id) => id.clone(),
+                Role::Worker(id, _) => id.clone(),
                 Role::Plain => window.name.clone(),
             };
             Ok(AgentWindow {

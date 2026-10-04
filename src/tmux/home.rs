@@ -2,13 +2,13 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use std::env;
 
-use super::{SessionName, TmuxTarget, WindowTarget, query, run, session};
+use super::{SessionName, TmuxTarget, WindowTarget, open_panel, query, run, session};
 use crate::agent_window::shell_quote;
 
 /// The session that holds the explorer. `+` is outside a project name's charset, so no project
 /// session can take this name.
 const HOME_SESSION: &str = "niles+home";
-const SHELL_LINES: &str = "4";
+const SHELL_LINES: &str = "2";
 const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";
@@ -59,6 +59,9 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
         "-c",
         cwd.as_str(),
     ])?;
+    let explorer = super::display(target.as_str(), "#{pane_id}")?;
+    show_in_view(&target, &open_panel("help")?)?;
+    run(&["select-pane", "-t", explorer.trim_end()])?;
     Ok(home)
 }
 
@@ -103,10 +106,18 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
                 explorer.as_str(),
                 "-P",
                 "-F",
-                "#{pane_id}",
+                "#{pane_id}\t#{pane_tty}",
                 &attach,
             ])?;
-            let id = id.trim_end();
+            let Some((id, tty)) = id.trim_end().split_once('\t') else {
+                bail!("invalid tmux pane line {id:?}");
+            };
+            // Killing the viewed session moves its clients to another session, which can be home
+            // itself. Send the view's client to help there so home never nests inside itself.
+            let help = open_panel("help")?.target_arg();
+            let switch = format!(
+                "if-shell -F '#{{==:#{{client_tty}},{tty}}}' 'switch-client -c {tty} -t {help}'"
+            );
             run(&[
                 "set-option",
                 "-p",
@@ -121,11 +132,31 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
                 id,
                 "remain-on-exit",
                 "off",
+                ";",
+                "set-hook",
+                "-t",
+                explorer.as_str(),
+                "client-session-changed",
+                &switch,
             ])?;
             id.to_owned()
         }
     };
     run(&["select-pane", "-t", &view])
+}
+
+/// Closes the agent view next to `explorer` by showing fresh help, keeping focus where it is.
+pub(crate) fn close_view(explorer: &TmuxTarget) -> Result<()> {
+    match view_pane(explorer)? {
+        Some(view) => run(&[
+            "switch-client",
+            "-c",
+            &view.tty,
+            "-t",
+            &open_panel("help")?.target_arg(),
+        ]),
+        None => Ok(()),
+    }
 }
 
 struct ViewPane {

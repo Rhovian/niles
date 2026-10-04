@@ -149,7 +149,6 @@ mod tests {
                 path: "/tmp".into(),
             },
             state,
-            lead_tokens: None,
         };
         let rows = [
             row("api", State::Running),

@@ -20,11 +20,15 @@ project with its lead's state and refreshes every two seconds.
 | Key | Action |
 | --- | --- |
 | ↑ ↓ | Move |
-| → ← | Expand or collapse a running project |
+| → ← | Expand or collapse a running project or role folder |
 | Enter | Show the project's lead, or the selected window, in the view pane |
+| `[` `]` | Show the previous or next running project |
+| `;` `'` | Show the previous or next window of the shown project |
+| `?` | Show help in the view pane |
+| Esc | Show the selected item again, leaving help |
 | `r` | Register a directory as a project |
 | `q` | Quiet the selected worker's check-in |
-| `c` | Close the selected worker, after a y/n confirm |
+| `c` | Close the selected worker or running project, after a y/n confirm |
 
 The view pane on the right is a tmux client nested inside the home session, so typing there goes
 to the agent. Enter retargets only that client, never your own. Leave the home view with tmux's
@@ -38,12 +42,16 @@ Open the home view from anywhere in tmux with a popup:
 bind-key -n M-n display-popup -E niles
 ```
 
-In the explorer, `]` and `[` cycle the view through every running agent. To cycle from any pane
-of the home view, send those keys to the explorer:
+In the explorer, `[` and `]` cycle the view through running projects, and `;` and `'` through
+the shown project's windows. To cycle from any pane of the home view, send those keys to the
+explorer. tmux has no per-session bindings, so each binding checks the session itself; elsewhere
+the keys keep the command you choose (here, switching sessions and windows):
 
 ```tmux
-bind -n M-] send-keys -t '=niles+home:{start}.{top-left}' ]
-bind -n M-[ send-keys -t '=niles+home:{start}.{top-left}' [
+bind -n M-[ if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' [ } { switch-client -p }
+bind -n M-] if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' ] } { switch-client -n }
+bind -n M-\; if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' \; } { previous-window }
+bind -n "M-'" if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' "'" } { next-window }
 ```
 
 ## Pi with OpenRouter

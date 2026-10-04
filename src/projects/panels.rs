@@ -14,6 +14,7 @@ use crate::{
 pub(crate) enum Panel {
     Config,
     Telemetry,
+    Help,
 }
 
 impl Panel {
@@ -21,16 +22,23 @@ impl Panel {
         match self {
             Self::Config => "config",
             Self::Telemetry => "telemetry",
+            Self::Help => "help",
         }
     }
 }
 
 pub(crate) fn render(panel: Panel) -> Result<()> {
     let mut text = String::new();
-    for entry in registry::entries()? {
-        match panel {
-            Panel::Config => text.push_str(&config(&entry)?),
-            Panel::Telemetry => {
+    let entries = registry::entries()?;
+    match panel {
+        Panel::Help => text.push_str(help_text(entries.is_empty())),
+        Panel::Config => {
+            for entry in entries {
+                text.push_str(&config(&entry)?);
+            }
+        }
+        Panel::Telemetry => {
+            for entry in entries {
                 let session = entry.name.session()?;
                 let lead = if tmux::project_session(&session)?.as_deref()
                     == Some(entry.path.as_str())
@@ -50,6 +58,35 @@ pub(crate) fn render(panel: Panel) -> Result<()> {
     }
     print!("{text}");
     Ok(())
+}
+
+const FIRST_RUN: &str = "niles
+
+Coordinates coding agents from different model families in tmux.
+
+Get started
+  r    register a project directory, in the explorer on the left
+  ↵    start its lead and show it here
+
+Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
+";
+
+const KEYS: &str = "Choose a project on the left.
+
+  ↵      open                 → ←    expand / collapse
+  [ ]    previous / next project
+  ; '    previous / next window
+  r      register a project   q      quiet a worker
+  c      close a worker or project
+  ?      this help            esc    back
+
+  ⣾ running   ⚠ waiting
+
+With the bindings in docs/setup.md, M-[ M-] M-; M-' do the same from any pane.
+";
+
+fn help_text(first_run: bool) -> &'static str {
+    if first_run { FIRST_RUN } else { KEYS }
 }
 
 fn config(entry: &registry::Entry) -> Result<String> {
@@ -105,6 +142,12 @@ fn telemetry(sessions: &[SessionUsage]) -> Result<String> {
 mod tests {
     use super::*;
     use crate::{projects::registry::ProjectName, test_support::temp_test_path};
+
+    #[test]
+    fn help_text_depends_on_whether_registry_is_empty() {
+        assert_eq!(help_text(true), FIRST_RUN);
+        assert_eq!(help_text(false), KEYS);
+    }
 
     #[test]
     fn config_prints_files_and_missing_manifests() {

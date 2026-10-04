@@ -1,12 +1,14 @@
 use std::collections::HashSet;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
 use crate::projects::{
     panels::Panel,
-    rows::{self, Row, State},
-    windows::{AgentWindow, SessionAgents, age},
+    rows::{Row, State},
+    windows::{AgentWindow, Role, SessionAgents},
 };
+use crate::worker::WorkerRole;
 
 pub(super) struct Project {
     pub row: Row,
@@ -14,13 +16,58 @@ pub(super) struct Project {
     pub agents: Option<SessionAgents>,
 }
 
+impl Project {
+    fn members(&self, role: WorkerRole) -> impl Iterator<Item = Item<'_>> {
+        self.agents.iter().flat_map(move |agents| {
+            let windows = agents
+                .windows
+                .iter()
+                .filter(move |w| matches!(w.role, Role::Worker(_, r) if r == role))
+                .map(move |w| Item::Member(self, role, Member::Window(w)));
+            let lost = agents
+                .lost
+                .iter()
+                .filter(move |(_, r)| *r == role)
+                .map(|(id, r)| Item::Member(self, *r, Member::Lost(id)));
+            windows.chain(lost)
+        })
+    }
+
+    fn roles(&self) -> impl DoubleEndedIterator<Item = WorkerRole> + '_ {
+        [
+            WorkerRole::Worker,
+            WorkerRole::Reviewer,
+            WorkerRole::Security,
+            WorkerRole::Research,
+        ]
+        .into_iter()
+        .filter(|role| self.members(*role).next().is_some())
+    }
+}
+
+const SPINNER: [&str; 8] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
+pub(super) const SPINNER_FRAME: Duration = Duration::from_millis(120);
+
+fn spinner(now: DateTime<Utc>) -> &'static str {
+    let delta = now.timestamp_millis();
+    let frame_ms = SPINNER_FRAME.as_millis() as i64;
+    let index = (delta / frame_ms).rem_euclid(SPINNER.len() as i64);
+    SPINNER[index as usize]
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Item<'a> {
     Header,
     Panel(Panel),
     Project(&'a Project),
-    Window(&'a Project, &'a AgentWindow),
-    Lost(&'a Project, &'a str),
+    Folder(&'a Project, WorkerRole),
+    Member(&'a Project, WorkerRole, Member<'a>),
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Member<'a> {
+    Window(&'a AgentWindow),
+    Lost(&'a str),
 }
 
 /// What the cursor is on, by name, so a refresh that reorders rows keeps the selection.
@@ -29,6 +76,7 @@ enum Key<'a> {
     Header,
     Panel(Panel),
     Project(&'a str),
+    Folder(&'a str, WorkerRole),
     Window(&'a str, &'a str),
     Lost(&'a str, &'a str),
 }
@@ -36,7 +84,7 @@ enum Key<'a> {
 impl<'a> Item<'a> {
     pub fn project(self) -> Option<&'a Project> {
         match self {
-            Item::Project(project) | Item::Window(project, _) | Item::Lost(project, _) => {
+            Item::Project(project) | Item::Folder(project, _) | Item::Member(project, _, _) => {
                 Some(project)
             }
             Item::Header | Item::Panel(_) => None,
@@ -48,10 +96,13 @@ impl<'a> Item<'a> {
             Item::Header => Key::Header,
             Item::Panel(panel) => Key::Panel(panel),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
-            Item::Window(project, window) => {
+            Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
+            Item::Member(project, _, Member::Window(window)) => {
                 Key::Window(project.row.entry.name.as_str(), &window.name)
             }
-            Item::Lost(project, id) => Key::Lost(project.row.entry.name.as_str(), id),
+            Item::Member(project, _, Member::Lost(id)) => {
+                Key::Lost(project.row.entry.name.as_str(), id)
+            }
         }
     }
 }
@@ -60,13 +111,14 @@ impl<'a> Item<'a> {
 pub(super) struct Tree {
     projects: Vec<Project>,
     expanded: HashSet<String>,
+    folders: HashSet<(String, WorkerRole)>,
     cursor: usize,
 }
 
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
         let old = std::mem::replace(&mut self.projects, projects);
-        let selected = Tree::items_of(&old, &self.expanded)
+        let selected = Tree::items_of(&old, &self.expanded, &self.folders)
             .get(self.cursor)
             .map(|item| item.key());
         let items = self.items();
@@ -79,21 +131,31 @@ impl Tree {
     }
 
     pub fn items(&self) -> Vec<Item<'_>> {
-        Tree::items_of(&self.projects, &self.expanded)
+        Tree::items_of(&self.projects, &self.expanded, &self.folders)
     }
 
-    fn items_of<'a>(projects: &'a [Project], expanded: &HashSet<String>) -> Vec<Item<'a>> {
+    fn items_of<'a>(
+        projects: &'a [Project],
+        expanded: &HashSet<String>,
+        folders: &HashSet<(String, WorkerRole)>,
+    ) -> Vec<Item<'a>> {
         let mut items = vec![Item::Header];
         for project in projects {
             items.push(Item::Project(project));
-            if let Some(agents) = &project.agents
-                && expanded.contains(project.row.entry.name.as_str())
-            {
-                items.extend(agents.windows.iter().map(|w| Item::Window(project, w)));
-                items.extend(agents.lost.iter().map(|id| Item::Lost(project, id)));
+            if project.agents.is_some() && expanded.contains(project.row.entry.name.as_str()) {
+                for role in project.roles() {
+                    items.push(Item::Folder(project, role));
+                    if folders.contains(&(project.row.entry.name.as_str().to_owned(), role)) {
+                        items.extend(project.members(role));
+                    }
+                }
             }
         }
-        items.extend([Item::Panel(Panel::Config), Item::Panel(Panel::Telemetry)]);
+        items.extend([
+            Item::Panel(Panel::Config),
+            Item::Panel(Panel::Telemetry),
+            Item::Panel(Panel::Help),
+        ]);
         items
     }
 
@@ -116,63 +178,107 @@ impl Tree {
     }
 
     pub fn expand(&mut self) {
-        if let Some(Item::Project(project)) = self.selected()
-            && project.agents.is_some()
-        {
-            let name = project.row.entry.name.as_str().to_owned();
-            self.expanded.insert(name);
+        match self.selected() {
+            Some(Item::Project(project)) if project.agents.is_some() => {
+                self.expanded
+                    .insert(project.row.entry.name.as_str().to_owned());
+            }
+            Some(Item::Folder(project, role)) => {
+                self.folders
+                    .insert((project.row.entry.name.as_str().to_owned(), role));
+            }
+            Some(Item::Project(_) | Item::Header | Item::Panel(_) | Item::Member(..)) | None => {}
         }
     }
 
-    /// Moves `steps` agent windows along every running project's windows, wrapping at the ends
-    /// and expanding the project it lands in. Off a window, it lands on the first. Returns whether
-    /// it landed on one.
-    pub fn cycle(&mut self, steps: isize) -> bool {
-        let windows: Vec<(&str, &str)> = self
+    /// Cycles running projects, landing on their project rows.
+    pub fn cycle_projects(&mut self, steps: isize) -> bool {
+        let current = self
+            .selected()
+            .and_then(Item::project)
+            .map(|p| p.row.entry.name.as_str());
+        let projects: Vec<&str> = self
             .projects
             .iter()
-            .filter_map(|project| Some((project.row.entry.name.as_str(), project.agents.as_ref()?)))
-            .flat_map(|(project, agents)| {
-                agents
-                    .windows
-                    .iter()
-                    .map(move |window| (project, window.name.as_str()))
-            })
+            .filter(|p| p.agents.is_some())
+            .map(|p| p.row.entry.name.as_str())
             .collect();
-        let current = self.selected().map(Item::key);
-        let next = windows
-            .iter()
-            .position(|&(project, window)| current == Some(Key::Window(project, window)))
-            .map_or(0, |index| {
-                (index.cast_signed() + steps).rem_euclid(windows.len().cast_signed())
-            });
-        let Some(&(project, window)) = windows.get(next.cast_unsigned()) else {
+        let index = projects.iter().position(|&p| Some(p) == current);
+        let Some(project) = wrapped(&projects, index, steps).map(|p| (*p).to_owned()) else {
             return false;
         };
-        self.expanded.insert(project.to_owned());
-        #[expect(clippy::expect_used, reason = "an expanded project lists its windows")]
-        let cursor = Tree::items_of(&self.projects, &self.expanded)
-            .iter()
-            .position(|item| item.key() == Key::Window(project, window))
-            .expect("the target window is listed");
-        self.cursor = cursor;
+        self.select(Key::Project(&project));
         true
     }
 
-    /// Collapses the selected project, or the project of the selected child and moves onto it.
-    pub fn collapse(&mut self) {
+    /// Cycles the lead and worker windows; off either, lands on the lead.
+    pub fn cycle_windows(&mut self, steps: isize) -> bool {
         let Some(project) = self.selected().and_then(Item::project) else {
+            return false;
+        };
+        let name = project.row.entry.name.as_str();
+        let Some(agents) = &project.agents else {
+            return false;
+        };
+        let mut windows = vec![None];
+        windows.extend(
+            agents
+                .windows
+                .iter()
+                .filter_map(|window| match window.role {
+                    Role::Worker(_, role) => Some(Some((window.name.as_str(), role))),
+                    Role::Lead | Role::Plain => None,
+                }),
+        );
+        let current = self.selected().map(Item::key);
+        let index = windows.iter().position(|&window| {
+            current == Some(window.map_or(Key::Project(name), |(w, _)| Key::Window(name, w)))
+        });
+        let Some(window) = wrapped(&windows, index, steps) else {
+            return false;
+        };
+        let project = name.to_owned();
+        let window = window.map(|(w, role)| (w.to_owned(), role));
+        match window {
+            Some((window, role)) => {
+                self.expanded.insert(project.clone());
+                self.folders.insert((project.clone(), role));
+                self.select(Key::Window(&project, &window));
+            }
+            None => self.select(Key::Project(&project)),
+        }
+        true
+    }
+
+    fn select(&mut self, key: Key<'_>) {
+        #[expect(clippy::expect_used, reason = "the navigation target is visible")]
+        let cursor = self
+            .items()
+            .iter()
+            .position(|item| item.key() == key)
+            .expect("the target row is listed");
+        self.cursor = cursor;
+    }
+
+    pub fn collapse(&mut self) {
+        let Some(item) = self.selected() else {
+            return;
+        };
+        let Some(project) = item.project() else {
             return;
         };
         let name = project.row.entry.name.as_str().to_owned();
-        let parent = self
-            .items()
-            .iter()
-            .position(|other| other.key() == Key::Project(&name));
-        if let Some(parent) = parent {
-            self.cursor = parent;
+        match item {
+            Item::Member(_, role, _) => {
+                self.folders.remove(&(name.clone(), role));
+                self.select(Key::Folder(&name, role));
+            }
+            Item::Project(_) | Item::Folder(..) => {
+                self.expanded.remove(&name);
+                self.select(Key::Project(&name));
+            }
+            Item::Header | Item::Panel(_) => {}
         }
-        self.expanded.remove(&name);
     }
 
     pub fn label(&self, item: Item<'_>, now: DateTime<Utc>) -> String {
@@ -186,197 +292,64 @@ impl Tree {
                     Some(_) => "▸",
                     None => " ",
                 };
-                let state = match project.row.state {
-                    State::Missing => "missing".to_owned(),
-                    State::NotRunning => "not running".to_owned(),
-                    State::Running => "running".to_owned(),
-                    State::Waiting(Some(since)) => format!("waiting {}", age(now, since)),
-                    State::Waiting(None) => "waiting".to_owned(),
-                };
-                let tokens = match project.row.lead_tokens {
-                    Some(n) => format!(" · lead {}", rows::abbreviate(n)),
-                    None => String::new(),
-                };
-                format!("  {marker} {name}  {state}{tokens}")
+                match project.row.state {
+                    State::Missing => format!("  {marker} {name}  missing"),
+                    State::NotRunning => format!("  {marker} {name}"),
+                    State::Running => format!("  {marker} {name}  {}", spinner(now)),
+                    State::Waiting(_) => format!("  {marker} {name}  ⚠"),
+                }
             }
-            Item::Window(_, window) => format!("      {}", window.segment.text()),
-            Item::Lost(_, id) => format!("      {id} window lost"),
+            Item::Folder(project, role) => {
+                let branch = if project.roles().next_back() == Some(role) {
+                    "└─"
+                } else {
+                    "├─"
+                };
+                let name = project.row.entry.name.as_str().to_owned();
+                let marker = if self.folders.contains(&(name, role)) {
+                    "▾"
+                } else {
+                    "▸"
+                };
+                let plural = match role {
+                    WorkerRole::Worker => "workers",
+                    WorkerRole::Reviewer => "reviewers",
+                    WorkerRole::Security => "security",
+                    WorkerRole::Research => "research",
+                };
+                let count = project.members(role).count();
+                format!("    {branch} {marker} {plural} {count}")
+            }
+            Item::Member(project, role, member) => {
+                let stem = if project.roles().next_back() == Some(role) {
+                    " "
+                } else {
+                    "│"
+                };
+                let branch = if project.members(role).last().map(Item::key) == Some(item.key()) {
+                    "└─"
+                } else {
+                    "├─"
+                };
+                let label = match member {
+                    Member::Window(window) => window.segment.label.clone(),
+                    Member::Lost(id) => format!("{id} window lost"),
+                };
+                format!("    {stem}     {branch} {label}")
+            }
         }
     }
+}
+
+/// The item `steps` along from `index`, wrapping at the ends; the first when there is no `index`.
+fn wrapped<T>(items: &[T], index: Option<usize>, steps: isize) -> Option<&T> {
+    let index = index.map_or(0, |index| {
+        (index.cast_signed() + steps)
+            .rem_euclid(items.len().cast_signed())
+            .cast_unsigned()
+    });
+    items.get(index)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::projects::{
-        registry::{Entry, ProjectName},
-        status::Segment,
-        windows::Role,
-    };
-
-    fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
-        let entry = Entry {
-            name: ProjectName::parse(name).unwrap(),
-            path: "/tmp".into(),
-        };
-        let row = Row {
-            entry,
-            state,
-            lead_tokens: Some(12_000),
-        };
-        Project { row, agents }
-    }
-
-    fn window(index: u32, name: &str, role: Role, label: &str) -> AgentWindow {
-        let segment = Segment {
-            label: label.into(),
-            model: Some("opus".into()),
-            glyph: Some("●"),
-            tokens: None,
-            age: None,
-            highlighted: false,
-        };
-        AgentWindow {
-            index,
-            name: name.into(),
-            role,
-            segment,
-        }
-    }
-
-    fn projects() -> Vec<Project> {
-        let agents = SessionAgents {
-            windows: vec![
-                window(0, "niles", Role::Lead, "lead"),
-                window(1, "parse", Role::Worker("parse".into()), "parse"),
-            ],
-            lost: vec!["gone".into()],
-        };
-        vec![
-            project("api", State::Running, Some(agents)),
-            project("old", State::NotRunning, None),
-        ]
-    }
-
-    fn tree() -> Tree {
-        let mut tree = Tree::default();
-        tree.replace(projects());
-        tree.down();
-        tree
-    }
-
-    fn labels(tree: &Tree) -> Vec<String> {
-        let now = Utc::now();
-        let items = tree.items();
-        items
-            .into_iter()
-            .map(|item| tree.label(item, now))
-            .collect()
-    }
-
-    #[test]
-    fn running_projects_expand_to_windows_and_lost_workers() {
-        let mut tree = tree();
-        assert_eq!(
-            labels(&tree),
-            [
-                "PROJECTS",
-                "  ▸ api  running · lead 12k",
-                "    old  not running · lead 12k",
-                "CONFIG",
-                "TELEMETRY"
-            ]
-        );
-        tree.expand();
-        assert_eq!(
-            labels(&tree),
-            [
-                "PROJECTS",
-                "  ▾ api  running · lead 12k",
-                "      lead opus ●",
-                "      parse opus ●",
-                "      gone window lost",
-                "    old  not running · lead 12k",
-                "CONFIG",
-                "TELEMETRY",
-            ]
-        );
-        tree.down();
-        tree.down();
-        assert!(matches!(
-            tree.selected(),
-            Some(Item::Window(_, window)) if matches!(&window.role, Role::Worker(id) if id == "parse")
-        ));
-    }
-
-    #[test]
-    fn cycling_wraps_over_running_windows_and_expands_their_project() {
-        let mut tree = tree();
-        tree.down();
-        assert!(tree.cycle(-1));
-        assert_eq!(tree.cursor(), 2);
-        assert!(tree.cycle(-1));
-        assert_eq!(tree.cursor(), 3);
-        assert!(tree.cycle(1));
-        assert_eq!(tree.cursor(), 2);
-        tree.replace(Vec::new());
-        assert!(!tree.cycle(1));
-    }
-
-    #[test]
-    fn projects_without_agents_do_not_expand() {
-        let mut tree = tree();
-        tree.down();
-        tree.expand();
-        assert_eq!(tree.items().len(), 5);
-        tree.down();
-        assert_eq!(tree.cursor(), 3);
-    }
-
-    #[test]
-    fn collapsing_a_child_moves_to_its_project() {
-        let mut tree = tree();
-        tree.expand();
-        for _ in 0..3 {
-            tree.down();
-        }
-        tree.collapse();
-        assert_eq!(tree.cursor(), 1);
-        assert_eq!(tree.items().len(), 5);
-        tree.up();
-        assert_eq!(tree.cursor(), 0);
-    }
-
-    #[test]
-    fn refresh_keeps_the_selection_by_name() {
-        let mut tree = tree();
-        tree.down();
-        let mut projects = projects();
-        projects.reverse();
-        tree.replace(projects);
-        assert!(matches!(
-            tree.selected(),
-            Some(Item::Project(project)) if project.row.entry.name.as_str() == "old"
-        ));
-        assert_eq!(tree.cursor(), 1);
-        tree.replace(Vec::new());
-        assert!(matches!(tree.selected(), Some(Item::Panel(Panel::Config))));
-    }
-    #[test]
-    fn panels_keep_selection_and_cycle_only_to_windows() {
-        let mut tree = tree();
-        for panel in [Panel::Config, Panel::Telemetry] {
-            tree.cursor = tree
-                .items()
-                .iter()
-                .position(|item| item.key() == Key::Panel(panel))
-                .unwrap();
-            tree.replace(projects());
-            assert!(matches!(tree.selected(), Some(Item::Panel(selected)) if selected == panel));
-            assert!(tree.cycle(1));
-            assert!(
-                matches!(tree.selected(), Some(Item::Window(_, window)) if window.name == "niles")
-            );
-        }
-    }
-}
+mod tests;

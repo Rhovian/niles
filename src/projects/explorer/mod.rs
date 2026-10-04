@@ -1,9 +1,11 @@
 mod tree;
 
 use std::{
-    env,
+    env, fs,
+    os::unix::process::CommandExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
@@ -17,9 +19,10 @@ use ratatui::{
     widgets::{List, ListState, Paragraph, Wrap},
 };
 
-use self::tree::{Item, Project, Tree};
+use self::tree::{Item, Member, Project, Tree};
 use super::{
-    register, registry,
+    register,
+    registry::{self, ProjectName},
     rows::{self, State},
     windows::{self, LEAD_WINDOW, Role},
 };
@@ -30,7 +33,7 @@ use crate::{
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: &str = "↵ open · [ ] cycle · r register · q quiet · c close";
+const KEYS: &str = "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help";
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
@@ -41,18 +44,31 @@ pub fn home() -> Result<()> {
 /// `niles explorer`: the tree in the home session's left pane.
 pub fn run() -> Result<()> {
     let pane = env::var("TMUX_PANE").context("niles explorer runs in a tmux pane; run `niles`")?;
+    // Taken now: once the binary is replaced, Linux reports this process's path as "(deleted)".
+    let binary = env::current_exe().context("failed to find niles executable")?;
     let mut explorer = Explorer {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
         mode: Mode::Browse,
         footer: None,
+        installed: modified(&binary)?,
+        binary,
     };
     explorer.tree.replace(collect()?);
     let mut terminal = ratatui::init();
     let result = explorer.run(&mut terminal);
     ratatui::restore();
-    result
+    result?;
+    // Replacing the process keeps its pane, so the operator's layout survives an upgrade.
+    Err(Command::new(&explorer.binary).arg("explorer").exec())
+        .context("failed to restart the explorer")
+}
+
+fn modified(binary: &Path) -> Result<SystemTime> {
+    fs::metadata(binary)
+        .and_then(|metadata| metadata.modified())
+        .with_context(|| format!("failed to read {}", binary.display()))
 }
 
 enum Mode {
@@ -63,9 +79,19 @@ enum Mode {
         default: String,
         input: String,
     },
-    Close {
+    Close(Closing),
+}
+
+enum Closing {
+    Worker {
         id: String,
         project: Utf8PathBuf,
+    },
+    /// A running project: its workers, then its view and session.
+    Project {
+        name: ProjectName,
+        path: Utf8PathBuf,
+        workers: Vec<String>,
     },
 }
 
@@ -76,20 +102,27 @@ struct Explorer {
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
     footer: Option<String>,
+    binary: PathBuf,
+    /// When `binary` was written; a later write is an upgrade this process doesn't run yet.
+    installed: SystemTime,
 }
 
 impl Explorer {
+    /// Returns once the binary on disk has been replaced and no prompt is open.
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut collected = Instant::now();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(REFRESH.saturating_sub(collected.elapsed()))?
+            if event::poll(tree::SPINNER_FRAME.min(REFRESH.saturating_sub(collected.elapsed())))?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
                 self.key(key.code)?;
             }
             if collected.elapsed() >= REFRESH {
+                if matches!(self.mode, Mode::Browse) && modified(&self.binary)? != self.installed {
+                    return Ok(());
+                }
                 self.tree.replace(collect()?);
                 collected = Instant::now();
             }
@@ -104,24 +137,50 @@ impl Explorer {
             (Mode::Browse, KeyCode::Down) => self.tree.down(),
             (Mode::Browse, KeyCode::Right) => self.tree.expand(),
             (Mode::Browse, KeyCode::Left) => self.tree.collapse(),
-            (Mode::Browse, KeyCode::Enter) => self.footer = shown(self.open()),
-            (Mode::Browse, KeyCode::Char(key @ ('[' | ']'))) => {
-                if self.tree.cycle(if key == ']' { 1 } else { -1 }) {
+            // Help leaves the selection alone, so Esc reopens what the view showed before it.
+            (Mode::Browse, KeyCode::Enter | KeyCode::Esc) => self.footer = shown(self.open()),
+            (Mode::Browse, KeyCode::Char('?')) => {
+                self.footer = shown(tmux::open_panel("help").map(|_| None));
+            }
+            (Mode::Browse, KeyCode::Char(key @ ('[' | ']' | ';' | '\''))) => {
+                let steps = if matches!(key, ']' | '\'') { 1 } else { -1 };
+                let landed = if matches!(key, '[' | ']') {
+                    self.tree.cycle_projects(steps)
+                } else {
+                    self.tree.cycle_windows(steps)
+                };
+                if landed {
                     self.footer = shown(self.open());
                 }
             }
             (Mode::Browse, KeyCode::Char('r')) => self.mode = Mode::Directory(String::new()),
-            (Mode::Browse, KeyCode::Char(key @ ('q' | 'c'))) => match self.selected_worker() {
-                Some((id, project)) if key == 'q' => {
+            (Mode::Browse, KeyCode::Char('q')) => match self.selected_worker() {
+                Some((id, project)) => {
                     self.footer = shown(niles(&["quiet", &id], &project).map(Some));
                 }
-                Some((id, project)) => self.mode = Mode::Close { id, project },
                 None => self.footer = Some("select a worker".to_owned()),
             },
-            (Mode::Close { id, project }, KeyCode::Char('y')) => {
-                self.footer = shown(niles(&["close", id.as_str()], project).map(Some));
+            (Mode::Browse, KeyCode::Char('c')) => match self.selected_closing() {
+                Some(closing) => self.mode = Mode::Close(closing),
+                None => self.footer = Some("select a worker or running project".to_owned()),
+            },
+            (Mode::Close(closing), KeyCode::Char('y')) => {
+                // Onto the next running project first, so the view moves there once this one is
+                // gone. When it was the only one, its row stays selected and the view stays
+                // on help.
+                let project = matches!(closing, Closing::Project { .. });
+                if project {
+                    self.tree.cycle_projects(1);
+                }
+                self.footer = shown(close(closing, &self.pane));
                 self.mode = Mode::Browse;
                 self.tree.replace(collect()?);
+                if project
+                    && matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
+                    && let Some(error) = shown(self.open())
+                {
+                    self.footer = Some(error);
+                }
             }
             (Mode::Directory(input) | Mode::Name { input, .. }, KeyCode::Char(c)) => input.push(c),
             (Mode::Directory(input) | Mode::Name { input, .. }, KeyCode::Backspace) => {
@@ -152,6 +211,9 @@ impl Explorer {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
                         self.tree.replace(collect()?);
+                        if let Some(error) = shown(tmux::open_panel("help").map(|_| None)) {
+                            self.footer = Some(error);
+                        }
                     }
                     Err(error) => self.footer = Some(format!("{error:#}")),
                 }
@@ -169,7 +231,7 @@ impl Explorer {
             return Ok(None);
         };
         let target = match item {
-            Item::Header => return Ok(None),
+            Item::Header | Item::Folder(..) => return Ok(None),
             Item::Panel(panel) => tmux::open_panel(panel.name())?,
             Item::Project(project) => {
                 let entry = &project.row.entry;
@@ -189,25 +251,47 @@ impl Explorer {
                 }
                 WindowTarget::new(session, LEAD_WINDOW)?
             }
-            Item::Window(project, window) => {
+            Item::Member(project, _, Member::Window(window)) => {
                 WindowTarget::new(project.row.entry.name.session()?, &window.name)?
             }
-            Item::Lost(_, id) => return Ok(Some(format!("{id}: window lost"))),
+            Item::Member(_, _, Member::Lost(id)) => return Ok(Some(format!("{id}: window lost"))),
         };
         tmux::show_in_view(&self.pane, &target)?;
-        Ok(Some(format!("showing {target}")))
+        Ok(None)
     }
 
     fn selected_worker(&self) -> Option<(String, Utf8PathBuf)> {
         let (project, id) = match self.tree.selected()? {
-            Item::Window(project, window) => match &window.role {
-                Role::Worker(id) => (project, id.as_str()),
+            Item::Member(project, _, Member::Window(window)) => match &window.role {
+                Role::Worker(id, _) => (project, id.as_str()),
                 Role::Lead | Role::Plain => return None,
             },
-            Item::Lost(project, id) => (project, id),
-            Item::Project(_) | Item::Header | Item::Panel(_) => return None,
+            Item::Member(project, _, Member::Lost(id)) => (project, id),
+            Item::Project(_) | Item::Folder(..) | Item::Header | Item::Panel(_) => return None,
         };
         Some((id.to_owned(), project.row.entry.path.clone()))
+    }
+
+    fn selected_closing(&self) -> Option<Closing> {
+        let Some(Item::Project(project)) = self.tree.selected() else {
+            let (id, project) = self.selected_worker()?;
+            return Some(Closing::Worker { id, project });
+        };
+        let agents = project.agents.as_ref()?;
+        let workers = agents
+            .windows
+            .iter()
+            .filter_map(|window| match &window.role {
+                Role::Worker(id, _) => Some(id.clone()),
+                Role::Lead | Role::Plain => None,
+            })
+            .chain(agents.lost.iter().map(|(id, _)| id.clone()))
+            .collect();
+        Some(Closing::Project {
+            name: project.row.entry.name.clone(),
+            path: project.row.entry.path.clone(),
+            workers,
+        })
     }
 
     fn draw(&self, frame: &mut Frame) {
@@ -227,7 +311,10 @@ impl Explorer {
             Mode::Browse => None,
             Mode::Directory(input) => Some(format!("directory [{}]: {input}", self.cwd)),
             Mode::Name { default, input, .. } => Some(format!("name [{default}]: {input}")),
-            Mode::Close { id, .. } => Some(format!("close {id}? y/n")),
+            Mode::Close(Closing::Worker { id, .. }) => Some(format!("close {id}? y/n")),
+            Mode::Close(Closing::Project { name, .. }) => {
+                Some(format!("close {} and its workers? y/n", name.as_str()))
+            }
         };
         let text = match (&self.footer, prompt) {
             (Some(message), Some(prompt)) => format!("{message}\n{prompt}"),
@@ -244,6 +331,25 @@ fn shown(outcome: Result<Option<String>>) -> Option<String> {
     match outcome {
         Ok(message) => message,
         Err(error) => Some(format!("{error:#}")),
+    }
+}
+
+fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
+    match closing {
+        Closing::Worker { id, project } => niles(&["close", id], project).map(Some),
+        Closing::Project {
+            name,
+            path,
+            workers,
+        } => {
+            for id in workers {
+                niles(&["close", id], path)?;
+            }
+            // Before the session goes, so its client never moves to another session.
+            tmux::close_view(explorer)?;
+            tmux::kill_session(&name.session()?)?;
+            Ok(Some(format!("closed {}", name.as_str())))
+        }
     }
 }
 
