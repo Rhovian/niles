@@ -1,9 +1,11 @@
 mod tree;
 
 use std::{
-    env,
+    env, fs,
+    os::unix::process::CommandExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
@@ -42,18 +44,31 @@ pub fn home() -> Result<()> {
 /// `niles explorer`: the tree in the home session's left pane.
 pub fn run() -> Result<()> {
     let pane = env::var("TMUX_PANE").context("niles explorer runs in a tmux pane; run `niles`")?;
+    // Taken now: once the binary is replaced, Linux reports this process's path as "(deleted)".
+    let binary = env::current_exe().context("failed to find niles executable")?;
     let mut explorer = Explorer {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
         mode: Mode::Browse,
         footer: None,
+        installed: modified(&binary)?,
+        binary,
     };
     explorer.tree.replace(collect()?);
     let mut terminal = ratatui::init();
     let result = explorer.run(&mut terminal);
     ratatui::restore();
-    result
+    result?;
+    // Replacing the process keeps its pane, so the operator's layout survives an upgrade.
+    Err(Command::new(&explorer.binary).arg("explorer").exec())
+        .context("failed to restart the explorer")
+}
+
+fn modified(binary: &Path) -> Result<SystemTime> {
+    fs::metadata(binary)
+        .and_then(|metadata| metadata.modified())
+        .with_context(|| format!("failed to read {}", binary.display()))
 }
 
 enum Mode {
@@ -87,9 +102,13 @@ struct Explorer {
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
     footer: Option<String>,
+    binary: PathBuf,
+    /// When `binary` was written; a later write is an upgrade this process doesn't run yet.
+    installed: SystemTime,
 }
 
 impl Explorer {
+    /// Returns once the binary on disk has been replaced and no prompt is open.
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut collected = Instant::now();
         loop {
@@ -101,6 +120,9 @@ impl Explorer {
                 self.key(key.code)?;
             }
             if collected.elapsed() >= REFRESH {
+                if matches!(self.mode, Mode::Browse) && modified(&self.binary)? != self.installed {
+                    return Ok(());
+                }
                 self.tree.replace(collect()?);
                 collected = Instant::now();
             }
