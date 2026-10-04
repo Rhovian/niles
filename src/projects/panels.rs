@@ -78,6 +78,7 @@ const KEYS: &str = "Choose a project on the left.
   ; '    previous / next window
   r      register a project   q      quiet a worker
   c      close a worker or project
+  ?      this help            esc    back
 
   ⣾ running   ⚠ waiting
 

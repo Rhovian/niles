@@ -20,11 +20,15 @@ project with its lead's state and refreshes every two seconds.
 | Key | Action |
 | --- | --- |
 | ↑ ↓ | Move |
-| → ← | Expand or collapse a running project |
+| → ← | Expand or collapse a running project or role folder |
 | Enter | Show the project's lead, or the selected window, in the view pane |
+| `[` `]` | Show the previous or next running project |
+| `;` `'` | Show the previous or next window of the shown project |
+| `?` | Show help in the view pane |
+| Esc | Show the selected item again, leaving help |
 | `r` | Register a directory as a project |
 | `q` | Quiet the selected worker's check-in |
-| `c` | Close the selected worker, after a y/n confirm |
+| `c` | Close the selected worker or running project, after a y/n confirm |
 
 The view pane on the right is a tmux client nested inside the home session, so typing there goes
 to the agent. Enter retargets only that client, never your own. Leave the home view with tmux's

@@ -31,7 +31,7 @@ use crate::{
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: &str = "↵ open · [ ] project · ; ' window · r register · q quiet · c close";
+const KEYS: &str = "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help";
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
@@ -115,7 +115,11 @@ impl Explorer {
             (Mode::Browse, KeyCode::Down) => self.tree.down(),
             (Mode::Browse, KeyCode::Right) => self.tree.expand(),
             (Mode::Browse, KeyCode::Left) => self.tree.collapse(),
-            (Mode::Browse, KeyCode::Enter) => self.footer = shown(self.open()),
+            // Help leaves the selection alone, so Esc reopens what the view showed before it.
+            (Mode::Browse, KeyCode::Enter | KeyCode::Esc) => self.footer = shown(self.open()),
+            (Mode::Browse, KeyCode::Char('?')) => {
+                self.footer = shown(tmux::open_panel("help").map(|_| None));
+            }
             (Mode::Browse, KeyCode::Char(key @ ('[' | ']' | ';' | '\''))) => {
                 let steps = if matches!(key, ']' | '\'') { 1 } else { -1 };
                 let landed = if matches!(key, '[' | ']') {
