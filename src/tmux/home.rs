@@ -103,10 +103,15 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
                 explorer.as_str(),
                 "-P",
                 "-F",
-                "#{pane_id}",
+                "#{pane_id}\t#{pane_tty}",
                 &attach,
             ])?;
-            let id = id.trim_end();
+            let Some((id, tty)) = id.trim_end().split_once('\t') else {
+                bail!("invalid tmux pane line {id:?}");
+            };
+            // Killing the viewed session moves its clients to another session, which can be home
+            // itself. Detaching the view's client there ends its attach, so the view pane closes.
+            let detach = format!("if-shell -F '#{{==:#{{client_tty}},{tty}}}' detach-client");
             run(&[
                 "set-option",
                 "-p",
@@ -121,6 +126,12 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
                 id,
                 "remain-on-exit",
                 "off",
+                ";",
+                "set-hook",
+                "-t",
+                explorer.as_str(),
+                "client-session-changed",
+                &detach,
             ])?;
             id.to_owned()
         }
