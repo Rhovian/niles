@@ -16,6 +16,7 @@ const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message)
+    if [ "$3" = '#{client_width} #{client_height}' ]; then printf '160 45\n'; exit 0; fi
     if [ "$3" = "-t" ]; then printf '%s\n' "${TMUX_PROJECT_TAG:-}"; else printf 'niles-test-session\n'; fi
     exit 0 ;;
   display) printf '%s\n' "${TMUX_PROJECT_TAG:-}"; exit 0 ;;

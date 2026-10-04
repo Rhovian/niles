@@ -4,13 +4,9 @@ use chrono::{DateTime, Utc};
 use super::{
     registry,
     rows::{self, Row, State},
+    windows::{self, age},
 };
-use crate::{
-    cli::StatusLine,
-    session,
-    telemetry::{SessionState, Usage},
-    tmux, worker,
-};
+use crate::{cli::StatusLine, tmux};
 use camino::Utf8PathBuf;
 
 pub(crate) struct Segment {
@@ -65,77 +61,34 @@ fn from_rows(rows: &[Row], session_name: &str, now: DateTime<Utc>) -> Vec<Segmen
 
 fn session_segments(name: &str, active_index: u32, now: DateTime<Utc>) -> Result<Vec<Segment>> {
     let session_name = tmux::SessionName::new(name)?;
-    let windows = tmux::windows(&session_name)?;
     let project = project(session_name.as_str())?;
-    let (lead, workers) = match &project {
-        Some(path) => (session::latest_lead(path)?, worker::status_workers(path)?),
-        None => (None, Vec::new()),
-    };
-    windows
-        .into_iter()
-        .map(|window| {
-            let (label, model, glyph, tokens, age) = if project.is_some() && window.name == "niles"
-            {
-                let model = lead
-                    .as_ref()
-                    .map(|lead| lead.model.clone().unwrap_or_else(|| lead.agent.clone()));
-                let usage = lead.as_ref().map(worker::lead_usage).transpose()?.flatten();
-                let alert_when_waiting = !workers.iter().any(|worker| {
-                    worker.usage.as_ref().and_then(|usage| usage.state)
-                        == Some(SessionState::Working)
-                });
-                let (glyph, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
-                ("lead".to_owned(), model, glyph, tokens, None)
-            } else if let Some(worker) = workers
-                .iter()
-                .find(|worker| worker.window == format!("{}:{}", session_name, window.name))
-            {
-                let (glyph, tokens) = usage_fields(worker.usage.as_ref(), false);
-                (
-                    worker.id.clone(),
-                    Some(worker.model.clone()),
-                    glyph,
-                    tokens,
-                    Some(age(now, worker.created_at)),
-                )
-            } else {
-                (window.name, None, None, None, None)
-            };
-            Ok(Segment {
-                label: format!("{}:{label}", window.index),
-                model,
-                glyph,
-                tokens,
-                age,
+    Ok(
+        windows::session_agents(&session_name, project.as_deref(), now)?
+            .windows
+            .into_iter()
+            .map(|window| Segment {
+                label: format!("{}:{}", window.index, window.segment.label),
                 highlighted: window.index == active_index,
+                ..window.segment
             })
-        })
-        .collect()
+            .collect(),
+    )
 }
 
-fn usage_fields(
-    usage: Option<&Usage>,
-    alert_when_waiting: bool,
-) -> (Option<&'static str>, Option<u64>) {
-    match usage {
-        Some(usage) => (
-            usage.state.map(|state| match state {
-                SessionState::Working => "●",
-                SessionState::Waiting if alert_when_waiting => "⚠",
-                SessionState::Waiting => "○",
-            }),
-            Some(usage.total_tokens()),
-        ),
-        None => (None, None),
-    }
-}
-
-fn age(now: DateTime<Utc>, since: DateTime<Utc>) -> String {
-    let minutes = (now - since).num_minutes().max(0);
-    if minutes >= 60 {
-        format!("{}h", minutes / 60)
-    } else {
-        format!("{minutes}m")
+impl Segment {
+    pub(super) fn text(&self) -> String {
+        let tokens = self.tokens.map(rows::abbreviate);
+        [
+            Some(self.label.as_str()),
+            self.model.as_deref(),
+            self.glyph,
+            tokens.as_deref(),
+            self.age.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 }
 
@@ -143,19 +96,7 @@ pub(crate) fn render(segments: &[Segment]) -> String {
     segments
         .iter()
         .map(|segment| {
-            let tokens = segment.tokens.map(rows::abbreviate);
-            let text = [
-                Some(segment.label.as_str()),
-                segment.model.as_deref(),
-                segment.glyph,
-                tokens.as_deref(),
-                segment.age.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .replace('#', "##");
+            let text = segment.text().replace('#', "##");
             if segment.highlighted {
                 format!("#[reverse]{text}#[noreverse]")
             } else {
@@ -209,7 +150,6 @@ mod tests {
             },
             state,
             lead_tokens: None,
-            workers: 0,
         };
         let rows = [
             row("api", State::Running),

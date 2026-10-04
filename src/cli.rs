@@ -77,6 +77,9 @@ pub enum CommandName {
     /// Start the lead in a project session.
     #[command(hide = true)]
     Lead,
+    /// Run the project explorer in the home session.
+    #[command(hide = true)]
+    Explorer,
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
     /// Remove dated metadata across registered projects (preview unless --apply)

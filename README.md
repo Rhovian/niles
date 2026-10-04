@@ -62,9 +62,11 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/
 cargo install niles
 ```
 
-Then run `niles`. It opens the project list: type a project's number to open it, `n` to register a
-directory, or `q` to quit, then press Enter. Opening a project creates or switches to its own tmux
-session with the lead running in a window named `niles`. The first launch in a workspace prompts
+Then run `niles`. It opens the home view, a tmux session named `niles+home` with a project
+explorer on the left, a view pane on the right and a shell along the bottom. Move with the arrow
+keys, expand a running project into its lead and workers with →, and press Enter to show one in
+the view, where you can type to it; `r` registers a directory. Opening a project that isn't
+running creates its own tmux session with the lead running in a window named `niles`. The first launch in a workspace prompts
 for all four roles and writes `.niles/manifest.yaml`; later launches show the roles before
 starting.
 

@@ -44,7 +44,8 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => projects::list::run()?,
+        None => projects::explorer::home()?,
+        Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Lead) => session::run()?,
         Some(CommandName::Status { line }) => {
             return Ok(match projects::status::run(line) {

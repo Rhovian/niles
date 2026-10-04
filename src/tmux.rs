@@ -6,10 +6,12 @@ use std::{
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
+mod home;
 mod send;
 mod session;
 mod target;
 
+pub(crate) use home::{open_home, show_in_view};
 pub(crate) use session::{
     configure_status, lead_running, open_session, project_session, switch_or_attach, windows,
 };
@@ -34,6 +36,20 @@ fn run(args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Runs a tmux command for what it prints.
+fn query(args: &[&str]) -> Result<String> {
+    let output = output(args)?;
+    if !output.status.success() {
+        bail!(
+            "tmux {} exited with {}: {}",
+            args.join(" "),
+            output.status,
+            normalize_stderr(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout).with_context(|| format!("tmux {} printed non-UTF-8", args[0]))
 }
 
 fn output(args: &[&str]) -> Result<Output> {
