@@ -76,23 +76,23 @@ Bar changes apply when a session's status is configured; there is no live reload
 
 ## Key bindings
 
-Open the home view from anywhere in tmux with a popup:
+Enable the built-in bindings in `~/.niles/config.yaml` (default: false):
 
-```tmux
-bind-key -n M-n display-popup -E niles
+```yaml
+tmux:
+  bindings: true
 ```
 
-In the explorer, `[` and `]` cycle the view through running projects, and `;` and `'` through
-the shown project's windows. To cycle from any pane of the home view, send those keys to the
-explorer. tmux has no per-session bindings, so each binding checks the session itself; elsewhere
-the keys keep the command you choose (here, switching sessions and windows):
+- `M-n` opens the home view in a popup from any session.
+- `M-[` and `M-]` show the previous or next running project.
+- `M-;` and `M-'` show the previous or next window of the shown project.
 
-```tmux
-bind -n M-[ if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' [ } { switch-client -p }
-bind -n M-] if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' ] } { switch-client -n }
-bind -n M-\; if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' \; } { previous-window }
-bind -n "M-'" if -F '#{==:#{session_name},niles+home}' { send-keys -t '=niles+home:{start}.{top-left}' "'" } { next-window }
-```
+The four cycling keys send their plain keys to the explorer in `niles+home`; elsewhere,
+they pass the original Meta key through to the current pane.
+
+Bindings are installed in tmux's root table on the next bare `niles`, replacing any existing
+bindings for those five keys. Switching the option off installs nothing and removes nothing:
+installed bindings stay until tmux restarts.
 
 ## Pi with OpenRouter
 

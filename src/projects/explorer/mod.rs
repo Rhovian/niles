@@ -61,7 +61,11 @@ fn key_hints(theme: &Theme) -> Line<'_> {
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
+    let config = crate::config::user::UserConfig::load()?;
     let home = tmux::open_home(&current_dir_utf8()?)?;
+    if config.tmux.bindings {
+        tmux::install_home_bindings()?;
+    }
     tmux::switch_or_attach(&TmuxTarget::session(&home))
 }
 

@@ -1,7 +1,6 @@
-use std::{collections::BTreeMap, env, fs, io::ErrorKind};
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use camino::Utf8PathBuf;
 use ratatui::{
     backend::IntoCrossterm,
     crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor},
@@ -11,29 +10,28 @@ use ratatui::{
 use serde::Deserialize;
 
 const DEFAULTS: &str = r##"
-theme:
-  styles:
-    running: 'fg=#5fd38d'
-    waiting: 'fg=#f0a35e'
-    idle: 'fg=#8a8f98'
-    lost: 'fg=#e06c75'
-    selection: 'bg=#1f2a44,bold'
-    pill: 'fg=#1b1b1b,bg=#6b9cff,bold'
-    heading: 'bold'
-    muted: 'fg=#6c7086'
-    accent: 'fg=#6b9cff,bold'
-    guide: 'fg=#3b4252'
-    bar: 'fg=#c0caf5,bg=#1a1b26'
-  glyphs:
-    running: '●'
-    waiting: '⚠'
-    idle: '○'
-    spinner: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
-    branch: '├─'
-    last: '└─'
-    stem: '│'
-    expanded: '▾'
-    collapsed: '▸'
+styles:
+  running: 'fg=#5fd38d'
+  waiting: 'fg=#f0a35e'
+  idle: 'fg=#8a8f98'
+  lost: 'fg=#e06c75'
+  selection: 'bg=#1f2a44,bold'
+  pill: 'fg=#1b1b1b,bg=#6b9cff,bold'
+  heading: 'bold'
+  muted: 'fg=#6c7086'
+  accent: 'fg=#6b9cff,bold'
+  guide: 'fg=#3b4252'
+  bar: 'fg=#c0caf5,bg=#1a1b26'
+glyphs:
+  running: '●'
+  waiting: '⚠'
+  idle: '○'
+  spinner: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
+  branch: '├─'
+  last: '└─'
+  stem: '│'
+  expanded: '▾'
+  collapsed: '▸'
 "##;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -194,14 +192,7 @@ fn parse_color(text: &str) -> Result<Color> {
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Config {
-    #[serde(default)]
-    theme: Overrides,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Overrides {
+pub(crate) struct Overrides {
     #[serde(default)]
     styles: BTreeMap<StyleKey, String>,
     #[serde(default)]
@@ -260,27 +251,19 @@ pub(crate) struct Theme {
 
 impl Theme {
     pub(crate) fn load() -> Result<Self> {
-        let path = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?)
-            .join(".niles/config.yaml");
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => Some(text),
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => {
-                return Err(error).with_context(|| format!("failed to read {path}"));
-            }
-        };
-        Self::parse(text.as_deref()).with_context(|| format!("invalid config {path}"))
+        Ok(crate::config::user::UserConfig::load()?.theme)
     }
 
+    #[cfg(test)]
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
-        let mut config: Config = serde_saphyr::from_str(DEFAULTS)?;
-        if let Some(text) = text {
-            let overrides: Config = serde_saphyr::from_str(text)?;
-            config.theme.styles.extend(overrides.theme.styles);
-            config.theme.glyphs.extend(overrides.theme.glyphs);
-        }
+        Ok(crate::config::user::UserConfig::parse(text)?.theme)
+    }
+
+    pub(crate) fn build(overrides: Overrides) -> Result<Self> {
+        let mut config: Overrides = serde_saphyr::from_str(DEFAULTS)?;
+        config.styles.extend(overrides.styles);
+        config.glyphs.extend(overrides.glyphs);
         let styles = config
-            .theme
             .styles
             .into_iter()
             .map(|(key, value)| {
@@ -289,7 +272,6 @@ impl Theme {
             })
             .collect::<Result<_>>()?;
         let glyphs = config
-            .theme
             .glyphs
             .into_iter()
             .map(|(key, value)| Ok((key, frames(key, value)?)))

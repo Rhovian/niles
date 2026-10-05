@@ -21,6 +21,8 @@ It never accepts an agent CLI workspace-trust prompt. Niles does not create an i
 between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
 CLI, its launch flags, and operating-system controls.
 
+The operator's `~/.niles/config.yaml` controls the theme and optional tmux bindings; those bindings run only the shell-quoted Niles executable.
+
 ## Boundaries
 
 ### Cloned repository manifest and configuration

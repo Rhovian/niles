@@ -13,6 +13,38 @@ const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";
 
+pub(crate) fn install_home_bindings() -> Result<()> {
+    let popup = shell_quote(&session::executable()?);
+    let condition = format!("#{{==:#{{session_name}},{HOME_SESSION}}}");
+    let mut args = vec![
+        "bind-key".to_owned(),
+        "-n".to_owned(),
+        "M-n".to_owned(),
+        "display-popup".to_owned(),
+        "-E".to_owned(),
+        popup,
+    ];
+    for key in ["[", "]", ";", "'"] {
+        let meta = format!("M-{key}");
+        let send = format!(
+            "send-keys -t '={HOME_SESSION}:{{start}}.{{top-left}}' {}",
+            shell_quote(key)
+        );
+        args.extend([
+            ";".to_owned(),
+            "bind-key".to_owned(),
+            "-n".to_owned(),
+            meta.replace(';', "\\;"),
+            "if-shell".to_owned(),
+            "-F".to_owned(),
+            condition.clone(),
+            send,
+            format!("send-keys {}", shell_quote(&meta)),
+        ]);
+    }
+    run(&args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
 /// Creates the home session unless it exists; an existing one is left as the operator arranged it.
 pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
     let home = SessionName::new(HOME_SESSION)?;

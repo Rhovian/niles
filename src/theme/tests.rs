@@ -76,6 +76,8 @@ fn invalid_tokens_name_the_key() {
     }
     for text in [
         "unknown: {}",
+        "tmux: {unknown: true}",
+        "tmux: {bindings: invalid}",
         "theme: {unknown: {}}",
         "theme: {styles: {blink: bold}}",
         "theme: {glyphs: {unknown: x}}",
