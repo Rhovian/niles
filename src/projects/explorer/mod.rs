@@ -50,12 +50,12 @@ fn key_hints(theme: &Theme) -> Line<'_> {
     let mut spans = Vec::new();
     for (index, (key, label)) in KEYS.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(" · ", theme.style(StyleKey::Muted).ratatui));
+            spans.push(Span::styled(" · ", theme.style(StyleKey::Muted)));
         }
-        spans.push(Span::styled(*key, theme.style(StyleKey::Accent).ratatui));
+        spans.push(Span::styled(*key, theme.style(StyleKey::Accent)));
         spans.push(Span::styled(
             format!(" {label}"),
-            theme.style(StyleKey::Muted).ratatui,
+            theme.style(StyleKey::Muted),
         ));
     }
     Line::from(spans)
@@ -356,8 +356,7 @@ impl Explorer {
             .into_iter()
             .map(|item| self.tree.label(item, now, &self.theme));
         let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
-        let list_widget =
-            List::new(labels).highlight_style(self.theme.style(StyleKey::Selection).ratatui);
+        let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
         frame.render_stateful_widget(list_widget, list, &mut state);
         let prompt = match &self.mode {
             Mode::Browse => None,
@@ -481,7 +480,7 @@ mod tests {
             } else {
                 StyleKey::Muted
             };
-            assert_eq!(span.style, theme.style(key).ratatui);
+            assert_eq!(span.style, theme.style(key));
         }
     }
 }

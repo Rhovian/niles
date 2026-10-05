@@ -87,7 +87,8 @@ lock authenticates neither writers nor status content. Other `.niles` state is n
 locked. Niles does not defend its state from a process that already has the operator's filesystem
 permissions.
 
-Theme config style text reaches tmux formats only through the whitelist in `src/theme.rs`.
+Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
+colors and styling modifiers are rendered into tmux formats.
 
 ### Status lines, pane capture, and terminal or lead injection
 

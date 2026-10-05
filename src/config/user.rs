@@ -4,13 +4,26 @@ use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use serde::Deserialize;
 
-use crate::theme::{Overrides, Theme};
+use ratatui_themes::ThemeName;
 
-#[derive(Default, Deserialize)]
+use crate::theme::Theme;
+
+const DEFAULT_THEME: ThemeName = ThemeName::TokyoNight;
+
+#[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileConfig {
-    theme: Overrides,
+    theme: ThemeName,
     tmux: TmuxConfig,
+}
+
+impl Default for FileConfig {
+    fn default() -> Self {
+        Self {
+            theme: DEFAULT_THEME,
+            tmux: TmuxConfig::default(),
+        }
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -42,8 +55,48 @@ impl UserConfig {
             None => FileConfig::default(),
         };
         Ok(Self {
-            theme: Theme::build(config.theme)?,
+            theme: Theme::new(config.theme),
             tmux: config.tmux,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::StyleKey;
+
+    #[test]
+    fn parses_named_palette_and_bindings() {
+        let config = UserConfig::parse(Some("theme: nord\ntmux: {bindings: true}")).unwrap();
+        assert_eq!(
+            config.theme.style(StyleKey::Running).fg,
+            Some(ThemeName::Nord.palette().success)
+        );
+        assert!(config.tmux.bindings);
+    }
+
+    #[test]
+    fn missing_theme_defaults_to_tokyo_night() {
+        for text in [None, Some("{}"), Some("tmux: {bindings: true}")] {
+            let config = UserConfig::parse(text).unwrap();
+            assert_eq!(
+                config.theme.style(StyleKey::Bar).bg,
+                Some(ThemeName::TokyoNight.palette().selection)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_names_and_keys() {
+        for text in [
+            "theme: unknown",
+            "unknown: {}",
+            "tmux: {unknown: true}",
+            "tmux: {bindings: invalid}",
+            "theme: {styles: {waiting: bold}}",
+        ] {
+            assert!(UserConfig::parse(Some(text)).is_err(), "{text}");
+        }
     }
 }

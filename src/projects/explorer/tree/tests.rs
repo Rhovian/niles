@@ -273,7 +273,7 @@ fn state_suffixes_carry_theme_styles() {
     let line = tree.label(Item::Project(&tree.projects[0]), now, &theme);
     assert_eq!(
         line.spans.last().unwrap().style,
-        theme.state(ThemeState::Waiting).1.ratatui
+        theme.state(ThemeState::Waiting).1
     );
     let line = tree.label(
         Item::Member(&tree.projects[0], WorkerRole::Worker, Member::Lost("gone")),
@@ -283,7 +283,7 @@ fn state_suffixes_carry_theme_styles() {
     assert_eq!(line.spans.last().unwrap().content, "window lost");
     assert_eq!(
         line.spans.last().unwrap().style,
-        theme.style(StyleKey::Lost).ratatui
+        theme.style(StyleKey::Lost)
     );
 }
 
@@ -294,16 +294,13 @@ fn headings_guides_and_counts_carry_theme_styles() {
     let theme = Theme::parse(None).unwrap();
     let now = Utc::now();
     let heading = tree.label(Item::Header, now, &theme);
-    assert_eq!(
-        heading.spans[0].style,
-        theme.style(StyleKey::Heading).ratatui
-    );
+    assert_eq!(heading.spans[0].style, theme.style(StyleKey::Heading));
     let folder = tree.label(tree.items()[2], now, &theme);
     for span in [&folder.spans[1], &folder.spans[3]] {
-        assert_eq!(span.style, theme.style(StyleKey::Guide).ratatui);
+        assert_eq!(span.style, theme.style(StyleKey::Guide));
     }
     assert_eq!(
         folder.spans.last().unwrap().style,
-        theme.style(StyleKey::Muted).ratatui
+        theme.style(StyleKey::Muted)
     );
 }

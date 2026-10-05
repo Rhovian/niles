@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     cli::StatusLine,
-    theme::{self, StyleKey, Theme},
+    theme::{self, StyleKey, StyleRender, Theme},
     tmux,
 };
 use camino::Utf8PathBuf;
@@ -127,6 +127,10 @@ mod tests {
 
     #[test]
     fn session_segments_render_lead_worker_plain_and_active() {
+        let theme = Theme::parse(None).unwrap();
+        let pill = theme.style(StyleKey::Pill).tmux();
+        let running = theme.style(StyleKey::Running).tmux();
+        let waiting = theme.style(StyleKey::Waiting).tmux();
         let segment =
             |label: &str, model: Option<&str>, state, tokens, age: Option<&str>, highlighted| {
                 Segment {
@@ -159,13 +163,19 @@ mod tests {
                     ),
                     segment("2:shell", None, None, None, None, false),
                 ],
-                &Theme::parse(None).unwrap()
+                &theme
             ),
-            "0:lead opus #[fg=#f0a35e]⚠#[default] 12k │ #[fg=#1b1b1b,bg=#6b9cff,bold]1:w##parse gpt-6 #[fg=#5fd38d]●#[default]#[fg=#1b1b1b,bg=#6b9cff,bold] 840k 6m#[default] │ 2:shell"
+            format!(
+                "0:lead opus {waiting}⚠#[default] 12k │ {pill}1:w##parse gpt-6 {running}●#[default]{pill} 840k 6m#[default] │ 2:shell"
+            )
         );
     }
     #[test]
     fn projects_render_live_states_and_escape_names() {
+        let theme = Theme::parse(None).unwrap();
+        let pill = theme.style(StyleKey::Pill).tmux();
+        let running = theme.style(StyleKey::Running).tmux();
+        let waiting = theme.style(StyleKey::Waiting).tmux();
         let now = Utc::now();
         let row = |name, state| Row {
             entry: registry::Entry {
@@ -184,8 +194,10 @@ mod tests {
             row("gone", State::NotRunning),
         ];
         assert_eq!(
-            render(&from_rows(&rows, "api", now), &Theme::parse(None).unwrap()),
-            "#[fg=#1b1b1b,bg=#6b9cff,bold]api #[fg=#5fd38d]●#[default]#[fg=#1b1b1b,bg=#6b9cff,bold]#[default] │ wait #[fg=#f0a35e]⚠#[default] 12m │ unknown #[fg=#f0a35e]⚠#[default]"
+            render(&from_rows(&rows, "api", now), &theme),
+            format!(
+                "{pill}api {running}●#[default]{pill}#[default] │ wait {waiting}⚠#[default] 12m │ unknown {waiting}⚠#[default]"
+            )
         );
         let escaped = Segment {
             label: "a#b".into(),
@@ -196,8 +208,8 @@ mod tests {
             highlighted: false,
         };
         assert_eq!(
-            render(&[escaped], &Theme::parse(None).unwrap()),
-            "a##b #[fg=#5fd38d]●#[default]"
+            render(&[escaped], &theme),
+            format!("a##b {running}●#[default]")
         );
     }
 }

@@ -1,7 +1,7 @@
 use super::{SessionName, TmuxTarget, WindowPresence, output, run, target};
 use crate::{
     agent_window::shell_quote,
-    theme::{StyleKey, Theme},
+    theme::{StyleKey, StyleRender, Theme},
 };
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
@@ -82,10 +82,11 @@ pub(crate) fn configure_status(session: &SessionName, theme: &Theme) -> Result<(
     let target = format!("{}:", target::exact(session.as_str()));
     let projects = format!("#({quoted} status projects #{{session_name}})");
     let sessions = format!("#({quoted} status sessions #{{session_name}} #{{window_index}})");
+    let bar_style = theme.style(StyleKey::Bar).tmux_option();
     let options = [
         ("status", "2"),
         ("status-position", "top"),
-        ("status-style", theme.style(StyleKey::Bar).tmux_option()),
+        ("status-style", bar_style.as_str()),
         ("status-interval", "5"),
         ("status-format[0]", projects.as_str()),
         ("status-format[1]", sessions.as_str()),

@@ -7,7 +7,7 @@ use super::{registry, rows};
 use crate::{
     config::spec::PROJECT_CONFIG_FILES,
     session,
-    theme::{State, StyleKey, Theme},
+    theme::{State, StyleKey, StyleRender, Theme},
     tmux,
     worker::usage::{self, SessionUsage},
 };

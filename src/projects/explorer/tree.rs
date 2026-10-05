@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::theme::{GlyphKey, State as ThemeState, StyleKey, Theme};
+use crate::theme::{self, State as ThemeState, StyleKey, Theme};
 use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
 
@@ -280,21 +280,18 @@ impl Tree {
     }
 
     pub fn label<'a>(&self, item: Item<'_>, now: DateTime<Utc>, theme: &'a Theme) -> Line<'a> {
-        let guide = |glyph| Span::styled(glyph, theme.style(StyleKey::Guide).ratatui);
+        let guide = |glyph| Span::styled(glyph, theme.style(StyleKey::Guide));
         match item {
-            Item::Header => Line::from(Span::styled(
-                "PROJECTS",
-                theme.style(StyleKey::Heading).ratatui,
-            )),
+            Item::Header => Line::from(Span::styled("PROJECTS", theme.style(StyleKey::Heading))),
             Item::Panel(panel) => Line::from(Span::styled(
                 panel.name().to_uppercase(),
-                theme.style(StyleKey::Heading).ratatui,
+                theme.style(StyleKey::Heading),
             )),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
                 let marker = match &project.agents {
-                    Some(_) if self.expanded.contains(name) => theme.glyph(GlyphKey::Expanded),
-                    Some(_) => theme.glyph(GlyphKey::Collapsed),
+                    Some(_) if self.expanded.contains(name) => theme::EXPANDED,
+                    Some(_) => theme::COLLAPSED,
                     None => " ",
                 };
                 let mut line = Line::from(vec![
@@ -303,17 +300,15 @@ impl Tree {
                     Span::raw(format!(" {name}")),
                 ]);
                 let suffix = match project.row.state {
-                    State::Missing => {
-                        Some(Span::styled("missing", theme.style(StyleKey::Lost).ratatui))
-                    }
+                    State::Missing => Some(Span::styled("missing", theme.style(StyleKey::Lost))),
                     State::NotRunning => None,
                     State::Running => Some(Span::styled(
                         spinner(now, theme),
-                        theme.state(ThemeState::Running).1.ratatui,
+                        theme.state(ThemeState::Running).1,
                     )),
                     State::Waiting(_) => {
                         let (glyph, style) = theme.state(ThemeState::Waiting);
-                        Some(Span::styled(glyph, style.ratatui))
+                        Some(Span::styled(glyph, style))
                     }
                 };
                 if let Some(suffix) = suffix {
@@ -323,15 +318,15 @@ impl Tree {
             }
             Item::Folder(project, role) => {
                 let branch = if project.roles().next_back() == Some(role) {
-                    theme.glyph(GlyphKey::Last)
+                    theme::LAST
                 } else {
-                    theme.glyph(GlyphKey::Branch)
+                    theme::BRANCH
                 };
                 let name = project.row.entry.name.as_str().to_owned();
                 let marker = if self.folders.contains(&(name, role)) {
-                    theme.glyph(GlyphKey::Expanded)
+                    theme::EXPANDED
                 } else {
-                    theme.glyph(GlyphKey::Collapsed)
+                    theme::COLLAPSED
                 };
                 let plural = match role {
                     WorkerRole::Worker => "workers",
@@ -346,19 +341,19 @@ impl Tree {
                     Span::raw(" "),
                     guide(marker),
                     Span::raw(format!(" {plural} ")),
-                    Span::styled(count.to_string(), theme.style(StyleKey::Muted).ratatui),
+                    Span::styled(count.to_string(), theme.style(StyleKey::Muted)),
                 ])
             }
             Item::Member(project, role, member) => {
                 let stem = if project.roles().next_back() == Some(role) {
                     " "
                 } else {
-                    theme.glyph(GlyphKey::Stem)
+                    theme::STEM
                 };
                 let branch = if project.members(role).last().map(Item::key) == Some(item.key()) {
-                    theme.glyph(GlyphKey::Last)
+                    theme::LAST
                 } else {
-                    theme.glyph(GlyphKey::Branch)
+                    theme::BRANCH
                 };
                 let mut line = Line::from(vec![
                     Span::raw("    "),
@@ -373,7 +368,7 @@ impl Tree {
                     }
                     Member::Lost(id) => line.spans.extend([
                         Span::raw(format!("{id} ")),
-                        Span::styled("window lost", theme.style(StyleKey::Lost).ratatui),
+                        Span::styled("window lost", theme.style(StyleKey::Lost)),
                     ]),
                 }
                 line
