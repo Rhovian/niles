@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::TestEnv;
+use common::{TestEnv, assert_command_success as assert_ok, stdout_of};
+use std::{fs, process::Command};
 
 #[test]
 fn bare_niles_creates_the_home_session_and_switches() {
@@ -58,4 +59,55 @@ fn existing_home_session_only_switches() {
     let log = env.tmux_log();
     assert!(log.contains("switch-client -t =niles+home:"), "{log}");
     assert!(!log.contains("new-session"), "{log}");
+}
+
+#[test]
+fn home_bindings_install_on_a_real_server() {
+    let found = Command::new("which").arg("tmux").output().unwrap();
+    let real_tmux = String::from_utf8(found.stdout).unwrap().trim().to_owned();
+    let wrapper = r#"#!/bin/sh
+[ "$1" = switch-client ] || exec "$TMUX_REAL" -S "$TMUX_SOCKET" "$@"
+"#;
+    let env = TestEnv::with_tmux("niles-bindings", wrapper);
+    let socket = env.root.join("tmux.sock");
+    let tmux = |args: &[&str]| {
+        let mut command = Command::new(&real_tmux);
+        command.args(["-f", "/dev/null", "-S", socket.to_str().unwrap()]);
+        command.args(args).output().unwrap()
+    };
+    let start = ["new-session", "-d", "-s", "niles+home"];
+    assert_ok("start tmux", &tmux(&start));
+    fs::create_dir_all(env.home.join(".niles")).unwrap();
+    let config = "tmux: {bindings: true}";
+    fs::write(env.home.join(".niles/config.yaml"), config).unwrap();
+    let mut niles = env.niles(&env.root, &[]);
+    niles.envs([
+        ("HOME", env.home.to_str().unwrap()),
+        ("TMUX_REAL", &real_tmux),
+        ("TMUX_SOCKET", socket.to_str().unwrap()),
+    ]);
+    let result = niles.output().unwrap();
+    let installed = tmux(&["list-keys", "-T", "root"]);
+    assert_ok("stop tmux", &tmux(&["kill-server"]));
+    assert_ok("bare niles", &result);
+    let keys = stdout_of(&installed);
+    let popup = format!("display-popup -E \"'{}'\"", env!("CARGO_BIN_EXE_niles"));
+    let line = |key| {
+        keys.lines()
+            .find(|l| l.split_whitespace().nth(3) == Some(key))
+            .unwrap_or_else(|| panic!("missing {key}: {keys}"))
+    };
+    assert!(line("M-n").contains(&popup), "{keys}");
+    for (meta, plain, pass) in [
+        ("M-[", "'['", "'M-['"),
+        ("M-]", "']'", "'M-]'"),
+        ("\"M-;\"", "';'", "'M-;'"),
+        ("\"M-'\"", "''\\\\'''", "'M-'\\\\'''"),
+    ] {
+        let line = line(meta);
+        assert!(line.contains("#{==:#{session_name},niles+home}"), "{line}");
+        let send = format!("send-keys -t '=niles+home:{{start}}.{{top-left}}' {plain}");
+        assert!(line.contains(&send), "{line}");
+        assert!(line.contains(&format!("send-keys {pass}")), "{line}");
+    }
 }

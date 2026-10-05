@@ -12,6 +12,7 @@ mod projects;
 mod session;
 mod store;
 mod telemetry;
+mod theme;
 mod tmux;
 mod util;
 mod wait;
@@ -55,7 +56,10 @@ fn run() -> Result<ExitCode> {
                     ExitCode::SUCCESS
                 }
                 Err(error) => {
-                    println!("niles: {}", format!("{error:#}").replace('\n', " "));
+                    println!(
+                        "niles: {}",
+                        format!("{error:#}").replace('\n', " ").replace('#', "##")
+                    );
                     ExitCode::FAILURE
                 }
             });

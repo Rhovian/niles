@@ -5,6 +5,8 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -15,7 +17,7 @@ use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout},
-    style::Style,
+    text::{Line, Span, Text},
     widgets::{List, ListState, Paragraph, Wrap},
 };
 
@@ -27,17 +29,45 @@ use super::{
     windows::{self, LEAD_WINDOW, Role},
 };
 use crate::{
+    theme::{StyleKey, Theme},
     tmux::{self, TmuxTarget, WindowTarget},
     util::current_dir_utf8,
 };
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: &str = "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help";
+const KEYS: [(&str, &str); 7] = [
+    ("↵", "open"),
+    ("[ ]", "project"),
+    ("; '", "window"),
+    ("r", "register"),
+    ("q", "quiet"),
+    ("c", "close"),
+    ("?", "help"),
+];
+
+fn key_hints(theme: &Theme) -> Line<'_> {
+    let mut spans = Vec::new();
+    for (index, (key, label)) in KEYS.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" · ", theme.style(StyleKey::Muted)));
+        }
+        spans.push(Span::styled(*key, theme.style(StyleKey::Accent)));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            theme.style(StyleKey::Muted),
+        ));
+    }
+    Line::from(spans)
+}
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
+    let config = crate::config::user::UserConfig::load()?;
     let home = tmux::open_home(&current_dir_utf8()?)?;
+    if config.tmux.bindings {
+        tmux::install_home_bindings()?;
+    }
     tmux::switch_or_attach(&TmuxTarget::session(&home))
 }
 
@@ -50,12 +80,14 @@ pub fn run() -> Result<()> {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
+        collected: Instant::now(),
+        theme: Theme::load()?,
         mode: Mode::Browse,
         footer: None,
         installed: modified(&binary)?,
         binary,
     };
-    explorer.tree.replace(collect()?);
+    explorer.refresh()?;
     let mut terminal = ratatui::init();
     let result = explorer.run(&mut terminal);
     ratatui::restore();
@@ -99,6 +131,9 @@ struct Explorer {
     pane: TmuxTarget,
     cwd: Utf8PathBuf,
     tree: Tree,
+    /// When the collect behind `tree` began; an older one finishing later would undo it.
+    collected: Instant,
+    theme: Theme,
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
     footer: Option<String>,
@@ -110,23 +145,39 @@ struct Explorer {
 impl Explorer {
     /// Returns once the binary on disk has been replaced and no prompt is open.
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        let mut collected = Instant::now();
+        let collections = collector();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(tree::SPINNER_FRAME.min(REFRESH.saturating_sub(collected.elapsed())))?
+            if event::poll(tree::SPINNER_FRAME)?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
                 self.key(key.code)?;
             }
-            if collected.elapsed() >= REFRESH {
-                if matches!(self.mode, Mode::Browse) && modified(&self.binary)? != self.installed {
-                    return Ok(());
+            match collections.try_recv() {
+                Ok((started, projects)) => {
+                    if matches!(self.mode, Mode::Browse)
+                        && modified(&self.binary)? != self.installed
+                    {
+                        return Ok(());
+                    }
+                    let projects = projects?;
+                    if started > self.collected {
+                        self.tree.replace(projects);
+                        self.collected = started;
+                    }
                 }
-                self.tree.replace(collect()?);
-                collected = Instant::now();
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => bail!("the explorer's collector stopped"),
             }
         }
+    }
+
+    /// Collects in place, for an action whose next step reads the result.
+    fn refresh(&mut self) -> Result<()> {
+        self.collected = Instant::now();
+        self.tree.replace(collect()?);
+        Ok(())
     }
 
     /// Every key clears the footer; a key that does something reports its outcome there.
@@ -174,7 +225,7 @@ impl Explorer {
                 }
                 self.footer = shown(close(closing, &self.pane));
                 self.mode = Mode::Browse;
-                self.tree.replace(collect()?);
+                self.refresh()?;
                 if project
                     && matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
                     && let Some(error) = shown(self.open())
@@ -210,7 +261,7 @@ impl Explorer {
                     Ok(()) => {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
-                        self.tree.replace(collect()?);
+                        self.refresh()?;
                         if let Some(error) = shown(tmux::open_panel("help").map(|_| None)) {
                             self.footer = Some(error);
                         }
@@ -245,7 +296,7 @@ impl Explorer {
                     }
                     State::NotRunning => {
                         tmux::open_session(&session, &entry.path)?;
-                        tmux::configure_status(&session)?;
+                        tmux::configure_status(&session, &self.theme)?;
                     }
                     State::Running | State::Waiting(_) => {}
                 }
@@ -303,9 +354,9 @@ impl Explorer {
             .tree
             .items()
             .into_iter()
-            .map(|item| self.tree.label(item, now));
+            .map(|item| self.tree.label(item, now, &self.theme));
         let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
-        let list_widget = List::new(labels).highlight_style(Style::new().reversed());
+        let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
         frame.render_stateful_widget(list_widget, list, &mut state);
         let prompt = match &self.mode {
             Mode::Browse => None,
@@ -317,10 +368,10 @@ impl Explorer {
             }
         };
         let text = match (&self.footer, prompt) {
-            (Some(message), Some(prompt)) => format!("{message}\n{prompt}"),
-            (Some(message), None) => message.clone(),
-            (None, Some(prompt)) => prompt,
-            (None, None) => KEYS.to_owned(),
+            (Some(message), Some(prompt)) => Text::raw(format!("{message}\n{prompt}")),
+            (Some(message), None) => Text::raw(message.as_str()),
+            (None, Some(prompt)) => Text::raw(prompt),
+            (None, None) => Text::from(key_hints(&self.theme)),
         };
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), footer);
     }
@@ -351,6 +402,22 @@ fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
             Ok(Some(format!("closed {}", name.as_str())))
         }
     }
+}
+
+/// Collects every `REFRESH` on its own thread, so a slow collect never stalls drawing. Each result
+/// carries when its collect began.
+fn collector() -> Receiver<(Instant, Result<Vec<Project>>)> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        loop {
+            thread::sleep(REFRESH);
+            let started = Instant::now();
+            if sender.send((started, collect())).is_err() {
+                break;
+            }
+        }
+    });
+    receiver
 }
 
 fn collect() -> Result<Vec<Project>> {
@@ -393,4 +460,27 @@ fn niles(args: &[&str], project: &Utf8Path) -> Result<String> {
         bail!(text);
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn footer_keys_and_labels_carry_theme_styles() {
+        let theme = Theme::parse(None).unwrap();
+        let line = key_hints(&theme);
+        assert_eq!(
+            line.to_string(),
+            "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help"
+        );
+        for (index, span) in line.spans.iter().enumerate() {
+            let key = if index % 3 == 0 {
+                StyleKey::Accent
+            } else {
+                StyleKey::Muted
+            };
+            assert_eq!(span.style, theme.style(key));
+        }
+    }
 }

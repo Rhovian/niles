@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use crate::theme::{self, State as ThemeState, StyleKey, Theme};
 use chrono::{DateTime, Utc};
+use ratatui::text::{Line, Span};
 
 use crate::projects::{
     panels::Panel,
@@ -45,14 +47,10 @@ impl Project {
     }
 }
 
-const SPINNER: [&str; 8] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 pub(super) const SPINNER_FRAME: Duration = Duration::from_millis(120);
 
-fn spinner(now: DateTime<Utc>) -> &'static str {
-    let delta = now.timestamp_millis();
-    let frame_ms = SPINNER_FRAME.as_millis() as i64;
-    let index = (delta / frame_ms).rem_euclid(SPINNER.len() as i64);
-    SPINNER[index as usize]
+fn spinner(now: DateTime<Utc>, theme: &Theme) -> &str {
+    theme.spinner(now.timestamp_millis() / SPINNER_FRAME.as_millis() as i64)
 }
 
 #[derive(Clone, Copy)]
@@ -281,35 +279,54 @@ impl Tree {
         }
     }
 
-    pub fn label(&self, item: Item<'_>, now: DateTime<Utc>) -> String {
+    pub fn label<'a>(&self, item: Item<'_>, now: DateTime<Utc>, theme: &'a Theme) -> Line<'a> {
+        let guide = |glyph| Span::styled(glyph, theme.style(StyleKey::Guide));
         match item {
-            Item::Header => "PROJECTS".to_owned(),
-            Item::Panel(panel) => panel.name().to_uppercase(),
+            Item::Header => Line::from(Span::styled("PROJECTS", theme.style(StyleKey::Heading))),
+            Item::Panel(panel) => Line::from(Span::styled(
+                panel.name().to_uppercase(),
+                theme.style(StyleKey::Heading),
+            )),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
                 let marker = match &project.agents {
-                    Some(_) if self.expanded.contains(name) => "▾",
-                    Some(_) => "▸",
+                    Some(_) if self.expanded.contains(name) => theme::EXPANDED,
+                    Some(_) => theme::COLLAPSED,
                     None => " ",
                 };
-                match project.row.state {
-                    State::Missing => format!("  {marker} {name}  missing"),
-                    State::NotRunning => format!("  {marker} {name}"),
-                    State::Running => format!("  {marker} {name}  {}", spinner(now)),
-                    State::Waiting(_) => format!("  {marker} {name}  ⚠"),
+                let mut line = Line::from(vec![
+                    Span::raw("  "),
+                    guide(marker),
+                    Span::raw(format!(" {name}")),
+                ]);
+                let suffix = match project.row.state {
+                    State::Missing => Some(Span::styled("missing", theme.style(StyleKey::Lost))),
+                    State::NotRunning => None,
+                    State::Running => Some(Span::styled(
+                        spinner(now, theme),
+                        theme.state(ThemeState::Running).1,
+                    )),
+                    State::Waiting(_) => {
+                        let (glyph, style) = theme.state(ThemeState::Waiting);
+                        Some(Span::styled(glyph, style))
+                    }
+                };
+                if let Some(suffix) = suffix {
+                    line.spans.extend([Span::raw("  "), suffix]);
                 }
+                line
             }
             Item::Folder(project, role) => {
                 let branch = if project.roles().next_back() == Some(role) {
-                    "└─"
+                    theme::LAST
                 } else {
-                    "├─"
+                    theme::BRANCH
                 };
                 let name = project.row.entry.name.as_str().to_owned();
                 let marker = if self.folders.contains(&(name, role)) {
-                    "▾"
+                    theme::EXPANDED
                 } else {
-                    "▸"
+                    theme::COLLAPSED
                 };
                 let plural = match role {
                     WorkerRole::Worker => "workers",
@@ -318,24 +335,43 @@ impl Tree {
                     WorkerRole::Research => "research",
                 };
                 let count = project.members(role).count();
-                format!("    {branch} {marker} {plural} {count}")
+                Line::from(vec![
+                    Span::raw("    "),
+                    guide(branch),
+                    Span::raw(" "),
+                    guide(marker),
+                    Span::raw(format!(" {plural} ")),
+                    Span::styled(count.to_string(), theme.style(StyleKey::Muted)),
+                ])
             }
             Item::Member(project, role, member) => {
                 let stem = if project.roles().next_back() == Some(role) {
                     " "
                 } else {
-                    "│"
+                    theme::STEM
                 };
                 let branch = if project.members(role).last().map(Item::key) == Some(item.key()) {
-                    "└─"
+                    theme::LAST
                 } else {
-                    "├─"
+                    theme::BRANCH
                 };
-                let label = match member {
-                    Member::Window(window) => window.segment.label.clone(),
-                    Member::Lost(id) => format!("{id} window lost"),
-                };
-                format!("    {stem}     {branch} {label}")
+                let mut line = Line::from(vec![
+                    Span::raw("    "),
+                    guide(stem),
+                    Span::raw("     "),
+                    guide(branch),
+                    Span::raw(" "),
+                ]);
+                match member {
+                    Member::Window(window) => {
+                        line.spans.push(Span::raw(window.segment.label.clone()))
+                    }
+                    Member::Lost(id) => line.spans.extend([
+                        Span::raw(format!("{id} ")),
+                        Span::styled("window lost", theme.style(StyleKey::Lost)),
+                    ]),
+                }
+                line
             }
         }
     }

@@ -21,6 +21,8 @@ It never accepts an agent CLI workspace-trust prompt. Niles does not create an i
 between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
 CLI, its launch flags, and operating-system controls.
 
+The operator's `~/.niles/config.yaml` controls the theme and optional tmux bindings; those bindings run only the shell-quoted Niles executable.
+
 ## Boundaries
 
 ### Cloned repository manifest and configuration
@@ -84,6 +86,9 @@ The cursor itself is the locked file—there is no separate persistent lock file
 lock authenticates neither writers nor status content. Other `.niles` state is not universally
 locked. Niles does not defend its state from a process that already has the operator's filesystem
 permissions.
+
+Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
+colors and styling modifiers are rendered into tmux formats.
 
 ### Status lines, pane capture, and terminal or lead injection
 

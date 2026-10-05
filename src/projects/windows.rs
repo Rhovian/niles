@@ -6,6 +6,7 @@ use super::status::Segment;
 use crate::{
     session,
     telemetry::{SessionState, Usage},
+    theme,
     tmux::{self, SessionName},
     worker,
 };
@@ -58,7 +59,7 @@ pub(super) fn session_agents(
     let windows = windows
         .into_iter()
         .map(|window| {
-            let (role, model, glyph, tokens, age) =
+            let (role, model, state, tokens, age) =
                 if project.is_some() && window.name == LEAD_WINDOW {
                     let model = lead
                         .as_ref()
@@ -68,17 +69,17 @@ pub(super) fn session_agents(
                         worker.usage.as_ref().and_then(|usage| usage.state)
                             == Some(SessionState::Working)
                     });
-                    let (glyph, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
-                    (Role::Lead, model, glyph, tokens, None)
+                    let (state, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
+                    (Role::Lead, model, state, tokens, None)
                 } else if let Some(worker) = workers
                     .iter()
                     .find(|worker| worker.window == recorded(&window.name))
                 {
-                    let (glyph, tokens) = usage_fields(worker.usage.as_ref(), false);
+                    let (state, tokens) = usage_fields(worker.usage.as_ref(), false);
                     (
                         Role::Worker(worker.id.clone(), worker.role),
                         Some(worker.model.clone()),
-                        glyph,
+                        state,
                         tokens,
                         Some(age(now, worker.created_at)),
                     )
@@ -97,7 +98,7 @@ pub(super) fn session_agents(
                 segment: Segment {
                     label,
                     model,
-                    glyph,
+                    state,
                     tokens,
                     age,
                     highlighted: false,
@@ -111,13 +112,13 @@ pub(super) fn session_agents(
 fn usage_fields(
     usage: Option<&Usage>,
     alert_when_waiting: bool,
-) -> (Option<&'static str>, Option<u64>) {
+) -> (Option<theme::State>, Option<u64>) {
     match usage {
         Some(usage) => (
             usage.state.map(|state| match state {
-                SessionState::Working => "●",
-                SessionState::Waiting if alert_when_waiting => "⚠",
-                SessionState::Waiting => "○",
+                SessionState::Working => theme::State::Running,
+                SessionState::Waiting if alert_when_waiting => theme::State::Waiting,
+                SessionState::Waiting => theme::State::Idle,
             }),
             Some(usage.total_tokens()),
         ),

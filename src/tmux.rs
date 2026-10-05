@@ -12,7 +12,7 @@ mod send;
 mod session;
 mod target;
 
-pub(crate) use home::{close_view, open_home, show_in_view};
+pub(crate) use home::{close_view, install_home_bindings, open_home, show_in_view};
 pub(crate) use panels::open_panel;
 pub(crate) use session::{
     configure_status, kill_session, lead_running, open_session, project_session, switch_or_attach,
