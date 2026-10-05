@@ -6,19 +6,24 @@ use super::{
     rows::{self, Row, State},
     windows::{self, age},
 };
-use crate::{cli::StatusLine, tmux};
+use crate::{
+    cli::StatusLine,
+    theme::{self, StyleKey, Theme},
+    tmux,
+};
 use camino::Utf8PathBuf;
 
 pub(crate) struct Segment {
     pub label: String,
     pub model: Option<String>,
-    pub glyph: Option<&'static str>,
+    pub state: Option<theme::State>,
     pub tokens: Option<u64>,
     pub age: Option<String>,
     pub highlighted: bool,
 }
 
 pub(crate) fn run(line: StatusLine) -> Result<String> {
+    let theme = Theme::load()?;
     let now = Utc::now();
     let segments = match line {
         StatusLine::Projects { session_name } => {
@@ -29,7 +34,7 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
             window_index,
         } => session_segments(&session_name, window_index, now)?,
     };
-    Ok(render(&segments))
+    Ok(render(&segments, &theme))
 }
 
 fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
@@ -42,16 +47,18 @@ fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
 fn from_rows(rows: &[Row], session_name: &str, now: DateTime<Utc>) -> Vec<Segment> {
     rows.iter()
         .filter_map(|row| {
-            let (glyph, age) = match row.state {
-                State::Running => ("●", None),
-                State::Waiting(since) => ("⚠", since.map(|since| age(now, since))),
+            let (state, age) = match row.state {
+                State::Running => (theme::State::Running, None),
+                State::Waiting(since) => {
+                    (theme::State::Waiting, since.map(|since| age(now, since)))
+                }
                 State::Missing | State::NotRunning => return None,
             };
             Some(Segment {
                 highlighted: row.entry.name.as_str() == session_name,
                 label: row.entry.name.as_str().to_owned(),
                 model: None,
-                glyph: Some(glyph),
+                state: Some(state),
                 tokens: None,
                 age,
             })
@@ -75,30 +82,37 @@ fn session_segments(name: &str, active_index: u32, now: DateTime<Utc>) -> Result
     )
 }
 
-impl Segment {
-    pub(super) fn text(&self) -> String {
-        let tokens = self.tokens.map(rows::abbreviate);
-        [
-            Some(self.label.as_str()),
-            self.model.as_deref(),
-            self.glyph,
-            tokens.as_deref(),
-            self.age.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" ")
-    }
-}
-
-pub(crate) fn render(segments: &[Segment]) -> String {
+pub(crate) fn render(segments: &[Segment], theme: &Theme) -> String {
     segments
         .iter()
         .map(|segment| {
-            let text = segment.text().replace('#', "##");
+            let base = if segment.highlighted {
+                theme.style(StyleKey::Pill).tmux()
+            } else {
+                String::new()
+            };
+            let glyph = segment.state.map(|state| {
+                let (glyph, style) = theme.state(state);
+                format!(
+                    "{}{}#[default]{base}",
+                    style.tmux(),
+                    glyph.replace('#', "##")
+                )
+            });
+            let tokens = segment.tokens.map(rows::abbreviate);
+            let text = [
+                Some(segment.label.replace('#', "##")),
+                segment.model.as_ref().map(|s| s.replace('#', "##")),
+                glyph,
+                tokens,
+                segment.age.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
             if segment.highlighted {
-                format!("#[reverse]{text}#[noreverse]")
+                format!("{base}{text}#[default]")
             } else {
                 text
             }
@@ -114,30 +128,40 @@ mod tests {
     #[test]
     fn session_segments_render_lead_worker_plain_and_active() {
         let segment =
-            |label: &str, model: Option<&str>, glyph, tokens, age: Option<&str>, highlighted| {
+            |label: &str, model: Option<&str>, state, tokens, age: Option<&str>, highlighted| {
                 Segment {
                     label: label.into(),
                     model: model.map(str::to_owned),
-                    glyph,
+                    state,
                     tokens,
                     age: age.map(str::to_owned),
                     highlighted,
                 }
             };
         assert_eq!(
-            render(&[
-                segment("0:lead", Some("opus"), Some("⚠"), Some(12_000), None, false),
-                segment(
-                    "1:w#parse",
-                    Some("gpt-6"),
-                    Some("●"),
-                    Some(840_000),
-                    Some("6m"),
-                    true
-                ),
-                segment("2:shell", None, None, None, None, false),
-            ]),
-            "0:lead opus ⚠ 12k │ #[reverse]1:w##parse gpt-6 ● 840k 6m#[noreverse] │ 2:shell"
+            render(
+                &[
+                    segment(
+                        "0:lead",
+                        Some("opus"),
+                        Some(theme::State::Waiting),
+                        Some(12_000),
+                        None,
+                        false
+                    ),
+                    segment(
+                        "1:w#parse",
+                        Some("gpt-6"),
+                        Some(theme::State::Running),
+                        Some(840_000),
+                        Some("6m"),
+                        true
+                    ),
+                    segment("2:shell", None, None, None, None, false),
+                ],
+                &Theme::parse(None).unwrap()
+            ),
+            "0:lead opus #[fg=#f0a35e]⚠#[default] 12k │ #[fg=#1b1b1b,bg=#6b9cff,bold]1:w##parse gpt-6 #[fg=#5fd38d]●#[default]#[fg=#1b1b1b,bg=#6b9cff,bold] 840k 6m#[default] │ 2:shell"
         );
     }
     #[test]
@@ -160,17 +184,20 @@ mod tests {
             row("gone", State::NotRunning),
         ];
         assert_eq!(
-            render(&from_rows(&rows, "api", now)),
-            "#[reverse]api ●#[noreverse] │ wait ⚠ 12m │ unknown ⚠"
+            render(&from_rows(&rows, "api", now), &Theme::parse(None).unwrap()),
+            "#[fg=#1b1b1b,bg=#6b9cff,bold]api #[fg=#5fd38d]●#[default]#[fg=#1b1b1b,bg=#6b9cff,bold]#[default] │ wait #[fg=#f0a35e]⚠#[default] 12m │ unknown #[fg=#f0a35e]⚠#[default]"
         );
         let escaped = Segment {
             label: "a#b".into(),
             model: None,
-            glyph: Some("●"),
+            state: Some(theme::State::Running),
             tokens: None,
             age: None,
             highlighted: false,
         };
-        assert_eq!(render(&[escaped]), "a##b ●");
+        assert_eq!(
+            render(&[escaped], &Theme::parse(None).unwrap()),
+            "a##b #[fg=#5fd38d]●#[default]"
+        );
     }
 }

@@ -85,6 +85,8 @@ lock authenticates neither writers nor status content. Other `.niles` state is n
 locked. Niles does not defend its state from a process that already has the operator's filesystem
 permissions.
 
+Theme config style text reaches tmux formats only through the whitelist in `src/theme.rs`.
+
 ### Status lines, pane capture, and terminal or lead injection
 
 **Attacker.** A malicious repository author whose content is repeated or acted on by an agent, or

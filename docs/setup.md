@@ -34,6 +34,46 @@ The view pane on the right is a tmux client nested inside the home session, so t
 to the agent. Enter retargets only that client, never your own. Leave the home view with tmux's
 detach or by switching sessions.
 
+## Theme
+
+Set overrides in `~/.niles/config.yaml`; a missing file uses the defaults below. Each key
+replaces its entire token. Unknown keys, unreadable files, and invalid values are errors.
+
+```yaml
+theme:
+  styles:
+    running: 'fg=#5fd38d'
+    waiting: 'fg=#f0a35e'
+    idle: 'fg=#8a8f98'
+    lost: 'fg=#e06c75'
+    selection: 'bg=#1f2a44,bold'
+    pill: 'fg=#1b1b1b,bg=#6b9cff,bold'
+    heading: 'bold'
+    muted: 'fg=#6c7086'
+    accent: 'fg=#6b9cff,bold'
+    guide: 'fg=#3b4252'
+    bar: 'fg=#c0caf5,bg=#1a1b26'
+  glyphs:
+    running: '●'
+    waiting: '⚠'
+    idle: '○'
+    spinner: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
+    branch: '├─'
+    last: '└─'
+    stem: '│'
+    expanded: '▾'
+    collapsed: '▸'
+```
+
+Styles use comma-separated tmux syntax with no spaces: `fg=C`, `bg=C`, `bold`, `dim`,
+`italics`, `underscore`, and `reverse`. Colors are `default`, `black`, `red`, `green`,
+`yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright` variants, `colourN` or `colorN`
+for 0–255, or `#rrggbb`. Glyphs must be non-empty strings with the default's display width:
+`branch` and `last` require width two; all others require width one. `spinner` is a
+non-empty list of width-one strings. Unstyled text keeps the terminal default color.
+
+Bar changes apply when a session's status is configured; there is no live reload.
+
 ## Key bindings
 
 Open the home view from anywhere in tmux with a popup:

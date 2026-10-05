@@ -6,7 +6,9 @@ use clap::ValueEnum;
 use super::{registry, rows};
 use crate::{
     config::spec::PROJECT_CONFIG_FILES,
-    session, tmux,
+    session,
+    theme::{State, StyleKey, Theme},
+    tmux,
     worker::usage::{self, SessionUsage},
 };
 
@@ -28,13 +30,14 @@ impl Panel {
 }
 
 pub(crate) fn render(panel: Panel) -> Result<()> {
+    let theme = Theme::load()?;
     let mut text = String::new();
     let entries = registry::entries()?;
     match panel {
-        Panel::Help => text.push_str(help_text(entries.is_empty())),
+        Panel::Help => text.push_str(&help_text(entries.is_empty(), &theme)),
         Panel::Config => {
             for entry in entries {
-                text.push_str(&config(&entry)?);
+                text.push_str(&config(&entry, &theme)?);
             }
         }
         Panel::Telemetry => {
@@ -50,7 +53,15 @@ pub(crate) fn render(panel: Panel) -> Result<()> {
                 };
                 let sessions = usage::collect(&entry.path, lead)?;
                 if !sessions.is_empty() {
-                    writeln!(text, "{}  {}", entry.name.as_str(), entry.path)?;
+                    writeln!(
+                        text,
+                        "{}",
+                        theme.style(StyleKey::Heading).paint(&format!(
+                            "{}  {}",
+                            entry.name.as_str(),
+                            entry.path
+                        ))
+                    )?;
                     text.push_str(&telemetry(&sessions)?);
                 }
             }
@@ -80,27 +91,58 @@ const KEYS: &str = "Choose a project on the left.
   c      close a worker or project
   ?      this help            esc    back
 
-  ⣾ running   ⚠ waiting
+  {running} running   {waiting} waiting
 
 With the bindings in docs/setup.md, M-[ M-] M-; M-' do the same from any pane.
 ";
 
-fn help_text(first_run: bool) -> &'static str {
-    if first_run { FIRST_RUN } else { KEYS }
+fn help_text(first_run: bool, theme: &Theme) -> String {
+    if first_run {
+        FIRST_RUN
+            .split('\n')
+            .map(|line| match line {
+                "niles" | "Get started" => theme.style(StyleKey::Heading).paint(line),
+                _ => line.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        let (waiting, style) = theme.state(State::Waiting);
+        KEYS.replace(
+            "{running}",
+            &theme.state(State::Running).1.paint(theme.spinner(0)),
+        )
+        .replace("{waiting}", &style.paint(waiting))
+    }
 }
 
-fn config(entry: &registry::Entry) -> Result<String> {
-    let mut text = format!("{}  {}\n", entry.name.as_str(), entry.path);
+fn config(entry: &registry::Entry, theme: &Theme) -> Result<String> {
+    let mut text = format!(
+        "{}\n",
+        theme
+            .style(StyleKey::Heading)
+            .paint(&format!("{}  {}", entry.name.as_str(), entry.path))
+    );
     for file in std::iter::once(".niles/manifest.yaml").chain(PROJECT_CONFIG_FILES) {
         let path = entry.path.join(file);
         if !path.try_exists()? {
             if file == ".niles/manifest.yaml" {
-                writeln!(text, "{file} missing")?;
+                writeln!(
+                    text,
+                    "{} {}",
+                    theme.style(StyleKey::Accent).paint(file),
+                    theme.style(StyleKey::Lost).paint("missing")
+                )?;
             }
             continue;
         }
         let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-        writeln!(text, "{file}\n{}", body.trim_end_matches('\n'))?;
+        writeln!(
+            text,
+            "{}\n{}",
+            theme.style(StyleKey::Accent).paint(file),
+            body.trim_end_matches('\n')
+        )?;
     }
     text.push('\n');
     Ok(text)
@@ -145,8 +187,21 @@ mod tests {
 
     #[test]
     fn help_text_depends_on_whether_registry_is_empty() {
-        assert_eq!(help_text(true), FIRST_RUN);
-        assert_eq!(help_text(false), KEYS);
+        let theme = Theme::parse(None).unwrap();
+        assert_eq!(
+            help_text(true, &theme),
+            FIRST_RUN
+                .replacen("niles", &theme.style(StyleKey::Heading).paint("niles"), 1)
+                .replace(
+                    "Get started",
+                    &theme.style(StyleKey::Heading).paint("Get started")
+                )
+        );
+        assert!(help_text(false, &theme).contains(&format!(
+            "{} running   {} waiting",
+            theme.state(State::Running).1.paint("⣾"),
+            theme.state(State::Waiting).1.paint("⚠")
+        )));
     }
 
     #[test]
@@ -156,19 +211,28 @@ mod tests {
             name: ProjectName::parse("api").unwrap(),
             path,
         };
-        let heading = format!("api  {}\n", entry.path);
+        let theme = Theme::parse(None).unwrap();
+        let heading = format!(
+            "{}\n",
+            theme
+                .style(StyleKey::Heading)
+                .paint(&format!("api  {}", entry.path))
+        );
+        let [manifest, niles, dot_niles] = [".niles/manifest.yaml", "niles.yaml", ".niles.yaml"]
+            .map(|file| theme.style(StyleKey::Accent).paint(file));
+        let missing = theme.style(StyleKey::Lost).paint("missing");
         assert_eq!(
-            config(&entry).unwrap(),
-            format!("{heading}.niles/manifest.yaml missing\n\n")
+            config(&entry, &theme).unwrap(),
+            format!("{heading}{manifest} {missing}\n\n")
         );
         fs::create_dir_all(entry.path.join(".niles")).unwrap();
         for file in [".niles/manifest.yaml", "niles.yaml", ".niles.yaml"] {
             fs::write(entry.path.join(file), "agents: {}\n").unwrap();
         }
         assert_eq!(
-            config(&entry).unwrap(),
+            config(&entry, &theme).unwrap(),
             format!(
-                "{heading}.niles/manifest.yaml\nagents: {{}}\nniles.yaml\nagents: {{}}\n.niles.yaml\nagents: {{}}\n\n"
+                "{heading}{manifest}\nagents: {{}}\n{niles}\nagents: {{}}\n{dot_niles}\nagents: {{}}\n\n"
             )
         );
         fs::remove_dir_all(&entry.path).unwrap();

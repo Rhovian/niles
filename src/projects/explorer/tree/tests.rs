@@ -18,7 +18,7 @@ fn window(index: u32, name: &str, role: Role, label: &str) -> AgentWindow {
     let segment = Segment {
         label: label.into(),
         model: Some("opus".into()),
-        glyph: Some("●"),
+        state: Some(ThemeState::Running),
         tokens: None,
         age: None,
         highlighted: false,
@@ -60,9 +60,10 @@ fn tree() -> Tree {
 fn labels(tree: &Tree) -> Vec<String> {
     let now = DateTime::from_timestamp_millis(0).unwrap();
     let items = tree.items();
+    let theme = Theme::parse(None).unwrap();
     items
         .into_iter()
-        .map(|item| tree.label(item, now))
+        .map(|item| tree.label(item, now, &theme).to_string())
         .collect()
 }
 
@@ -204,9 +205,10 @@ fn waiting_project_shows_warning_and_spinner() {
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
     let now960 = DateTime::from_timestamp_millis(960).unwrap();
-    assert_eq!(spinner(now0), "⣾");
-    assert_eq!(spinner(now120), "⣽");
-    assert_eq!(spinner(now960), "⣾");
+    let theme = Theme::parse(None).unwrap();
+    assert_eq!(spinner(now0, &theme), "⣾");
+    assert_eq!(spinner(now120, &theme), "⣽");
+    assert_eq!(spinner(now960, &theme), "⣾");
 }
 
 #[test]
@@ -260,4 +262,48 @@ fn collapsing_a_member_moves_to_its_folder() {
     tree.collapse();
     assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", WorkerRole::Worker)));
     assert!(!tree.folders.contains(&("api".into(), WorkerRole::Worker)));
+}
+
+#[test]
+fn state_suffixes_carry_theme_styles() {
+    let mut tree = tree();
+    tree.projects[0].row.state = State::Waiting(None);
+    let theme = Theme::parse(None).unwrap();
+    let now = Utc::now();
+    let line = tree.label(Item::Project(&tree.projects[0]), now, &theme);
+    assert_eq!(
+        line.spans.last().unwrap().style,
+        theme.state(ThemeState::Waiting).1.ratatui
+    );
+    let line = tree.label(
+        Item::Member(&tree.projects[0], WorkerRole::Worker, Member::Lost("gone")),
+        now,
+        &theme,
+    );
+    assert_eq!(line.spans.last().unwrap().content, "window lost");
+    assert_eq!(
+        line.spans.last().unwrap().style,
+        theme.style(StyleKey::Lost).ratatui
+    );
+}
+
+#[test]
+fn headings_guides_and_counts_carry_theme_styles() {
+    let mut tree = tree();
+    tree.expand();
+    let theme = Theme::parse(None).unwrap();
+    let now = Utc::now();
+    let heading = tree.label(Item::Header, now, &theme);
+    assert_eq!(
+        heading.spans[0].style,
+        theme.style(StyleKey::Heading).ratatui
+    );
+    let folder = tree.label(tree.items()[2], now, &theme);
+    for span in [&folder.spans[1], &folder.spans[3]] {
+        assert_eq!(span.style, theme.style(StyleKey::Guide).ratatui);
+    }
+    assert_eq!(
+        folder.spans.last().unwrap().style,
+        theme.style(StyleKey::Muted).ratatui
+    );
 }

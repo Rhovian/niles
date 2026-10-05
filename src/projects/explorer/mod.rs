@@ -15,7 +15,7 @@ use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout},
-    style::Style,
+    text::{Line, Span, Text},
     widgets::{List, ListState, Paragraph, Wrap},
 };
 
@@ -27,13 +27,37 @@ use super::{
     windows::{self, LEAD_WINDOW, Role},
 };
 use crate::{
+    theme::{StyleKey, Theme},
     tmux::{self, TmuxTarget, WindowTarget},
     util::current_dir_utf8,
 };
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: &str = "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help";
+const KEYS: [(&str, &str); 7] = [
+    ("↵", "open"),
+    ("[ ]", "project"),
+    ("; '", "window"),
+    ("r", "register"),
+    ("q", "quiet"),
+    ("c", "close"),
+    ("?", "help"),
+];
+
+fn key_hints(theme: &Theme) -> Line<'_> {
+    let mut spans = Vec::new();
+    for (index, (key, label)) in KEYS.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" · ", theme.style(StyleKey::Muted).ratatui));
+        }
+        spans.push(Span::styled(*key, theme.style(StyleKey::Accent).ratatui));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            theme.style(StyleKey::Muted).ratatui,
+        ));
+    }
+    Line::from(spans)
+}
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
@@ -50,6 +74,7 @@ pub fn run() -> Result<()> {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
+        theme: Theme::load()?,
         mode: Mode::Browse,
         footer: None,
         installed: modified(&binary)?,
@@ -99,6 +124,7 @@ struct Explorer {
     pane: TmuxTarget,
     cwd: Utf8PathBuf,
     tree: Tree,
+    theme: Theme,
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
     footer: Option<String>,
@@ -245,7 +271,7 @@ impl Explorer {
                     }
                     State::NotRunning => {
                         tmux::open_session(&session, &entry.path)?;
-                        tmux::configure_status(&session)?;
+                        tmux::configure_status(&session, &self.theme)?;
                     }
                     State::Running | State::Waiting(_) => {}
                 }
@@ -303,9 +329,10 @@ impl Explorer {
             .tree
             .items()
             .into_iter()
-            .map(|item| self.tree.label(item, now));
+            .map(|item| self.tree.label(item, now, &self.theme));
         let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
-        let list_widget = List::new(labels).highlight_style(Style::new().reversed());
+        let list_widget =
+            List::new(labels).highlight_style(self.theme.style(StyleKey::Selection).ratatui);
         frame.render_stateful_widget(list_widget, list, &mut state);
         let prompt = match &self.mode {
             Mode::Browse => None,
@@ -317,10 +344,10 @@ impl Explorer {
             }
         };
         let text = match (&self.footer, prompt) {
-            (Some(message), Some(prompt)) => format!("{message}\n{prompt}"),
-            (Some(message), None) => message.clone(),
-            (None, Some(prompt)) => prompt,
-            (None, None) => KEYS.to_owned(),
+            (Some(message), Some(prompt)) => Text::raw(format!("{message}\n{prompt}")),
+            (Some(message), None) => Text::raw(message.as_str()),
+            (None, Some(prompt)) => Text::raw(prompt),
+            (None, None) => Text::from(key_hints(&self.theme)),
         };
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), footer);
     }
@@ -393,4 +420,27 @@ fn niles(args: &[&str], project: &Utf8Path) -> Result<String> {
         bail!(text);
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn footer_keys_and_labels_carry_theme_styles() {
+        let theme = Theme::parse(None).unwrap();
+        let line = key_hints(&theme);
+        assert_eq!(
+            line.to_string(),
+            "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help"
+        );
+        for (index, span) in line.spans.iter().enumerate() {
+            let key = if index % 3 == 0 {
+                StyleKey::Accent
+            } else {
+                StyleKey::Muted
+            };
+            assert_eq!(span.style, theme.style(key).ratatui);
+        }
+    }
 }

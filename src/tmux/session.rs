@@ -1,5 +1,8 @@
 use super::{SessionName, TmuxTarget, WindowPresence, output, run, target};
-use crate::agent_window::shell_quote;
+use crate::{
+    agent_window::shell_quote,
+    theme::{StyleKey, Theme},
+};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use std::{env, os::unix::process::CommandExt, process::Command};
@@ -74,7 +77,7 @@ pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
     Ok(windows)
 }
 
-pub(crate) fn configure_status(session: &SessionName) -> Result<()> {
+pub(crate) fn configure_status(session: &SessionName, theme: &Theme) -> Result<()> {
     let quoted = shell_quote(&executable()?).replace('#', "##");
     let target = format!("{}:", target::exact(session.as_str()));
     let projects = format!("#({quoted} status projects #{{session_name}})");
@@ -82,6 +85,7 @@ pub(crate) fn configure_status(session: &SessionName) -> Result<()> {
     let options = [
         ("status", "2"),
         ("status-position", "top"),
+        ("status-style", theme.style(StyleKey::Bar).tmux_option()),
         ("status-interval", "5"),
         ("status-format[0]", projects.as_str()),
         ("status-format[1]", sessions.as_str()),
