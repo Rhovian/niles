@@ -5,6 +5,8 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -78,13 +80,14 @@ pub fn run() -> Result<()> {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
+        collected: Instant::now(),
         theme: Theme::load()?,
         mode: Mode::Browse,
         footer: None,
         installed: modified(&binary)?,
         binary,
     };
-    explorer.tree.replace(collect()?);
+    explorer.refresh()?;
     let mut terminal = ratatui::init();
     let result = explorer.run(&mut terminal);
     ratatui::restore();
@@ -128,6 +131,8 @@ struct Explorer {
     pane: TmuxTarget,
     cwd: Utf8PathBuf,
     tree: Tree,
+    /// When the collect behind `tree` began; an older one finishing later would undo it.
+    collected: Instant,
     theme: Theme,
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
@@ -140,23 +145,39 @@ struct Explorer {
 impl Explorer {
     /// Returns once the binary on disk has been replaced and no prompt is open.
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        let mut collected = Instant::now();
+        let collections = collector();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(tree::SPINNER_FRAME.min(REFRESH.saturating_sub(collected.elapsed())))?
+            if event::poll(tree::SPINNER_FRAME)?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
                 self.key(key.code)?;
             }
-            if collected.elapsed() >= REFRESH {
-                if matches!(self.mode, Mode::Browse) && modified(&self.binary)? != self.installed {
-                    return Ok(());
+            match collections.try_recv() {
+                Ok((started, projects)) => {
+                    if matches!(self.mode, Mode::Browse)
+                        && modified(&self.binary)? != self.installed
+                    {
+                        return Ok(());
+                    }
+                    let projects = projects?;
+                    if started > self.collected {
+                        self.tree.replace(projects);
+                        self.collected = started;
+                    }
                 }
-                self.tree.replace(collect()?);
-                collected = Instant::now();
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => bail!("the explorer's collector stopped"),
             }
         }
+    }
+
+    /// Collects in place, for an action whose next step reads the result.
+    fn refresh(&mut self) -> Result<()> {
+        self.collected = Instant::now();
+        self.tree.replace(collect()?);
+        Ok(())
     }
 
     /// Every key clears the footer; a key that does something reports its outcome there.
@@ -204,7 +225,7 @@ impl Explorer {
                 }
                 self.footer = shown(close(closing, &self.pane));
                 self.mode = Mode::Browse;
-                self.tree.replace(collect()?);
+                self.refresh()?;
                 if project
                     && matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
                     && let Some(error) = shown(self.open())
@@ -240,7 +261,7 @@ impl Explorer {
                     Ok(()) => {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
-                        self.tree.replace(collect()?);
+                        self.refresh()?;
                         if let Some(error) = shown(tmux::open_panel("help").map(|_| None)) {
                             self.footer = Some(error);
                         }
@@ -382,6 +403,22 @@ fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
             Ok(Some(format!("closed {}", name.as_str())))
         }
     }
+}
+
+/// Collects every `REFRESH` on its own thread, so a slow collect never stalls drawing. Each result
+/// carries when its collect began.
+fn collector() -> Receiver<(Instant, Result<Vec<Project>>)> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        loop {
+            thread::sleep(REFRESH);
+            let started = Instant::now();
+            if sender.send((started, collect())).is_err() {
+                break;
+            }
+        }
+    });
+    receiver
 }
 
 fn collect() -> Result<Vec<Project>> {
