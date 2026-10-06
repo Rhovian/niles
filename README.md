@@ -77,7 +77,7 @@ See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 - `.niles/` in each workspace: the role manifest, worker briefs, status logs, and reports.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
-- `../<repo>-trees/<branch>` when you spawn with `--worktree`.
+- `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
 
 Niles does not edit your agent CLIs' configuration or your tmux config.
 
