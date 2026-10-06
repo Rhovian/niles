@@ -30,7 +30,6 @@ esac
     let steps = [
         format!("new-session -d -x 160 -y 45 -s niles+home -c {}", cwd.display()),
         "explorer ; set-option -t =niles+home: status off ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
-        format!("; split-window -d -f -v -l 2 -t =niles+home: -c {}", cwd.display()),
         "new-window -d -t =niles+panels: -n help".to_owned(),
         "panel help".to_owned(),
         "split-window -h -l 75% -t =niles+home:".to_owned(),

@@ -8,7 +8,6 @@ use crate::agent_window::shell_quote;
 /// The session that holds the explorer. `+` is outside a project name's charset, so no project
 /// session can take this name.
 const HOME_SESSION: &str = "niles+home";
-const SHELL_LINES: &str = "2";
 const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";
@@ -79,17 +78,6 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
         target.as_str(),
         "remain-on-exit",
         "failed",
-        ";",
-        "split-window",
-        "-d",
-        "-f",
-        "-v",
-        "-l",
-        SHELL_LINES,
-        "-t",
-        target.as_str(),
-        "-c",
-        cwd.as_str(),
     ])?;
     let explorer = super::display(target.as_str(), "#{pane_id}")?;
     show_in_view(&target, &open_panel("help")?)?;
@@ -98,7 +86,7 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
 }
 
 /// The size of the client about to show the home session. A detached session otherwise starts at
-/// tmux's default size and scales its panes on attach, stretching the shell past its lines.
+/// tmux's default size and rescales its panes on attach, losing the explorer's share of the width.
 fn attaching_size() -> Result<[String; 2]> {
     if env::var_os("TMUX").is_none() {
         let (width, height) =
