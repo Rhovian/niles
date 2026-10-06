@@ -36,12 +36,9 @@ use crate::{
 
 const REFRESH: Duration = Duration::from_secs(2);
 const FOOTER_LINES: u16 = 3;
-const KEYS: [(&str, &str); 7] = [
+const KEYS: [(&str, &str); 4] = [
     ("↵", "open"),
-    ("[ ]", "project"),
-    ("; '", "window"),
     ("r", "register"),
-    ("q", "quiet"),
     ("c", "close"),
     ("?", "help"),
 ];
@@ -205,12 +202,6 @@ impl Explorer {
                 }
             }
             (Mode::Browse, KeyCode::Char('r')) => self.mode = Mode::Directory(String::new()),
-            (Mode::Browse, KeyCode::Char('q')) => match self.selected_worker() {
-                Some((id, project)) => {
-                    self.footer = shown(niles(&["quiet", &id], &project).map(Some));
-                }
-                None => self.footer = Some("select a worker".to_owned()),
-            },
             (Mode::Browse, KeyCode::Char('c')) => match self.selected_closing() {
                 Some(closing) => self.mode = Mode::Close(closing),
                 None => self.footer = Some("select a worker or running project".to_owned()),
@@ -470,10 +461,7 @@ mod tests {
     fn footer_keys_and_labels_carry_theme_styles() {
         let theme = Theme::parse(None).unwrap();
         let line = key_hints(&theme);
-        assert_eq!(
-            line.to_string(),
-            "↵ open · [ ] project · ; ' window · r register · q quiet · c close · ? help"
-        );
+        assert_eq!(line.to_string(), "↵ open · r register · c close · ? help");
         for (index, span) in line.spans.iter().enumerate() {
             let key = if index % 3 == 0 {
                 StyleKey::Accent
