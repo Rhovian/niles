@@ -27,7 +27,6 @@ project with its lead's state and refreshes every two seconds.
 | `?` | Show help in the view pane |
 | Esc | Show the selected item again, leaving help |
 | `r` | Register a directory as a project |
-| `q` | Quiet the selected worker's check-in |
 | `c` | Close the selected worker or running project, after a y/n confirm |
 
 The view pane on the right is a tmux client nested inside the home session, so typing there goes

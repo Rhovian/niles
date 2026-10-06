@@ -87,7 +87,7 @@ const KEYS: &str = "Choose a project on the left.
   ↵      open                 → ←    expand / collapse
   [ ]    previous / next project
   ; '    previous / next window
-  r      register a project   q      quiet a worker
+  r      register a project
   c      close a worker or project
   ?      this help            esc    back
 
