@@ -11,12 +11,9 @@ use super::{
     validation::validate_id,
 };
 
-/// Whether this worker's tmux window is definitively gone, so nothing can ever append to its
-/// status log again.
-///
-/// Only a confirmed absence counts. A transient tmux failure, an ambiguous legacy candidate, and
-/// a window found alive under a new name all report `false`: a wait that stops early on a healthy
-/// worker is a worse failure than one that waits out its timeout.
+/// Whether this worker's tmux window is gone by [`TargetState::is_gone`]. Anything short of a
+/// confirmed absence is `false`: a wait that stops early on a healthy worker is a worse failure
+/// than one that waits out its timeout.
 pub fn window_is_gone(id: &str) -> Result<bool> {
     let Some(worker_dir) = resolve_worker_if_exists(id)? else {
         return Ok(false);
@@ -25,13 +22,7 @@ pub fn window_is_gone(id: &str) -> Result<bool> {
         return Ok(false);
     };
 
-    Ok(match window_state(&meta) {
-        TargetState::PaneExited | TargetState::WindowDead | TargetState::OrphanGone => true,
-        TargetState::Live
-        | TargetState::OrphanRecovered { .. }
-        | TargetState::OrphanLegacyCandidate { .. }
-        | TargetState::Unknown { .. } => false,
-    })
+    Ok(window_state(&meta).is_gone())
 }
 
 pub(super) fn window_state(meta: &WorkerMeta) -> TargetState {

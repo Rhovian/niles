@@ -75,22 +75,33 @@ pub(crate) fn windows(session: &SessionName) -> Result<Option<Vec<Window>>> {
 }
 
 pub(crate) fn configure_status(session: &SessionName, theme: &Theme) -> Result<()> {
-    let quoted = shell_quote(&executable()?).replace('#', "##");
-    let target = format!("{}:", target::exact(session.as_str()));
-    let projects = format!("#({quoted} status projects #{{session_name}})");
-    let sessions = format!("#({quoted} status sessions #{{session_name}} #{{window_index}})");
+    let projects = status_command("projects #{session_name}")?;
+    let sessions = status_command("sessions #{session_name} #{window_index}")?;
     let bar_style = theme.style(StyleKey::Bar).tmux_option();
-    let options = [
-        ("status", "2"),
-        ("status-position", "top"),
-        ("status-style", bar_style.as_str()),
-        ("status-interval", "5"),
-        ("status-format[0]", projects.as_str()),
-        ("status-format[1]", sessions.as_str()),
-    ];
+    set_options(
+        session,
+        &[
+            ("status", "2"),
+            ("status-position", "top"),
+            ("status-style", bar_style.as_str()),
+            ("status-interval", "5"),
+            ("status-format[0]", projects.as_str()),
+            ("status-format[1]", sessions.as_str()),
+        ],
+    )
+}
+
+/// A status-format job that runs `niles status <line>`.
+pub(super) fn status_command(line: &str) -> Result<String> {
+    let quoted = shell_quote(&executable()?).replace('#', "##");
+    Ok(format!("#({quoted} status {line})"))
+}
+
+pub(super) fn set_options(session: &SessionName, options: &[(&str, &str)]) -> Result<()> {
+    let target = format!("{}:", target::exact(session.as_str()));
     let args = options
-        .into_iter()
-        .flat_map(|(option, value)| [";", "set-option", "-t", target.as_str(), option, value])
+        .iter()
+        .flat_map(|&(option, value)| [";", "set-option", "-t", target.as_str(), option, value])
         .skip(1)
         .collect::<Vec<_>>();
     run(&args)

@@ -42,16 +42,7 @@ pub(crate) fn render(panel: Panel) -> Result<()> {
         }
         Panel::Telemetry => {
             for entry in entries {
-                let session = entry.name.session()?;
-                let lead = if tmux::project_session(&session)?.as_deref()
-                    == Some(entry.path.as_str())
-                    && tmux::lead_running(&session)?
-                {
-                    session::latest_lead(&entry.path)?
-                } else {
-                    None
-                };
-                let sessions = usage::collect(&entry.path, lead)?;
+                let sessions = open_sessions(&entry)?;
                 if !sessions.is_empty() {
                     writeln!(
                         text,
@@ -69,6 +60,19 @@ pub(crate) fn render(panel: Panel) -> Result<()> {
     }
     print!("{text}");
     Ok(())
+}
+
+/// The project's workers, and its lead while it runs.
+pub(super) fn open_sessions(entry: &registry::Entry) -> Result<Vec<SessionUsage>> {
+    let session = entry.name.session()?;
+    let lead = if tmux::project_session(&session)?.as_deref() == Some(entry.path.as_str())
+        && tmux::lead_running(&session)?
+    {
+        session::latest_lead(&entry.path)?
+    } else {
+        None
+    };
+    usage::collect(&entry.path, lead)
 }
 
 const FIRST_RUN: &str = "niles
@@ -255,12 +259,14 @@ mod tests {
                     state: None,
                     estimated_cost_usd: Some(0.03),
                 }),
+                window_gone: false,
             },
             SessionUsage {
                 id: "parse".into(),
                 role: "worker",
                 agent: "codex".into(),
                 usage: None,
+                window_gone: false,
             },
         ];
         assert_eq!(

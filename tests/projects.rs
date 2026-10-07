@@ -62,7 +62,7 @@ esac
     let cwd = env.root.canonicalize().unwrap();
     let steps = [
         format!("new-session -d -x 160 -y 45 -s niles+home -c {}", cwd.display()),
-        "explorer ; set-option -t =niles+home: status off ; set-option -t =niles+home: mouse on ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
+        "explorer ; set-option -t =niles+home: mouse on ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
         "new-window -d -t =niles+panels: -n help".to_owned(),
         "panel help".to_owned(),
         "split-window -h -l 75% -t =niles+home:".to_owned(),
@@ -76,7 +76,7 @@ esac
 }
 
 #[test]
-fn existing_home_session_only_switches() {
+fn existing_home_session_gets_the_header_and_switches() {
     let env = TestEnv::new("niles-home-live");
     let result = env
         .niles(&env.root, &[])
@@ -89,7 +89,19 @@ fn existing_home_session_only_switches() {
         String::from_utf8_lossy(&result.stderr)
     );
     let log = env.tmux_log();
-    assert!(log.contains("switch-client -t =niles+home:"), "{log}");
+    let header = log.find(
+        "set-option -t =niles+home: status on ; set-option -t =niles+home: status-position top",
+    );
+    let interval = log.find("set-option -t =niles+home: status-interval 2 ; set-option -t =niles+home: status-format[0] #(");
+    let switch = log.find("switch-client -t =niles+home:");
+    assert!(
+        header.is_some() && interval.is_some() && header < switch,
+        "{log}"
+    );
+    assert!(
+        log.contains(" status home)#[align=right]poll #{status-interval}s"),
+        "{log}"
+    );
     assert!(!log.contains("new-session"), "{log}");
 }
 

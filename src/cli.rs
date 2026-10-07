@@ -15,6 +15,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum StatusLine {
+    Home,
     Projects {
         session_name: String,
     },

@@ -62,6 +62,7 @@ fn key_hints(theme: &Theme) -> Line<'_> {
 pub fn home() -> Result<()> {
     let config = crate::config::user::UserConfig::load()?;
     let home = tmux::open_home(&current_dir_utf8()?)?;
+    tmux::configure_home(&home, &Theme::load()?, REFRESH)?;
     if config.tmux.bindings {
         tmux::install_home_bindings()?;
     }
@@ -349,7 +350,7 @@ impl Explorer {
             .tree
             .items()
             .into_iter()
-            .map(|item| self.tree.label(item, now, &self.theme));
+            .map(|item| self.tree.label(item, now, &self.theme, list.width));
         let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
         let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
         frame.render_stateful_widget(list_widget, list, &mut state);

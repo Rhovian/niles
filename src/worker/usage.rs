@@ -4,7 +4,10 @@ use serde::Serialize;
 
 use crate::{session, telemetry, util::current_dir_utf8};
 
-use super::{WorkerSnapshot, list::print_json, meta::report_path, snapshot::worker_snapshot};
+use super::{
+    WorkerSnapshot, list::print_json, meta::report_path, resolve::window_state,
+    snapshot::worker_snapshot,
+};
 
 #[derive(Serialize)]
 pub(crate) struct SessionUsage {
@@ -12,6 +15,9 @@ pub(crate) struct SessionUsage {
     pub(crate) role: &'static str,
     pub(crate) agent: String,
     pub(crate) usage: Option<telemetry::Usage>,
+    /// Always `false` for the lead, which is only collected while it runs.
+    #[serde(skip)]
+    pub(crate) window_gone: bool,
 }
 
 #[derive(Serialize)]
@@ -45,6 +51,7 @@ pub(crate) fn collect(
             role: meta.role.as_str(),
             agent: meta.agent.clone(),
             usage,
+            window_gone: window_state(meta).is_gone(),
         });
     }
     if let Some(meta) = lead {
@@ -54,6 +61,7 @@ pub(crate) fn collect(
             role: "lead",
             agent: meta.agent,
             usage,
+            window_gone: false,
         });
     }
     Ok(sessions)

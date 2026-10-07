@@ -148,6 +148,20 @@ pub(crate) enum TargetState {
     },
 }
 
+impl TargetState {
+    /// Only a confirmed absence counts: a transient tmux failure, an ambiguous legacy candidate,
+    /// and a window found alive under a new name are not gone.
+    pub(crate) fn is_gone(&self) -> bool {
+        match self {
+            Self::PaneExited | Self::WindowDead | Self::OrphanGone => true,
+            Self::Live
+            | Self::OrphanRecovered { .. }
+            | Self::OrphanLegacyCandidate { .. }
+            | Self::Unknown { .. } => false,
+        }
+    }
+}
+
 impl fmt::Display for TargetState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
