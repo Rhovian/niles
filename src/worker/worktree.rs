@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{env, process::Command};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -30,12 +30,13 @@ fn git(workspace: &Utf8Path, args: &[&str]) -> Result<String> {
     String::from_utf8(output.stdout).context("git output is not UTF-8")
 }
 
+// Keyed by the full workspace path so two workspaces with the same name never share a root.
 fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
-    let parent = workspace.parent().context("workspace has no parent")?;
-    let name = workspace
-        .file_name()
-        .context("workspace has no directory name")?;
-    Ok(parent.join(format!("{name}-trees")))
+    let workspace = workspace
+        .strip_prefix("/")
+        .context("workspace path is not absolute")?;
+    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    Ok(home.join(".niles/trees").join(workspace))
 }
 
 fn registered_branch(workspace: &Utf8Path, path: &Utf8Path) -> Result<Option<String>> {

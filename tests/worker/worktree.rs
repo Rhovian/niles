@@ -51,7 +51,11 @@ impl Repo {
         git(&workspace, &["add", "file"]);
         git(&workspace, &["commit", "-m", "base"]);
         git(&workspace, &["push", "origin", "main"]);
-        let tree = env.root.join("workspace-trees/fix/x");
+        let tree = env
+            .home
+            .join(".niles/trees")
+            .join(workspace.strip_prefix("/").unwrap())
+            .join("fix/x");
         Self {
             env,
             workspace,
@@ -62,6 +66,7 @@ impl Repo {
     fn run(&self, args: &[&str]) -> std::process::Output {
         self.env
             .niles(&self.workspace, args)
+            .env("HOME", &self.env.home)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_AUTHOR_NAME", "Niles Test")

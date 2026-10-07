@@ -134,7 +134,7 @@ capture and submit can still merge with a nudge.
 
 With `--tree`, the worker agent runs in a directory chosen by the lead; Niles validates only that it
 exists and is a directory.
-With `--worktree`, Niles uses git to create a sibling directory outside the workspace and can
+With `--worktree`, Niles uses git to create a worktree under `~/.niles/trees` and can
 remove it on close. The branch name is checked by git before it becomes a path. Close removes only
 registered worktrees under that workspace's managed tree root after checking live workers, status,
 and remote reachability; it never deletes branches.
