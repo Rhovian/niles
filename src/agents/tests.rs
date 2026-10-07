@@ -177,6 +177,7 @@ fn invocation_maps_codex_model_effort_flags() {
     assert_eq!(
         invocation.args,
         [
+            "--no-daemon",
             "--dangerously-bypass-approvals-and-sandbox",
             "--model",
             "gpt-5.5",

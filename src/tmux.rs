@@ -140,7 +140,10 @@ fn capture_start(lines: usize) -> String {
 pub(crate) fn current_session() -> Result<SessionName> {
     if env::var_os("TMUX").is_none() {
         bail!(
-            "niles agent commands must run inside tmux. Run bare `niles` to open a project session."
+            "niles agent commands must run inside tmux, and this process has no $TMUX. If you are \
+             a niles lead or worker, your agent session was moved out of its tmux pane (for \
+             example into a background session): resume it in its pane. Otherwise run bare \
+             `niles` to open a project session."
         );
     }
 
