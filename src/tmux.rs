@@ -63,6 +63,18 @@ fn output(args: &[&str]) -> Result<Output> {
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
 }
 
+fn session_output(args: &[&str]) -> Result<Option<Output>> {
+    let output = output(args)?;
+    if !output.status.success() {
+        let error = normalize_stderr(&output.stderr);
+        if target::is_missing_session_error(&error) {
+            return Ok(None);
+        }
+        bail!("tmux {} failed: {error}", args.join(" "));
+    }
+    Ok(Some(output))
+}
+
 pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.as_str();
@@ -160,20 +172,16 @@ pub(crate) fn current_session() -> Result<SessionName> {
 }
 
 fn window_presence_in(session: &SessionName, window: &str) -> Result<WindowPresence> {
-    let output = output(&[
+    let Some(output) = session_output(&[
         "list-windows",
         "-t",
         &target::exact(session.as_str()),
         "-F",
         LIVE_WINDOW_FORMAT,
-    ])
-    .with_context(|| format!("failed to list tmux windows in session {session}"))?;
-    if !output.status.success() {
-        bail!(
-            "tmux list-windows failed for session {session}: {}",
-            normalize_stderr(&output.stderr)
-        );
-    }
+    ])?
+    else {
+        return Ok(WindowPresence::Absent);
+    };
     Ok(window_presence(&output.stdout, window))
 }
 

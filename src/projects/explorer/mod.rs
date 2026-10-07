@@ -415,15 +415,16 @@ fn collect() -> Result<Vec<Project>> {
     let now = Utc::now();
     rows::collect(registry::entries()?)?
         .into_iter()
-        .map(|row| {
+        .map(|mut row| {
             let agents = match row.state {
-                State::Running | State::Waiting(_) => Some(windows::session_agents(
-                    &row.entry.name.session()?,
-                    Some(&row.entry.path),
-                    now,
-                )?),
+                State::Running | State::Waiting(_) => {
+                    windows::session_agents(&row.entry.name.session()?, Some(&row.entry.path), now)?
+                }
                 State::Missing | State::NotRunning => None,
             };
+            if agents.is_none() && !matches!(row.state, State::Missing) {
+                row.state = State::NotRunning;
+            }
             Ok(Project { row, agents })
         })
         .collect()

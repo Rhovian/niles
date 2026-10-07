@@ -40,8 +40,10 @@ pub(super) fn session_agents(
     session: &SessionName,
     project: Option<&Utf8Path>,
     now: DateTime<Utc>,
-) -> Result<SessionAgents> {
-    let windows = tmux::windows(session)?;
+) -> Result<Option<SessionAgents>> {
+    let Some(windows) = tmux::windows(session)? else {
+        return Ok(None);
+    };
     let (lead, workers) = match project {
         Some(path) => (session::latest_lead(path)?, worker::status_workers(path)?),
         None => (None, Vec::new()),
@@ -106,7 +108,7 @@ pub(super) fn session_agents(
             })
         })
         .collect::<Result<_>>()?;
-    Ok(SessionAgents { windows, lost })
+    Ok(Some(SessionAgents { windows, lost }))
 }
 
 fn usage_fields(
