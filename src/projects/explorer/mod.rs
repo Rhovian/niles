@@ -188,7 +188,11 @@ impl Explorer {
             // Help leaves the selection alone, so Esc reopens what the view showed before it.
             (Mode::Browse, KeyCode::Enter | KeyCode::Esc) => self.footer = shown(self.open()),
             (Mode::Browse, KeyCode::Char('?')) => {
-                self.footer = shown(tmux::open_panel("help").map(|_| None));
+                self.footer = shown(
+                    tmux::open_panel("help")
+                        .and_then(|window| tmux::show_in_view(&self.pane, &window))
+                        .map(|()| None),
+                );
             }
             (Mode::Browse, KeyCode::Char(key @ ('[' | ']' | ';' | '\''))) => {
                 let steps = if matches!(key, ']' | '\'') { 1 } else { -1 };
