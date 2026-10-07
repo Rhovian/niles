@@ -91,8 +91,10 @@ const PROFILES: &[AgentProfile] = &[
         id: "codex",
         binary: "codex",
         tested_version: "0.160.0",
-        foreground_args: &[],
-        worker_args: &["--dangerously-bypass-approvals-and-sandbox"],
+        // The shared daemon lets a running session continue in the background, out of its tmux
+        // pane.
+        foreground_args: &["--no-daemon"],
+        worker_args: &["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::Arg,
         default_model: "gpt-5.5",
@@ -119,7 +121,11 @@ const PROFILES: &[AgentProfile] = &[
             model_flag: "--model",
             effort: EffortArg::Flag("--effort"),
         },
-        launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+        // Agent view moves a session into a detached background daemon, out of its tmux pane.
+        launch_env: &[
+            ("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false"),
+            ("CLAUDE_CODE_DISABLE_AGENT_VIEW", "1"),
+        ],
         composer: Some("❯\u{a0}"),
     },
     AgentProfile {

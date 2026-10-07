@@ -49,6 +49,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 
     let launch = fs::read_to_string(env.root.join(".niles/worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
+    assert!(launch.contains("CLAUDE_CODE_DISABLE_AGENT_VIEW=1"));
     // The agent runs as a child, not via exec, so the script survives to report its exit.
     assert!(launch.contains("'claude'"), "{launch}");
     assert!(!launch.contains("exec "), "{launch}");

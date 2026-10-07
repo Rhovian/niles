@@ -181,6 +181,29 @@ mod tests {
             state(claude_usage(&format!("{assistant}\n{tool_result}\n"), &[])),
             Some(SessionState::Working)
         );
+
+        let shell = r#"{"type":"user","message":{"role":"user","content":[]},"toolUseResult":{"backgroundTaskId":"b1"}}"#;
+        let notified = |body: &str| {
+            format!(
+                r#"{{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>b1</task-id>\n{body}</task-notification>"}}"#
+            )
+        };
+        let event = notified("<event>tick</event>");
+        let killed = notified("<status>killed</status>");
+        assert_eq!(
+            state(claude_usage(
+                &format!("{shell}\n{assistant}\n{event}\n"),
+                &[]
+            )),
+            Some(SessionState::Working)
+        );
+        assert_eq!(
+            state(claude_usage(
+                &format!("{shell}\n{assistant}\n{killed}\n"),
+                &[]
+            )),
+            Some(SessionState::Waiting)
+        );
     }
 
     #[test]

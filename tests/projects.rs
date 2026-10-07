@@ -6,6 +6,39 @@ use common::{TestEnv, assert_command_success as assert_ok, stdout_of};
 use std::{fs, process::Command};
 
 #[test]
+fn status_tolerates_a_session_closing_after_has_session() {
+    let env = TestEnv::with_tmux(
+        "niles-session-race",
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+if [ "$1" = "$FAIL_QUERY" ]; then
+  printf "can't find session: race\n" >&2; exit 1
+fi
+if [ "$1" = display ]; then printf '%s\n' "$TMUX_PROJECT_TAG"; fi
+"#,
+    );
+    let registry = env.home.join(".niles/projects");
+    fs::create_dir_all(&registry).unwrap();
+    std::os::unix::fs::symlink(&env.root, registry.join("race")).unwrap();
+    for (query, args) in [
+        ("display", vec!["status", "projects", "race"]),
+        ("list-windows", vec!["status", "projects", "race"]),
+        ("list-windows", vec!["status", "sessions", "race", "0"]),
+    ] {
+        let result = env
+            .niles(&env.root, &args)
+            .env("HOME", &env.home)
+            .env("TMUX_PROJECT_TAG", &env.root)
+            .env("FAIL_QUERY", query)
+            .output()
+            .unwrap();
+        assert_ok(query, &result);
+        assert_eq!(stdout_of(&result).trim(), "");
+    }
+    assert!(env.tmux_log().contains("has-session -t =race"));
+}
+
+#[test]
 fn bare_niles_creates_the_home_session_and_switches() {
     let env = TestEnv::with_tmux(
         "niles-home-create",

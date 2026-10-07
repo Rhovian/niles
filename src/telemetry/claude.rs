@@ -32,7 +32,12 @@ enum ClaudeLine {
     },
     User {
         message: ClaudeUserMessage,
+        #[serde(rename = "toolUseResult")]
+        tool_use_result: Option<serde_json::Value>,
     },
+    /// Queued input, including the `<task-notification>` for each background task event.
+    #[serde(rename = "queue-operation")]
+    QueueOperation { content: Option<serde_json::Value> },
     #[serde(other)]
     Other,
 }
@@ -63,6 +68,7 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
     let mut seen = HashSet::new();
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
     let (mut reasoning, mut last_turn, mut state) = (None, None, None);
+    let mut background_shells = HashSet::new();
     for (body, main_file) in
         std::iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
     {
@@ -77,8 +83,18 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
                     }
                     (timestamp, message)
                 }
-                ClaudeLine::User { message } => {
+                ClaudeLine::User {
+                    message,
+                    tool_use_result,
+                } => {
                     if main_file {
+                        if let Some(id) = tool_use_result
+                            .as_ref()
+                            .and_then(|result| result.get("backgroundTaskId"))
+                            .and_then(serde_json::Value::as_str)
+                        {
+                            background_shells.insert(id.to_owned());
+                        }
                         state = Some(
                             if message.content.as_array().is_some_and(|blocks| {
                                 blocks.iter().any(|block| {
@@ -97,6 +113,17 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
                                 SessionState::Working
                             },
                         );
+                    }
+                    continue;
+                }
+                ClaudeLine::QueueOperation { content } => {
+                    if main_file
+                        && let Some(id) = content
+                            .as_ref()
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(ended_task)
+                    {
+                        background_shells.remove(id);
                     }
                     continue;
                 }
@@ -119,6 +146,10 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
     if seen.is_empty() {
         return None;
     }
+    // A turn that ended with a shell still running wakes itself when the shell finishes.
+    if state == Some(SessionState::Waiting) && !background_shells.is_empty() {
+        state = Some(SessionState::Working);
+    }
     Some(Usage {
         input_tokens: input,
         output_tokens: output,
@@ -129,4 +160,14 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
         state,
         estimated_cost_usd: None,
     })
+}
+
+/// The task a notification reports as ended. Monitor events notify without a `<status>` while
+/// the task keeps running.
+fn ended_task(notification: &str) -> Option<&str> {
+    if !notification.contains("<status>") {
+        return None;
+    }
+    let (_, rest) = notification.split_once("<task-id>")?;
+    Some(rest.split_once("</task-id>")?.0)
 }

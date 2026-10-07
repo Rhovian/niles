@@ -1,4 +1,4 @@
-use super::{SessionName, TmuxTarget, WindowPresence, output, run, target};
+use super::{SessionName, TmuxTarget, WindowPresence, run, session_output, target};
 use crate::{
     agent_window::shell_quote,
     theme::{StyleKey, StyleRender, Theme},
@@ -8,15 +8,7 @@ use camino::Utf8Path;
 use std::{env, os::unix::process::CommandExt, process::Command};
 
 pub(super) fn has_session(session: &SessionName) -> Result<bool> {
-    let probe = output(&["has-session", "-t", &target::exact(session.as_str())])?;
-    if !probe.status.success() {
-        let error = super::normalize_stderr(&probe.stderr);
-        if target::is_missing_session_error(&error) {
-            return Ok(false);
-        }
-        bail!("tmux has-session failed: {error}");
-    }
-    Ok(true)
+    Ok(session_output(&["has-session", "-t", &target::exact(session.as_str())])?.is_some())
 }
 
 pub(crate) fn kill_session(session: &SessionName) -> Result<()> {
@@ -28,10 +20,18 @@ pub(crate) fn project_session(session: &SessionName) -> Result<Option<String>> {
         return Ok(None);
     }
     let name = target::exact(session.as_str());
+    let Some(tag) = session_output(&[
+        "display",
+        "-p",
+        "-t",
+        &format!("{name}:"),
+        "#{@niles-project}",
+    ])?
+    else {
+        return Ok(None);
+    };
     Ok(Some(
-        super::display(&format!("{name}:"), "#{@niles-project}")?
-            .trim_end()
-            .to_owned(),
+        String::from_utf8_lossy(&tag.stdout).trim_end().to_owned(),
     ))
 }
 
@@ -44,21 +44,18 @@ pub(crate) struct Window {
     pub name: String,
 }
 
-pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
+pub(crate) fn windows(session: &SessionName) -> Result<Option<Vec<Window>>> {
     let target = format!("{}:", target::exact(session.as_str()));
-    let output = output(&[
+    let Some(output) = session_output(&[
         "list-windows",
         "-t",
         &target,
         "-F",
         "#{window_index}\t#{window_name}",
-    ])?;
-    if !output.status.success() {
-        bail!(
-            "tmux list-windows failed: {}",
-            super::normalize_stderr(&output.stderr)
-        );
-    }
+    ])?
+    else {
+        return Ok(None);
+    };
     let body = String::from_utf8(output.stdout).context("tmux windows are not UTF-8")?;
     let windows = body
         .lines()
@@ -74,7 +71,7 @@ pub(crate) fn windows(session: &SessionName) -> Result<Vec<Window>> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(windows)
+    Ok(Some(windows))
 }
 
 pub(crate) fn configure_status(session: &SessionName, theme: &Theme) -> Result<()> {

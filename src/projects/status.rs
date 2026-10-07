@@ -71,8 +71,8 @@ fn session_segments(name: &str, active_index: u32, now: DateTime<Utc>) -> Result
     let project = project(session_name.as_str())?;
     Ok(
         windows::session_agents(&session_name, project.as_deref(), now)?
-            .windows
             .into_iter()
+            .flat_map(|agents| agents.windows)
             .map(|window| Segment {
                 label: format!("{}:{}", window.index, window.segment.label),
                 highlighted: window.index == active_index,

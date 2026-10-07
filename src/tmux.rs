@@ -63,6 +63,18 @@ fn output(args: &[&str]) -> Result<Output> {
         .with_context(|| format!("failed to run tmux {}", args.join(" ")))
 }
 
+fn session_output(args: &[&str]) -> Result<Option<Output>> {
+    let output = output(args)?;
+    if !output.status.success() {
+        let error = normalize_stderr(&output.stderr);
+        if target::is_missing_session_error(&error) {
+            return Ok(None);
+        }
+        bail!("tmux {} failed: {error}", args.join(" "));
+    }
+    Ok(Some(output))
+}
+
 pub(crate) fn capture_pane(target: &TmuxTarget, lines: usize) -> Result<String> {
     let start = capture_start(lines);
     let arg = target.as_str();
@@ -140,7 +152,10 @@ fn capture_start(lines: usize) -> String {
 pub(crate) fn current_session() -> Result<SessionName> {
     if env::var_os("TMUX").is_none() {
         bail!(
-            "niles agent commands must run inside tmux. Run bare `niles` to open a project session."
+            "niles agent commands must run inside tmux, and this process has no $TMUX. If you are \
+             a niles lead or worker, your agent session was moved out of its tmux pane (for \
+             example into a background session): resume it in its pane. Otherwise run bare \
+             `niles` to open a project session."
         );
     }
 
@@ -157,20 +172,16 @@ pub(crate) fn current_session() -> Result<SessionName> {
 }
 
 fn window_presence_in(session: &SessionName, window: &str) -> Result<WindowPresence> {
-    let output = output(&[
+    let Some(output) = session_output(&[
         "list-windows",
         "-t",
         &target::exact(session.as_str()),
         "-F",
         LIVE_WINDOW_FORMAT,
-    ])
-    .with_context(|| format!("failed to list tmux windows in session {session}"))?;
-    if !output.status.success() {
-        bail!(
-            "tmux list-windows failed for session {session}: {}",
-            normalize_stderr(&output.stderr)
-        );
-    }
+    ])?
+    else {
+        return Ok(WindowPresence::Absent);
+    };
     Ok(window_presence(&output.stdout, window))
 }
 
