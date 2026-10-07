@@ -119,7 +119,11 @@ const PROFILES: &[AgentProfile] = &[
             model_flag: "--model",
             effort: EffortArg::Flag("--effort"),
         },
-        launch_env: &[("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false")],
+        // Agent view moves a session into a detached background daemon, out of its tmux pane.
+        launch_env: &[
+            ("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false"),
+            ("CLAUDE_CODE_DISABLE_AGENT_VIEW", "1"),
+        ],
         composer: Some("❯\u{a0}"),
     },
     AgentProfile {
