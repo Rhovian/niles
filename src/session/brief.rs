@@ -157,8 +157,8 @@ mod tests {
     /// The brief is read on every session start; length is a running cost.
     #[test]
     fn lead_brief_stays_short() {
-        let lines = LEAD_BRIEF_TEMPLATE.lines().count();
-        assert!(lines <= 60, "lead brief is {lines} lines; keep it tight");
+        let words = LEAD_BRIEF_TEMPLATE.split_whitespace().count();
+        assert!(words <= 1750, "lead brief is {words} words; keep it tight");
     }
 
     #[test]

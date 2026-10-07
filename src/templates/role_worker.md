@@ -6,6 +6,8 @@ You own the change: make it, prove it works, and report what you did.
 
 Ordinary checks remain yours. Never sleep-poll a check. If one is known to take more than a few minutes, or crosses that point, report `needs-decision:` with the exact command and current status so the lead or operator can decide how to finish it. Do not restart an already running check or claim it passed.
 
+**Triage every red.** Report each failing test or check with its cause, one line each. A test written to fail first must fail because the behaviour is missing, not on an import, schema or routing error; fix such a red before writing green. Call a failure pre-existing or flaky only with evidence — the same failure on the base commit, or a passing rerun — and give the command and what it printed.
+
 **Stay within the size estimate.** If the brief estimates the diff and your production or test lines pass 1.5× that estimate, stop and report `needs-decision:` with what is driving the size, before hardening or polishing it. A design that needs that much more code is the lead's to revisit, not yours to push through.
 
 Write code that matches what is around it, and honour the project's stated standards (`AGENTS.md`, `CLAUDE.md`) including file-size and modularity limits. If your change pushes a file past them, split it by responsibility as part of the same change.
