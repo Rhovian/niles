@@ -14,7 +14,7 @@ two-line status bar at the top:
 ## The home view
 
 Bare `niles` opens the `niles+home` session, creating it on first use: the explorer on the left
-and a shell along the bottom, started where you ran `niles`. The explorer lists every registered
+and the view pane on the right, started where you ran `niles`. The explorer lists every registered
 project with its lead's state and refreshes every two seconds.
 
 | Key | Action |
@@ -32,6 +32,10 @@ project with its lead's state and refreshes every two seconds.
 The view pane on the right is a tmux client nested inside the home session, so typing there goes
 to the agent. Enter retargets only that client, never your own. Leave the home view with tmux's
 detach or by switching sessions.
+
+Click a pane to focus it, or return to the explorer with tmux's `prefix + ←` (default
+`Ctrl-b ←`). The home session turns tmux's `mouse` on for itself alone, so a plain drag selects
+in tmux; hold Option (macOS) or Shift (most Linux terminals) for your terminal's own selection.
 
 ## Theme
 

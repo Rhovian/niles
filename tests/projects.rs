@@ -29,7 +29,7 @@ esac
     let cwd = env.root.canonicalize().unwrap();
     let steps = [
         format!("new-session -d -x 160 -y 45 -s niles+home -c {}", cwd.display()),
-        "explorer ; set-option -t =niles+home: status off ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
+        "explorer ; set-option -t =niles+home: status off ; set-option -t =niles+home: mouse on ; set-option -p -t =niles+home: remain-on-exit failed".to_owned(),
         "new-window -d -t =niles+panels: -n help".to_owned(),
         "panel help".to_owned(),
         "split-window -h -l 75% -t =niles+home:".to_owned(),

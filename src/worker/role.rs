@@ -27,6 +27,8 @@ The states are `done:`, `blocked:`, `needs-decision:` and `failed:`, all in that
 
 Deliverables go in the report file; the lead reads it, not your terminal.
 
+Work from this brief and the code. Do not read other agents' briefs, reports or notes under `.niles/` unless this brief names one.
+
 Stay open after `done:` — it means you have something to hand back, not that you are exiting. The lead closes you with `niles close {id}`.
 
 Report uncertainty as uncertainty. `blocked:` and `needs-decision:` are far cheaper than a confident wrong answer.
