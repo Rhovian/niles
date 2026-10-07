@@ -63,37 +63,43 @@ fn labels(tree: &Tree) -> Vec<String> {
     let theme = Theme::parse(None).unwrap();
     items
         .into_iter()
-        .map(|item| tree.label(item, now, &theme).to_string())
+        .map(|item| tree.label(item, now, &theme, 36).to_string())
         .collect()
 }
 
 #[test]
-fn running_projects_expand_to_role_folders() {
-    let mut tree = tree();
+fn running_projects_and_role_folders_start_open() {
+    let tree = tree();
     assert_eq!(
         labels(&tree),
         [
             "PROJECTS",
-            "  ▸ api  ⣾",
-            "    old",
-            "CONFIG",
-            "TELEMETRY",
-            "HELP"
-        ]
-    );
-    tree.expand();
-    assert_eq!(
-        labels(&tree),
-        [
-            "PROJECTS",
-            "  ▾ api  ⣾",
-            "    └─ ▸ workers 2",
-            "    old",
+            "├─ ▾ ⣾ api",
+            "│  └─ ▾ workers 2",
+            "│     ├─ parse",
+            "│     └─ gone window lost",
+            "└─     old",
             "CONFIG",
             "TELEMETRY",
             "HELP",
         ]
     );
+}
+
+#[test]
+fn collapsed_projects_and_folders_survive_refresh() {
+    let mut tree = tree();
+    tree.down();
+    tree.down();
+    tree.collapse();
+    tree.collapse();
+    tree.replace(projects());
+    assert_eq!(tree.items().len(), 6);
+    tree.expand();
+    assert_eq!(tree.items().len(), 7);
+    tree.down();
+    tree.expand();
+    assert_eq!(tree.items().len(), 9);
 }
 
 fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
@@ -123,32 +129,33 @@ fn cycling_windows_wraps_within_the_selected_project() {
     let mut tree = tree();
     assert!(tree.cycle_windows(1));
     assert!(selected_window(&tree, "api", "parse"));
-    assert!(tree.folders.contains(&("api".into(), WorkerRole::Worker)));
+    assert!(
+        !tree
+            .collapsed_folders
+            .contains(&("api".into(), WorkerRole::Worker))
+    );
     assert!(tree.cycle_windows(1));
     assert!(tree.selected().map(Item::key) == Some(Key::Project("api")));
     assert!(tree.cycle_windows(-1));
     assert!(selected_window(&tree, "api", "parse"));
     assert!(tree.cycle_windows(1));
-    for _ in 0..4 {
-        tree.down();
-    }
+    tree.select(Key::Project("old"));
     assert!(!tree.cycle_windows(1));
 }
 
 #[test]
 fn projects_without_agents_do_not_expand() {
     let mut tree = tree();
-    tree.down();
+    tree.select(Key::Project("old"));
     tree.expand();
-    assert_eq!(tree.items().len(), 6);
+    assert_eq!(tree.items().len(), 9);
     tree.down();
-    assert_eq!(tree.cursor(), 3);
+    assert_eq!(tree.cursor(), 6);
 }
 
 #[test]
 fn collapsing_a_child_moves_to_its_project() {
     let mut tree = tree();
-    tree.expand();
     tree.down();
     tree.collapse();
     assert_eq!(tree.cursor(), 1);
@@ -160,7 +167,7 @@ fn collapsing_a_child_moves_to_its_project() {
 #[test]
 fn refresh_keeps_the_selection_by_name() {
     let mut tree = tree();
-    tree.down();
+    tree.select(Key::Project("old"));
     let mut projects = projects();
     projects.reverse();
     tree.replace(projects);
@@ -200,7 +207,7 @@ fn waiting_project_shows_warning_and_spinner() {
     tree.replace(vec![waiting_none]);
     assert_eq!(
         labels(&tree),
-        vec!["PROJECTS", "  ▸ wait  ⚠", "CONFIG", "TELEMETRY", "HELP",]
+        vec!["PROJECTS", "└─   ⚠ wait", "CONFIG", "TELEMETRY", "HELP",]
     );
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
@@ -224,25 +231,30 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
         windows: Vec::new(),
         lost: Vec::new(),
     };
-    projects.insert(1, project("web", State::Waiting(None), Some(web)));
+    projects.insert(
+        1,
+        project(
+            "web",
+            State::Waiting(Some(DateTime::from_timestamp(-180, 0).unwrap())),
+            Some(web),
+        ),
+    );
     let mut tree = Tree::default();
     tree.replace(projects);
+    tree.select(Key::Window("api", "parse"));
+    tree.collapse();
     tree.down();
-    tree.expand();
-    tree.down();
-    tree.down();
-    tree.expand();
     assert_eq!(
         labels(&tree),
         [
             "PROJECTS",
-            "  ▾ api  ⣾",
-            "    ├─ ▸ workers 2",
-            "    └─ ▾ reviewers 2",
-            "          ├─ review-parse",
-            "          └─ gone window lost",
-            "  ▸ web  ⚠",
-            "    old",
+            "├─ ▾ ⣾ api",
+            "│  ├─ ▸ workers 2",
+            "│  └─ ▾ reviewers 2",
+            "│     ├─ review-parse",
+            "│     └─ gone window lost",
+            "├─   ⚠ web                        3m",
+            "└─     old",
             "CONFIG",
             "TELEMETRY",
             "HELP"
@@ -261,24 +273,25 @@ fn collapsing_a_member_moves_to_its_folder() {
     assert!(tree.cycle_windows(1));
     tree.collapse();
     assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", WorkerRole::Worker)));
-    assert!(!tree.folders.contains(&("api".into(), WorkerRole::Worker)));
+    assert!(
+        tree.collapsed_folders
+            .contains(&("api".into(), WorkerRole::Worker))
+    );
 }
 
 #[test]
-fn state_suffixes_carry_theme_styles() {
+fn state_glyphs_and_lost_suffixes_carry_theme_styles() {
     let mut tree = tree();
     tree.projects[0].row.state = State::Waiting(None);
     let theme = Theme::parse(None).unwrap();
     let now = Utc::now();
-    let line = tree.label(Item::Project(&tree.projects[0]), now, &theme);
-    assert_eq!(
-        line.spans.last().unwrap().style,
-        theme.state(ThemeState::Waiting).1
-    );
+    let line = tree.label(Item::Project(&tree.projects[0]), now, &theme, 36);
+    assert_eq!(line.spans[2].style, theme.state(ThemeState::Waiting).1);
     let line = tree.label(
         Item::Member(&tree.projects[0], WorkerRole::Worker, Member::Lost("gone")),
         now,
         &theme,
+        36,
     );
     assert_eq!(line.spans.last().unwrap().content, "window lost");
     assert_eq!(
@@ -289,14 +302,13 @@ fn state_suffixes_carry_theme_styles() {
 
 #[test]
 fn headings_guides_and_counts_carry_theme_styles() {
-    let mut tree = tree();
-    tree.expand();
+    let tree = tree();
     let theme = Theme::parse(None).unwrap();
     let now = Utc::now();
-    let heading = tree.label(Item::Header, now, &theme);
+    let heading = tree.label(Item::Header, now, &theme, 36);
     assert_eq!(heading.spans[0].style, theme.style(StyleKey::Heading));
-    let folder = tree.label(tree.items()[2], now, &theme);
-    for span in [&folder.spans[1], &folder.spans[3]] {
+    let folder = tree.label(tree.items()[2], now, &theme, 36);
+    for span in [&folder.spans[0], &folder.spans[2], &folder.spans[4]] {
         assert_eq!(span.style, theme.style(StyleKey::Guide));
     }
     assert_eq!(

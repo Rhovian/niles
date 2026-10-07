@@ -2,14 +2,16 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 
 use super::{
-    registry,
+    panels, registry,
     rows::{self, Row, State},
-    windows::{self, age},
+    windows,
 };
 use crate::{
     cli::StatusLine,
+    telemetry::Usage,
     theme::{self, StyleKey, StyleRender, Theme},
     tmux,
+    worker::usage::SessionUsage,
 };
 use camino::Utf8PathBuf;
 
@@ -26,8 +28,16 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
     let theme = Theme::load()?;
     let now = Utc::now();
     let segments = match line {
+        StatusLine::Home => {
+            let entries = registry::entries()?;
+            let mut sessions = Vec::new();
+            for entry in &entries {
+                sessions.extend(panels::open_sessions(entry)?);
+            }
+            return Ok(home(entries.len(), &sessions, &theme));
+        }
         StatusLine::Projects { session_name } => {
-            from_rows(&rows::collect(registry::entries()?)?, &session_name, now)
+            from_rows(&rows::collect(registry::entries()?)?, &session_name)
         }
         StatusLine::Sessions {
             session_name,
@@ -37,6 +47,31 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
     Ok(render(&segments, &theme))
 }
 
+/// The home session's header: projects, live and orphaned agents, and their total tokens.
+fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
+    let orphaned = sessions
+        .iter()
+        .filter(|session| session.window_gone)
+        .count();
+    let tokens = sessions
+        .iter()
+        .filter_map(|session| session.usage.as_ref())
+        .map(Usage::total_tokens)
+        .sum();
+    let heading = theme.style(StyleKey::Heading).tmux();
+    let mut parts = vec![
+        format!("{heading}NILES#[default]"),
+        format!("{projects} projects"),
+        format!("{} live", sessions.len() - orphaned),
+    ];
+    if orphaned > 0 {
+        let lost = theme.style(StyleKey::Lost).tmux();
+        parts.push(format!("{lost}{orphaned} orphaned#[default]"));
+    }
+    parts.push(format!("{} tok", rows::abbreviate(tokens)));
+    parts.join("  ")
+}
+
 fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
     Ok(registry::entries()?
         .into_iter()
@@ -44,23 +79,19 @@ fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
         .map(|entry| entry.path))
 }
 
-fn from_rows(rows: &[Row], session_name: &str, now: DateTime<Utc>) -> Vec<Segment> {
+fn from_rows(rows: &[Row], session_name: &str) -> Vec<Segment> {
     rows.iter()
         .filter_map(|row| {
-            let (state, age) = match row.state {
-                State::Running => (theme::State::Running, None),
-                State::Waiting(since) => {
-                    (theme::State::Waiting, since.map(|since| age(now, since)))
-                }
-                State::Missing | State::NotRunning => return None,
-            };
+            if matches!(row.state, State::Missing | State::NotRunning) {
+                return None;
+            }
             Some(Segment {
                 highlighted: row.entry.name.as_str() == session_name,
                 label: row.entry.name.as_str().to_owned(),
                 model: None,
-                state: Some(state),
+                state: None,
                 tokens: None,
-                age,
+                age: None,
             })
         })
         .collect()
@@ -171,11 +202,48 @@ mod tests {
         );
     }
     #[test]
-    fn projects_render_live_states_and_escape_names() {
+    fn home_counts_live_and_orphaned_and_abbreviates_tokens() {
+        let theme = Theme::parse(None).unwrap();
+        let heading = theme.style(StyleKey::Heading).tmux();
+        let lost = theme.style(StyleKey::Lost).tmux();
+        let session = |tokens: Option<u64>, window_gone| SessionUsage {
+            id: "w".into(),
+            role: "worker",
+            agent: "codex".into(),
+            usage: tokens.map(|input_tokens| Usage {
+                input_tokens,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
+                last_turn_at: None,
+                state: None,
+                estimated_cost_usd: None,
+            }),
+            window_gone,
+        };
+        let sessions = [
+            session(Some(3_000_000), false),
+            session(None, false),
+            session(Some(400_000), true),
+        ];
+        assert_eq!(
+            home(4, &sessions, &theme),
+            format!(
+                "{heading}NILES#[default]  4 projects  2 live  {lost}1 orphaned#[default]  3.4M tok"
+            )
+        );
+        assert_eq!(
+            home(4, &sessions[..2], &theme),
+            format!("{heading}NILES#[default]  4 projects  2 live  3.0M tok")
+        );
+    }
+
+    #[test]
+    fn projects_render_live_names_and_escape_names() {
         let theme = Theme::parse(None).unwrap();
         let pill = theme.style(StyleKey::Pill).tmux();
         let running = theme.style(StyleKey::Running).tmux();
-        let waiting = theme.style(StyleKey::Waiting).tmux();
         let now = Utc::now();
         let row = |name, state| Row {
             entry: registry::Entry {
@@ -194,10 +262,8 @@ mod tests {
             row("gone", State::NotRunning),
         ];
         assert_eq!(
-            render(&from_rows(&rows, "api", now), &theme),
-            format!(
-                "{pill}api {running}●#[default]{pill}#[default] │ wait {waiting}⚠#[default] 12m │ unknown {waiting}⚠#[default]"
-            )
+            render(&from_rows(&rows, "api"), &theme),
+            format!("{pill}api#[default] │ wait │ unknown")
         );
         let escaped = Segment {
             label: "a#b".into(),

@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use crate::projects::{
     panels::Panel,
     rows::{Row, State},
-    windows::{AgentWindow, Role, SessionAgents},
+    windows::{AgentWindow, Role, SessionAgents, age},
 };
 use crate::worker::WorkerRole;
 
@@ -108,15 +108,15 @@ impl<'a> Item<'a> {
 #[derive(Default)]
 pub(super) struct Tree {
     projects: Vec<Project>,
-    expanded: HashSet<String>,
-    folders: HashSet<(String, WorkerRole)>,
+    collapsed: HashSet<String>,
+    collapsed_folders: HashSet<(String, WorkerRole)>,
     cursor: usize,
 }
 
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
         let old = std::mem::replace(&mut self.projects, projects);
-        let selected = Tree::items_of(&old, &self.expanded, &self.folders)
+        let selected = Tree::items_of(&old, &self.collapsed, &self.collapsed_folders)
             .get(self.cursor)
             .map(|item| item.key());
         let items = self.items();
@@ -129,21 +129,23 @@ impl Tree {
     }
 
     pub fn items(&self) -> Vec<Item<'_>> {
-        Tree::items_of(&self.projects, &self.expanded, &self.folders)
+        Tree::items_of(&self.projects, &self.collapsed, &self.collapsed_folders)
     }
 
     fn items_of<'a>(
         projects: &'a [Project],
-        expanded: &HashSet<String>,
-        folders: &HashSet<(String, WorkerRole)>,
+        collapsed: &HashSet<String>,
+        collapsed_folders: &HashSet<(String, WorkerRole)>,
     ) -> Vec<Item<'a>> {
         let mut items = vec![Item::Header];
         for project in projects {
             items.push(Item::Project(project));
-            if project.agents.is_some() && expanded.contains(project.row.entry.name.as_str()) {
+            if project.agents.is_some() && !collapsed.contains(project.row.entry.name.as_str()) {
                 for role in project.roles() {
                     items.push(Item::Folder(project, role));
-                    if folders.contains(&(project.row.entry.name.as_str().to_owned(), role)) {
+                    if !collapsed_folders
+                        .contains(&(project.row.entry.name.as_str().to_owned(), role))
+                    {
                         items.extend(project.members(role));
                     }
                 }
@@ -178,12 +180,12 @@ impl Tree {
     pub fn expand(&mut self) {
         match self.selected() {
             Some(Item::Project(project)) if project.agents.is_some() => {
-                self.expanded
-                    .insert(project.row.entry.name.as_str().to_owned());
+                let name = project.row.entry.name.as_str().to_owned();
+                self.collapsed.remove(&name);
             }
             Some(Item::Folder(project, role)) => {
-                self.folders
-                    .insert((project.row.entry.name.as_str().to_owned(), role));
+                self.collapsed_folders
+                    .remove(&(project.row.entry.name.as_str().to_owned(), role));
             }
             Some(Item::Project(_) | Item::Header | Item::Panel(_) | Item::Member(..)) | None => {}
         }
@@ -239,8 +241,8 @@ impl Tree {
         let window = window.map(|(w, role)| (w.to_owned(), role));
         match window {
             Some((window, role)) => {
-                self.expanded.insert(project.clone());
-                self.folders.insert((project.clone(), role));
+                self.collapsed.remove(&project);
+                self.collapsed_folders.remove(&(project.clone(), role));
                 self.select(Key::Window(&project, &window));
             }
             None => self.select(Key::Project(&project)),
@@ -268,19 +270,31 @@ impl Tree {
         let name = project.row.entry.name.as_str().to_owned();
         match item {
             Item::Member(_, role, _) => {
-                self.folders.remove(&(name.clone(), role));
+                self.collapsed_folders.insert((name.clone(), role));
                 self.select(Key::Folder(&name, role));
             }
             Item::Project(_) | Item::Folder(..) => {
-                self.expanded.remove(&name);
+                self.collapsed.insert(name.clone());
                 self.select(Key::Project(&name));
             }
             Item::Header | Item::Panel(_) => {}
         }
     }
 
-    pub fn label<'a>(&self, item: Item<'_>, now: DateTime<Utc>, theme: &'a Theme) -> Line<'a> {
+    pub fn label<'a>(
+        &self,
+        item: Item<'_>,
+        now: DateTime<Utc>,
+        theme: &'a Theme,
+        width: u16,
+    ) -> Line<'a> {
         let guide = |glyph| Span::styled(glyph, theme.style(StyleKey::Guide));
+        let last = item.project().is_some_and(|project| {
+            self.projects
+                .last()
+                .is_some_and(|last| last.row.entry.name == project.row.entry.name)
+        });
+        let stem = if last { " " } else { theme::STEM };
         match item {
             Item::Header => Line::from(Span::styled("PROJECTS", theme.style(StyleKey::Heading))),
             Item::Panel(panel) => Line::from(Span::styled(
@@ -289,30 +303,38 @@ impl Tree {
             )),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
-                let marker = match &project.agents {
-                    Some(_) if self.expanded.contains(name) => theme::EXPANDED,
-                    Some(_) => theme::COLLAPSED,
-                    None => " ",
+                let marker = if project.roles().next().is_none() {
+                    " "
+                } else if self.collapsed.contains(name) {
+                    theme::COLLAPSED
+                } else {
+                    theme::EXPANDED
+                };
+                let (glyph, style) = match project.row.state {
+                    State::Running => (spinner(now, theme), theme.state(ThemeState::Running).1),
+                    State::Waiting(_) => theme.state(ThemeState::Waiting),
+                    State::Missing | State::NotRunning => (" ", theme.style(StyleKey::Muted)),
                 };
                 let mut line = Line::from(vec![
-                    Span::raw("  "),
-                    guide(marker),
+                    guide(if last { theme::LAST } else { theme::BRANCH }),
+                    Span::styled(format!(" {marker} "), theme.style(StyleKey::Guide)),
+                    Span::styled(glyph, style),
                     Span::raw(format!(" {name}")),
                 ]);
-                let suffix = match project.row.state {
-                    State::Missing => Some(Span::styled("missing", theme.style(StyleKey::Lost))),
-                    State::NotRunning => None,
-                    State::Running => Some(Span::styled(
-                        spinner(now, theme),
-                        theme.state(ThemeState::Running).1,
-                    )),
-                    State::Waiting(_) => {
-                        let (glyph, style) = theme.state(ThemeState::Waiting);
-                        Some(Span::styled(glyph, style))
+                match project.row.state {
+                    State::Missing => line.spans.extend([
+                        Span::raw("  "),
+                        Span::styled("missing", theme.style(StyleKey::Lost)),
+                    ]),
+                    State::Waiting(Some(since)) => {
+                        let age = age(now, since);
+                        let padding = usize::from(width).saturating_sub(line.width() + age.len());
+                        line.spans.push(Span::styled(
+                            format!("{}{age}", " ".repeat(padding)),
+                            theme.style(StyleKey::Waiting),
+                        ));
                     }
-                };
-                if let Some(suffix) = suffix {
-                    line.spans.extend([Span::raw("  "), suffix]);
+                    State::Running | State::NotRunning | State::Waiting(None) => {}
                 }
                 line
             }
@@ -323,10 +345,10 @@ impl Tree {
                     theme::BRANCH
                 };
                 let name = project.row.entry.name.as_str().to_owned();
-                let marker = if self.folders.contains(&(name, role)) {
-                    theme::EXPANDED
-                } else {
+                let marker = if self.collapsed_folders.contains(&(name, role)) {
                     theme::COLLAPSED
+                } else {
+                    theme::EXPANDED
                 };
                 let plural = match role {
                     WorkerRole::Worker => "workers",
@@ -336,7 +358,8 @@ impl Tree {
                 };
                 let count = project.members(role).count();
                 Line::from(vec![
-                    Span::raw("    "),
+                    guide(stem),
+                    Span::raw("  "),
                     guide(branch),
                     Span::raw(" "),
                     guide(marker),
@@ -345,7 +368,7 @@ impl Tree {
                 ])
             }
             Item::Member(project, role, member) => {
-                let stem = if project.roles().next_back() == Some(role) {
+                let folder_stem = if project.roles().next_back() == Some(role) {
                     " "
                 } else {
                     theme::STEM
@@ -356,9 +379,10 @@ impl Tree {
                     theme::BRANCH
                 };
                 let mut line = Line::from(vec![
-                    Span::raw("    "),
                     guide(stem),
-                    Span::raw("     "),
+                    Span::raw("  "),
+                    guide(folder_stem),
+                    Span::raw("  "),
                     guide(branch),
                     Span::raw(" "),
                 ]);

@@ -1,9 +1,12 @@
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
-use std::env;
+use std::{env, time::Duration};
 
 use super::{SessionName, TmuxTarget, WindowTarget, open_panel, query, run, session};
-use crate::agent_window::shell_quote;
+use crate::{
+    agent_window::shell_quote,
+    theme::{StyleKey, StyleRender, Theme},
+};
 
 /// The session that holds the explorer. `+` is outside a project name's charset, so no project
 /// session can take this name.
@@ -69,12 +72,6 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
         "set-option",
         "-t",
         target.as_str(),
-        "status",
-        "off",
-        ";",
-        "set-option",
-        "-t",
-        target.as_str(),
         "mouse",
         "on",
         ";",
@@ -89,6 +86,25 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
     show_in_view(&target, &open_panel("help")?)?;
     run(&["select-pane", "-t", explorer.trim_end()])?;
     Ok(home)
+}
+
+/// Draws the fleet header across the top of `home`, ticking every `refresh`.
+pub(crate) fn configure_home(home: &SessionName, theme: &Theme, refresh: Duration) -> Result<()> {
+    let header = format!(
+        "{}#[align=right]poll #{{status-interval}}s · %Y-%m-%d %H:%M:%S %Z",
+        session::status_command("home")?
+    );
+    let bar_style = theme.style(StyleKey::Bar).tmux_option();
+    session::set_options(
+        home,
+        &[
+            ("status", "on"),
+            ("status-position", "top"),
+            ("status-style", bar_style.as_str()),
+            ("status-interval", &refresh.as_secs().to_string()),
+            ("status-format[0]", header.as_str()),
+        ],
+    )
 }
 
 /// The size of the client about to show the home session. A detached session otherwise starts at
