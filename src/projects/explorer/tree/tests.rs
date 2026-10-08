@@ -227,6 +227,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
         .windows
         .push(window(2, "review-parse", reviewer, "review-parse"));
     agents.lost.push(("gone".into(), WorkerRole::Reviewer));
+    agents.windows[0].segment.age = Some("3m".into());
     let web = SessionAgents {
         windows: Vec::new(),
         lost: Vec::new(),
@@ -248,12 +249,12 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
         labels(&tree),
         [
             "PROJECTS",
-            "├─ ▾ ⣾ api",
+            "├─ ▾ ⣾ api                        3m",
             "│  ├─ ▸ workers 2",
             "│  └─ ▾ reviewers 2",
             "│     ├─ review-parse",
             "│     └─ gone window lost",
-            "├─   ⚠ web                        3m",
+            "├─   ⚠ web",
             "└─     old",
             "CONFIG",
             "TELEMETRY",

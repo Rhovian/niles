@@ -16,7 +16,7 @@ two-line status bar at the top:
 Bare `niles` opens the `niles+home` session, creating it on first use: the explorer on the left
 and the view pane on the right, started where you ran `niles`. The explorer lists every registered
 project with its lead's state and refreshes every two seconds. A header across the top counts
-projects, live and orphaned agents, and their tokens, with the poll interval and time.
+projects, live and lost agents, and their tokens, with the poll interval and time.
 
 | Key | Action |
 | --- | --- |

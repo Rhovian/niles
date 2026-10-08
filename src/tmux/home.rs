@@ -88,13 +88,15 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
     Ok(home)
 }
 
-/// Draws the fleet header across the top of `home`, ticking every `refresh`.
+/// Draws the fleet header across the top of `home`, ticking every `refresh`, with a rule under it
+/// drawn by the panes' top borders.
 pub(crate) fn configure_home(home: &SessionName, theme: &Theme, refresh: Duration) -> Result<()> {
     let header = format!(
-        "{}#[align=right]poll #{{status-interval}}s · %Y-%m-%d %H:%M:%S %Z",
+        "{}#[align=right]poll #{{status-interval}}s · %H:%M:%S %Z",
         session::status_command("home")?
     );
     let bar_style = theme.style(StyleKey::Bar).tmux_option();
+    let rule_style = theme.style(StyleKey::Guide).tmux_option();
     session::set_options(
         home,
         &[
@@ -103,6 +105,10 @@ pub(crate) fn configure_home(home: &SessionName, theme: &Theme, refresh: Duratio
             ("status-style", bar_style.as_str()),
             ("status-interval", &refresh.as_secs().to_string()),
             ("status-format[0]", header.as_str()),
+            ("pane-border-status", "top"),
+            ("pane-border-format", ""),
+            ("pane-border-style", rule_style.as_str()),
+            ("pane-active-border-style", rule_style.as_str()),
         ],
     )
 }

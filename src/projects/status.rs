@@ -47,9 +47,9 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
     Ok(render(&segments, &theme))
 }
 
-/// The home session's header: projects, agents, orphaned agents, and their total tokens.
+/// The home session's header: projects, agents, lost agents, and their total tokens.
 fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
-    let orphaned = sessions
+    let lost = sessions
         .iter()
         .filter(|session| session.window_gone)
         .count();
@@ -58,17 +58,21 @@ fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
         .filter_map(|session| session.usage.as_ref())
         .map(Usage::total_tokens)
         .sum();
-    let heading = theme.style(StyleKey::Heading).tmux();
+    let count =
+        |key, count: String, label| format!("{}{count}#[default] {label}", theme.style(key).tmux());
     let mut parts = vec![
-        format!("{heading}NILES#[default]"),
-        format!("{projects} projects"),
-        format!("{} agents", sessions.len() - orphaned),
+        format!("{}NILES#[default]", theme.style(StyleKey::Accent).tmux()),
+        count(StyleKey::Heading, projects.to_string(), "projects"),
+        count(
+            StyleKey::Running,
+            (sessions.len() - lost).to_string(),
+            "agents",
+        ),
     ];
-    if orphaned > 0 {
-        let lost = theme.style(StyleKey::Lost).tmux();
-        parts.push(format!("{lost}{orphaned} orphaned#[default]"));
+    if lost > 0 {
+        parts.push(count(StyleKey::Lost, lost.to_string(), "lost"));
     }
-    parts.push(format!("{} tok", rows::abbreviate(tokens)));
+    parts.push(count(StyleKey::Heading, rows::abbreviate(tokens), "tok"));
     parts.join("  ")
 }
 
@@ -202,10 +206,15 @@ mod tests {
         );
     }
     #[test]
-    fn home_counts_live_and_orphaned_and_abbreviates_tokens() {
+    fn home_counts_live_and_lost_and_abbreviates_tokens() {
         let theme = Theme::parse(None).unwrap();
-        let heading = theme.style(StyleKey::Heading).tmux();
-        let lost = theme.style(StyleKey::Lost).tmux();
+        let [accent, heading, running, lost] = [
+            StyleKey::Accent,
+            StyleKey::Heading,
+            StyleKey::Running,
+            StyleKey::Lost,
+        ]
+        .map(|key| theme.style(key).tmux());
         let session = |tokens: Option<u64>, window_gone| SessionUsage {
             id: "w".into(),
             role: "worker",
@@ -230,12 +239,14 @@ mod tests {
         assert_eq!(
             home(4, &sessions, &theme),
             format!(
-                "{heading}NILES#[default]  4 projects  2 agents  {lost}1 orphaned#[default]  3.4M tok"
+                "{accent}NILES#[default]  {heading}4#[default] projects  {running}2#[default] agents  {lost}1#[default] lost  {heading}3.4M#[default] tok"
             )
         );
         assert_eq!(
             home(4, &sessions[..2], &theme),
-            format!("{heading}NILES#[default]  4 projects  2 agents  3.0M tok")
+            format!(
+                "{accent}NILES#[default]  {heading}4#[default] projects  {running}2#[default] agents  {heading}3.0M#[default] tok"
+            )
         );
     }
 

@@ -17,8 +17,8 @@ use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout},
-    text::{Line, Span, Text},
-    widgets::{List, ListState, Paragraph, Wrap},
+    text::{Line, Text},
+    widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
 };
 
 use self::tree::{Item, Member, Project, Tree};
@@ -35,26 +35,11 @@ use crate::{
 };
 
 const REFRESH: Duration = Duration::from_secs(2);
-const KEYS: [(&str, &str); 4] = [
-    ("↵", "open"),
-    ("r", "register"),
-    ("c", "close"),
-    ("?", "help"),
-];
+const KEYS: [(&str, &str); 3] = [("↵", "open"), ("r", "register"), ("c", "close")];
 
 fn key_hints(theme: &Theme) -> Line<'_> {
-    let mut spans = Vec::new();
-    for (index, (key, label)) in KEYS.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(" · ", theme.style(StyleKey::Muted)));
-        }
-        spans.push(Span::styled(*key, theme.style(StyleKey::Accent)));
-        spans.push(Span::styled(
-            format!(" {label}"),
-            theme.style(StyleKey::Muted),
-        ));
-    }
-    Line::from(spans)
+    let hints = KEYS.map(|(key, label)| format!("{key} {label}"));
+    Line::styled(hints.join(" · "), theme.style(StyleKey::Muted))
 }
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
@@ -356,7 +341,10 @@ impl Explorer {
             (None, Some(prompt)) => Text::raw(prompt),
             (None, None) => Text::from(key_hints(&self.theme)),
         };
-        let footer_widget = Paragraph::new(text).wrap(Wrap { trim: false });
+        let rule = Block::new()
+            .borders(Borders::TOP)
+            .border_style(self.theme.style(StyleKey::Guide));
+        let footer_widget = Paragraph::new(text).wrap(Wrap { trim: false }).block(rule);
         #[expect(
             clippy::disallowed_methods,
             reason = "a footer past u16::MAX lines is clipped to the frame either way"
@@ -470,17 +458,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn footer_keys_and_labels_carry_theme_styles() {
+    fn footer_keys_are_muted() {
         let theme = Theme::parse(None).unwrap();
         let line = key_hints(&theme);
-        assert_eq!(line.to_string(), "↵ open · r register · c close · ? help");
-        for (index, span) in line.spans.iter().enumerate() {
-            let key = if index % 3 == 0 {
-                StyleKey::Accent
-            } else {
-                StyleKey::Muted
-            };
-            assert_eq!(span.style, theme.style(key));
-        }
+        assert_eq!(line.to_string(), "↵ open · r register · c close");
+        assert_eq!(line.style, theme.style(StyleKey::Muted));
     }
 }

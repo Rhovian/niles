@@ -72,7 +72,8 @@ pub(super) fn session_agents(
                             == Some(SessionState::Working)
                     });
                     let (state, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
-                    (Role::Lead, model, state, tokens, None)
+                    let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
+                    (Role::Lead, model, state, tokens, runtime)
                 } else if let Some(worker) = workers
                     .iter()
                     .find(|worker| worker.window == recorded(&window.name))
