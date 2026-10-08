@@ -8,7 +8,10 @@ use crate::{
     config::spec::{ProjectConfig, load_project_config_from},
 };
 
-use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
+use super::{
+    ReviewerBinding, RoleBinding, WorkspaceManifest, load, manifest_path,
+    roles_table::print_manifest_roles, save,
+};
 
 pub fn ensure_interactive(root: &Utf8Path) -> Result<WorkspaceManifest> {
     let stdin = io::stdin();
@@ -55,26 +58,54 @@ fn ensure_interactive_with_io<R: BufRead, W: Write>(
         output,
         "Choose persistent agents for this workspace. Press Enter to accept a default."
     )?;
-    let manifest = prompt_manifest_values(&defaults, &config)?;
+    let manifest = prompt_manifest_values(output, &defaults, &config)?;
     save(root, &manifest)?;
     writeln!(output, "manifest: {path}")?;
 
     Ok(manifest)
 }
 
-fn prompt_manifest_values(
+fn prompt_manifest_values<W: Write>(
+    output: &mut W,
     defaults: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<WorkspaceManifest> {
-    let pick = |label, default| picker::prompt_agent_value(label, default, config);
+    let lead = picker::prompt_agent_value("Lead agent", &defaults.lead, config)?;
+    let worker = prompt_binding(output, "Worker agent", &defaults.worker, config)?;
+    let reviewer = match &defaults.reviewer {
+        ReviewerBinding::Agent(binding) if binding.scalar().is_none() => {
+            ReviewerBinding::Agent(prompt_binding(output, "Reviewer agent", binding, config)?)
+        }
+        ReviewerBinding::Lead | ReviewerBinding::Agent(_) => {
+            picker::prompt_reviewer_value("Reviewer agent", &defaults.reviewer, config)?
+        }
+    };
+    let security = prompt_binding(output, "Security agent", &defaults.security, config)?;
     Ok(WorkspaceManifest {
-        lead: pick("Lead agent", &defaults.lead)?,
-        worker: pick("Worker agent", defaults.worker.default_model())?.into(),
-        reviewer: picker::prompt_reviewer_value("Reviewer agent", &defaults.reviewer, config)?,
-        security: pick("Security agent", defaults.security.default_model())?.into(),
+        lead,
+        worker,
+        reviewer,
+        security,
         // Hand-edited settings are not prompted for, so changing roles must preserve them.
         ..defaults.clone()
     })
+}
+
+/// A pick is one model, so a role with groups is kept rather than collapsed to the pick.
+fn prompt_binding<W: Write>(
+    output: &mut W,
+    label: &str,
+    binding: &RoleBinding,
+    config: &ProjectConfig,
+) -> Result<RoleBinding> {
+    if binding.scalar().is_some() {
+        return Ok(picker::prompt_agent_value(label, binding.default_model(), config)?.into());
+    }
+    writeln!(
+        output,
+        "{label}: hand-edited groups kept; edit the manifest to change them"
+    )?;
+    Ok(binding.clone())
 }
 
 fn prompt_yes_no<R: BufRead, W: Write>(
@@ -173,6 +204,47 @@ security  claude  opus     max
         );
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    #[test]
+    fn grouped_role_is_kept_without_prompting() -> Result<()> {
+        let group = |when: &str, model: &str| crate::workspace_manifest::AgentGroup {
+            when: Some(when.to_owned()),
+            models: vec![model.to_owned()],
+            efforts: Some(vec!["medium".to_owned(), "high".to_owned()]),
+        };
+        let grouped = RoleBinding(vec![
+            group("settled plan", "codex:gpt-5.5"),
+            group("design open", "claude:opus"),
+        ]);
+        let config = load_project_config_from(&temp_test_path("grouped-role"))?;
+        let mut output = Vec::new();
+
+        let kept = prompt_binding(&mut output, "Worker agent", &grouped, &config)?;
+
+        assert_eq!(kept, grouped);
+        assert_eq!(
+            String::from_utf8(output)?,
+            "Worker agent: hand-edited groups kept; edit the manifest to change them\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_single_model_and_effort_is_scalar() {
+        let binding = |efforts: Option<&[&str]>| {
+            RoleBinding(vec![crate::workspace_manifest::AgentGroup {
+                when: None,
+                models: vec!["codex:gpt-5.5".to_owned()],
+                efforts: efforts.map(|efforts| efforts.iter().map(|e| (*e).to_owned()).collect()),
+            }])
+        };
+        assert_eq!(binding(None).scalar().as_deref(), Some("codex:gpt-5.5"));
+        assert_eq!(
+            binding(Some(&["high"])).scalar().as_deref(),
+            Some("codex:gpt-5.5:high")
+        );
+        assert_eq!(binding(Some(&["medium", "high"])).scalar(), None);
     }
 
     #[test]
