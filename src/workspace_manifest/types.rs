@@ -89,22 +89,10 @@ impl TryFrom<RoleBindingWire> for RoleBinding {
 
 impl Serialize for RoleBinding {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        if let [
-            AgentGroup {
-                when: None,
-                models,
-                efforts,
-            },
-        ] = self.0.as_slice()
-            && let [model] = models.as_slice()
-        {
-            match efforts.as_deref() {
-                None => return serializer.serialize_str(model),
-                Some([effort]) => return serializer.serialize_str(&format!("{model}:{effort}")),
-                Some(_) => {}
-            }
+        match self.scalar() {
+            Some(value) => serializer.serialize_str(&value),
+            None => self.0.serialize(serializer),
         }
-        self.0.serialize(serializer)
     }
 }
 
@@ -131,6 +119,29 @@ fn listed_spec(model: &str, roster: &ModelRoster) -> Result<AgentSpec> {
 }
 
 impl RoleBinding {
+    /// The binding as one `model[:effort]` value, unless it carries groups, `when` text or an effort
+    /// list that only the list form can hold.
+    pub fn scalar(&self) -> Option<String> {
+        let [
+            AgentGroup {
+                when: None,
+                models,
+                efforts,
+            },
+        ] = self.0.as_slice()
+        else {
+            return None;
+        };
+        let [model] = models.as_slice() else {
+            return None;
+        };
+        match efforts.as_deref() {
+            None => Some(model.clone()),
+            Some([effort]) => Some(format!("{model}:{effort}")),
+            Some(_) => None,
+        }
+    }
+
     pub fn default_model(&self) -> &str {
         &self.0[0].models[0]
     }
