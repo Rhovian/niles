@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use crate::projects::{
     panels::Panel,
     rows::{Row, State},
-    windows::{AgentWindow, Role, SessionAgents, age},
+    windows::{AgentWindow, Role, SessionAgents},
 };
 use crate::worker::WorkerRole;
 
@@ -321,20 +321,24 @@ impl Tree {
                     Span::styled(glyph, style),
                     Span::raw(format!(" {name}")),
                 ]);
-                match project.row.state {
-                    State::Missing => line.spans.extend([
+                if let State::Missing = project.row.state {
+                    line.spans.extend([
                         Span::raw("  "),
                         Span::styled("missing", theme.style(StyleKey::Lost)),
-                    ]),
-                    State::Waiting(Some(since)) => {
-                        let age = age(now, since);
-                        let padding = usize::from(width).saturating_sub(line.width() + age.len());
-                        line.spans.push(Span::styled(
-                            format!("{}{age}", " ".repeat(padding)),
-                            theme.style(StyleKey::Waiting),
-                        ));
-                    }
-                    State::Running | State::NotRunning | State::Waiting(None) => {}
+                    ]);
+                }
+                let runtime = project
+                    .agents
+                    .iter()
+                    .flat_map(|agents| &agents.windows)
+                    .find(|window| matches!(window.role, Role::Lead))
+                    .and_then(|lead| lead.segment.age.as_deref());
+                if let Some(runtime) = runtime {
+                    let padding = usize::from(width).saturating_sub(line.width() + runtime.len());
+                    line.spans.push(Span::styled(
+                        format!("{}{runtime}", " ".repeat(padding)),
+                        theme.style(StyleKey::Muted),
+                    ));
                 }
                 line
             }
