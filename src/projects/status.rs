@@ -47,7 +47,7 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
     Ok(render(&segments, &theme))
 }
 
-/// The home session's header: projects, live and orphaned agents, and their total tokens.
+/// The home session's header: projects, agents, orphaned agents, and their total tokens.
 fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
     let orphaned = sessions
         .iter()
@@ -62,7 +62,7 @@ fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
     let mut parts = vec![
         format!("{heading}NILES#[default]"),
         format!("{projects} projects"),
-        format!("{} live", sessions.len() - orphaned),
+        format!("{} agents", sessions.len() - orphaned),
     ];
     if orphaned > 0 {
         let lost = theme.style(StyleKey::Lost).tmux();
@@ -230,12 +230,12 @@ mod tests {
         assert_eq!(
             home(4, &sessions, &theme),
             format!(
-                "{heading}NILES#[default]  4 projects  2 live  {lost}1 orphaned#[default]  3.4M tok"
+                "{heading}NILES#[default]  4 projects  2 agents  {lost}1 orphaned#[default]  3.4M tok"
             )
         );
         assert_eq!(
             home(4, &sessions[..2], &theme),
-            format!("{heading}NILES#[default]  4 projects  2 live  3.0M tok")
+            format!("{heading}NILES#[default]  4 projects  2 agents  3.0M tok")
         );
     }
 
