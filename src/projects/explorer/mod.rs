@@ -35,7 +35,6 @@ use crate::{
 };
 
 const REFRESH: Duration = Duration::from_secs(2);
-const FOOTER_LINES: u16 = 3;
 const KEYS: [(&str, &str); 4] = [
     ("↵", "open"),
     ("r", "register"),
@@ -342,18 +341,6 @@ impl Explorer {
     }
 
     fn draw(&self, frame: &mut Frame) {
-        let [list, footer] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(FOOTER_LINES)])
-                .areas(frame.area());
-        let now = Utc::now();
-        let labels = self
-            .tree
-            .items()
-            .into_iter()
-            .map(|item| self.tree.label(item, now, &self.theme, list.width));
-        let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
-        let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
-        frame.render_stateful_widget(list_widget, list, &mut state);
         let prompt = match &self.mode {
             Mode::Browse => None,
             Mode::Directory(input) => Some(format!("directory [{}]: {input}", self.cwd)),
@@ -369,7 +356,26 @@ impl Explorer {
             (None, Some(prompt)) => Text::raw(prompt),
             (None, None) => Text::from(key_hints(&self.theme)),
         };
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), footer);
+        let footer_widget = Paragraph::new(text).wrap(Wrap { trim: false });
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a footer past u16::MAX lines is clipped to the frame either way"
+        )]
+        let footer_lines =
+            u16::try_from(footer_widget.line_count(frame.area().width)).unwrap_or(u16::MAX);
+        let [list, footer] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(footer_lines)])
+                .areas(frame.area());
+        frame.render_widget(footer_widget, footer);
+        let now = Utc::now();
+        let labels = self
+            .tree
+            .items()
+            .into_iter()
+            .map(|item| self.tree.label(item, now, &self.theme, list.width));
+        let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
+        let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
+        frame.render_stateful_widget(list_widget, list, &mut state);
     }
 }
 
