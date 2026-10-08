@@ -14,28 +14,12 @@ const MAX_CELL: usize = 40;
 const MAX_REASON: usize = 68;
 const MISSING: &str = "-";
 
-pub(super) fn print_manifest_roles<W: Write>(
+pub(crate) fn print_manifest_roles<W: Write>(
     output: &mut W,
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<()> {
-    let reviewer = match &manifest.reviewer {
-        ReviewerBinding::Lead => RoleRow {
-            role: "reviewer",
-            family: "lead".to_owned(),
-            model: MISSING.to_owned(),
-            effort: MISSING.to_owned(),
-            invalid_reason: None,
-        },
-        ReviewerBinding::Agent(agent) => binding_row("reviewer", agent, config),
-    };
-    let rows = [
-        role_row("lead", &manifest.lead, config),
-        binding_row("worker", &manifest.worker, config),
-        reviewer,
-        binding_row("security", &manifest.security, config),
-    ];
-
+    let rows = manifest_roles(manifest, config);
     let role_width = rows.iter().map(|row| row.role.len()).fold(0, usize::max);
     let family_width = rows
         .iter()
@@ -57,12 +41,31 @@ pub(super) fn print_manifest_roles<W: Write>(
     Ok(())
 }
 
-struct RoleRow {
-    role: &'static str,
-    family: String,
-    model: String,
-    effort: String,
-    invalid_reason: Option<String>,
+pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 4] {
+    let reviewer = match &manifest.reviewer {
+        ReviewerBinding::Lead => RoleRow {
+            role: "reviewer",
+            family: "lead".to_owned(),
+            model: MISSING.to_owned(),
+            effort: MISSING.to_owned(),
+            invalid_reason: None,
+        },
+        ReviewerBinding::Agent(agent) => binding_row("reviewer", agent, config),
+    };
+    [
+        role_row("lead", &manifest.lead, config),
+        binding_row("worker", &manifest.worker, config),
+        reviewer,
+        binding_row("security", &manifest.security, config),
+    ]
+}
+
+pub(crate) struct RoleRow {
+    pub role: &'static str,
+    pub family: String,
+    pub model: String,
+    pub effort: String,
+    pub invalid_reason: Option<String>,
 }
 
 fn binding_row(role: &'static str, binding: &RoleBinding, config: &ProjectConfig) -> RoleRow {
@@ -109,7 +112,7 @@ fn cell(value: &str) -> String {
 /// Render a manifest value as one inert line. Control characters are dropped
 /// rather than escaped: a bare newline forges a whole extra table row, and an
 /// ESC sequence rewrites rows already printed.
-fn clamp(value: &str, max: usize) -> String {
+pub(crate) fn clamp(value: &str, max: usize) -> String {
     let kept: String = value
         .chars()
         .filter(|c| !c.is_control())

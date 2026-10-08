@@ -118,6 +118,9 @@ as state only and never submits captured text.
 Agent-written session telemetry gates due worker check-ins. Agents can delay their own check-ins
 by writing to their own logs.
 
+`niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
+are clamped and stripped of control characters before terminal rendering.
+
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
 universal sanitizer. See [`src/worker/list.rs`](../src/worker/list.rs),
