@@ -94,10 +94,7 @@ fn config_prints_models_files_errors_and_project_overrides() {
             expected += &format!(
                 "{}\n{}",
                 paint(StyleKey::Muted, "models (project overrides)"),
-                models_table(
-                    &load_project_config_from(&entry.path).unwrap().models.rows(),
-                    &theme
-                )
+                models_table(&[["codex", "gpt-5.5", "high"].map(str::to_owned)], &theme)
             );
         }
     }
