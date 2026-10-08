@@ -1,15 +1,19 @@
-use std::{fmt::Write, fs};
+use std::fmt::Write;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::ValueEnum;
+use ratatui::style::Style;
 
 use super::{registry, rows};
 use crate::{
-    config::spec::PROJECT_CONFIG_FILES,
+    agents::ModelRoster,
+    config::spec::{PROJECT_CONFIG_FILES, load_project_config_from},
     session,
+    telemetry::SessionState,
     theme::{State, StyleKey, StyleRender, Theme},
     tmux,
     worker::usage::{self, SessionUsage},
+    workspace_manifest,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -35,27 +39,16 @@ pub(crate) fn render(panel: Panel) -> Result<()> {
     let entries = registry::entries()?;
     match panel {
         Panel::Help => text.push_str(&help_text(entries.is_empty(), &theme)),
-        Panel::Config => {
-            for entry in entries {
-                text.push_str(&config(&entry, &theme)?);
-            }
-        }
+        Panel::Config => text.push_str(&config_panel(&entries, &theme)?),
         Panel::Telemetry => {
-            for entry in entries {
-                let sessions = open_sessions(&entry)?;
-                if !sessions.is_empty() {
-                    writeln!(
-                        text,
-                        "{}",
-                        theme.style(StyleKey::Heading).paint(&format!(
-                            "{}  {}",
-                            entry.name.as_str(),
-                            entry.path
-                        ))
-                    )?;
-                    text.push_str(&telemetry(&sessions)?);
-                }
-            }
+            let projects = entries
+                .into_iter()
+                .map(|entry| {
+                    let sessions = open_sessions(&entry)?;
+                    Ok((entry.name.as_str().to_owned(), sessions))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            text.push_str(&telemetry(&projects, &theme)?);
         }
     }
     print!("{text}");
@@ -120,162 +113,274 @@ fn help_text(first_run: bool, theme: &Theme) -> String {
     }
 }
 
-fn config(entry: &registry::Entry, theme: &Theme) -> Result<String> {
-    let mut text = format!(
-        "{}\n",
-        theme
-            .style(StyleKey::Heading)
-            .paint(&format!("{}  {}", entry.name.as_str(), entry.path))
-    );
-    for file in std::iter::once(".niles/manifest.yaml").chain(PROJECT_CONFIG_FILES) {
-        let path = entry.path.join(file);
-        if !path.try_exists()? {
-            if file == ".niles/manifest.yaml" {
-                writeln!(
-                    text,
-                    "{} {}",
-                    theme.style(StyleKey::Accent).paint(file),
-                    theme.style(StyleKey::Lost).paint("missing")
-                )?;
-            }
-            continue;
+const MANIFEST: &str = ".niles/manifest.yaml";
+const ERROR_WIDTH: usize = 68;
+const MODEL_WIDTH: usize = 40;
+
+struct Cell {
+    text: String,
+    style: Style,
+    right: bool,
+}
+impl Cell {
+    fn left(text: impl Into<String>, style: Style) -> Self {
+        Self {
+            text: text.into(),
+            style,
+            right: false,
         }
-        let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+    }
+    fn right(text: impl Into<String>, style: Style) -> Self {
+        Self {
+            right: true,
+            ..Self::left(text, style)
+        }
+    }
+}
+
+fn table(rows: &[Vec<Cell>]) -> (Vec<String>, usize) {
+    let mut widths = vec![0; rows.iter().map(Vec::len).fold(0, usize::max)];
+    for row in rows {
+        for (cell, width) in row.iter().zip(&mut widths) {
+            *width = (*width).max(cell.text.chars().count());
+        }
+    }
+    let lines = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .zip(&widths)
+                .map(|(cell, width)| {
+                    let text = if cell.right {
+                        format!("{:>width$}", cell.text)
+                    } else {
+                        format!("{:<width$}", cell.text)
+                    };
+                    cell.style.paint(&text)
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        })
+        .collect();
+    let width = widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
+    (lines, width)
+}
+
+fn config_panel(entries: &[registry::Entry], theme: &Theme) -> Result<String> {
+    let builtin = ModelRoster::builtin()?.rows();
+    let mut text = format!(
+        "{}\n{}",
+        theme.style(StyleKey::Heading).paint("MODELS"),
+        models_table(&builtin, theme)
+    );
+    for entry in entries {
         writeln!(
             text,
-            "{}\n{}",
-            theme.style(StyleKey::Accent).paint(file),
-            body.trim_end_matches('\n')
+            "\n{}  {}",
+            theme.style(StyleKey::Heading).paint(entry.name.as_str()),
+            theme.style(StyleKey::Muted).paint(entry.path.as_str())
         )?;
+        match project_config(entry, &builtin, theme) {
+            Ok(Some(body)) => text.push_str(&body),
+            Ok(None) => writeln!(
+                text,
+                "{} {MANIFEST}",
+                theme.style(StyleKey::Lost).paint("✗")
+            )?,
+            Err(error) => writeln!(
+                text,
+                "{} {}",
+                theme.style(StyleKey::Lost).paint("✗"),
+                workspace_manifest::clamp(&format!("{error:#}"), ERROR_WIDTH)
+            )?,
+        }
     }
-    text.push('\n');
     Ok(text)
 }
 
-fn telemetry(sessions: &[SessionUsage]) -> Result<String> {
+fn project_config(
+    entry: &registry::Entry,
+    builtin: &[[String; 3]],
+    theme: &Theme,
+) -> Result<Option<String>> {
+    let Some(manifest) = workspace_manifest::load(&entry.path)? else {
+        return Ok(None);
+    };
+    let config = load_project_config_from(&entry.path)?;
+    let roles = workspace_manifest::manifest_roles(&manifest, &config);
+    let cells = roles
+        .iter()
+        .map(|row| {
+            vec![
+                Cell::left(row.role, theme.style(StyleKey::Accent)),
+                Cell::left(&row.family, Style::new()),
+                Cell::left(&row.model, theme.style(StyleKey::Heading)),
+                Cell::left(&row.effort, theme.style(StyleKey::Muted)),
+            ]
+        })
+        .collect::<Vec<_>>();
     let mut text = String::new();
-    let mut tokens = 0;
-    let mut cost_total = None;
-    for session in sessions {
-        write!(
-            text,
-            "{}  {}  {}  ",
-            session.id, session.role, session.agent
-        )?;
-        match &session.usage {
-            Some(usage) => {
-                let total = usage.total_tokens();
-                tokens += total;
-                write!(text, "{} tokens", rows::abbreviate(total))?;
-                if let Some(cost) = usage.estimated_cost_usd {
-                    cost_total = Some(cost_total.map_or(cost, |total| total + cost));
-                    write!(text, "  ${cost:.4}")?;
-                }
-            }
-            None => text.push_str("tokens unknown"),
+    for (line, row) in table(&cells).0.iter().zip(roles) {
+        writeln!(text, "{line}")?;
+        if let Some(reason) = row.invalid_reason {
+            writeln!(
+                text,
+                "{}",
+                theme
+                    .style(StyleKey::Lost)
+                    .paint(&format!("  reason: {reason}"))
+            )?;
         }
-        text.push('\n');
     }
-    write!(text, "total  {} tokens", rows::abbreviate(tokens))?;
-    if let Some(cost) = cost_total {
-        write!(text, "  ${cost:.4}")?;
+    let mut files = vec![MANIFEST];
+    for file in PROJECT_CONFIG_FILES {
+        if entry.path.join(file).try_exists()? {
+            files.push(file);
+        }
     }
-    text.push_str("\n\n");
+    writeln!(
+        text,
+        "{}",
+        files
+            .iter()
+            .map(|file| format!("{} {file}", theme.style(StyleKey::Running).paint("✓")))
+            .collect::<Vec<_>>()
+            .join("   ")
+    )?;
+    let models = config.models.rows();
+    if models != builtin {
+        writeln!(
+            text,
+            "{}",
+            theme
+                .style(StyleKey::Muted)
+                .paint("models (project overrides)")
+        )?;
+        text.push_str(&models_table(&models, theme));
+    }
+    Ok(Some(text))
+}
+
+fn models_table(rows: &[[String; 3]], theme: &Theme) -> String {
+    let mut previous = "";
+    let cells = rows
+        .iter()
+        .map(|[family, model, efforts]| {
+            let label = if previous == family { "" } else { family };
+            previous = family;
+            vec![
+                Cell::left(label, theme.style(StyleKey::Accent)),
+                Cell::left(workspace_manifest::clamp(model, MODEL_WIDTH), Style::new()),
+                Cell::left(efforts, theme.style(StyleKey::Muted)),
+            ]
+        })
+        .collect::<Vec<_>>();
+    table(&cells).0.join("\n") + "\n"
+}
+
+fn telemetry(projects: &[(String, Vec<SessionUsage>)], theme: &Theme) -> Result<String> {
+    let sessions = projects
+        .iter()
+        .flat_map(|(_, sessions)| sessions)
+        .collect::<Vec<_>>();
+    if sessions.is_empty() {
+        return Ok(format!(
+            "{}\n",
+            theme.style(StyleKey::Muted).paint("no live sessions")
+        ));
+    }
+    let usages = sessions
+        .iter()
+        .filter_map(|session| session.usage.as_ref())
+        .collect::<Vec<_>>();
+    let tokens = usages.iter().map(|usage| usage.total_tokens()).sum();
+    let cost = usages
+        .iter()
+        .filter_map(|usage| usage.estimated_cost_usd)
+        .reduce(|a, b| a + b);
+    let numbers = |tokens: String, cost: Option<f64>| {
+        [
+            Cell::right(tokens, theme.style(StyleKey::Heading)),
+            Cell::right(
+                cost.map_or_else(String::new, |cost| format!("${cost:.2}")),
+                theme.style(StyleKey::Muted),
+            ),
+        ]
+    };
+    let blanks = |count| std::iter::repeat_with(|| Cell::left("", Style::new())).take(count);
+    let mut header = blanks(4).collect::<Vec<_>>();
+    header.extend([
+        Cell::right("TOKENS", theme.style(StyleKey::Muted)),
+        Cell::right("COST", theme.style(StyleKey::Muted)),
+    ]);
+    let mut cells = vec![header];
+    for session in &sessions {
+        let state = session
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.state)
+            .map(|state| match state {
+                SessionState::Working => State::Running,
+                SessionState::Waiting => State::Idle,
+            });
+        let (glyph, style) = match state {
+            Some(state) => theme.state(state),
+            None => (" ", Style::new()),
+        };
+        let id = if session.role == "lead" {
+            "lead"
+        } else {
+            &session.id
+        };
+        let mut row = vec![
+            Cell::left(glyph, style),
+            Cell::left(id, theme.style(StyleKey::Accent)),
+            Cell::left(session.role, theme.style(StyleKey::Muted)),
+            Cell::left(&session.agent, Style::new()),
+        ];
+        row.extend(numbers(
+            session.usage.as_ref().map_or_else(
+                || "?".into(),
+                |usage| rows::abbreviate(usage.total_tokens()),
+            ),
+            session
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.estimated_cost_usd),
+        ));
+        cells.push(row);
+    }
+    let mut total = blanks(1).collect::<Vec<_>>();
+    total.push(Cell::left("total", theme.style(StyleKey::Heading)));
+    total.extend(blanks(2));
+    total.extend(numbers(rows::abbreviate(tokens), cost));
+    cells.push(total);
+    let (lines, width) = table(&cells);
+    let mut text = format!("  {}\n", lines[0]);
+    let mut index = 1;
+    for (name, sessions) in projects.iter().filter(|(_, sessions)| !sessions.is_empty()) {
+        writeln!(text, "{}", theme.style(StyleKey::Heading).paint(name))?;
+        for session in sessions {
+            write!(text, "  {}", lines[index])?;
+            if session.window_gone {
+                write!(
+                    text,
+                    "  {}",
+                    theme.style(StyleKey::Lost).paint("window lost")
+                )?;
+            }
+            text.push('\n');
+            index += 1;
+        }
+    }
+    writeln!(
+        text,
+        "{}\n  {}",
+        theme.style(StyleKey::Guide).paint(&"─".repeat(width + 2)),
+        lines[index]
+    )?;
     Ok(text)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{projects::registry::ProjectName, test_support::temp_test_path};
-
-    #[test]
-    fn help_text_depends_on_whether_registry_is_empty() {
-        let theme = Theme::parse(None).unwrap();
-        assert_eq!(
-            help_text(true, &theme),
-            FIRST_RUN
-                .replacen("niles", &theme.style(StyleKey::Heading).paint("niles"), 1)
-                .replace(
-                    "Get started",
-                    &theme.style(StyleKey::Heading).paint("Get started")
-                )
-        );
-        assert!(help_text(false, &theme).contains(&format!(
-            "{} running   {} waiting",
-            theme.state(State::Running).1.paint("⣾"),
-            theme.state(State::Waiting).1.paint("⚠")
-        )));
-    }
-
-    #[test]
-    fn config_prints_files_and_missing_manifests() {
-        let path = temp_test_path("panel-config");
-        let entry = registry::Entry {
-            name: ProjectName::parse("api").unwrap(),
-            path,
-        };
-        let theme = Theme::parse(None).unwrap();
-        let heading = format!(
-            "{}\n",
-            theme
-                .style(StyleKey::Heading)
-                .paint(&format!("api  {}", entry.path))
-        );
-        let [manifest, niles, dot_niles] = [".niles/manifest.yaml", "niles.yaml", ".niles.yaml"]
-            .map(|file| theme.style(StyleKey::Accent).paint(file));
-        let missing = theme.style(StyleKey::Lost).paint("missing");
-        assert_eq!(
-            config(&entry, &theme).unwrap(),
-            format!("{heading}{manifest} {missing}\n\n")
-        );
-        fs::create_dir_all(entry.path.join(".niles")).unwrap();
-        for file in [".niles/manifest.yaml", "niles.yaml", ".niles.yaml"] {
-            fs::write(entry.path.join(file), "agents: {}\n").unwrap();
-        }
-        assert_eq!(
-            config(&entry, &theme).unwrap(),
-            format!(
-                "{heading}{manifest}\nagents: {{}}\n{niles}\nagents: {{}}\n{dot_niles}\nagents: {{}}\n\n"
-            )
-        );
-        fs::remove_dir_all(&entry.path).unwrap();
-    }
-
-    #[test]
-    fn telemetry_prints_known_and_unknown_usage_and_totals() {
-        let sessions = [
-            SessionUsage {
-                id: "lead".into(),
-                role: "lead",
-                agent: "claude".into(),
-                usage: Some(crate::telemetry::Usage {
-                    input_tokens: 10_000,
-                    output_tokens: 2_000,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: None,
-                    reasoning_tokens: None,
-                    last_turn_at: None,
-                    state: None,
-                    estimated_cost_usd: Some(0.03),
-                }),
-                window_gone: false,
-            },
-            SessionUsage {
-                id: "parse".into(),
-                role: "worker",
-                agent: "codex".into(),
-                usage: None,
-                window_gone: false,
-            },
-        ];
-        assert_eq!(
-            telemetry(&sessions).unwrap(),
-            "lead  lead  claude  12k tokens  $0.0300\nparse  worker  codex  tokens unknown\ntotal  12k tokens  $0.0300\n\n"
-        );
-        assert_eq!(
-            telemetry(&sessions[1..]).unwrap(),
-            "parse  worker  codex  tokens unknown\ntotal  0 tokens\n\n"
-        );
-    }
-}
+mod tests;
