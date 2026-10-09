@@ -16,14 +16,22 @@ mod role;
 mod tests;
 
 use columns::{Columns, Pick};
-use form::{Action, Form};
+use form::Form;
 pub(crate) use role::Role;
+
+pub(crate) enum Choice {
+    Save(WorkspaceManifest),
+    /// Launch with the manifest as it is.
+    Keep,
+    /// Stop the launch.
+    Quit,
+}
 
 pub(crate) fn roles(
     root: &Utf8Path,
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
-) -> Result<Option<WorkspaceManifest>> {
+) -> Result<Choice> {
     let theme = Theme::load()?;
     let mut form = Form::new(manifest, config)?;
     let mut terminal = ratatui::init();
@@ -38,17 +46,14 @@ fn run_form(
     form: &mut Form,
     config: &ProjectConfig,
     theme: &Theme,
-) -> Result<Option<WorkspaceManifest>> {
+) -> Result<Choice> {
     loop {
         terminal.draw(|frame| draw::form(frame, form, theme, root.as_str()))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
+            && let Some(choice) = form.key(key.code, config)?
         {
-            match form.key(key.code, config)? {
-                Action::Continue => {}
-                Action::Quit => return Ok(None),
-                Action::Save => return Ok(Some(form.draft.clone())),
-            }
+            return Ok(choice);
         }
     }
 }

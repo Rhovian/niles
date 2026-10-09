@@ -5,11 +5,12 @@ use camino::Utf8Path;
 
 use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
 use crate::{
-    agents::picker::{self, Role},
+    agents::picker::{self, Choice, Role},
     config::spec::load_project_config_from,
 };
 
-pub fn ensure_interactive(root: &Utf8Path) -> Result<WorkspaceManifest> {
+/// The manifest to launch with, or `None` when the operator quit the picker.
+pub fn ensure_interactive(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     ensure(
         root,
         io::stdin().is_terminal(),
@@ -26,8 +27,8 @@ fn ensure(
         &Utf8Path,
         WorkspaceManifest,
         &crate::config::spec::ProjectConfig,
-    ) -> Result<Option<WorkspaceManifest>>,
-) -> Result<WorkspaceManifest> {
+    ) -> Result<Choice>,
+) -> Result<Option<WorkspaceManifest>> {
     let config = load_project_config_from(root)?;
     let existing = load(root)?;
     if !interactive {
@@ -38,15 +39,16 @@ fn ensure(
             );
         };
         print_manifest_roles(output, &manifest, &config)?;
-        return Ok(manifest);
+        return Ok(Some(manifest));
     }
     let defaults = match &existing {
         Some(manifest) => manifest.clone(),
         None => WorkspaceManifest::default(),
     };
     match pick(root, defaults, &config)? {
-        Some(draft) => save_changes(root, existing.as_ref(), &draft),
-        None => existing.context("no workspace manifest written"),
+        Choice::Save(draft) => save_changes(root, existing.as_ref(), &draft).map(Some),
+        Choice::Keep => existing.context("no workspace manifest written").map(Some),
+        Choice::Quit => Ok(None),
     }
 }
 

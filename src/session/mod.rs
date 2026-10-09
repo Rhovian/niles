@@ -27,11 +27,13 @@ pub fn run() -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
-    let manifest = launch_prelude(&workspace)?;
+    let Some(manifest) = launch_prelude(&workspace)? else {
+        return Ok(());
+    };
     launch_foreground_agent(&workspace, &manifest)
 }
 
-fn launch_prelude(workspace: &Utf8Path) -> Result<WorkspaceManifest> {
+fn launch_prelude(workspace: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let worker_dir = store::workers_dir(workspace);
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
 

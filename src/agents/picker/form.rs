@@ -2,7 +2,7 @@ use anyhow::Result;
 use ratatui::crossterm::event::KeyCode;
 
 use super::{
-    Role,
+    Choice, Role,
     columns::{self, Columns, Family, Pick},
     presets::{self, Preset},
 };
@@ -13,12 +13,6 @@ pub(super) enum Screen {
     Presets { selected: usize },
     Editing { role: Role, columns: Columns },
     Review,
-}
-
-pub(super) enum Action {
-    Continue,
-    Save,
-    Quit,
 }
 
 pub(super) struct Form {
@@ -46,9 +40,12 @@ impl Form {
         clippy::wildcard_enum_match_arm,
         reason = "each screen ignores unbound terminal keys"
     )]
-    pub fn key(&mut self, key: KeyCode, config: &ProjectConfig) -> Result<Action> {
-        if key == KeyCode::Char('q') {
-            return Ok(Action::Quit);
+    /// The operator's choice, or `None` while the form stays open.
+    pub fn key(&mut self, key: KeyCode, config: &ProjectConfig) -> Result<Option<Choice>> {
+        match key {
+            KeyCode::Char('c') => return Ok(Some(Choice::Keep)),
+            KeyCode::Char('q') => return Ok(Some(Choice::Quit)),
+            _ => {}
         }
         match &mut self.screen {
             Screen::Editing { role, columns } => match columns.key(key) {
@@ -60,7 +57,7 @@ impl Form {
                 }
             },
             Screen::Review => match key {
-                KeyCode::Enter => return Ok(Action::Save),
+                KeyCode::Enter => return Ok(Some(Choice::Save(self.draft.clone()))),
                 KeyCode::Esc | KeyCode::Left => self.screen = Screen::Roles,
                 _ => {}
             },
@@ -101,6 +98,6 @@ impl Form {
                 _ => {}
             },
         }
-        Ok(Action::Continue)
+        Ok(None)
     }
 }

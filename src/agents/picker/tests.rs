@@ -218,8 +218,12 @@ fn cancelling_group_replacement_keeps_groups_and_other_picks() {
     form.key(KeyCode::Esc, &config).unwrap();
     assert!(matches!(form.screen, Screen::Roles));
     assert!(matches!(
+        form.key(KeyCode::Char('c'), &config).unwrap(),
+        Some(Choice::Keep)
+    ));
+    assert!(matches!(
         form.key(KeyCode::Char('q'), &config).unwrap(),
-        Action::Quit
+        Some(Choice::Quit)
     ));
 }
 
@@ -242,7 +246,7 @@ fn preset_can_be_edited_then_reviewed_and_saved() {
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(
         form.key(KeyCode::Enter, &config).unwrap(),
-        Action::Save
+        Some(Choice::Save(_))
     ));
 }
 

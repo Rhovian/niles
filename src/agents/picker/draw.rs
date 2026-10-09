@@ -21,14 +21,15 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         Screen::Roles | Screen::Presets { .. } | Screen::Review => "NILES / ROLES".to_owned(),
     };
     let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
+    let mut warning = None;
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit · p preset · s save · q quit"
+            "↑↓ role · ↵ edit · p preset · s save"
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
-            "↵ save · esc back · q quit"
+            "↵ save · esc back"
         }
         Screen::Presets { selected } => {
             let items = form
@@ -43,24 +44,19 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
                 })
                 .collect();
             list(frame, body, "PRESETS", items, *selected, true, theme);
-            "↑↓ preset · ↵ apply · esc back · q quit"
+            "↑↓ preset · ↵ apply · esc back"
         }
         Screen::Editing { role, columns } => {
             columns.draw(frame, body, theme);
             if role.groups(&form.draft).is_some() {
-                footer_text(
-                    frame,
-                    footer,
-                    theme,
-                    Some("Replacing this role drops its hand-edited groups; esc back keeps them."),
-                    COLUMN_KEYS,
-                );
-                return;
+                warning =
+                    Some("Replacing this role drops its hand-edited groups; esc back keeps them.");
             }
             COLUMN_KEYS
         }
     };
-    footer_text(frame, footer, theme, None, hints);
+    let hints = format!("{hints} · c continue · q quit");
+    footer_text(frame, footer, theme, warning, &hints);
 }
 
 pub(super) fn single(frame: &mut Frame, columns: &Columns, role: Role, theme: &Theme) {

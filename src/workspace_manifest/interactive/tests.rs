@@ -40,8 +40,9 @@ fn changing_only_lead_preserves_worker_groups_and_planning() {
     let before = load(&root).unwrap().unwrap();
     let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
         draft.lead = "codex:gpt-6.1-sol:high".to_owned();
-        Ok(Some(draft))
+        Ok(Choice::Save(draft))
     })
+    .unwrap()
     .unwrap();
     let after = load(&root).unwrap().unwrap();
     assert_eq!(after.lead, "codex:gpt-6.1-sol:high");
@@ -54,15 +55,18 @@ fn changing_only_lead_preserves_worker_groups_and_planning() {
 }
 
 #[test]
-fn quitting_and_unchanged_save_write_nothing() {
+fn continue_quit_and_unchanged_save_write_nothing() {
     let root = root("picker-no-write", MANIFEST);
     let path = manifest_path(&root);
     let before = fs::metadata(&path).unwrap().modified().unwrap();
-    for save in [false, true] {
-        ensure(&root, true, &mut Vec::new(), |_, draft, _| {
-            Ok(save.then_some(draft))
-        })
-        .unwrap();
+    let manifest = load(&root).unwrap();
+    for (choice, launched) in [
+        (Choice::Keep, &manifest),
+        (Choice::Quit, &None),
+        (Choice::Save(manifest.clone().unwrap()), &manifest),
+    ] {
+        let result = ensure(&root, true, &mut Vec::new(), |_, _, _| Ok(choice)).unwrap();
+        assert_eq!(&result, launched);
         assert_eq!(fs::read_to_string(&path).unwrap(), MANIFEST);
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
@@ -70,9 +74,9 @@ fn quitting_and_unchanged_save_write_nothing() {
 }
 
 #[test]
-fn quitting_first_run_errors_without_a_file() {
-    let root = temp_test_path("picker-first-quit");
-    let error = ensure(&root, true, &mut Vec::new(), |_, _, _| Ok(None)).unwrap_err();
+fn continuing_first_run_errors_without_a_file() {
+    let root = temp_test_path("picker-first-continue");
+    let error = ensure(&root, true, &mut Vec::new(), |_, _, _| Ok(Choice::Keep)).unwrap_err();
     assert_eq!(error.to_string(), "no workspace manifest written");
     assert!(!manifest_path(&root).exists());
 }
@@ -85,7 +89,7 @@ fn no_terminal_uses_existing_manifest_and_prints_roles() {
         panic!("opened picker without terminal")
     })
     .unwrap();
-    assert_eq!(result, load(&root).unwrap().unwrap());
+    assert_eq!(result, load(&root).unwrap());
     assert!(
         String::from_utf8(output)
             .unwrap()
@@ -138,8 +142,9 @@ fn every_preset_saves_and_loads_launchable_roles() {
             ]) {
                 role.set(&mut draft, value);
             }
-            Ok(Some(draft))
+            Ok(Choice::Save(draft))
         })
+        .unwrap()
         .unwrap();
         let loaded = load(&root).unwrap().unwrap();
         assert_eq!(draft, loaded);
