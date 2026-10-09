@@ -73,11 +73,16 @@ pub(crate) fn abbreviate(tokens: u64) -> String {
     if tokens < 1_000 {
         return tokens.to_string();
     }
-    let (scaled, suffix) = if tokens < 1_000_000 {
-        (tokens as f64 / 1_000.0, "k")
-    } else {
-        (tokens as f64 / 1_000_000.0, "M")
-    };
+    let mut scaled = tokens as f64 / 1_000.0;
+    let mut suffix = "k";
+    // Climbs while the value would print as 1000 or more, so 999_600 is 1.0M, not 1000k.
+    for larger in ["M", "B", "T"] {
+        if scaled < 999.5 {
+            break;
+        }
+        scaled /= 1_000.0;
+        suffix = larger;
+    }
     if scaled >= 10.0 {
         format!("{scaled:.0}{suffix}")
     } else {
@@ -92,6 +97,10 @@ mod tests {
     fn token_scale() {
         assert_eq!(abbreviate(88_000), "88k");
         assert_eq!(abbreviate(1_200_000), "1.2M");
+        assert_eq!(abbreviate(999_600), "1.0M");
+        assert_eq!(abbreviate(2_000_000_000), "2.0B");
+        assert_eq!(abbreviate(45_000_000_000_000), "45T");
+        assert_eq!(abbreviate(u64::MAX), "18446744T");
     }
     #[test]
     fn waiting_sorts_oldest_first() {
