@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize, Serializer};
@@ -20,10 +20,10 @@ pub struct WorkspaceManifest {
     pub worker: RoleBinding,
     pub reviewer: ReviewerBinding,
     pub security: RoleBinding,
-    /// Planning guidance keyed by an exact `family:model` pair. The lead consults this only for
+    /// Planning guidance for exact `family:model` pairs. The lead consults this only for
     /// implementation assignments; Niles does not interpret models or infer capabilities.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub worker_planning: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "WorkerPlanning::is_empty")]
+    pub worker_planning: WorkerPlanning,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
     /// default.
@@ -59,6 +59,41 @@ pub struct AgentGroup {
     pub models: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<String>>,
+}
+
+/// Guidance groups in which each `family:model` appears at most once, so a model never
+/// carries two instructions the lead would have to choose between.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<PlanningGroup>")]
+pub struct WorkerPlanning(pub Vec<PlanningGroup>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanningGroup {
+    pub models: Vec<String>,
+    pub guidance: String,
+}
+
+impl WorkerPlanning {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl TryFrom<Vec<PlanningGroup>> for WorkerPlanning {
+    type Error = String;
+
+    fn try_from(groups: Vec<PlanningGroup>) -> std::result::Result<Self, Self::Error> {
+        let mut seen = BTreeSet::new();
+        for model in groups.iter().flat_map(|group| &group.models) {
+            if !seen.insert(model) {
+                return Err(format!(
+                    "{model} appears in more than one worker_planning group"
+                ));
+            }
+        }
+        Ok(Self(groups))
+    }
 }
 
 #[derive(Deserialize)]
@@ -234,7 +269,7 @@ struct WorkspaceManifestWire {
     reviewer: ReviewerBinding,
     security: RoleBinding,
     #[serde(default)]
-    worker_planning: BTreeMap<String, String>,
+    worker_planning: WorkerPlanning,
     #[serde(default)]
     checkin: Option<String>,
     #[serde(default)]
@@ -262,7 +297,7 @@ impl Default for WorkspaceManifest {
             worker: "codex".to_owned().into(),
             reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned().into()),
             security: "claude".to_owned().into(),
-            worker_planning: BTreeMap::new(),
+            worker_planning: WorkerPlanning::default(),
             checkin: None,
             recheck: None,
         }

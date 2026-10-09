@@ -146,8 +146,8 @@ Set `reviewer: lead` to have the lead review worker diffs inline. This saves a s
 session, but the lead reviews its own plan and must question its design during the economy pass.
 Run `niles models` to list the effective models and effort levels for the current workspace.
 
-Optional manifest keys include `worker_planning`, a mapping from exact `family:model` names to
-planning guidance the lead reads, and `checkin` / `recheck` for watcher cadence. Check-ins default
+Optional manifest keys include `worker_planning`, a list of entries pairing exact `family:model`
+names (`models`) with planning guidance the lead reads (`guidance`), and `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
 followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
 fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command

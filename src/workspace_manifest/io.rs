@@ -27,6 +27,8 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 mod tests {
     use super::*;
 
+    use super::super::{PlanningGroup, WorkerPlanning};
+
     use crate::test_support::temp_test_path;
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
@@ -182,11 +184,10 @@ flow:
         let configured = WorkspaceManifest {
             checkin: Some("15m".to_owned()),
             recheck: Some("backoff".to_owned()),
-            worker_planning: [(
-                "codex:gpt-6-astra".to_owned(),
-                "Include the API invariants in the handoff.".to_owned(),
-            )]
-            .into(),
+            worker_planning: WorkerPlanning(vec![PlanningGroup {
+                models: vec!["codex:gpt-6-astra".to_owned()],
+                guidance: "Include the API invariants in the handoff.".to_owned(),
+            }]),
             ..manifest
         };
         save(&root, &configured).unwrap();
@@ -220,12 +221,14 @@ worker: codex:gpt-5.6-sol:medium
 reviewer: claude:opus:medium
 security: hermes:tencent/hy3:high
 worker_planning:
-  claude:haiku: |
-    Settle the implementation approach and edge cases. Decompose the work into
-    concrete changes and dispatch each change individually.
-  codex:gpt-5.6-sol: |
-    Supply the objective, constraints, and explicit acceptance criteria with
-    minimal implementation granularity.
+  - models: [claude:haiku, claude:sonnet]
+    guidance: |
+      Settle the implementation approach and edge cases. Decompose the work into
+      concrete changes and dispatch each change individually.
+  - models: [codex:gpt-5.6-sol]
+    guidance: |
+      Supply the objective, constraints, and explicit acceptance criteria with
+      minimal implementation granularity.
 "#,
         )
         .unwrap();
@@ -234,17 +237,16 @@ worker_planning:
             worker: "codex:gpt-5.6-sol:medium".to_owned().into(),
             reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned().into()),
             security: "hermes:tencent/hy3:high".to_owned().into(),
-            worker_planning: [
-                (
-                    "claude:haiku".to_owned(),
-                    "Settle the implementation approach and edge cases. Decompose the work into\nconcrete changes and dispatch each change individually.\n".to_owned(),
-                ),
-                (
-                    "codex:gpt-5.6-sol".to_owned(),
-                    "Supply the objective, constraints, and explicit acceptance criteria with\nminimal implementation granularity.\n".to_owned(),
-                ),
-            ]
-            .into(),
+            worker_planning: WorkerPlanning(vec![
+                PlanningGroup {
+                    models: vec!["claude:haiku".to_owned(), "claude:sonnet".to_owned()],
+                    guidance: "Settle the implementation approach and edge cases. Decompose the work into\nconcrete changes and dispatch each change individually.\n".to_owned(),
+                },
+                PlanningGroup {
+                    models: vec!["codex:gpt-5.6-sol".to_owned()],
+                    guidance: "Supply the objective, constraints, and explicit acceptance criteria with\nminimal implementation granularity.\n".to_owned(),
+                },
+            ]),
             checkin: None,
             recheck: None,
         };
@@ -294,13 +296,41 @@ worker: codex
 reviewer: claude
 security: claude
 worker_planning:
-  codex:gpt-6-astra:
-    steps: 2
+  - models: [codex:gpt-6-astra]
+    guidance:
+      steps: 2
 "#,
             )
             .unwrap_err()
         );
 
         assert!(err.contains("expected string"), "{err}");
+    }
+
+    #[test]
+    fn worker_planning_rejects_a_model_in_two_groups() {
+        let err = format!(
+            "{:#}",
+            load_body(
+                "manifest-worker-planning-duplicate",
+                r#"
+lead: claude
+worker: codex
+reviewer: claude
+security: claude
+worker_planning:
+  - models: [codex:gpt-6-astra, claude:opus]
+    guidance: Plan lightly.
+  - models: [claude:opus]
+    guidance: Plan in detail.
+"#,
+            )
+            .unwrap_err()
+        );
+
+        assert!(
+            err.contains("claude:opus appears in more than one worker_planning group"),
+            "{err}"
+        );
     }
 }
