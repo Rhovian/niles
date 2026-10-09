@@ -119,7 +119,9 @@ Agent-written session telemetry gates due worker check-ins. Agents can delay the
 by writing to their own logs.
 
 `niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
-are clamped and stripped of control characters before terminal rendering.
+are clamped and stripped of control characters before terminal rendering. The shared roles picker
+also clamps repository-authored family names and role values. It probes configured executables
+with the same PATH lookup as doctor; it does not execute them.
 
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared

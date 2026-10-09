@@ -77,18 +77,7 @@ pub(super) enum Edit {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Role {
-    Lead,
-    Worker,
-    Reviewer,
-    Security,
-}
-
-impl Role {
-    /// In the order `manifest_roles` lists them.
-    const ALL: [Self; 4] = [Self::Lead, Self::Worker, Self::Reviewer, Self::Security];
-}
+pub(super) use crate::agents::picker::Role;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let edit = Edit::File(config.to_owned());

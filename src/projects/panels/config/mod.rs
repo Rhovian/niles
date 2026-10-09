@@ -24,7 +24,7 @@ use crate::{
     config::{spec::load_project_config_from, user},
     theme::{StyleKey, Theme},
     tmux,
-    workspace_manifest::{self, RoleBinding, WorkspaceManifest},
+    workspace_manifest::{self, WorkspaceManifest},
 };
 
 mod items;
@@ -87,14 +87,14 @@ impl ConfigPanel<'_> {
                 (KeyEventKind::Press, KeyCode::Esc) => {
                     self.footer = tmux::focus_explorer().err().map(shown);
                 }
-                (KeyEventKind::Press, KeyCode::Enter) => self.enter(terminal)?,
+                (KeyEventKind::Press, KeyCode::Enter) => self.enter(terminal, theme)?,
                 _ => {}
             }
         }
     }
 
     /// Edits the selected row, then reloads every row, since an edit can change any of them.
-    fn enter(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+    fn enter(&mut self, terminal: &mut DefaultTerminal, theme: &Theme) -> Result<()> {
         let Some(edit) = self.selected.and_then(|index| self.items[index].edit()) else {
             return Ok(());
         };
@@ -109,9 +109,7 @@ impl ConfigPanel<'_> {
             }
             .err()
             .map(shown),
-            Edit::Role { root, role } => suspended(terminal, || pick_role(&root, role))
-                .err()
-                .map(shown),
+            Edit::Role { root, role } => pick_role(terminal, &root, role, theme).err().map(shown),
         };
         self.items = items(self.project)?;
         if self
@@ -243,31 +241,20 @@ fn edit_file(editor: Option<&OsStr>, file: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
-fn pick_role(root: &Utf8Path, role: Role) -> Result<()> {
+fn pick_role(
+    terminal: &mut DefaultTerminal,
+    root: &Utf8Path,
+    role: Role,
+    theme: &Theme,
+) -> Result<()> {
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;
-    let agent = |label, binding: &RoleBinding| {
-        picker::prompt_agent_value(label, binding.default_model(), &config).map(RoleBinding::from)
-    };
-    match role {
-        Role::Lead => {
-            let lead = picker::prompt_agent_value("Lead agent", &manifest.lead, &config)?;
-            save_role(root, |manifest| manifest.lead = lead)
-        }
-        Role::Worker => {
-            let worker = agent("Worker agent", &manifest.worker)?;
-            save_role(root, |manifest| manifest.worker = worker)
-        }
-        Role::Reviewer => {
-            let reviewer =
-                picker::prompt_reviewer_value("Reviewer agent", &manifest.reviewer, &config)?;
-            save_role(root, |manifest| manifest.reviewer = reviewer)
-        }
-        Role::Security => {
-            let security = agent("Security agent", &manifest.security)?;
-            save_role(root, |manifest| manifest.security = security)
-        }
+    if let Some(value) = picker::role(terminal, role, &manifest, &config, theme)?
+        && value != role.value(&manifest)
+    {
+        save_role(root, |manifest| role.set(manifest, value))?;
     }
+    Ok(())
 }
 
 /// Sets one role, through `set`, in the manifest as it is now, so the picker's wait loses nothing.

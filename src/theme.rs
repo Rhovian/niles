@@ -46,8 +46,10 @@ impl Theme {
         Ok(crate::config::user::UserConfig::load()?.theme)
     }
 
+    /// Test themes always emit colors, independent of the caller's environment.
     #[cfg(test)]
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
+        ratatui::crossterm::style::force_color_output(true);
         Ok(crate::config::user::UserConfig::parse(text)?.theme)
     }
 

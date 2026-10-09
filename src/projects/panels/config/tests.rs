@@ -3,6 +3,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 use camino::Utf8PathBuf;
 
 use super::*;
+use crate::workspace_manifest::RoleBinding;
 use crate::{agents::ModelRoster, test_support::temp_test_path};
 
 /// Each row as `key | value | from | note`, so a whole scope reads as one table.
