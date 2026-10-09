@@ -23,6 +23,7 @@ use ratatui::{
 
 use self::tree::{Item, Member, Project, Tree};
 use super::{
+    panels::{self, Panel},
     register,
     registry::{self, ProjectName},
     rows::{self, State},
@@ -174,7 +175,7 @@ impl Explorer {
             (Mode::Browse, KeyCode::Enter | KeyCode::Esc) => self.footer = shown(self.open()),
             (Mode::Browse, KeyCode::Char('?')) => {
                 self.footer = shown(
-                    tmux::open_panel("help")
+                    panels::open(Panel::Help)
                         .and_then(|window| tmux::show_in_view(&self.pane, &window))
                         .map(|()| None),
                 );
@@ -242,7 +243,7 @@ impl Explorer {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
                         self.refresh()?;
-                        if let Some(error) = shown(tmux::open_panel("help").map(|_| None)) {
+                        if let Some(error) = shown(panels::open(Panel::Help).map(|_| None)) {
                             self.footer = Some(error);
                         }
                     }
@@ -263,7 +264,8 @@ impl Explorer {
         };
         let target = match item {
             Item::Header | Item::Folder(..) => return Ok(None),
-            Item::Panel(panel) => tmux::open_panel(panel.name())?,
+            Item::Panel(panel) => panels::open(panel)?,
+            Item::Range(range) => panels::open(Panel::Telemetry { range })?,
             Item::Project(project) => {
                 let entry = &project.row.entry;
                 let session = entry.name.session()?;
@@ -298,7 +300,11 @@ impl Explorer {
                 Role::Lead | Role::Plain => return None,
             },
             Item::Member(project, _, Member::Lost(id)) => (project, id),
-            Item::Project(_) | Item::Folder(..) | Item::Header | Item::Panel(_) => return None,
+            Item::Project(_)
+            | Item::Folder(..)
+            | Item::Header
+            | Item::Panel(_)
+            | Item::Range(_) => return None,
         };
         Some((id.to_owned(), project.row.entry.path.clone()))
     }

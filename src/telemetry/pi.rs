@@ -1,4 +1,4 @@
-use super::{SessionState, Usage, parse_lines};
+use super::{Buckets, SessionState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -50,7 +50,8 @@ struct PiCounters {
 
 pub(super) fn pi_usage(body: &str) -> Option<Usage> {
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut last_turn, mut state) = (None, None);
+    let (mut last_turn, mut state, mut prompt) = (None, None, None);
+    let mut buckets = Buckets::default();
     for line in parse_lines::<PiLine>(body)? {
         let PiLine::Message { timestamp, message } = line else {
             continue;
@@ -64,6 +65,11 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
             output += usage.output;
             cache_read += usage.cache_read;
             cache_write += usage.cache_write;
+            buckets.add(
+                timestamp,
+                usage.input + usage.output + usage.cache_read + usage.cache_write,
+            );
+            prompt = Some(usage.input + usage.cache_read + usage.cache_write);
             last_turn =
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
@@ -78,5 +84,8 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
         last_turn_at: last_turn,
         state,
         estimated_cost_usd: None,
+        buckets,
+        prompt_tokens: prompt,
+        context_window: None,
     })
 }

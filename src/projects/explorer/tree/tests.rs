@@ -81,6 +81,9 @@ fn running_projects_and_role_folders_start_open() {
             "└─     old",
             "CONFIG",
             "TELEMETRY",
+            "├─ today",
+            "├─ 7 days",
+            "└─ 30 days",
             "HELP",
         ]
     );
@@ -94,12 +97,12 @@ fn collapsed_projects_and_folders_survive_refresh() {
     tree.collapse();
     tree.collapse();
     tree.replace(projects());
-    assert_eq!(tree.items().len(), 6);
+    assert_eq!(tree.items().len(), 9);
     tree.expand();
-    assert_eq!(tree.items().len(), 7);
+    assert_eq!(tree.items().len(), 10);
     tree.down();
     tree.expand();
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 12);
 }
 
 fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
@@ -148,7 +151,7 @@ fn projects_without_agents_do_not_expand() {
     let mut tree = tree();
     tree.select(Key::Project("old"));
     tree.expand();
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 12);
     tree.down();
     assert_eq!(tree.cursor(), 6);
 }
@@ -159,7 +162,7 @@ fn collapsing_a_child_moves_to_its_project() {
     tree.down();
     tree.collapse();
     assert_eq!(tree.cursor(), 1);
-    assert_eq!(tree.items().len(), 6);
+    assert_eq!(tree.items().len(), 9);
     tree.up();
     assert_eq!(tree.cursor(), 0);
 }
@@ -182,14 +185,21 @@ fn refresh_keeps_the_selection_by_name() {
 #[test]
 fn panels_keep_selection_and_cycle_only_to_windows() {
     let mut tree = tree();
-    for panel in [Panel::Config, Panel::Telemetry, Panel::Help] {
+    let telemetry = Panel::Telemetry {
+        range: Range::Today,
+    };
+    let panels = [Item::Panel(Panel::Config), Item::Panel(telemetry)]
+        .into_iter()
+        .chain(Range::ALL.map(Item::Range))
+        .chain([Item::Panel(Panel::Help)]);
+    for panel in panels {
         tree.cursor = tree
             .items()
             .iter()
-            .position(|item| item.key() == Key::Panel(panel))
+            .position(|item| item.key() == panel.key())
             .unwrap();
         tree.replace(projects());
-        assert!(matches!(tree.selected(), Some(Item::Panel(selected)) if selected == panel));
+        assert!(tree.selected().map(Item::key) == Some(panel.key()));
         assert!(!tree.cycle_windows(1));
         assert!(tree.cycle_projects(1));
         assert!(tree.selected().map(Item::key) == Some(Key::Project("api")));
@@ -207,7 +217,16 @@ fn waiting_project_shows_warning_and_spinner() {
     tree.replace(vec![waiting_none]);
     assert_eq!(
         labels(&tree),
-        vec!["PROJECTS", "└─   ⚠ wait", "CONFIG", "TELEMETRY", "HELP",]
+        vec![
+            "PROJECTS",
+            "└─   ⚠ wait",
+            "CONFIG",
+            "TELEMETRY",
+            "├─ today",
+            "├─ 7 days",
+            "└─ 30 days",
+            "HELP",
+        ]
     );
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
@@ -258,6 +277,9 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "└─     old",
             "CONFIG",
             "TELEMETRY",
+            "├─ today",
+            "├─ 7 days",
+            "└─ 30 days",
             "HELP"
         ]
     );

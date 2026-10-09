@@ -120,10 +120,13 @@ models:
   codex:
     gpt-5.7:
       efforts: [low, med, high, xhigh]
+      context_window: 400000
 ```
 
-Model entries extend the built-in roster; listing an existing model replaces its effort list.
-An empty `efforts: []` marks a model that takes no effort qualifier.
+Model entries extend the built-in roster; listing an existing model replaces its entry.
+An empty `efforts: []` marks a model that takes no effort qualifier. The optional
+`context_window`, in tokens, is what the telemetry panel measures a live session's context
+against; without one, the panel shows the session's tokens and no percentage.
 
 Bindings accept `family[:model[:effort]]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`. Built-in families are `codex`, `claude`, `hermes`, and `pi`. Scalar role bindings still work. When a manifest exists, an `--agent` the role does not list is rejected.
 

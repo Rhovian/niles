@@ -89,7 +89,7 @@ mod tests {
             r#"
 models:
   codex:
-    gpt-5.7: { efforts: [low, med, xhigh] }
+    gpt-5.7: { efforts: [low, med, xhigh], context_window: 400000 }
     gpt-5.5: { efforts: [high] }
   claude:
     opus: { efforts: [] }
@@ -111,6 +111,16 @@ models:
                 .supported_efforts("claude", "opus")
                 .unwrap()
                 .is_empty()
+        );
+        assert_eq!(
+            config.models.context_window("codex", "gpt-5.7"),
+            Some(400_000)
+        );
+        // An override replaces the whole builtin entry, window included.
+        assert_eq!(config.models.context_window("claude", "opus"), None);
+        assert_eq!(
+            config.models.context_window("claude", "sonnet"),
+            Some(1_000_000)
         );
     }
 

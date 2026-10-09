@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
 
 use crate::projects::{
-    panels::Panel,
+    panels::{Panel, Range},
     rows::{Row, State},
     windows::{AgentWindow, Role, SessionAgents},
 };
@@ -57,6 +57,8 @@ fn spinner(now: DateTime<Utc>, theme: &Theme) -> &str {
 pub(super) enum Item<'a> {
     Header,
     Panel(Panel),
+    /// A child of TELEMETRY, which is never collapsed.
+    Range(Range),
     Project(&'a Project),
     Folder(&'a Project, WorkerRole),
     Member(&'a Project, WorkerRole, Member<'a>),
@@ -73,6 +75,7 @@ pub(super) enum Member<'a> {
 enum Key<'a> {
     Header,
     Panel(Panel),
+    Range(Range),
     Project(&'a str),
     Folder(&'a str, WorkerRole),
     Window(&'a str, &'a str),
@@ -85,7 +88,7 @@ impl<'a> Item<'a> {
             Item::Project(project) | Item::Folder(project, _) | Item::Member(project, _, _) => {
                 Some(project)
             }
-            Item::Header | Item::Panel(_) => None,
+            Item::Header | Item::Panel(_) | Item::Range(_) => None,
         }
     }
 
@@ -93,6 +96,7 @@ impl<'a> Item<'a> {
         match self {
             Item::Header => Key::Header,
             Item::Panel(panel) => Key::Panel(panel),
+            Item::Range(range) => Key::Range(range),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
             Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
             Item::Member(project, _, Member::Window(window)) => {
@@ -153,9 +157,12 @@ impl Tree {
         }
         items.extend([
             Item::Panel(Panel::Config),
-            Item::Panel(Panel::Telemetry),
-            Item::Panel(Panel::Help),
+            Item::Panel(Panel::Telemetry {
+                range: Range::Today,
+            }),
         ]);
+        items.extend(Range::ALL.map(Item::Range));
+        items.push(Item::Panel(Panel::Help));
         items
     }
 
@@ -187,7 +194,14 @@ impl Tree {
                 self.collapsed_folders
                     .remove(&(project.row.entry.name.as_str().to_owned(), role));
             }
-            Some(Item::Project(_) | Item::Header | Item::Panel(_) | Item::Member(..)) | None => {}
+            Some(
+                Item::Project(_)
+                | Item::Header
+                | Item::Panel(_)
+                | Item::Range(_)
+                | Item::Member(..),
+            )
+            | None => {}
         }
     }
 
@@ -277,7 +291,7 @@ impl Tree {
                 self.collapsed.insert(name.clone());
                 self.select(Key::Project(&name));
             }
-            Item::Header | Item::Panel(_) => {}
+            Item::Header | Item::Panel(_) | Item::Range(_) => {}
         }
     }
 
@@ -301,6 +315,14 @@ impl Tree {
                 panel.name().to_uppercase(),
                 theme.style(StyleKey::Heading),
             )),
+            Item::Range(range) => Line::from(vec![
+                guide(if range == Range::Month {
+                    theme::LAST
+                } else {
+                    theme::BRANCH
+                }),
+                Span::raw(format!(" {}", range.label())),
+            ]),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
                 let marker = if project.roles().next().is_none() {

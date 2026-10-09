@@ -8,10 +8,11 @@ use std::fs;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, Utc};
 
 use crate::{
     store, tmux,
-    util::current_dir_utf8,
+    util::{current_dir_utf8, dated_directories, parse_timestamp_id},
     workspace_manifest::{self, WorkspaceManifest},
 };
 
@@ -39,4 +40,9 @@ fn launch_prelude(workspace: &Utf8Path) -> Result<WorkspaceManifest> {
 
 pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Utf8PathBuf {
     workspace.join(store::paths::NILES_DIR).join("sessions")
+}
+
+/// Every lead session directory, oldest first, with the time it was created.
+pub(crate) fn session_dirs(workspace: &Utf8Path) -> Result<Vec<(DateTime<Utc>, Utf8PathBuf)>> {
+    dated_directories(&sessions_dir(workspace), parse_timestamp_id)
 }

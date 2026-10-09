@@ -83,7 +83,7 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
         "failed",
     ])?;
     let explorer = super::display(target.as_str(), "#{pane_id}")?;
-    show_in_view(&target, &open_panel("help")?)?;
+    show_in_view(&target, &open_panel("help", &[])?)?;
     run(&["select-pane", "-t", explorer.trim_end()])?;
     Ok(home)
 }
@@ -162,7 +162,7 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
             };
             // Killing the viewed session moves its clients to another session, which can be home
             // itself. Send the view's client to help there so home never nests inside itself.
-            let help = open_panel("help")?.target_arg();
+            let help = open_panel("help", &[])?.target_arg();
             let switch = format!(
                 "if-shell -F '#{{==:#{{client_tty}},{tty}}}' 'switch-client -c {tty} -t {help}'"
             );
@@ -201,7 +201,7 @@ pub(crate) fn close_view(explorer: &TmuxTarget) -> Result<()> {
             "-c",
             &view.tty,
             "-t",
-            &open_panel("help")?.target_arg(),
+            &open_panel("help", &[])?.target_arg(),
         ]),
         None => Ok(()),
     }

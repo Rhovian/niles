@@ -81,9 +81,10 @@ pub enum CommandName {
     /// Run the project explorer in the home session.
     #[command(hide = true)]
     Explorer,
-    #[command(hide = true)]
+    /// `help` is a panel, so it is not also clap's subcommand.
+    #[command(hide = true, disable_help_subcommand = true)]
     Panel {
-        #[arg(value_enum)]
+        #[command(subcommand)]
         panel: crate::projects::panels::Panel,
     },
     /// Report binary identity, tmux, and agent CLI versions
@@ -247,7 +248,32 @@ pub enum CommandName {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
+
+    #[test]
+    fn command_definition_is_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn panels_parse_with_their_range() {
+        use crate::projects::panels::{Panel, Range};
+        let panel = |args: &[&str]| {
+            let Some(CommandName::Panel { panel }) = Cli::try_parse_from(args).unwrap().command
+            else {
+                panic!("not a panel");
+            };
+            panel
+        };
+        assert_eq!(panel(&["niles", "panel", "help"]), Panel::Help);
+        assert_eq!(
+            panel(&["niles", "panel", "telemetry", "--range", "7d"]),
+            Panel::Telemetry { range: Range::Week }
+        );
+        assert!(Cli::try_parse_from(["niles", "panel", "telemetry"]).is_err());
+    }
 
     #[test]
     fn bare_niles_has_no_subcommand() {

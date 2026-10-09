@@ -1,4 +1,4 @@
-use super::{SessionState, Usage};
+use super::{Buckets, SessionState, Usage};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::DateTime;
@@ -52,16 +52,17 @@ fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
         let ended: bool = row.get("ended")?;
         let replied: Option<bool> = row.get("replied")?;
         let last_activity_at: Option<f64> = row.get("last_activity_at")?;
-        Ok(Usage {
+        let last_turn_at = last_activity_at.and_then(|seconds| {
+            DateTime::from_timestamp_micros((seconds * 1_000_000.0).round() as i64)
+        });
+        let mut usage = Usage {
             input_tokens: row.get("input_tokens")?,
             output_tokens: row.get("output_tokens")?,
             cache_read_tokens: row.get("cache_read_tokens")?,
             cache_write_tokens: Some(row.get("cache_write_tokens")?),
             reasoning_tokens: Some(row.get("reasoning_tokens")?),
             estimated_cost_usd: row.get("estimated_cost_usd")?,
-            last_turn_at: last_activity_at.and_then(|seconds| {
-                DateTime::from_timestamp_micros((seconds * 1_000_000.0).round() as i64)
-            }),
+            last_turn_at,
             state: if ended {
                 Some(SessionState::Waiting)
             } else {
@@ -73,15 +74,29 @@ fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
                     }
                 })
             },
-        })
+            buckets: Buckets::default(),
+            prompt_tokens: None,
+            context_window: None,
+        };
+        // Hermes keeps only per-session totals, so the whole session lands in its last-activity
+        // bucket, and it has no per-turn prompt to measure context by.
+        if let Some(at) = last_turn_at {
+            usage.buckets.add(at, usage.total_tokens());
+        }
+        Ok(usage)
     })
     .optional()
     .context("query Hermes session")
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    /// The fixture's main session, which has activity and so lands in one bucket.
+    pub(in crate::telemetry) fn fixture_usage() -> Usage {
+        read_session(&fixture(), "niles:test").unwrap().unwrap()
+    }
 
     fn fixture() -> Connection {
         let db = Connection::open_in_memory().unwrap();

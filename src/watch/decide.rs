@@ -172,6 +172,13 @@ fn report_text(id: &str, kind: WakeKind) -> String {
     format!("niles: {id} reported ({kind}) — check workers")
 }
 
+/// The worker and state a `report_text` names.
+pub(super) fn parse_report_text(text: &str) -> Option<(&str, WakeKind)> {
+    let (id, rest) = text.strip_prefix("niles: ")?.split_once(" reported (")?;
+    let kind = rest.strip_suffix(") — check workers")?;
+    Some((id, WakeKind::parse(kind)?))
+}
+
 fn no_report_text(id: &str, state: Option<SessionState>) -> String {
     match state {
         Some(SessionState::Waiting) => format!("niles: {id} stopped without a report — check it"),
@@ -188,6 +195,17 @@ mod tests {
     use crate::test_support::at;
 
     const WINDOW: &str = "working: launch\n";
+
+    #[test]
+    fn report_text_parses_back() {
+        for kind in WakeKind::ALL {
+            assert_eq!(
+                parse_report_text(&report_text("impl-2", kind)),
+                Some(("impl-2", kind))
+            );
+        }
+        assert_eq!(parse_report_text(&no_report_text("impl", None)), None);
+    }
     const DONE: &str = "done: shipped\n";
 
     fn worker(id: &str, log: &str) -> WorkerSnapshot {

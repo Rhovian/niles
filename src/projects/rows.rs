@@ -130,6 +130,9 @@ mod tests {
             last_turn_at: None,
             state: Some(SessionState::Waiting),
             estimated_cost_usd: None,
+            buckets: Default::default(),
+            prompt_tokens: None,
+            context_window: None,
         };
         assert!(matches!(lead_state(&usage, false), State::Waiting(None)));
         assert!(matches!(lead_state(&usage, true), State::Running));
