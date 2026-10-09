@@ -142,7 +142,7 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
 }
 
 pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
-    let (mut last, mut state, mut prompt, mut window) = (None, None, None, None);
+    let (mut last, mut state, mut prompt, mut window, mut spent) = (None, None, None, None, 0);
     let mut buckets = Buckets::default();
     for line in lines {
         let CodexLine::EventMsg { timestamp, payload } = line else {
@@ -169,9 +169,9 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
             continue;
         };
         debug_assert!(counts.cached_input_tokens <= counts.input_tokens);
-        let spent = last.map_or(0, |(prior, _): (&CodexCounters, _)| prior.total());
         debug_assert!(spent <= counts.total(), "Codex totals only grow");
         buckets.add(*timestamp, counts.total() - spent);
+        spent = counts.total();
         last = Some((counts, *timestamp));
     }
     let (counts, timestamp) = last?;

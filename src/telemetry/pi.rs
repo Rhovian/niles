@@ -58,6 +58,7 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
         };
         state = Some(SessionState::Working);
         if let PiMessage::Assistant { usage, stop_reason } = message {
+            let prompt_tokens = usage.input + usage.cache_read + usage.cache_write;
             if stop_reason != "toolUse" {
                 state = Some(SessionState::Waiting);
             }
@@ -65,11 +66,8 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
             output += usage.output;
             cache_read += usage.cache_read;
             cache_write += usage.cache_write;
-            buckets.add(
-                timestamp,
-                usage.input + usage.output + usage.cache_read + usage.cache_write,
-            );
-            prompt = Some(usage.input + usage.cache_read + usage.cache_write);
+            buckets.add(timestamp, prompt_tokens + usage.output);
+            prompt = Some(prompt_tokens);
             last_turn =
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }

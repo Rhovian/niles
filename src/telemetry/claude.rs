@@ -59,6 +59,12 @@ struct ClaudeCounters {
     cache_creation_input_tokens: u64,
     output_tokens_details: Option<ClaudeDetails>,
 }
+
+impl ClaudeCounters {
+    fn prompt(&self) -> u64 {
+        self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
+    }
+}
 #[derive(Deserialize)]
 struct ClaudeDetails {
     thinking_tokens: u64,
@@ -78,11 +84,7 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
                 ClaudeLine::Assistant { timestamp, message } => {
                     if main_file {
                         let usage = &message.usage;
-                        prompt = Some(
-                            usage.input_tokens
-                                + usage.cache_read_input_tokens
-                                + usage.cache_creation_input_tokens,
-                        );
+                        prompt = Some(usage.prompt());
                         state = Some(match message.stop_reason.as_deref() {
                             None | Some("tool_use") => SessionState::Working,
                             Some(_) => SessionState::Waiting,
@@ -144,13 +146,7 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
             output += usage.output_tokens;
             cache_read += usage.cache_read_input_tokens;
             cache_write += usage.cache_creation_input_tokens;
-            buckets.add(
-                timestamp,
-                usage.input_tokens
-                    + usage.output_tokens
-                    + usage.cache_read_input_tokens
-                    + usage.cache_creation_input_tokens,
-            );
+            buckets.add(timestamp, usage.prompt() + usage.output_tokens);
             if let Some(details) = usage.output_tokens_details {
                 *reasoning.get_or_insert(0) += details.thinking_tokens;
             }

@@ -9,7 +9,7 @@ use crate::{
         spec::{
             PROJECT_CONFIG_FILES, ProjectConfig, load_project_config_from, project_config_file,
         },
-        user::{self, DEFAULT_BINDINGS, DEFAULT_THEME, FileConfig},
+        user::{DEFAULT_BINDINGS, DEFAULT_THEME, FileConfig},
     },
     projects::registry,
     watch,
@@ -30,16 +30,14 @@ pub(super) enum Item {
     Section(String),
     Setting(Setting),
     /// A file that failed to load, in place of the settings it holds.
-    Broken {
-        reason: String,
-    },
+    Broken(String),
 }
 
 impl Item {
     /// What ↵ does on this row; a section heading does nothing.
     pub(super) fn edit(&self) -> Option<&Edit> {
         match self {
-            Self::Section(_) | Self::Broken { .. } => None,
+            Self::Section(_) | Self::Broken(_) => None,
             Self::Setting(setting) => setting.edit.as_ref(),
         }
     }
@@ -70,9 +68,7 @@ pub(super) enum Edit {
     },
     Step(Step),
     /// The registry is a directory of links, changed from the explorer rather than a file.
-    Registry {
-        name: String,
-    },
+    Registry,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,7 +83,7 @@ pub(super) use crate::agents::picker::Role;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
-    match user::read(config).and_then(|text| FileConfig::parse(text.as_deref())) {
+    match FileConfig::load(config) {
         Ok(file) => items.extend(
             [
                 setting(
@@ -116,9 +112,7 @@ pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Ite
             value: clamp(entry.path.as_str(), VALUE_WIDTH),
             from: REGISTRY,
             note: Note::None,
-            edit: Some(Edit::Registry {
-                name: entry.name.as_str().to_owned(),
-            }),
+            edit: Some(Edit::Registry),
         })
     }));
     items
@@ -137,7 +131,7 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
                 Ok(config) => items.extend(roles(root, &manifest, config)),
                 Err(error) => items.extend([Item::Section("roles".to_owned()), broken(error)]),
             }
-            items.extend(watch(root, &manifest)?);
+            items.extend(watch(root, &manifest));
             items.push(Item::Section("worker_planning".to_owned()));
             items.extend(listed(manifest.worker_planning.0.iter().map(|group| {
                 plain(
@@ -149,9 +143,7 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
         }
         Ok(None) => items.extend([
             Item::Section(MANIFEST.to_owned()),
-            Item::Broken {
-                reason: ".niles/manifest.yaml".to_owned(),
-            },
+            Item::Broken(".niles/manifest.yaml".to_owned()),
         ]),
         Err(error) => items.extend([Item::Section(MANIFEST.to_owned()), broken(&error)]),
     }
@@ -221,16 +213,11 @@ fn groups(binding: &RoleBinding) -> Option<&[AgentGroup]> {
     binding.scalar().is_none().then_some(binding.0.as_slice())
 }
 
-fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<[Item; 3]> {
-    let builtin = watch::resolve_cadence(None, None, Utf8Path::new(""))?;
-    let checkin_builtin = match builtin.delay {
-        Some(delay) => watch::describe_delay(delay),
-        None => "off".to_owned(),
-    };
+fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> [Item; 3] {
     let mut checkin = setting(
         "checkin",
         manifest.checkin.clone(),
-        &checkin_builtin,
+        &watch::describe_delay(watch::DEFAULT_DELAY),
         MANIFEST,
         &Edit::Step(Step::Checkin(root.to_owned())),
     );
@@ -240,18 +227,18 @@ fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<[Item; 3]> {
     let mut recheck = setting(
         "recheck",
         manifest.recheck.clone(),
-        &builtin.recheck.spelling(),
+        &watch::Recheck::Backoff.spelling(),
         MANIFEST,
         &Edit::Step(Step::Recheck(root.to_owned())),
     );
     if let Some(Err(error)) = manifest.recheck.as_deref().map(watch::parse_recheck) {
         recheck.note = invalid(&error);
     }
-    Ok([
+    [
         Item::Section("watch".to_owned()),
         Item::Setting(checkin),
         Item::Setting(recheck),
-    ])
+    ]
 }
 
 /// The `niles.yaml` sections: its custom agents, and the models it adds or changes.
@@ -324,7 +311,5 @@ fn invalid(error: &anyhow::Error) -> Note {
 
 /// The section names the file, so its root cause is the part of the error that fits.
 fn broken(error: &anyhow::Error) -> Item {
-    Item::Broken {
-        reason: clamp(&error.root_cause().to_string(), REASON_WIDTH),
-    }
+    Item::Broken(clamp(&error.root_cause().to_string(), REASON_WIDTH))
 }

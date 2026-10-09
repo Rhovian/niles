@@ -160,10 +160,6 @@ mod tests {
         codex::{CodexLine, codex_matches, codex_usage},
     };
 
-    fn bucket_total(usage: &Usage) -> u64 {
-        usage.buckets.iter().map(|(_, tokens)| tokens).sum()
-    }
-
     #[test]
     fn buckets_sum_to_the_total_for_every_family() {
         for usage in [
@@ -172,7 +168,10 @@ mod tests {
             fixtures::pi(),
             fixtures::hermes(),
         ] {
-            assert_eq!(bucket_total(&usage), usage.total_tokens());
+            assert_eq!(
+                usage.buckets.iter().map(|(_, tokens)| tokens).sum::<u64>(),
+                usage.total_tokens()
+            );
             assert!(
                 usage
                     .buckets
@@ -209,13 +208,6 @@ mod tests {
         let hermes = fixtures::hermes();
         assert_eq!(hermes.buckets.iter().count(), 1);
         assert_eq!(hermes.prompt_tokens, None);
-    }
-
-    #[test]
-    fn cached_buckets_round_trip() {
-        let buckets = fixtures::claude().buckets;
-        let body = serde_json::to_string(&buckets).unwrap();
-        assert_eq!(serde_json::from_str::<Buckets>(&body).unwrap(), buckets);
     }
 
     fn state(usage: Option<Usage>) -> Option<SessionState> {

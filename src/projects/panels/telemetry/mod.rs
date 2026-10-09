@@ -37,7 +37,7 @@ impl Range {
     /// Days back to the window's first local midnight, its bins' width, and how many there are.
     fn shape(self) -> (u64, TimeDelta, i32) {
         match self {
-            Self::Today => (1, TimeDelta::minutes(15), 96),
+            Self::Today => (1, BUCKET, 96),
             Self::Week => (7, TimeDelta::hours(2), 84),
             Self::Month => (30, TimeDelta::hours(8), 90),
         }

@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     store, tmux,
     util::{current_dir_utf8, dated_directories, parse_timestamp_id},
-    workspace_manifest::{self, WorkspaceManifest},
+    workspace_manifest,
 };
 
 pub(crate) use brief::{SessionMeta, latest_lead, live_lead};
@@ -27,17 +27,12 @@ pub fn run() -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
-    let Some(manifest) = launch_prelude(&workspace)? else {
+    let worker_dir = store::workers_dir(&workspace);
+    fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
+    let Some(manifest) = workspace_manifest::ensure_interactive(&workspace)? else {
         return Ok(());
     };
     launch_foreground_agent(&workspace, &manifest)
-}
-
-fn launch_prelude(workspace: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
-    let worker_dir = store::workers_dir(workspace);
-    fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
-
-    workspace_manifest::ensure_interactive(workspace)
 }
 
 pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Utf8PathBuf {

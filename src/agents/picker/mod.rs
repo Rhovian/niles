@@ -15,6 +15,9 @@ mod role;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use presets::load as load_presets;
+
 use columns::{Columns, Pick};
 use form::Form;
 pub(crate) use role::Role;

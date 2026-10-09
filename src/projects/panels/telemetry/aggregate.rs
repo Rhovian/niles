@@ -1,6 +1,5 @@
 use std::{cmp::Reverse, collections::BTreeMap, iter};
 
-use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 
 use super::{
@@ -25,7 +24,7 @@ pub(super) struct Dashboard<'a> {
     /// Highest share of the context window first; those with no known window last.
     pub(super) context: Vec<ContextRow<'a>>,
     /// Newest first.
-    pub(super) events: Vec<Event<'a>>,
+    pub(super) events: Vec<(&'a str, &'a super::collect::Event)>,
 }
 
 pub(super) struct ModelRow<'a> {
@@ -40,13 +39,6 @@ pub(super) struct ContextRow<'a> {
     pub(super) session: &'a Session,
     pub(super) prompt_tokens: u64,
     pub(super) percent: Option<u64>,
-}
-
-pub(super) struct Event<'a> {
-    pub(super) project: &'a str,
-    pub(super) at: DateTime<Utc>,
-    pub(super) id: &'a str,
-    pub(super) kind: EventKind,
 }
 
 pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
@@ -75,7 +67,7 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
                     prompt_tokens,
                     percent: live
                         .context_window
-                        .map(|window| prompt_tokens * 100 / window),
+                        .and_then(|window| (prompt_tokens * 100).checked_div(window)),
                 });
             }
             if tokens == 0 && session.live.is_none() {
@@ -112,24 +104,22 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
     let mut events = projects
         .iter()
         .flat_map(|project| {
-            project.events.iter().map(|event| Event {
-                project: &project.name,
-                at: event.at,
-                id: &event.id,
-                kind: event.kind,
-            })
+            project
+                .events
+                .iter()
+                .map(|event| (project.name.as_str(), event))
         })
-        .filter(|event| window.contains(event.at))
+        .filter(|(_, event)| window.contains(event.at))
         .collect::<Vec<_>>();
-    let spawns = events
-        .iter()
-        .filter(|event| event.kind == EventKind::Spawned)
-        .count();
-    let wakes = events
-        .iter()
-        .filter(|event| matches!(event.kind, EventKind::Reported(_)))
-        .count();
-    events.sort_by_key(|event| Reverse(event.at));
+    let count = |predicate: fn(EventKind) -> bool| {
+        events
+            .iter()
+            .filter(|(_, event)| predicate(event.kind))
+            .count()
+    };
+    let spawns = count(|kind| kind == EventKind::Spawned);
+    let wakes = count(|kind| matches!(kind, EventKind::Reported(_)));
+    events.sort_by_key(|(_, event)| Reverse(event.at));
     events.truncate(EVENTS);
     Dashboard {
         window,

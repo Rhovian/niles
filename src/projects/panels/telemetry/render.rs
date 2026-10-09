@@ -286,7 +286,7 @@ fn events(dashboard: &Dashboard<'_>, theme: &Theme) -> Block {
     let rows = dashboard
         .events
         .iter()
-        .map(|event| {
+        .map(|(project, event)| {
             vec![
                 Cell::left(
                     local(event.at)
@@ -294,8 +294,8 @@ fn events(dashboard: &Dashboard<'_>, theme: &Theme) -> Block {
                         .to_string(),
                     theme.style(StyleKey::Muted),
                 ),
-                Cell::left(event.project, theme.style(StyleKey::Muted)),
-                Cell::left(event.id, theme.style(StyleKey::Accent)),
+                Cell::left(*project, theme.style(StyleKey::Muted)),
+                Cell::left(&event.id, theme.style(StyleKey::Accent)),
                 Cell::left(
                     match event.kind {
                         EventKind::Spawned => "spawned".to_owned(),

@@ -81,17 +81,7 @@ fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectC
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_support::temp_test_path;
-
-    fn load(body: &str) -> Result<ProjectConfig> {
-        let root = temp_test_path("project-models");
-        fs::create_dir_all(&root)?;
-        fs::write(root.join("niles.yaml"), body)?;
-        let result = load_project_config_from(&root);
-        fs::remove_dir_all(root)?;
-        result
-    }
+    use crate::test_support::project_config as load;
 
     #[test]
     fn model_overrides_add_replace_and_allow_empty_efforts() {

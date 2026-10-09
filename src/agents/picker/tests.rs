@@ -4,6 +4,7 @@ use super::*;
 use crate::{
     agents::{self, ModelRoster},
     config::spec::ProjectConfig,
+    test_support::project_config,
     workspace_manifest::{AgentGroup, RoleBinding},
 };
 use columns::Column;
@@ -14,15 +15,6 @@ fn config() -> ProjectConfig {
         agents: Default::default(),
         models: ModelRoster::builtin().unwrap(),
     }
-}
-
-fn project_config(body: &str) -> anyhow::Result<ProjectConfig> {
-    let root = crate::test_support::temp_test_path("picker-config");
-    std::fs::create_dir_all(&root)?;
-    std::fs::write(root.join("niles.yaml"), body)?;
-    let result = crate::config::spec::load_project_config_from(&root);
-    std::fs::remove_dir_all(root)?;
-    result
 }
 
 fn columns(value: &str, reviewer: bool) -> Columns {

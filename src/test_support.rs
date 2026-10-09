@@ -27,3 +27,12 @@ pub(crate) fn temp_test_path(label: &str) -> Utf8PathBuf {
     )))
     .unwrap()
 }
+
+pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::ProjectConfig> {
+    let root = temp_test_path("project-config");
+    std::fs::create_dir_all(&root)?;
+    std::fs::write(root.join("niles.yaml"), body)?;
+    let result = crate::config::spec::load_project_config_from(&root);
+    std::fs::remove_dir_all(root)?;
+    result
+}

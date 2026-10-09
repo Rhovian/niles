@@ -55,8 +55,8 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
             COLUMN_KEYS
         }
     };
-    let mut hints = key_hints(theme, hints);
     let muted = theme.style(StyleKey::Muted);
+    let mut hints = Line::styled(hints, muted);
     hints.spans.extend([
         Span::styled(" · ", muted),
         Span::styled("c", theme.style(StyleKey::Running)),
@@ -70,7 +70,8 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
 pub(super) fn single(frame: &mut Frame, columns: &Columns, role: Role, theme: &Theme) {
     let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", role.name()));
     columns.draw(frame, body, theme);
-    footer_text(frame, footer, theme, None, key_hints(theme, COLUMN_KEYS));
+    let hints = Line::styled(COLUMN_KEYS, theme.style(StyleKey::Muted));
+    footer_text(frame, footer, theme, None, hints);
 }
 
 const COLUMN_KEYS: &str = "↑↓ move · →/↵ pick · ←/esc back";
@@ -105,10 +106,6 @@ fn footer_text(
         .borders(Borders::TOP)
         .border_style(theme.style(StyleKey::Guide));
     frame.render_widget(Paragraph::new(Text::from(lines)).block(rule), area);
-}
-
-fn key_hints<'a>(theme: &Theme, hints: &'a str) -> Line<'a> {
-    Line::styled(hints, theme.style(StyleKey::Muted))
 }
 
 fn roles(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
@@ -159,6 +156,17 @@ impl Columns {
             Constraint::Percentage(25),
         ])
         .areas(area);
+        let mut render_list = |area, title, items, selected, column| {
+            list(
+                frame,
+                area,
+                title,
+                items,
+                selected,
+                self.column == column,
+                theme,
+            );
+        };
         let items = self
             .families
             .iter()
@@ -171,15 +179,7 @@ impl Columns {
                 }
             })
             .collect();
-        list(
-            frame,
-            families,
-            "FAMILY",
-            items,
-            self.family,
-            self.column == Column::Family,
-            theme,
-        );
+        render_list(families, "FAMILY", items, self.family, Column::Family);
         let family = &self.families[self.family];
         if family.models.is_empty() {
             return;
@@ -197,15 +197,7 @@ impl Columns {
                 ]))
             })
             .collect();
-        list(
-            frame,
-            models,
-            "MODEL",
-            items,
-            self.model,
-            self.column == Column::Model,
-            theme,
-        );
+        render_list(models, "MODEL", items, self.model, Column::Model);
         let model = &family.models[self.model];
         if model.efforts.is_empty() {
             return;
@@ -216,15 +208,7 @@ impl Columns {
             .map(|effort| ListItem::new(effort.as_str()))
             .chain(std::iter::once(ListItem::new("cli default")))
             .collect();
-        list(
-            frame,
-            efforts,
-            "EFFORT",
-            items,
-            self.effort,
-            self.column == Column::Effort,
-            theme,
-        );
+        render_list(efforts, "EFFORT", items, self.effort, Column::Effort);
     }
 }
 

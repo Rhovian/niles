@@ -1,4 +1,4 @@
-use std::{env, fs, io::ErrorKind};
+use std::{env, fs};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -39,9 +39,10 @@ impl FileConfig {
         crate::store::write_yaml(path, self)
     }
 
-    pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
-        match text {
-            Some(text) => Ok(serde_saphyr::from_str(text)?),
+    /// The file at `path`, or an empty config when there is no file.
+    pub(crate) fn load(path: &Utf8Path) -> Result<Self> {
+        match crate::store::read_optional_yaml(path)? {
+            Some(file) => Ok(file),
             None => Ok(Self::default()),
         }
     }
@@ -58,36 +59,34 @@ pub(crate) struct UserConfig {
 
 impl UserConfig {
     pub(crate) fn load() -> Result<Self> {
-        let path = path()?;
-        Self::parse(read(&path)?.as_deref()).with_context(|| format!("invalid config {path}"))
+        Ok(Self::resolve(FileConfig::load(&path()?)?))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
+        let file = match text {
+            Some(text) => crate::store::parse_yaml(text)?,
+            None => FileConfig::default(),
+        };
+        Ok(Self::resolve(file))
     }
 
     #[expect(
         clippy::disallowed_methods,
         reason = "the parse boundary resolves each absent key to its named default"
     )]
-    pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
-        let config = FileConfig::parse(text)?;
-        Ok(Self {
+    fn resolve(config: FileConfig) -> Self {
+        Self {
             theme: Theme::new(config.theme.unwrap_or(DEFAULT_THEME)),
             tmux: TmuxConfig {
                 bindings: config.tmux.bindings.unwrap_or(DEFAULT_BINDINGS),
             },
-        })
+        }
     }
 }
 
 pub(crate) fn path() -> Result<Utf8PathBuf> {
     Ok(Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?).join(".niles/config.yaml"))
-}
-
-/// The file's text, or `None` when there is no file.
-pub(crate) fn read(path: &Utf8Path) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("failed to read {path}")),
-    }
 }
 
 #[cfg(test)]

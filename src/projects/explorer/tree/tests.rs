@@ -5,6 +5,17 @@ use crate::projects::{
     windows::Role,
 };
 
+const PANEL_LABELS: [&str; 8] = [
+    "CONFIG",
+    "├─ global",
+    "└─ ▸ projects",
+    "TELEMETRY",
+    "├─ today",
+    "├─ 7 days",
+    "└─ 30 days",
+    "HELP",
+];
+
 fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
     let entry = Entry {
         name: ProjectName::parse(name).unwrap(),
@@ -79,15 +90,10 @@ fn running_projects_and_role_folders_start_open() {
             "│     ├─ parse",
             "│     └─ gone window lost",
             "└─     old",
-            "CONFIG",
-            "├─ global",
-            "└─ ▸ projects",
-            "TELEMETRY",
-            "├─ today",
-            "├─ 7 days",
-            "└─ 30 days",
-            "HELP",
         ]
+        .into_iter()
+        .chain(PANEL_LABELS)
+        .collect::<Vec<_>>()
     );
 }
 
@@ -252,18 +258,10 @@ fn waiting_project_shows_warning_and_spinner() {
     tree.replace(vec![waiting_none]);
     assert_eq!(
         labels(&tree),
-        vec![
-            "PROJECTS",
-            "└─   ⚠ wait",
-            "CONFIG",
-            "├─ global",
-            "└─ ▸ projects",
-            "TELEMETRY",
-            "├─ today",
-            "├─ 7 days",
-            "└─ 30 days",
-            "HELP",
-        ]
+        ["PROJECTS", "└─   ⚠ wait",]
+            .into_iter()
+            .chain(PANEL_LABELS)
+            .collect::<Vec<_>>()
     );
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
@@ -312,15 +310,10 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "│     └─ gone window lost",
             "├─   ⚠ web",
             "└─     old",
-            "CONFIG",
-            "├─ global",
-            "└─ ▸ projects",
-            "TELEMETRY",
-            "├─ today",
-            "├─ 7 days",
-            "└─ 30 days",
-            "HELP"
         ]
+        .into_iter()
+        .chain(PANEL_LABELS)
+        .collect::<Vec<_>>()
     );
     let mut refreshed = self::projects();
     let agents = refreshed[0].agents.as_mut().unwrap();

@@ -16,12 +16,12 @@ struct RawPreset {
     security: String,
 }
 
-pub(super) struct Preset {
+pub(crate) struct Preset {
     pub name: String,
     pub values: Result<[String; 4], String>,
 }
 
-pub(super) fn load(config: &ProjectConfig) -> Result<Vec<Preset>> {
+pub(crate) fn load(config: &ProjectConfig) -> Result<Vec<Preset>> {
     let raw: Vec<RawPreset> = crate::store::parse_yaml(include_str!("../presets.yaml"))?;
     Ok(raw
         .into_iter()

@@ -156,14 +156,7 @@ pub(super) struct Tree {
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
         let old = std::mem::replace(&mut self.projects, projects);
-        let selected = Tree::items_of(
-            &old,
-            &self.collapsed,
-            &self.collapsed_folders,
-            self.project_scopes_expanded,
-        )
-        .get(self.cursor)
-        .map(|item| item.key());
+        let selected = self.items_of(&old).get(self.cursor).map(|item| item.key());
         let items = self.items();
         self.cursor = match selected.and_then(|key| items.iter().position(|item| item.key() == key))
         {
@@ -174,27 +167,19 @@ impl Tree {
     }
 
     pub fn items(&self) -> Vec<Item<'_>> {
-        Tree::items_of(
-            &self.projects,
-            &self.collapsed,
-            &self.collapsed_folders,
-            self.project_scopes_expanded,
-        )
+        self.items_of(&self.projects)
     }
 
-    fn items_of<'a>(
-        projects: &'a [Project],
-        collapsed: &HashSet<String>,
-        collapsed_folders: &HashSet<(String, WorkerRole)>,
-        project_scopes_expanded: bool,
-    ) -> Vec<Item<'a>> {
+    fn items_of<'a>(&self, projects: &'a [Project]) -> Vec<Item<'a>> {
         let mut items = vec![Item::Header];
         for project in projects {
             items.push(Item::Project(project));
-            if project.agents.is_some() && !collapsed.contains(project.row.entry.name.as_str()) {
+            if project.agents.is_some() && !self.collapsed.contains(project.row.entry.name.as_str())
+            {
                 for role in project.roles() {
                     items.push(Item::Folder(project, role));
-                    if !collapsed_folders
+                    if !self
+                        .collapsed_folders
                         .contains(&(project.row.entry.name.as_str().to_owned(), role))
                     {
                         items.extend(project.members(role));
@@ -207,7 +192,7 @@ impl Tree {
             Item::Scope(None),
             Item::ProjectScopes,
         ]);
-        if project_scopes_expanded {
+        if self.project_scopes_expanded {
             items.extend(projects.iter().map(|project| Item::Scope(Some(project))));
         }
         items.push(Item::Panel(Heading::Telemetry));

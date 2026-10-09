@@ -12,7 +12,8 @@ pub struct ModelRoster {
     families: BTreeMap<String, BTreeMap<String, Model>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Model {
     efforts: Vec<String>,
     context_window: Option<u64>,
@@ -20,15 +21,7 @@ struct Model {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct RawRoster(BTreeMap<String, BTreeMap<String, RawModel>>);
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawModel {
-    efforts: Vec<String>,
-    /// Tokens, from the vendor's documentation of this exact model; unset when none states it.
-    context_window: Option<u64>,
-}
+pub(crate) struct RawRoster(BTreeMap<String, BTreeMap<String, Model>>);
 
 impl ModelRoster {
     pub(crate) fn builtin() -> Result<Self> {
@@ -59,19 +52,13 @@ impl ModelRoster {
             }
             let mut normalized_models = BTreeSet::new();
             let mut entries = BTreeMap::new();
-            for (name, model) in models {
+            for (name, mut model) in models {
                 let name = normalize_model(&family, &name)?;
                 if !normalized_models.insert(name.clone()) {
                     bail!("duplicate {family} model `{name}` after normalization");
                 }
-                let efforts = normalize_efforts(&family, &name, model.efforts)?;
-                entries.insert(
-                    name,
-                    Model {
-                        efforts,
-                        context_window: model.context_window,
-                    },
-                );
+                model.efforts = normalize_efforts(&family, &name, model.efforts)?;
+                entries.insert(name, model);
             }
             parsed.insert(family, entries);
         }

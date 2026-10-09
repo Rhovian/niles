@@ -95,8 +95,9 @@ impl ConfigPanel<'_> {
         };
         let theme = &self.theme;
         self.footer = match (setting.edit.as_ref(), key) {
-            (Some(Edit::Registry { name }), KeyCode::Enter) => Some(format!(
-                "r in the explorer registers; rm ~/.niles/projects/{name} unregisters"
+            (Some(Edit::Registry), KeyCode::Enter) => Some(format!(
+                "r in the explorer registers; rm ~/.niles/projects/{} unregisters",
+                setting.key
             )),
             (Some(Edit::Role { root, role }), KeyCode::Enter) => {
                 pick_role(terminal, root, *role, theme).err().map(shown)
@@ -204,7 +205,7 @@ fn cells<'a>(item: &'a Item, theme: &Theme) -> [Line<'a>; 3] {
                 from,
             ]
         }
-        Item::Broken { reason, .. } => [
+        Item::Broken(reason) => [
             Line::styled("  ✗", theme.style(StyleKey::Lost)),
             Line::raw(reason.as_str()),
             Line::default(),
@@ -217,7 +218,7 @@ fn shown(error: anyhow::Error) -> String {
 }
 
 fn step_config(path: &Utf8Path, set: impl FnOnce(&mut user::FileConfig)) -> Result<()> {
-    let mut file = user::FileConfig::parse(user::read(path)?.as_deref())?;
+    let mut file = user::FileConfig::load(path)?;
     set(&mut file);
     file.save(path)
 }

@@ -1,11 +1,7 @@
 use std::fs;
 
 use super::*;
-use crate::{
-    agents::{self, picker::Role},
-    test_support::temp_test_path,
-    workspace_manifest::save,
-};
+use crate::{agents::picker::Role, test_support::temp_test_path, workspace_manifest::save};
 
 const MANIFEST: &str = "\
 # workspace α
@@ -121,25 +117,16 @@ fn no_terminal_missing_or_malformed_manifest_errors() {
 }
 
 #[test]
-fn every_preset_saves_and_loads_launchable_roles() {
-    #[derive(serde::Deserialize)]
-    struct Preset {
-        lead: String,
-        worker: String,
-        reviewer: String,
-        security: String,
-    }
-    let presets: Vec<Preset> =
-        crate::store::parse_yaml(include_str!("../../agents/presets.yaml")).unwrap();
-    for (index, preset) in presets.into_iter().enumerate() {
+fn every_preset_saves_and_loads_roles() {
+    let config = crate::test_support::project_config("").unwrap();
+    for (index, preset) in crate::agents::picker::load_presets(&config)
+        .unwrap()
+        .into_iter()
+        .enumerate()
+    {
         let root = temp_test_path(&format!("picker-preset-{index}"));
         let draft = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
-            for (role, value) in Role::ALL.into_iter().zip([
-                preset.lead,
-                preset.worker,
-                preset.reviewer,
-                preset.security,
-            ]) {
+            for (role, value) in Role::ALL.into_iter().zip(preset.values.unwrap()) {
                 role.set(&mut draft, value);
             }
             Ok(Choice::Save(draft))
@@ -148,20 +135,6 @@ fn every_preset_saves_and_loads_launchable_roles() {
         .unwrap();
         let loaded = load(&root).unwrap().unwrap();
         assert_eq!(draft, loaded);
-        let config = load_project_config_from(&root).unwrap();
-        for role in Role::ALL {
-            let value = role.value(&loaded);
-            if role == Role::Reviewer && value == "lead" {
-                continue;
-            }
-            agents::invocation(
-                &value,
-                None,
-                agents::InvocationDefaults::Worker,
-                &config.models,
-            )
-            .unwrap();
-        }
         fs::remove_dir_all(root).unwrap();
     }
 }
