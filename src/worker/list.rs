@@ -1,4 +1,4 @@
-use std::{fs, io::Write};
+use std::io::Write;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -122,10 +122,8 @@ fn has_pending_wake(worker: &WorkerSnapshot) -> Result<bool> {
 /// ever consumed a line from it, which is position zero.
 fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
     let path = cursor_path(worker_dir);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    let Some(body) = crate::util::read_optional_string(&path)? else {
+        return Ok(0);
     };
     usize::try_from(parse_cursor(&body, &path)?)
         .with_context(|| format!("wake cursor in {path} exceeds this platform's address space"))

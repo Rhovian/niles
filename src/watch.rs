@@ -17,7 +17,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::{ErrorKind, Write},
+    io::Write,
     panic,
     sync::{
         Arc,
@@ -470,10 +470,8 @@ pub(crate) fn delivered_reports(
     session_dir: &Utf8Path,
 ) -> Result<Vec<(DateTime<Utc>, String, WakeKind)>> {
     let path = session_dir.join(WATCH_LOG);
-    let body = match fs::read_to_string(&path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    let Some(body) = crate::util::read_optional_string(&path)? else {
+        return Ok(Vec::new());
     };
     #[expect(clippy::disallowed_methods, reason = "other notes are not reports")]
     let reports = body.lines().filter_map(|line| {
