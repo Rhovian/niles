@@ -1,13 +1,7 @@
 //! The CONFIG panel: one scope's settings as key / value / from. ↵ runs the role picker on a
-//! single-model role and `$EDITOR` on the file behind any other row.
+//! single-model role; ←/→ steps simple values in place. Other settings are read-only.
 
-use std::{
-    env,
-    ffi::{OsStr, OsString},
-    process::Command,
-};
-
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use ratatui::{
     DefaultTerminal, Frame,
@@ -16,8 +10,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Row, Table, TableState, Wrap},
 };
+use ratatui_themes::ThemeName;
 
-use self::items::{Edit, Item, Note, Role};
+use self::items::{Edit, Item, Note, Role, Step};
 use super::registry::{self, ProjectName};
 use crate::{
     agents::picker,
@@ -50,11 +45,11 @@ pub(super) fn run(project: Option<&ProjectName>, theme: &Theme) -> Result<()> {
         items: items(project)?,
         selected: None,
         footer: None,
-        editor: env::var_os("EDITOR").filter(|editor| !editor.is_empty()),
+        theme: theme.clone(),
     };
     panel.down();
     let mut terminal = ratatui::init();
-    let result = panel.run(&mut terminal, theme);
+    let result = panel.run(&mut terminal);
     ratatui::restore();
     result
 }
@@ -66,15 +61,14 @@ struct ConfigPanel<'a> {
     selected: Option<usize>,
     /// The outcome of the last ↵.
     footer: Option<String>,
-    /// `$EDITOR`, unless it is unset or empty.
-    editor: Option<OsString>,
+    theme: Theme,
 }
 
 impl ConfigPanel<'_> {
     /// Runs until tmux respawns the panel's window.
-    fn run(&mut self, terminal: &mut DefaultTerminal, theme: &Theme) -> Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
-            terminal.draw(|frame| self.draw(frame, theme))?;
+            terminal.draw(|frame| self.draw(frame))?;
             let Event::Key(key) = event::read()? else {
                 continue;
             };
@@ -87,29 +81,33 @@ impl ConfigPanel<'_> {
                 (KeyEventKind::Press, KeyCode::Esc) => {
                     self.footer = tmux::focus_explorer().err().map(shown);
                 }
-                (KeyEventKind::Press, KeyCode::Enter) => self.enter(terminal, theme)?,
+                (KeyEventKind::Press, KeyCode::Enter | KeyCode::Left | KeyCode::Right) => {
+                    self.act(terminal, key.code)?
+                }
                 _ => {}
             }
         }
     }
 
-    /// Edits the selected row, then reloads every row, since an edit can change any of them.
-    fn enter(&mut self, terminal: &mut DefaultTerminal, theme: &Theme) -> Result<()> {
-        let Some(edit) = self.selected.and_then(|index| self.items[index].edit()) else {
+    fn act(&mut self, terminal: &mut DefaultTerminal, key: KeyCode) -> Result<()> {
+        let Some(Item::Setting(setting)) = self.selected.map(|index| &self.items[index]) else {
             return Ok(());
         };
-        self.footer = match edit.clone() {
-            Edit::Registry { name } => Some(format!(
+        let theme = &self.theme;
+        self.footer = match (setting.edit.as_ref(), key) {
+            (Some(Edit::Registry { name }), KeyCode::Enter) => Some(format!(
                 "r in the explorer registers; rm ~/.niles/projects/{name} unregisters"
             )),
-            Edit::File(file) => match self.editor.as_deref() {
-                Some(editor) => suspended(terminal, || edit_file(Some(editor), &file)),
-                // Nothing runs, so the terminal stays the panel's.
-                None => edit_file(None, &file),
+            (Some(Edit::Role { root, role }), KeyCode::Enter) => {
+                pick_role(terminal, root, *role, theme).err().map(shown)
             }
-            .err()
-            .map(shown),
-            Edit::Role { root, role } => pick_role(terminal, &root, role, theme).err().map(shown),
+            (Some(Edit::Step(step)), KeyCode::Enter | KeyCode::Left | KeyCode::Right) => step
+                .save(cycle(&step.options(), &setting.value, key == KeyCode::Left))
+                .and_then(|()| Theme::load())
+                .map(|theme| self.theme = theme)
+                .err()
+                .map(shown),
+            _ => return Ok(()),
         };
         self.items = items(self.project)?;
         if self
@@ -143,7 +141,8 @@ impl ConfigPanel<'_> {
         self.items[index].edit().is_some()
     }
 
-    fn draw(&self, frame: &mut Frame, theme: &Theme) {
+    fn draw(&self, frame: &mut Frame) {
+        let theme = &self.theme;
         let [body, footer] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(frame.area());
         let rows = self
@@ -213,32 +212,54 @@ fn cells<'a>(item: &'a Item, theme: &Theme) -> [Line<'a>; 3] {
     }
 }
 
-/// Hands the terminal to `action`, then takes it back.
-fn suspended<T>(terminal: &mut DefaultTerminal, action: impl FnOnce() -> Result<T>) -> Result<T> {
-    ratatui::restore();
-    let result = action();
-    *terminal = ratatui::init();
-    result
-}
-
 fn shown(error: anyhow::Error) -> String {
     format!("{error:#}")
 }
 
-/// Opens `file` in `editor`, through `sh` so an editor with arguments (`code -w`) works.
-fn edit_file(editor: Option<&OsStr>, file: &Utf8Path) -> Result<()> {
-    let Some(editor) = editor else {
-        bail!("set $EDITOR to edit {file}");
-    };
-    let status = Command::new("sh")
-        .args(["-c", "$EDITOR \"$1\"", "sh", file.as_str()])
-        .env("EDITOR", editor)
-        .status()
-        .context("failed to run $EDITOR")?;
-    if !status.success() {
-        bail!("$EDITOR exited with {status}");
+fn step_config(path: &Utf8Path, set: impl FnOnce(&mut user::FileConfig)) -> Result<()> {
+    let mut file = user::FileConfig::parse(user::read(path)?.as_deref())?;
+    set(&mut file);
+    file.save(path)
+}
+
+impl Step {
+    fn options(&self) -> Vec<&'static str> {
+        match self {
+            Self::Theme(_) => ThemeName::all().iter().map(|name| name.slug()).collect(),
+            Self::Bindings(_) => vec!["false", "true"],
+            Self::Checkin(_) => CHECKIN_STEPS.to_vec(),
+            Self::Recheck(_) => RECHECK_STEPS.to_vec(),
+        }
     }
-    Ok(())
+
+    fn save(&self, text: &str) -> Result<()> {
+        match self {
+            Self::Theme(path) => {
+                let theme = text.parse::<ThemeName>().map_err(anyhow::Error::msg)?;
+                step_config(path, |file| file.theme = Some(theme))
+            }
+            Self::Bindings(path) => {
+                let bindings = text.parse::<bool>()?;
+                step_config(path, |file| file.tmux.bindings = Some(bindings))
+            }
+            Self::Checkin(root) => save_manifest(root, |file| file.checkin = Some(text.to_owned())),
+            Self::Recheck(root) => save_manifest(root, |file| file.recheck = Some(text.to_owned())),
+        }
+    }
+}
+
+const CHECKIN_STEPS: &[&str] = &["off", "2m", "5m", "10m", "15m", "30m", "1h"];
+const RECHECK_STEPS: &[&str] = &["backoff", "5m", "10m", "15m", "30m", "1h"];
+
+fn cycle<'a>(options: &[&'a str], current: &str, previous: bool) -> &'a str {
+    debug_assert!(!options.is_empty());
+    let next = match (options.iter().position(|value| *value == current), previous) {
+        (Some(index), true) => (index + options.len() - 1) % options.len(),
+        (Some(index), false) => (index + 1) % options.len(),
+        (None, true) => options.len() - 1,
+        (None, false) => 0,
+    };
+    options[next]
 }
 
 fn pick_role(
@@ -252,14 +273,14 @@ fn pick_role(
     if let Some(value) = picker::role(terminal, role, &manifest, &config, theme)?
         && value != role.value(&manifest)
     {
-        save_role(root, |manifest| role.set(manifest, value))?;
+        save_manifest(root, |manifest| role.set(manifest, value))?;
     }
     Ok(())
 }
 
-/// Sets one role, through `set`, in the manifest as it is now, so the picker's wait loses nothing.
+/// Sets a field, through `set`, in the manifest as it is now, so the picker's wait loses nothing.
 /// race accepted: a concurrent edit in that window is lost, last writer wins.
-fn save_role(root: &Utf8Path, set: impl FnOnce(&mut WorkspaceManifest)) -> Result<()> {
+fn save_manifest(root: &Utf8Path, set: impl FnOnce(&mut WorkspaceManifest)) -> Result<()> {
     let mut manifest = load_manifest(root)?;
     set(&mut manifest);
     workspace_manifest::save(root, &manifest)

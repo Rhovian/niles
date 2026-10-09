@@ -2,7 +2,7 @@ use std::{env, fs, io::ErrorKind};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use ratatui_themes::ThemeName;
 
@@ -13,20 +13,32 @@ pub(crate) const DEFAULT_BINDINGS: bool = false;
 
 /// `config.yaml` as written: a key it leaves out is `None`, so the config panel can tell an
 /// absent key from one set to its builtin value.
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) theme: Option<ThemeName>,
+    #[serde(skip_serializing_if = "tmux_is_empty")]
     pub(crate) tmux: FileTmux,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileTmux {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) bindings: Option<bool>,
 }
 
+fn tmux_is_empty(tmux: &FileTmux) -> bool {
+    tmux.bindings.is_none()
+}
+
 impl FileConfig {
+    pub(crate) fn save(&self, path: &Utf8Path) -> Result<()> {
+        fs::create_dir_all(path.parent().context("config path has no parent")?)?;
+        crate::store::write_yaml(path, self)
+    }
+
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
         match text {
             Some(text) => Ok(serde_saphyr::from_str(text)?),

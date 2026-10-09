@@ -37,6 +37,7 @@ pub(crate) enum State {
     Idle,
 }
 
+#[derive(Clone)]
 pub(crate) struct Theme {
     palette: ThemePalette,
 }

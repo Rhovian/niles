@@ -32,7 +32,6 @@ pub(super) enum Item {
     /// A file that failed to load, in place of the settings it holds.
     Broken {
         reason: String,
-        edit: Edit,
     },
 }
 
@@ -40,9 +39,8 @@ impl Item {
     /// What ↵ does on this row; a section heading does nothing.
     pub(super) fn edit(&self) -> Option<&Edit> {
         match self {
-            Self::Section(_) => None,
-            Self::Setting(setting) => Some(&setting.edit),
-            Self::Broken { edit, .. } => Some(edit),
+            Self::Section(_) | Self::Broken { .. } => None,
+            Self::Setting(setting) => setting.edit.as_ref(),
         }
     }
 }
@@ -53,7 +51,7 @@ pub(super) struct Setting {
     /// `builtin` when no file sets the key, else the file that does.
     pub from: &'static str,
     pub note: Note,
-    pub edit: Edit,
+    pub edit: Option<Edit>,
 }
 
 pub(super) enum Note {
@@ -70,17 +68,24 @@ pub(super) enum Edit {
         root: Utf8PathBuf,
         role: Role,
     },
-    File(Utf8PathBuf),
+    Step(Step),
     /// The registry is a directory of links, changed from the explorer rather than a file.
     Registry {
         name: String,
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Step {
+    Theme(Utf8PathBuf),
+    Bindings(Utf8PathBuf),
+    Checkin(Utf8PathBuf),
+    Recheck(Utf8PathBuf),
+}
+
 pub(super) use crate::agents::picker::Role;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
-    let edit = Edit::File(config.to_owned());
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
     match user::read(config).and_then(|text| FileConfig::parse(text.as_deref())) {
         Ok(file) => items.extend(
@@ -90,19 +95,19 @@ pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Ite
                     file.theme.map(|theme| theme.slug().to_owned()),
                     DEFAULT_THEME.slug(),
                     CONFIG_YAML,
-                    &edit,
+                    &Edit::Step(Step::Theme(config.to_owned())),
                 ),
                 setting(
                     "tmux.bindings",
                     file.tmux.bindings.map(|bindings| bindings.to_string()),
                     &DEFAULT_BINDINGS.to_string(),
                     CONFIG_YAML,
-                    &edit,
+                    &Edit::Step(Step::Bindings(config.to_owned())),
                 ),
             ]
             .map(Item::Setting),
         ),
-        Err(error) => items.push(broken(&error, edit)),
+        Err(error) => items.push(broken(&error)),
     }
     items.push(Item::Section(REGISTRY.to_owned()));
     items.extend(registry.iter().map(|entry| {
@@ -111,71 +116,53 @@ pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Ite
             value: clamp(entry.path.as_str(), VALUE_WIDTH),
             from: REGISTRY,
             note: Note::None,
-            edit: Edit::Registry {
+            edit: Some(Edit::Registry {
                 name: entry.name.as_str().to_owned(),
-            },
+            }),
         })
     }));
     items
 }
 
 pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
-    let manifest_edit = Edit::File(workspace_manifest::manifest_path(root));
     let file = match project_config_file(root)? {
         Some(file) => file,
         None => PROJECT_CONFIG_FILES[0],
     };
-    let file_edit = Edit::File(root.join(file));
     let config = load_project_config_from(root);
     let mut items = Vec::new();
     match workspace_manifest::load(root) {
         Ok(Some(manifest)) => {
             match &config {
-                Ok(config) => items.extend(roles(root, &manifest, config, &manifest_edit)),
-                Err(error) => items.extend([
-                    Item::Section("roles".to_owned()),
-                    broken(error, file_edit.clone()),
-                ]),
+                Ok(config) => items.extend(roles(root, &manifest, config)),
+                Err(error) => items.extend([Item::Section("roles".to_owned()), broken(error)]),
             }
-            items.extend(watch(&manifest, &manifest_edit)?);
+            items.extend(watch(root, &manifest)?);
             items.push(Item::Section("worker_planning".to_owned()));
-            items.extend(listed(
-                manifest.worker_planning.0.iter().map(|group| {
-                    plain(
-                        &group.models.join(", "),
-                        &group.guidance.lines().take(1).collect::<String>(),
-                        MANIFEST,
-                        &manifest_edit,
-                    )
-                }),
-                &manifest_edit,
-            ));
+            items.extend(listed(manifest.worker_planning.0.iter().map(|group| {
+                plain(
+                    &group.models.join(", "),
+                    &group.guidance.lines().take(1).collect::<String>(),
+                    MANIFEST,
+                )
+            })));
         }
         Ok(None) => items.extend([
             Item::Section(MANIFEST.to_owned()),
             Item::Broken {
                 reason: ".niles/manifest.yaml".to_owned(),
-                edit: manifest_edit,
             },
         ]),
-        Err(error) => items.extend([
-            Item::Section(MANIFEST.to_owned()),
-            broken(&error, manifest_edit),
-        ]),
+        Err(error) => items.extend([Item::Section(MANIFEST.to_owned()), broken(&error)]),
     }
     match &config {
-        Ok(config) => items.extend(files(config, file, &file_edit)?),
-        Err(error) => items.extend([Item::Section(file.to_owned()), broken(error, file_edit)]),
+        Ok(config) => items.extend(files(config, file)?),
+        Err(error) => items.extend([Item::Section(file.to_owned()), broken(error)]),
     }
     Ok(items)
 }
 
-fn roles(
-    root: &Utf8Path,
-    manifest: &WorkspaceManifest,
-    config: &ProjectConfig,
-    manifest_edit: &Edit,
-) -> Vec<Item> {
+fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<Item> {
     let mut items = Vec::new();
     for (role, row) in Role::ALL.into_iter().zip(manifest_roles(manifest, config)) {
         items.push(Item::Section(format!("roles.{}", row.role)));
@@ -199,7 +186,8 @@ fn roles(
                 ]
                 .map(|(key, value)| {
                     let from = if value == MISSING { BUILTIN } else { MANIFEST };
-                    let mut setting = plain(key, &value, from, &edit);
+                    let mut setting = plain(key, &value, from);
+                    setting.edit = Some(edit.clone());
                     if let Some(note) = invalid.take() {
                         setting.note = note;
                     }
@@ -218,7 +206,7 @@ fn roles(
                 Some(when) => when.clone(),
                 None => format!("group {}", index + 1),
             };
-            let mut setting = plain(&key, &value, MANIFEST, manifest_edit);
+            let mut setting = plain(&key, &value, MANIFEST);
             if let Some(note) = invalid.take() {
                 setting.note = note;
             }
@@ -228,12 +216,12 @@ fn roles(
     items
 }
 
-/// A role written as groups, which only the editor can change; `None` for one model.
+/// A role written as groups, which is read-only; `None` for one model.
 fn groups(binding: &RoleBinding) -> Option<&[AgentGroup]> {
     binding.scalar().is_none().then_some(binding.0.as_slice())
 }
 
-fn watch(manifest: &WorkspaceManifest, edit: &Edit) -> Result<[Item; 3]> {
+fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<[Item; 3]> {
     let builtin = watch::resolve_cadence(None, None, Utf8Path::new(""))?;
     let checkin_builtin = match builtin.delay {
         Some(delay) => watch::describe_delay(delay),
@@ -244,7 +232,7 @@ fn watch(manifest: &WorkspaceManifest, edit: &Edit) -> Result<[Item; 3]> {
         manifest.checkin.clone(),
         &checkin_builtin,
         MANIFEST,
-        edit,
+        &Edit::Step(Step::Checkin(root.to_owned())),
     );
     if let Some(Err(error)) = manifest.checkin.as_deref().map(watch::parse_delay) {
         checkin.note = invalid(&error);
@@ -254,7 +242,7 @@ fn watch(manifest: &WorkspaceManifest, edit: &Edit) -> Result<[Item; 3]> {
         manifest.recheck.clone(),
         &builtin.recheck.spelling(),
         MANIFEST,
-        edit,
+        &Edit::Step(Step::Recheck(root.to_owned())),
     );
     if let Some(Err(error)) = manifest.recheck.as_deref().map(watch::parse_recheck) {
         recheck.note = invalid(&error);
@@ -267,19 +255,14 @@ fn watch(manifest: &WorkspaceManifest, edit: &Edit) -> Result<[Item; 3]> {
 }
 
 /// The `niles.yaml` sections: its custom agents, and the models it adds or changes.
-fn files(config: &ProjectConfig, file: &'static str, edit: &Edit) -> Result<Vec<Item>> {
+fn files(config: &ProjectConfig, file: &'static str) -> Result<Vec<Item>> {
     let builtin = ModelRoster::builtin()?.rows();
     let agents = config.agents.iter().map(|(name, agent)| {
         let command = agent.binary.iter().chain(&agent.args);
-        plain(
-            name,
-            &command.cloned().collect::<Vec<_>>().join(" "),
-            file,
-            edit,
-        )
+        plain(name, &command.cloned().collect::<Vec<_>>().join(" "), file)
     });
     let mut items = vec![Item::Section("agents".to_owned())];
-    items.extend(listed(agents, edit));
+    items.extend(listed(agents));
     items.push(Item::Section("models".to_owned()));
     let models = config
         .models
@@ -287,21 +270,21 @@ fn files(config: &ProjectConfig, file: &'static str, edit: &Edit) -> Result<Vec<
         .into_iter()
         .filter(|row| !builtin.contains(row));
     let models = models.map(|[family, model, efforts]| {
-        let mut setting = plain(&format!("{family}:{model}"), &efforts, file, edit);
+        let mut setting = plain(&format!("{family}:{model}"), &efforts, file);
         if let Some([.., builtin]) = builtin.iter().find(|[f, m, _]| *f == family && *m == model) {
             setting.note = Note::Builtin(builtin.clone());
         }
         setting
     });
-    items.extend(listed(models, edit));
+    items.extend(listed(models));
     Ok(items)
 }
 
-/// A section's settings, or one builtin `-` row so an empty section still has a row to edit.
-fn listed(settings: impl Iterator<Item = Setting>, edit: &Edit) -> Vec<Item> {
+/// A section's settings, or one builtin `-` row so an empty section is visible.
+fn listed(settings: impl Iterator<Item = Setting>) -> Vec<Item> {
     let mut items = settings.map(Item::Setting).collect::<Vec<_>>();
     if items.is_empty() {
-        items.push(Item::Setting(plain(MISSING, MISSING, BUILTIN, edit)));
+        items.push(Item::Setting(plain(MISSING, MISSING, BUILTIN)));
     }
     items
 }
@@ -314,22 +297,24 @@ fn setting(
     from: &'static str,
     edit: &Edit,
 ) -> Setting {
-    match set {
+    let mut setting = match set {
         Some(value) => Setting {
             note: Note::Builtin(builtin.to_owned()),
-            ..plain(key, &value, from, edit)
+            ..plain(key, &value, from)
         },
-        None => plain(key, builtin, BUILTIN, edit),
-    }
+        None => plain(key, builtin, BUILTIN),
+    };
+    setting.edit = Some(edit.clone());
+    setting
 }
 
-fn plain(key: &str, value: &str, from: &'static str, edit: &Edit) -> Setting {
+fn plain(key: &str, value: &str, from: &'static str) -> Setting {
     Setting {
         key: clamp(key, VALUE_WIDTH),
         value: clamp(value, VALUE_WIDTH),
         from,
         note: Note::None,
-        edit: edit.clone(),
+        edit: None,
     }
 }
 
@@ -338,9 +323,8 @@ fn invalid(error: &anyhow::Error) -> Note {
 }
 
 /// The section names the file, so its root cause is the part of the error that fits.
-fn broken(error: &anyhow::Error, edit: Edit) -> Item {
+fn broken(error: &anyhow::Error) -> Item {
     Item::Broken {
         reason: clamp(&error.root_cause().to_string(), REASON_WIDTH),
-        edit,
     }
 }

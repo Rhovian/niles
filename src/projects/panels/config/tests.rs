@@ -1,4 +1,4 @@
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::fs;
 
 use camino::Utf8PathBuf;
 
@@ -75,7 +75,7 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
     let items = items::global(&path, &[]);
     assert_rows(&items, &["[config.yaml]", "✗ ", "[registry]"]);
     assert!(table(&items)[1].contains("bogus"), "{:?}", table(&items));
-    assert_eq!(items[1].edit(), Some(&Edit::File(path)));
+    assert_eq!(items[1].edit(), None);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -153,19 +153,20 @@ fn project_rows_show_builtin_overridden_multi_group_and_invalid_values() {
             &format!("codex:gpt-5.5 | high | .niles.yaml | builtin: {efforts}"),
         ],
     );
-    let manifest = Edit::File(workspace_manifest::manifest_path(&root));
     let role = |role| Edit::Role {
         root: root.clone(),
         role,
     };
     assert_eq!(items[1].edit(), Some(&role(Role::Lead)));
-    assert_eq!(items[5].edit(), Some(&manifest));
+    assert_eq!(items[5].edit(), None);
     assert_eq!(items[8].edit(), Some(&role(Role::Reviewer)));
-    assert_eq!(items[17].edit(), Some(&manifest));
     assert_eq!(
-        items[21].edit(),
-        Some(&Edit::File(root.join(".niles.yaml")))
+        items[17].edit(),
+        Some(&Edit::Step(Step::Recheck(root.clone())))
     );
+    for index in [19, 21, 23] {
+        assert_eq!(items[index].edit(), None);
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -184,12 +185,9 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
             "- | - | builtin | ",
         ],
     );
-    assert_eq!(
-        items[1].edit(),
-        Some(&Edit::File(workspace_manifest::manifest_path(&root)))
-    );
-    // With no project file, its sections edit the canonical one.
-    assert_eq!(items[3].edit(), Some(&Edit::File(root.join("niles.yaml"))));
+    for index in [1, 3, 5] {
+        assert_eq!(items[index].edit(), None);
+    }
     fs::remove_dir_all(root).unwrap();
 
     let root = project(
@@ -212,18 +210,29 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
 }
 
 #[test]
-fn saving_a_role_keeps_the_other_roles_and_planning() {
-    let root = project("config-save", Some(MANIFEST), None);
+fn saving_a_role_and_checkin_keeps_the_other_fields() {
+    let text = MANIFEST.replace("15m", "300s").replace("nope", "backoff");
+    let root = project("config-save", Some(&text), None);
     let before = workspace_manifest::load(&root).unwrap().unwrap();
-    save_role(&root, |manifest| {
+    save_manifest(&root, |manifest| {
         manifest.security = RoleBinding::from("codex:gpt-5.5:high".to_owned());
     })
     .unwrap();
+    let rows = items::project(&root).unwrap();
+    let Item::Setting(setting) = &rows[16] else {
+        panic!("missing checkin row")
+    };
+    let Some(Edit::Step(step)) = &setting.edit else {
+        panic!("missing checkin step")
+    };
+    step.save(cycle(&step.options(), &setting.value, false))
+        .unwrap();
     let after = workspace_manifest::load(&root).unwrap().unwrap();
     assert_eq!(
         after,
         WorkspaceManifest {
             security: RoleBinding::from("codex:gpt-5.5:high".to_owned()),
+            checkin: Some("off".to_owned()),
             ..before
         }
     );
@@ -232,31 +241,35 @@ fn saving_a_role_keeps_the_other_roles_and_planning() {
 }
 
 #[test]
-fn editor_edits_the_file_and_the_rows_reload() {
-    let dir = temp_test_path("config-editor");
-    fs::create_dir_all(&dir).unwrap();
-    let editor = dir.join("editor");
-    fs::write(&editor, "#!/bin/sh\nprintf 'theme: nord\\n' >> \"$1\"\n").unwrap();
-    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = dir.join("config.yaml");
-    fs::write(&path, "# kept\n").unwrap();
-    edit_file(Some(editor.as_os_str()), &path).unwrap();
-    assert_eq!(fs::read_to_string(&path).unwrap(), "# kept\ntheme: nord\n");
+fn stepping_theme_creates_sparse_config_and_reloads_rows() {
+    let dir = temp_test_path("config-theme");
+    let path = dir.join(".niles/config.yaml");
+    let step = Step::Theme(path.clone());
+    let rows = items::global(&path, &[]);
+    let Item::Setting(setting) = &rows[1] else {
+        panic!("missing theme row")
+    };
+    step.save(cycle(&step.options(), &setting.value, false))
+        .unwrap();
+    let next = ThemeName::SolarizedDark;
     assert_eq!(
-        table(&items::global(&path, &[]))[1],
-        "theme | nord | config.yaml | builtin: tokyo-night"
+        fs::read_to_string(&path).unwrap(),
+        format!("theme: {}\n", next.slug())
     );
+    let rows = items::global(&path, &[]);
+    let Item::Setting(row) = &rows[1] else {
+        panic!("missing theme row")
+    };
+    assert_eq!(row.value, next.slug());
+    assert_eq!(row.from, "config.yaml");
     fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn unset_editor_names_the_file_and_changes_nothing() {
-    let dir = temp_test_path("config-no-editor");
-    fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("config.yaml");
-    fs::write(&path, "theme: nord\n").unwrap();
-    let error = edit_file(None, &path).unwrap_err();
-    assert_eq!(error.to_string(), format!("set $EDITOR to edit {path}"));
-    assert_eq!(fs::read_to_string(&path).unwrap(), "theme: nord\n");
-    fs::remove_dir_all(dir).unwrap();
+fn cycle_wraps_and_starts_at_an_end_when_unmatched() {
+    let options = ["one", "two", "three"];
+    assert_eq!(cycle(&options, "three", false), "one");
+    assert_eq!(cycle(&options, "one", true), "three");
+    assert_eq!(cycle(&options, "unknown", false), "one");
+    assert_eq!(cycle(&options, "unknown", true), "three");
 }
