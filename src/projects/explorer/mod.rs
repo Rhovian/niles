@@ -264,7 +264,10 @@ impl Explorer {
         };
         let target = match item {
             Item::Header | Item::Folder(..) => return Ok(None),
-            Item::Panel(panel) => panels::open(panel)?,
+            Item::Panel(heading) => panels::open(heading.panel())?,
+            Item::Scope(project) => panels::open(Panel::Config {
+                project: project.map(|project| project.row.entry.name.clone()),
+            })?,
             Item::Range(range) => panels::open(Panel::Telemetry { range })?,
             Item::Project(project) => {
                 let entry = &project.row.entry;
@@ -304,6 +307,7 @@ impl Explorer {
             | Item::Folder(..)
             | Item::Header
             | Item::Panel(_)
+            | Item::Scope(_)
             | Item::Range(_) => return None,
         };
         Some((id.to_owned(), project.row.entry.path.clone()))

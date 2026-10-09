@@ -28,7 +28,7 @@ impl Recheck {
         }
     }
 
-    pub(super) fn spelling(self) -> String {
+    pub(crate) fn spelling(self) -> String {
         match self {
             Self::Backoff => "backoff".to_owned(),
             Self::Fixed(delay) => describe_delay(delay),
@@ -65,7 +65,7 @@ pub(crate) fn resolve_cadence(
     Ok(Cadence { delay, recheck })
 }
 
-pub(super) fn parse_recheck(value: &str) -> Result<Recheck> {
+pub(crate) fn parse_recheck(value: &str) -> Result<Recheck> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("backoff") {
         return Ok(Recheck::Backoff);
@@ -90,7 +90,7 @@ pub(crate) fn describe_delay(delay: Duration) -> String {
     }
 }
 
-fn parse_delay(value: &str) -> Result<Option<Duration>> {
+pub(crate) fn parse_delay(value: &str) -> Result<Option<Duration>> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("off") {
         return Ok(None);

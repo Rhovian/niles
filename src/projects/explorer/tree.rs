@@ -53,10 +53,32 @@ fn spinner(now: DateTime<Utc>, theme: &Theme) -> &str {
     theme.spinner(now.timestamp_millis() / SPINNER_FRAME.as_millis() as i64)
 }
 
+/// A panel's row; CONFIG and TELEMETRY open their first child.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Heading {
+    Config,
+    Telemetry,
+    Help,
+}
+
+impl Heading {
+    pub fn panel(self) -> Panel {
+        match self {
+            Self::Config => Panel::Config { project: None },
+            Self::Telemetry => Panel::Telemetry {
+                range: Range::Today,
+            },
+            Self::Help => Panel::Help,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Item<'a> {
     Header,
-    Panel(Panel),
+    Panel(Heading),
+    /// A child of CONFIG, which is never collapsed: the global scope, or a project's.
+    Scope(Option<&'a Project>),
     /// A child of TELEMETRY, which is never collapsed.
     Range(Range),
     Project(&'a Project),
@@ -74,7 +96,8 @@ pub(super) enum Member<'a> {
 #[derive(PartialEq, Eq)]
 enum Key<'a> {
     Header,
-    Panel(Panel),
+    Panel(Heading),
+    Scope(Option<&'a str>),
     Range(Range),
     Project(&'a str),
     Folder(&'a str, WorkerRole),
@@ -88,14 +111,17 @@ impl<'a> Item<'a> {
             Item::Project(project) | Item::Folder(project, _) | Item::Member(project, _, _) => {
                 Some(project)
             }
-            Item::Header | Item::Panel(_) | Item::Range(_) => None,
+            Item::Header | Item::Panel(_) | Item::Scope(_) | Item::Range(_) => None,
         }
     }
 
     fn key(self) -> Key<'a> {
         match self {
             Item::Header => Key::Header,
-            Item::Panel(panel) => Key::Panel(panel),
+            Item::Panel(heading) => Key::Panel(heading),
+            Item::Scope(project) => {
+                Key::Scope(project.map(|project| project.row.entry.name.as_str()))
+            }
             Item::Range(range) => Key::Range(range),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
             Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
@@ -155,14 +181,11 @@ impl Tree {
                 }
             }
         }
-        items.extend([
-            Item::Panel(Panel::Config),
-            Item::Panel(Panel::Telemetry {
-                range: Range::Today,
-            }),
-        ]);
+        items.extend([Item::Panel(Heading::Config), Item::Scope(None)]);
+        items.extend(projects.iter().map(|project| Item::Scope(Some(project))));
+        items.push(Item::Panel(Heading::Telemetry));
         items.extend(Range::ALL.map(Item::Range));
-        items.push(Item::Panel(Panel::Help));
+        items.push(Item::Panel(Heading::Help));
         items
     }
 
@@ -198,6 +221,7 @@ impl Tree {
                 Item::Project(_)
                 | Item::Header
                 | Item::Panel(_)
+                | Item::Scope(_)
                 | Item::Range(_)
                 | Item::Member(..),
             )
@@ -291,7 +315,7 @@ impl Tree {
                 self.collapsed.insert(name.clone());
                 self.select(Key::Project(&name));
             }
-            Item::Header | Item::Panel(_) | Item::Range(_) => {}
+            Item::Header | Item::Panel(_) | Item::Scope(_) | Item::Range(_) => {}
         }
     }
 
@@ -311,10 +335,24 @@ impl Tree {
         let stem = if last { " " } else { theme::STEM };
         match item {
             Item::Header => Line::from(Span::styled("PROJECTS", theme.style(StyleKey::Heading))),
-            Item::Panel(panel) => Line::from(Span::styled(
-                panel.name().to_uppercase(),
+            Item::Panel(heading) => Line::from(Span::styled(
+                heading.panel().name().to_uppercase(),
                 theme.style(StyleKey::Heading),
             )),
+            Item::Scope(project) => {
+                let last = match (project, self.projects.last()) {
+                    (Some(project), Some(last)) => project.row.entry.name == last.row.entry.name,
+                    (None, last) => last.is_none(),
+                    (Some(_), None) => false,
+                };
+                Line::from(vec![
+                    guide(if last { theme::LAST } else { theme::BRANCH }),
+                    Span::raw(format!(
+                        " {}",
+                        project.map_or("global", |project| project.row.entry.name.as_str())
+                    )),
+                ])
+            }
             Item::Range(range) => Line::from(vec![
                 guide(if range == Range::Month {
                     theme::LAST

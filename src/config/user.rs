@@ -1,33 +1,40 @@
 use std::{env, fs, io::ErrorKind};
 
 use anyhow::{Context, Result};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 
 use ratatui_themes::ThemeName;
 
 use crate::theme::Theme;
 
-const DEFAULT_THEME: ThemeName = ThemeName::TokyoNight;
+pub(crate) const DEFAULT_THEME: ThemeName = ThemeName::TokyoNight;
+pub(crate) const DEFAULT_BINDINGS: bool = false;
 
-#[derive(Deserialize)]
+/// `config.yaml` as written: a key it leaves out is `None`, so the config panel can tell an
+/// absent key from one set to its builtin value.
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct FileConfig {
-    theme: ThemeName,
-    tmux: TmuxConfig,
-}
-
-impl Default for FileConfig {
-    fn default() -> Self {
-        Self {
-            theme: DEFAULT_THEME,
-            tmux: TmuxConfig::default(),
-        }
-    }
+pub(crate) struct FileConfig {
+    pub(crate) theme: Option<ThemeName>,
+    pub(crate) tmux: FileTmux,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub(crate) struct FileTmux {
+    pub(crate) bindings: Option<bool>,
+}
+
+impl FileConfig {
+    pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
+        match text {
+            Some(text) => Ok(serde_saphyr::from_str(text)?),
+            None => Ok(Self::default()),
+        }
+    }
+}
+
 pub(crate) struct TmuxConfig {
     pub(crate) bindings: bool,
 }
@@ -39,25 +46,35 @@ pub(crate) struct UserConfig {
 
 impl UserConfig {
     pub(crate) fn load() -> Result<Self> {
-        let path = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?)
-            .join(".niles/config.yaml");
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => Some(text),
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => return Err(error).with_context(|| format!("failed to read {path}")),
-        };
-        Self::parse(text.as_deref()).with_context(|| format!("invalid config {path}"))
+        let path = path()?;
+        Self::parse(read(&path)?.as_deref()).with_context(|| format!("invalid config {path}"))
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the parse boundary resolves each absent key to its named default"
+    )]
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
-        let config = match text {
-            Some(text) => serde_saphyr::from_str::<FileConfig>(text)?,
-            None => FileConfig::default(),
-        };
+        let config = FileConfig::parse(text)?;
         Ok(Self {
-            theme: Theme::new(config.theme),
-            tmux: config.tmux,
+            theme: Theme::new(config.theme.unwrap_or(DEFAULT_THEME)),
+            tmux: TmuxConfig {
+                bindings: config.tmux.bindings.unwrap_or(DEFAULT_BINDINGS),
+            },
         })
+    }
+}
+
+pub(crate) fn path() -> Result<Utf8PathBuf> {
+    Ok(Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?).join(".niles/config.yaml"))
+}
+
+/// The file's text, or `None` when there is no file.
+pub(crate) fn read(path: &Utf8Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to read {path}")),
     }
 }
 

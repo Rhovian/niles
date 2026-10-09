@@ -12,7 +12,8 @@ use super::{ReviewerBinding, RoleBinding, WorkspaceManifest};
 /// `u16::MAX` the format call panics.
 const MAX_CELL: usize = 40;
 const MAX_REASON: usize = 68;
-const MISSING: &str = "-";
+/// A model or effort the binding leaves to the builtin.
+pub(crate) const MISSING: &str = "-";
 
 pub(crate) fn print_manifest_roles<W: Write>(
     output: &mut W,

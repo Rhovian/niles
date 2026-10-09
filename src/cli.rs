@@ -273,6 +273,18 @@ mod tests {
             Panel::Telemetry { range: Range::Week }
         );
         assert!(Cli::try_parse_from(["niles", "panel", "telemetry"]).is_err());
+        assert_eq!(
+            panel(&["niles", "panel", "config"]),
+            Panel::Config { project: None }
+        );
+        let Panel::Config {
+            project: Some(name),
+        } = panel(&["niles", "panel", "config", "--project", "global"])
+        else {
+            panic!("not a project's config");
+        };
+        assert_eq!(name.as_str(), "global");
+        assert!(Cli::try_parse_from(["niles", "panel", "config", "--project", "a.b"]).is_err());
     }
 
     #[test]

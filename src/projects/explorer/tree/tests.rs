@@ -80,6 +80,9 @@ fn running_projects_and_role_folders_start_open() {
             "│     └─ gone window lost",
             "└─     old",
             "CONFIG",
+            "├─ global",
+            "├─ api",
+            "└─ old",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",
@@ -97,12 +100,12 @@ fn collapsed_projects_and_folders_survive_refresh() {
     tree.collapse();
     tree.collapse();
     tree.replace(projects());
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 12);
     tree.expand();
-    assert_eq!(tree.items().len(), 10);
+    assert_eq!(tree.items().len(), 13);
     tree.down();
     tree.expand();
-    assert_eq!(tree.items().len(), 12);
+    assert_eq!(tree.items().len(), 15);
 }
 
 fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
@@ -151,7 +154,7 @@ fn projects_without_agents_do_not_expand() {
     let mut tree = tree();
     tree.select(Key::Project("old"));
     tree.expand();
-    assert_eq!(tree.items().len(), 12);
+    assert_eq!(tree.items().len(), 15);
     tree.down();
     assert_eq!(tree.cursor(), 6);
 }
@@ -162,7 +165,7 @@ fn collapsing_a_child_moves_to_its_project() {
     tree.down();
     tree.collapse();
     assert_eq!(tree.cursor(), 1);
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 12);
     tree.up();
     assert_eq!(tree.cursor(), 0);
 }
@@ -180,18 +183,24 @@ fn refresh_keeps_the_selection_by_name() {
     ));
     assert_eq!(tree.cursor(), 1);
     tree.replace(Vec::new());
-    assert!(matches!(tree.selected(), Some(Item::Panel(Panel::Config))));
+    assert!(matches!(
+        tree.selected(),
+        Some(Item::Panel(Heading::Config))
+    ));
 }
 #[test]
 fn panels_keep_selection_and_cycle_only_to_windows() {
     let mut tree = tree();
-    let telemetry = Panel::Telemetry {
-        range: Range::Today,
-    };
-    let panels = [Item::Panel(Panel::Config), Item::Panel(telemetry)]
-        .into_iter()
-        .chain(Range::ALL.map(Item::Range))
-        .chain([Item::Panel(Panel::Help)]);
+    let old = projects();
+    let panels = [
+        Item::Panel(Heading::Config),
+        Item::Scope(None),
+        Item::Scope(Some(&old[1])),
+        Item::Panel(Heading::Telemetry),
+    ]
+    .into_iter()
+    .chain(Range::ALL.map(Item::Range))
+    .chain([Item::Panel(Heading::Help)]);
     for panel in panels {
         tree.cursor = tree
             .items()
@@ -221,6 +230,8 @@ fn waiting_project_shows_warning_and_spinner() {
             "PROJECTS",
             "└─   ⚠ wait",
             "CONFIG",
+            "├─ global",
+            "└─ wait",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",
@@ -276,6 +287,10 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "├─   ⚠ web",
             "└─     old",
             "CONFIG",
+            "├─ global",
+            "├─ api",
+            "├─ web",
+            "└─ old",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",

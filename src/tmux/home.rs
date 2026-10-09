@@ -15,6 +15,16 @@ const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";
 
+/// The explorer's pane: it is created first, top left, in the home session.
+fn explorer_pane() -> String {
+    format!("={HOME_SESSION}:{{start}}.{{top-left}}")
+}
+
+/// Moves the operator's focus back to the explorer.
+pub(crate) fn focus_explorer() -> Result<()> {
+    run(&["select-pane", "-t", &explorer_pane()])
+}
+
 pub(crate) fn install_home_bindings() -> Result<()> {
     let popup = shell_quote(&session::executable()?);
     let condition = format!("#{{==:#{{session_name}},{HOME_SESSION}}}");
@@ -28,10 +38,7 @@ pub(crate) fn install_home_bindings() -> Result<()> {
     ];
     for key in ["[", "]", ";", "'"] {
         let meta = format!("M-{key}");
-        let send = format!(
-            "send-keys -t '={HOME_SESSION}:{{start}}.{{top-left}}' {}",
-            shell_quote(key)
-        );
+        let send = format!("send-keys -t '{}' {}", explorer_pane(), shell_quote(key));
         args.extend([
             ";".to_owned(),
             "bind-key".to_owned(),

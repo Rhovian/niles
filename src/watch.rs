@@ -52,7 +52,7 @@ use cadence::Cadence;
 pub(crate) use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory, parse_report_text};
 
-pub(crate) use cadence::describe_delay;
+pub(crate) use cadence::{describe_delay, parse_delay, parse_recheck, resolve_cadence};
 
 /// How often the workspace is re-read. Report detection is a log-length comparison, so this only
 /// has to be prompt enough that a lead who is idle does not stay idle for long.
