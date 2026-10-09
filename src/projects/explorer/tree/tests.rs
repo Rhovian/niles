@@ -81,8 +81,7 @@ fn running_projects_and_role_folders_start_open() {
             "└─     old",
             "CONFIG",
             "├─ global",
-            "├─ api",
-            "└─ old",
+            "└─ ▸ projects",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",
@@ -100,12 +99,12 @@ fn collapsed_projects_and_folders_survive_refresh() {
     tree.collapse();
     tree.collapse();
     tree.replace(projects());
-    assert_eq!(tree.items().len(), 12);
+    assert_eq!(tree.items().len(), 11);
     tree.expand();
-    assert_eq!(tree.items().len(), 13);
+    assert_eq!(tree.items().len(), 12);
     tree.down();
     tree.expand();
-    assert_eq!(tree.items().len(), 15);
+    assert_eq!(tree.items().len(), 14);
 }
 
 fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
@@ -154,7 +153,7 @@ fn projects_without_agents_do_not_expand() {
     let mut tree = tree();
     tree.select(Key::Project("old"));
     tree.expand();
-    assert_eq!(tree.items().len(), 15);
+    assert_eq!(tree.items().len(), 14);
     tree.down();
     assert_eq!(tree.cursor(), 6);
 }
@@ -165,7 +164,7 @@ fn collapsing_a_child_moves_to_its_project() {
     tree.down();
     tree.collapse();
     assert_eq!(tree.cursor(), 1);
-    assert_eq!(tree.items().len(), 12);
+    assert_eq!(tree.items().len(), 11);
     tree.up();
     assert_eq!(tree.cursor(), 0);
 }
@@ -189,13 +188,40 @@ fn refresh_keeps_the_selection_by_name() {
     ));
 }
 #[test]
+fn project_scopes_expand_under_config_and_collapse_to_their_folder() {
+    let mut tree = tree();
+    tree.select(Key::ProjectScopes);
+    tree.expand();
+    let labels = labels(&tree);
+    let config = labels.iter().position(|label| label == "CONFIG").unwrap();
+    assert_eq!(
+        labels[config..config + 5],
+        [
+            "CONFIG",
+            "├─ global",
+            "└─ ▾ projects",
+            "   ├─ api",
+            "   └─ old"
+        ]
+    );
+    tree.select(Key::Scope(Some("old")));
+    tree.collapse();
+    assert!(tree.selected().map(Item::key) == Some(Key::ProjectScopes));
+    assert!(
+        !tree
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Scope(Some(_))))
+    );
+}
+
+#[test]
 fn panels_keep_selection_and_cycle_only_to_windows() {
     let mut tree = tree();
-    let old = projects();
     let panels = [
         Item::Panel(Heading::Config),
         Item::Scope(None),
-        Item::Scope(Some(&old[1])),
+        Item::ProjectScopes,
         Item::Panel(Heading::Telemetry),
     ]
     .into_iter()
@@ -231,7 +257,7 @@ fn waiting_project_shows_warning_and_spinner() {
             "└─   ⚠ wait",
             "CONFIG",
             "├─ global",
-            "└─ wait",
+            "└─ ▸ projects",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",
@@ -288,9 +314,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "└─     old",
             "CONFIG",
             "├─ global",
-            "├─ api",
-            "├─ web",
-            "└─ old",
+            "└─ ▸ projects",
             "TELEMETRY",
             "├─ today",
             "├─ 7 days",

@@ -263,7 +263,7 @@ impl Explorer {
             return Ok(None);
         };
         let target = match item {
-            Item::Header | Item::Folder(..) => return Ok(None),
+            Item::Header | Item::Folder(..) | Item::ProjectScopes => return Ok(None),
             Item::Panel(heading) => panels::open(heading.panel())?,
             Item::Scope(project) => panels::open(Panel::Config {
                 project: project.map(|project| project.row.entry.name.clone()),
@@ -308,6 +308,7 @@ impl Explorer {
             | Item::Header
             | Item::Panel(_)
             | Item::Scope(_)
+            | Item::ProjectScopes
             | Item::Range(_) => return None,
         };
         Some((id.to_owned(), project.row.entry.path.clone()))

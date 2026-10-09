@@ -77,8 +77,11 @@ impl Heading {
 pub(super) enum Item<'a> {
     Header,
     Panel(Heading),
-    /// A child of CONFIG, which is never collapsed: the global scope, or a project's.
+    /// A config scope: the global one under CONFIG, or a project's under
+    /// [`Item::ProjectScopes`].
     Scope(Option<&'a Project>),
+    /// The folder of project scopes under CONFIG, closed by default.
+    ProjectScopes,
     /// A child of TELEMETRY, which is never collapsed.
     Range(Range),
     Project(&'a Project),
@@ -98,6 +101,7 @@ enum Key<'a> {
     Header,
     Panel(Heading),
     Scope(Option<&'a str>),
+    ProjectScopes,
     Range(Range),
     Project(&'a str),
     Folder(&'a str, WorkerRole),
@@ -111,7 +115,11 @@ impl<'a> Item<'a> {
             Item::Project(project) | Item::Folder(project, _) | Item::Member(project, _, _) => {
                 Some(project)
             }
-            Item::Header | Item::Panel(_) | Item::Scope(_) | Item::Range(_) => None,
+            Item::Header
+            | Item::Panel(_)
+            | Item::Scope(_)
+            | Item::ProjectScopes
+            | Item::Range(_) => None,
         }
     }
 
@@ -122,6 +130,7 @@ impl<'a> Item<'a> {
             Item::Scope(project) => {
                 Key::Scope(project.map(|project| project.row.entry.name.as_str()))
             }
+            Item::ProjectScopes => Key::ProjectScopes,
             Item::Range(range) => Key::Range(range),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
             Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
@@ -140,15 +149,21 @@ pub(super) struct Tree {
     projects: Vec<Project>,
     collapsed: HashSet<String>,
     collapsed_folders: HashSet<(String, WorkerRole)>,
+    project_scopes_expanded: bool,
     cursor: usize,
 }
 
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
         let old = std::mem::replace(&mut self.projects, projects);
-        let selected = Tree::items_of(&old, &self.collapsed, &self.collapsed_folders)
-            .get(self.cursor)
-            .map(|item| item.key());
+        let selected = Tree::items_of(
+            &old,
+            &self.collapsed,
+            &self.collapsed_folders,
+            self.project_scopes_expanded,
+        )
+        .get(self.cursor)
+        .map(|item| item.key());
         let items = self.items();
         self.cursor = match selected.and_then(|key| items.iter().position(|item| item.key() == key))
         {
@@ -159,13 +174,19 @@ impl Tree {
     }
 
     pub fn items(&self) -> Vec<Item<'_>> {
-        Tree::items_of(&self.projects, &self.collapsed, &self.collapsed_folders)
+        Tree::items_of(
+            &self.projects,
+            &self.collapsed,
+            &self.collapsed_folders,
+            self.project_scopes_expanded,
+        )
     }
 
     fn items_of<'a>(
         projects: &'a [Project],
         collapsed: &HashSet<String>,
         collapsed_folders: &HashSet<(String, WorkerRole)>,
+        project_scopes_expanded: bool,
     ) -> Vec<Item<'a>> {
         let mut items = vec![Item::Header];
         for project in projects {
@@ -181,8 +202,14 @@ impl Tree {
                 }
             }
         }
-        items.extend([Item::Panel(Heading::Config), Item::Scope(None)]);
-        items.extend(projects.iter().map(|project| Item::Scope(Some(project))));
+        items.extend([
+            Item::Panel(Heading::Config),
+            Item::Scope(None),
+            Item::ProjectScopes,
+        ]);
+        if project_scopes_expanded {
+            items.extend(projects.iter().map(|project| Item::Scope(Some(project))));
+        }
         items.push(Item::Panel(Heading::Telemetry));
         items.extend(Range::ALL.map(Item::Range));
         items.push(Item::Panel(Heading::Help));
@@ -217,6 +244,7 @@ impl Tree {
                 self.collapsed_folders
                     .remove(&(project.row.entry.name.as_str().to_owned(), role));
             }
+            Some(Item::ProjectScopes) => self.project_scopes_expanded = true,
             Some(
                 Item::Project(_)
                 | Item::Header
@@ -302,6 +330,11 @@ impl Tree {
         let Some(item) = self.selected() else {
             return;
         };
+        if let Item::ProjectScopes | Item::Scope(Some(_)) = item {
+            self.project_scopes_expanded = false;
+            self.select(Key::ProjectScopes);
+            return;
+        }
         let Some(project) = item.project() else {
             return;
         };
@@ -315,7 +348,11 @@ impl Tree {
                 self.collapsed.insert(name.clone());
                 self.select(Key::Project(&name));
             }
-            Item::Header | Item::Panel(_) | Item::Scope(_) | Item::Range(_) => {}
+            Item::Header
+            | Item::Panel(_)
+            | Item::Scope(_)
+            | Item::ProjectScopes
+            | Item::Range(_) => {}
         }
     }
 
@@ -339,18 +376,31 @@ impl Tree {
                 heading.panel().name().to_uppercase(),
                 theme.style(StyleKey::Heading),
             )),
-            Item::Scope(project) => {
-                let last = match (project, self.projects.last()) {
-                    (Some(project), Some(last)) => project.row.entry.name == last.row.entry.name,
-                    (None, last) => last.is_none(),
-                    (Some(_), None) => false,
+            Item::Scope(None) => Line::from(vec![guide(theme::BRANCH), Span::raw(" global")]),
+            Item::Scope(Some(project)) => {
+                let last = self
+                    .projects
+                    .last()
+                    .is_some_and(|last| last.row.entry.name == project.row.entry.name);
+                Line::from(vec![
+                    Span::raw("   "),
+                    guide(if last { theme::LAST } else { theme::BRANCH }),
+                    Span::raw(format!(" {}", project.row.entry.name.as_str())),
+                ])
+            }
+            Item::ProjectScopes => {
+                let marker = if self.projects.is_empty() {
+                    " "
+                } else if self.project_scopes_expanded {
+                    theme::EXPANDED
+                } else {
+                    theme::COLLAPSED
                 };
                 Line::from(vec![
-                    guide(if last { theme::LAST } else { theme::BRANCH }),
-                    Span::raw(format!(
-                        " {}",
-                        project.map_or("global", |project| project.row.entry.name.as_str())
-                    )),
+                    guide(theme::LAST),
+                    Span::raw(" "),
+                    guide(marker),
+                    Span::raw(" projects"),
                 ])
             }
             Item::Range(range) => Line::from(vec![
