@@ -25,7 +25,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit · p preset · s save"
+            "↑↓ role · ↵ edit · s save"
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
@@ -57,6 +57,13 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     };
     let muted = theme.style(StyleKey::Muted);
     let mut hints = Line::styled(hints, muted);
+    if matches!(form.screen, Screen::Roles) {
+        hints.spans.extend([
+            Span::styled(" · ", muted),
+            Span::styled("p", theme.style(StyleKey::Waiting)),
+            Span::styled(" preset", muted),
+        ]);
+    }
     hints.spans.extend([
         Span::styled(" · ", muted),
         Span::styled("c", theme.style(StyleKey::Running)),
@@ -110,13 +117,6 @@ fn footer_text(
 
 fn roles(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
     let mut rows = Vec::new();
-    if !review {
-        rows.push(Row::new([
-            "PRESET".to_owned(),
-            "choose a preset".to_owned(),
-            String::new(),
-        ]));
-    }
     for role in Role::ALL {
         let changed = role.changed(&form.original, &form.draft);
         let value = match role.groups(&form.draft) {

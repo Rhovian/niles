@@ -185,7 +185,6 @@ fn grouped() -> WorkspaceManifest {
 fn cancelling_group_replacement_keeps_groups_and_other_picks() {
     let config = config();
     let mut form = Form::new(grouped(), &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     for _ in 0..3 {
         form.key(KeyCode::Enter, &config).unwrap();
@@ -223,12 +222,11 @@ fn cancelling_group_replacement_keeps_groups_and_other_picks() {
 fn preset_can_be_edited_then_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(grouped(), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
+    form.key(KeyCode::Char('p'), &config).unwrap();
     form.key(KeyCode::Down, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     assert_eq!(form.draft.lead, "codex:gpt-6.1-sol:medium");
     assert!(form.draft.worker.scalar().is_some());
-    form.key(KeyCode::Down, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
@@ -246,7 +244,6 @@ fn preset_can_be_edited_then_reviewed_and_saved() {
 fn rendering_marks_uninstalled_families_and_shows_effort_hints() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     if let Screen::Editing { columns, .. } = &mut form.screen {
         columns.families[0].installed = false;

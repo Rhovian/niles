@@ -77,14 +77,11 @@ impl Form {
             },
             Screen::Roles => match key {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-                KeyCode::Down => self.selected = (self.selected + 1).min(Role::ALL.len()),
+                KeyCode::Down => self.selected = (self.selected + 1).min(Role::ALL.len() - 1),
                 KeyCode::Char('p') => self.screen = Screen::Presets { selected: 0 },
                 KeyCode::Char('s') => self.screen = Screen::Review,
-                KeyCode::Enter if self.selected == 0 => {
-                    self.screen = Screen::Presets { selected: 0 }
-                }
                 KeyCode::Enter => {
-                    let role = Role::ALL[self.selected - 1];
+                    let role = Role::ALL[self.selected];
                     self.screen = Screen::Editing {
                         role,
                         columns: Columns::new(
