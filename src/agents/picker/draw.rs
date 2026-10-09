@@ -55,14 +55,22 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
             COLUMN_KEYS
         }
     };
-    let hints = format!("{hints} · c continue · q quit");
-    footer_text(frame, footer, theme, warning, &hints);
+    let mut hints = key_hints(theme, hints);
+    let muted = theme.style(StyleKey::Muted);
+    hints.spans.extend([
+        Span::styled(" · ", muted),
+        Span::styled("c", theme.style(StyleKey::Running)),
+        Span::styled(" continue · ", muted),
+        Span::styled("q", theme.style(StyleKey::Lost)),
+        Span::styled(" quit", muted),
+    ]);
+    footer_text(frame, footer, theme, warning, hints);
 }
 
 pub(super) fn single(frame: &mut Frame, columns: &Columns, role: Role, theme: &Theme) {
     let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", role.name()));
     columns.draw(frame, body, theme);
-    footer_text(frame, footer, theme, None, COLUMN_KEYS);
+    footer_text(frame, footer, theme, None, key_hints(theme, COLUMN_KEYS));
 }
 
 const COLUMN_KEYS: &str = "↑↓ move · →/↵ pick · ←/esc back";
@@ -81,12 +89,18 @@ fn chrome(frame: &mut Frame, theme: &Theme, title: &str) -> (Rect, Rect) {
     (body, footer)
 }
 
-fn footer_text(frame: &mut Frame, area: Rect, theme: &Theme, warning: Option<&str>, hints: &str) {
+fn footer_text(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    warning: Option<&str>,
+    hints: Line<'_>,
+) {
     let mut lines = Vec::new();
     if let Some(warning) = warning {
         lines.push(Line::styled(warning, theme.style(StyleKey::Accent)));
     }
-    lines.push(key_hints(theme, hints));
+    lines.push(hints);
     let rule = Block::new()
         .borders(Borders::TOP)
         .border_style(theme.style(StyleKey::Guide));
