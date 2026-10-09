@@ -247,8 +247,13 @@ fn project_config(
             .collect::<Vec<_>>()
             .join("   ")
     )?;
-    let models = config.models.rows();
-    if models != builtin {
+    let overrides = config
+        .models
+        .rows()
+        .into_iter()
+        .filter(|row| !builtin.contains(row))
+        .collect::<Vec<_>>();
+    if !overrides.is_empty() {
         writeln!(
             text,
             "{}",
@@ -256,7 +261,7 @@ fn project_config(
                 .style(StyleKey::Muted)
                 .paint("models (project overrides)")
         )?;
-        text.push_str(&models_table(&models, theme));
+        text.push_str(&models_table(&overrides, theme));
     }
     Ok(Some(text))
 }

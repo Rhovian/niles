@@ -152,7 +152,10 @@ mod tests {
                 "claude:opus:max".to_owned().into(),
             ),
             security: "claude:opus:max".to_owned().into(),
-            worker_planning: [("codex".to_owned(), "Plan carefully.".to_owned())].into(),
+            worker_planning: super::super::WorkerPlanning(vec![super::super::PlanningGroup {
+                models: vec!["codex".to_owned()],
+                guidance: "Plan carefully.".to_owned(),
+            }]),
             ..WorkspaceManifest::default()
         };
         save(root, &manifest)?;
