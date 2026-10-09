@@ -131,24 +131,22 @@ impl Serialize for RoleBinding {
     }
 }
 
+/// The value stays whole: only the roster can tell an effort from a model name that itself
+/// contains `:` (OpenRouter's `:free` variants), so the effort is read when the spec is parsed.
 impl From<String> for RoleBinding {
     fn from(value: String) -> Self {
-        let (model, effort) = match value.match_indices(':').nth(1) {
-            Some((index, _)) => (&value[..index], Some(&value[index + 1..])),
-            None => (value.as_str(), None),
-        };
         Self(vec![AgentGroup {
             when: None,
-            models: vec![model.to_owned()],
-            efforts: effort.map(|effort| vec![effort.to_owned()]),
+            models: vec![value],
+            efforts: None,
         }])
     }
 }
 
-fn listed_spec(model: &str, roster: &ModelRoster) -> Result<AgentSpec> {
+fn listed_spec(model: &str, group: &AgentGroup, roster: &ModelRoster) -> Result<AgentSpec> {
     let spec = AgentSpec::parse(model, roster)?;
-    if spec.effort().is_some() {
-        bail!("listed model `{model}` must not carry an effort; list it under efforts");
+    if spec.effort().is_some() && group.efforts.is_some() {
+        bail!("listed model `{model}` must not carry an effort alongside an efforts list");
     }
     Ok(spec)
 }
@@ -183,7 +181,7 @@ impl RoleBinding {
 
     pub fn default_agent(&self, models: &ModelRoster) -> Result<String> {
         let group = &self.0[0];
-        let spec = listed_spec(&group.models[0], models)?;
+        let spec = listed_spec(&group.models[0], group, models)?;
         let (Some(model), Some(efforts)) = (spec.model(), &group.efforts) else {
             return Ok(spec.canonical());
         };
@@ -206,12 +204,14 @@ impl RoleBinding {
     pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {
         for group in &self.0 {
             for model in &group.models {
-                let listed = listed_spec(model, models)?;
+                let listed = listed_spec(model, group, models)?;
                 if listed.family() != requested.family() || listed.model() != requested.model() {
                     continue;
                 }
                 let allowed = match (&group.efforts, requested.effort()) {
-                    (None, _) => true,
+                    (None, _) => listed
+                        .effort()
+                        .is_none_or(|effort| requested.effort() == Some(effort)),
                     (Some(efforts), Some(effort)) => efforts
                         .iter()
                         .any(|listed| roster::normalize_effort(listed) == effort),

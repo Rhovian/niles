@@ -60,7 +60,7 @@ fn explicit_agent_requires_membership_when_manifest_exists() {
     assert!(
         err.contains("reviewer")
             && err.contains(manifest_path(&root).as_str())
-            && err.contains("claude:opus [high]"),
+            && err.contains("claude:opus:high"),
         "{err}"
     );
     fs::remove_dir_all(root).unwrap();
@@ -90,6 +90,30 @@ fn groups_choose_default_effort_or_report_unsupported_effort() {
     binding.0[0].models = vec!["codex:gpt-6-sol:high".into()];
     let err = binding.default_agent(&models).unwrap_err().to_string();
     assert!(err.contains("must not carry an effort"), "{err}");
+}
+
+#[test]
+fn scalar_bindings_keep_colons_in_model_names_and_pin_their_effort() {
+    let models =
+        agents::roster::parse("pi:\n  nvidia/nemotron:free:\n    efforts: [low, high]\n").unwrap();
+    let parse = |agent| agents::AgentSpec::parse(agent, &models).unwrap();
+    for (scalar, allowed, refused) in [
+        (
+            "pi:nvidia/nemotron:free",
+            "pi:nvidia/nemotron:free:low",
+            None,
+        ),
+        (
+            "pi:nvidia/nemotron:free:high",
+            "pi:nvidia/nemotron:free:high",
+            Some("pi:nvidia/nemotron:free:low"),
+        ),
+    ] {
+        let binding = crate::workspace_manifest::RoleBinding::from(scalar.to_owned());
+        assert_eq!(binding.default_agent(&models).unwrap(), scalar);
+        assert!(binding.allows(&parse(allowed), &models).unwrap());
+        assert!(refused.is_none_or(|agent| !binding.allows(&parse(agent), &models).unwrap()));
+    }
 }
 
 #[test]
