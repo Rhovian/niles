@@ -12,7 +12,7 @@ use ratatui::{
 };
 use ratatui_themes::ThemeName;
 
-use self::items::{Edit, Item, Note, Role, Step};
+use self::items::{Edit, Item, Note, ScalarRole, Step};
 use super::registry::{self, ProjectName};
 use crate::{
     agents::picker,
@@ -266,13 +266,13 @@ fn cycle<'a>(options: &[&'a str], current: &str, previous: bool) -> &'a str {
 fn pick_role(
     terminal: &mut DefaultTerminal,
     root: &Utf8Path,
-    role: Role,
+    role: ScalarRole,
     theme: &Theme,
 ) -> Result<()> {
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;
     if let Some(value) = picker::role(terminal, role, &manifest, &config, theme)?
-        && value != role.value(&manifest)
+        && value != picker::Role::from(role).value(&manifest)
     {
         save_manifest(root, |manifest| role.set(manifest, value))?;
     }

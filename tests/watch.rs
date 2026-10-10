@@ -79,7 +79,9 @@ impl Fixture {
     /// `niles spawn <id>` with the default check-in: the dispatch most tests start from, and the
     /// one whose output they read.
     fn spawn(&self, id: &str) -> Output {
-        self.niles(&["spawn", id, "--agent", "claude", "Fix", "auth"])
+        self.niles(&[
+            "spawn", "--role", "research", id, "--agent", "claude", "Fix", "auth",
+        ])
     }
 
     /// The same dispatch with the `--checkin` spelling under test. The flag is written after the
@@ -87,6 +89,8 @@ impl Fixture {
     fn spawn_with_checkin(&self, id: &str, delay: &str) -> Output {
         self.niles(&[
             "spawn",
+            "--role",
+            "research",
             id,
             "--agent",
             "claude",
@@ -110,7 +114,7 @@ impl Fixture {
     fn write_manifest(&self, keys: &str) {
         fs::write(
             self.env.root.join(".niles/manifest.yaml"),
-            format!("lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\n{keys}"),
+            format!("lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n{keys}"),
         )
         .unwrap();
     }

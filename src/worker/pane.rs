@@ -81,7 +81,7 @@ pub fn send(
 }
 
 fn worker_target(id: String) -> Result<WorkerPane> {
-    let meta = read_meta(&id)?;
+    let meta = read_meta(&worker_dir(&id)?)?;
     let target = WindowTarget::parse(&meta.window)
         .with_context(|| format!("worker {id} metadata has invalid tmux window target"))?;
     Ok(WorkerPane {

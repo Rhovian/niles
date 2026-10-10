@@ -60,7 +60,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
 #[test]
 fn doctor_reports_custom_missing_and_unavailable_versions() {
     let env = TestEnv::new("niles-doctor-custom");
-    write_workspace_manifest(&env.root, "custom", "codex", "lead", "claude");
+    write_workspace_manifest(&env.root, "custom", "codex", "claude", "claude");
     fs::write(
         env.root.join("niles.yaml"),
         "agents:\n  custom:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",

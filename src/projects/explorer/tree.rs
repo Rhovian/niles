@@ -41,6 +41,7 @@ impl Project {
             WorkerRole::Reviewer,
             WorkerRole::Security,
             WorkerRole::Research,
+            WorkerRole::Design,
         ]
         .into_iter()
         .filter(|role| self.members(*role).next().is_some())
@@ -454,6 +455,7 @@ impl Tree {
                     WorkerRole::Reviewer => "reviewers",
                     WorkerRole::Security => "security",
                     WorkerRole::Research => "research",
+                    WorkerRole::Design => "designers",
                 };
                 let count = project.members(role).count();
                 Line::from(vec![

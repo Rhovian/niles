@@ -10,7 +10,8 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .niles(
             &env.root,
             &[
-                "spawn", "auth-fix", "--task", "auth", "--agent", "claude", "Fix", "auth",
+                "spawn", "--role", "research", "auth-fix", "--task", "auth", "--agent", "claude",
+                "Fix", "auth",
             ],
         )
         .env("TMUX_PANE_FILE", &pane_file)
@@ -41,9 +42,8 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(brief.contains("report_file:"));
     assert!(brief.contains(".niles/worker/auth-fix/report.md"));
     assert!(brief.contains("done: <short result>; report:"));
-    // Default role, so the worker fragment and none of the reviewer's doctrine.
-    assert!(brief.contains("You are the worker"));
-    assert!(brief.contains("You own the gate"));
+    assert!(brief.contains("You are the research"));
+    assert!(brief.contains("Do not run the gate"));
     assert!(!brief.contains("You are the reviewer"));
     assert!(!brief.contains("name the attacker"));
 
@@ -109,7 +109,9 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 fn send_accepts_stdin_and_literal_flag_text() {
     let env = TestEnv::new("niles-worker-send-message-input");
     let pane_file = env.root.join("pane.txt");
-    let spawn = env.run(&["spawn", "worker", "--agent", "claude", "task"]);
+    let spawn = env.run(&[
+        "spawn", "--role", "research", "worker", "--agent", "claude", "task",
+    ]);
     assert_command_success("fixture spawn", &spawn);
 
     let mut child = env

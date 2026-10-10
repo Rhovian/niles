@@ -9,7 +9,7 @@ const SHARED_CONTRACT: &str = r#"# Niles {role} brief
 id: {id}
 task_label: {task_label}
 project: {project}
-report_file: {report_path}
+report_file: {report_path}{design_record}
 
 ## Task
 
@@ -27,7 +27,7 @@ The states are `done:`, `blocked:`, `needs-decision:` and `failed:`, all in that
 
 Deliverables go in the report file; the lead reads it, not your terminal.
 
-Work from this brief and the code. Do not read other agents' briefs, reports or notes under `.niles/` unless this brief names one.
+Work from this brief and the code. Do not read other agents' briefs, reports or notes under `.niles/` unless this brief or a message from the lead names one.
 
 Stay open after `done:` — it means you have something to hand back, not that you are exiting. The lead closes you with `niles close {id}`.
 
@@ -38,6 +38,7 @@ const ROLE_WORKER_TEMPLATE: &str = include_str!("../templates/role_worker.md");
 const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../templates/role_reviewer.md");
 const ROLE_SECURITY_TEMPLATE: &str = include_str!("../templates/role_security.md");
 const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../templates/role_research.md");
+const ROLE_DESIGN_TEMPLATE: &str = include_str!("../templates/role_design.md");
 
 /// Which role a spawned worker is playing.
 ///
@@ -47,6 +48,8 @@ const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../templates/role_research.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkerRole {
+    /// Designs the record without editing the tree or running the gate.
+    Design,
     /// Owns the change: implements it and runs the gate.
     Worker,
     /// Owns correctness, idiom and economy. Does not run the gate and does not audit.
@@ -60,6 +63,7 @@ pub enum WorkerRole {
 impl WorkerRole {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::Design => "design",
             Self::Worker => "worker",
             Self::Reviewer => "reviewer",
             Self::Security => "security",
@@ -74,6 +78,7 @@ impl WorkerRole {
 
     pub(crate) fn fragment(self) -> &'static str {
         match self {
+            Self::Design => ROLE_DESIGN_TEMPLATE,
             Self::Worker => ROLE_WORKER_TEMPLATE,
             Self::Reviewer => ROLE_REVIEWER_TEMPLATE,
             Self::Security => ROLE_SECURITY_TEMPLATE,
@@ -86,11 +91,12 @@ impl WorkerRole {
 mod tests {
     use super::*;
 
-    const ALL: [WorkerRole; 4] = [
+    const ALL: [WorkerRole; 5] = [
         WorkerRole::Worker,
         WorkerRole::Reviewer,
         WorkerRole::Security,
         WorkerRole::Research,
+        WorkerRole::Design,
     ];
 
     /// The whole point of the split: the gate belongs to exactly one role.
@@ -101,6 +107,7 @@ mod tests {
             WorkerRole::Reviewer,
             WorkerRole::Security,
             WorkerRole::Research,
+            WorkerRole::Design,
         ] {
             assert!(
                 other.fragment().contains("Do not run the gate"),
@@ -136,6 +143,44 @@ mod tests {
                 lines <= 20,
                 "{} fragment is {lines} lines; keep role briefs short",
                 role.as_str()
+            );
+        }
+    }
+
+    /// Reviewers judge the issue's own words, and prove the tests would notice a wrong guard.
+    #[test]
+    fn reviewers_judge_the_issue_and_mutate_its_guards() {
+        for role in [WorkerRole::Reviewer, WorkerRole::Security] {
+            let fragment = role.fragment();
+            for phrase in [
+                "the issue as written",
+                "copy of the tree under the system temp directory",
+                "reported as a required test",
+            ] {
+                assert!(fragment.contains(phrase), "{}: {phrase}", role.as_str());
+            }
+        }
+        assert!(
+            WorkerRole::Reviewer
+                .fragment()
+                .contains("test the requirement itself")
+        );
+    }
+
+    #[test]
+    fn worker_builds_to_the_record_without_a_size_stop() {
+        let fragment = WorkerRole::Worker.fragment();
+        assert!(fragment.contains("the record wins"));
+        assert!(!fragment.contains("size estimate"));
+    }
+
+    #[test]
+    fn designers_record_the_design_and_its_constraints() {
+        let fragment = WorkerRole::Design.fragment();
+        for phrase in ["Done-when map", "race accepted", "never edit the tree"] {
+            assert!(
+                fragment.contains(phrase),
+                "missing design instruction: {phrase}"
             );
         }
     }

@@ -10,18 +10,26 @@ fn manifest_groups_bound_spawn_before_worker_state() {
         "worker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:haiku]\n    efforts: [medium, high]",
     );
     fs::write(&path, body).unwrap();
-    let default = env.run(&["spawn", "default", "Task"]);
+    let default = env.run(&["spawn", "--role", "research", "default", "Task"]);
     assert_command_success("group default", &default);
     let meta = fs::read_to_string(env.root.join(".niles/worker/default/meta.json")).unwrap();
     assert!(meta.contains("codex:gpt-6-sol:medium"), "{meta}");
-    let listed = env.run(&["spawn", "listed", "--agent", "claude:haiku", "Task"]);
+    let listed = env.run(&[
+        "spawn",
+        "--role",
+        "research",
+        "listed",
+        "--agent",
+        "claude:haiku",
+        "Task",
+    ]);
     assert_command_success("group listed", &listed);
     for (id, agent) in [
         ("unlisted", "codex:gpt-6-luna:medium"),
         ("effort", "codex:gpt-6-sol:low"),
         ("missing", "codex:gpt-6-sol"),
     ] {
-        let result = env.run(&["spawn", id, "--agent", agent, "Task"]);
+        let result = env.run(&["spawn", "--role", "research", id, "--agent", agent, "Task"]);
         assert_failure_contains(id, &result, "allowed agents");
         assert!(!env.root.join(".niles/worker").join(id).exists());
     }
@@ -34,7 +42,7 @@ fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
     fs::create_dir(&tree).unwrap();
     let tree_arg = tree.to_str().unwrap();
     let spawn = env.run(&[
-        "spawn", "other", "--agent", "claude", "--tree", tree_arg, "Fix",
+        "spawn", "--role", "research", "other", "--agent", "claude", "--tree", tree_arg, "Fix",
     ]);
     assert_command_success("spawn in another tree", &spawn);
     assert!(env.tmux_log().contains(&format!("-c {tree_arg} ")));
@@ -50,6 +58,8 @@ fn spawn_rejects_missing_tree_without_worker_state() {
     let missing = env.root.join("missing");
     let spawn = env.run(&[
         "spawn",
+        "--role",
+        "research",
         "other",
         "--agent",
         "claude",
@@ -68,7 +78,9 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let spawn = env
         .niles(
             &env.root,
-            &["spawn", "auth-fix", "--agent", "claude", "Fix"],
+            &[
+                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix",
+            ],
         )
         .env_remove("TMUX")
         .output()
@@ -96,6 +108,8 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
             &env.root,
             &[
                 "spawn",
+                "--role",
+                "research",
                 "codex-hi",
                 "--agent",
                 "codex:gpt-5.7:xhigh",
@@ -115,7 +129,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     let codex_meta = fs::read_to_string(env.root.join(".niles/worker/codex-hi/meta.json")).unwrap();
     let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
     assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
-    assert!(codex_meta.contains(r#""role": "worker""#));
+    assert!(codex_meta.contains(r#""role": "research""#));
     chrono::DateTime::parse_from_rfc3339(codex_meta_json["created_at"].as_str().unwrap()).unwrap();
     assert!(codex_meta.contains(r#""agent_family": "codex""#));
     assert!(codex_meta.contains(r#""model": "gpt-5.7""#));
@@ -133,25 +147,38 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
     let workspace = temp_workspace("niles-worker-invalid-input");
     for (args, needle, dir) in [
         (
-            &["spawn", "archive", "--agent", "claude", "Fix", "auth"][..],
+            &[
+                "spawn", "--role", "research", "archive", "--agent", "claude", "Fix", "auth",
+            ][..],
             "worker id 'archive' is reserved",
             "archive",
         ),
         (
             &[
-                "spawn", "auth-fix", "--task", "archive", "--agent", "claude", "Fix", "auth",
+                "spawn", "--role", "research", "auth-fix", "--task", "archive", "--agent",
+                "claude", "Fix", "auth",
             ][..],
             "task label 'archive' is reserved",
             "auth-fix",
         ),
         (
-            &["spawn", "bad-worker", "--agent", "claude:opus:turbo", "Fix"][..],
+            &[
+                "spawn",
+                "--role",
+                "research",
+                "bad-worker",
+                "--agent",
+                "claude:opus:turbo",
+                "Fix",
+            ][..],
             "unsupported claude effort `turbo`",
             "bad-worker",
         ),
         (
             &[
                 "spawn",
+                "--role",
+                "research",
                 "future-worker",
                 "--agent",
                 "codex:gpt-5.7:xhigh",

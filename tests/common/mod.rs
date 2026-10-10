@@ -208,7 +208,7 @@ pub fn write_workspace_manifest(
     fs::create_dir_all(workspace.join(".niles")).unwrap();
     fs::write(
         workspace.join(".niles/manifest.yaml"),
-        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\n"),
+        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\ndesign:\n  - models: [claude, codex]\n"),
     )
     .unwrap();
 }
