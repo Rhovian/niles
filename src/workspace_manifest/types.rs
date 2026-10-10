@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::agents::{AgentSpec, ModelRoster, roster};
+use crate::agents::{AgentSpec, ModelRoster, profile_for, roster};
 
-/// Which agent plays each role, plus operator-authored planning and check-in settings.
+/// Which agent plays each role, plus check-in settings.
 ///
 /// Every role that has its own brief has its own binding, `security` included: it is
 /// commissioned rarely, but when it is, the tier it runs at is a workspace decision rather
@@ -14,16 +14,15 @@ use crate::agents::{AgentSpec, ModelRoster, roster};
 /// The check-in keys are workspace-wide rather than per role: they say how often the lead is
 /// nudged about a worker that has gone quiet, which is a property of the workspace's pace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "WorkspaceManifestWire")]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceManifest {
     pub lead: String,
     pub worker: RoleBinding,
-    pub reviewer: ReviewerBinding,
+    #[serde(deserialize_with = "reviewer_binding")]
+    pub reviewer: RoleBinding,
     pub security: RoleBinding,
-    /// Planning guidance for exact `family:model` pairs. The lead consults this only for
-    /// implementation assignments; Niles does not interpret models or infer capabilities.
-    #[serde(default, skip_serializing_if = "WorkerPlanning::is_empty")]
-    pub worker_planning: WorkerPlanning,
+    #[serde(deserialize_with = "design_binding")]
+    pub design: RoleBinding,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
     /// default.
@@ -39,14 +38,6 @@ pub struct WorkspaceManifest {
     pub recheck: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReviewerBinding {
-    #[serde(rename = "lead")]
-    Lead,
-    #[serde(untagged)]
-    Agent(RoleBinding),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "RoleBindingWire")]
 pub struct RoleBinding(pub Vec<AgentGroup>);
@@ -59,41 +50,6 @@ pub struct AgentGroup {
     pub models: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<String>>,
-}
-
-/// Guidance groups in which each `family:model` appears at most once, so a model never
-/// carries two instructions the lead would have to choose between.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "Vec<PlanningGroup>")]
-pub struct WorkerPlanning(pub Vec<PlanningGroup>);
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlanningGroup {
-    pub models: Vec<String>,
-    pub guidance: String,
-}
-
-impl WorkerPlanning {
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl TryFrom<Vec<PlanningGroup>> for WorkerPlanning {
-    type Error = String;
-
-    fn try_from(groups: Vec<PlanningGroup>) -> std::result::Result<Self, Self::Error> {
-        let mut seen = BTreeSet::new();
-        for model in groups.iter().flat_map(|group| &group.models) {
-            if !seen.insert(model) {
-                return Err(format!(
-                    "{model} appears in more than one worker_planning group"
-                ));
-            }
-        }
-        Ok(Self(groups))
-    }
 }
 
 #[derive(Deserialize)]
@@ -250,44 +206,36 @@ impl RoleBinding {
     }
 }
 
-pub(crate) const DEFAULT_REVIEWER_AGENT: &str = "claude";
-
-impl ReviewerBinding {
-    pub fn as_agent(&self) -> Option<&RoleBinding> {
-        match self {
-            Self::Lead => None,
-            Self::Agent(agent) => Some(agent),
-        }
+fn design_binding<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<RoleBinding, D::Error> {
+    let binding = RoleBinding::deserialize(deserializer)?;
+    let families: BTreeSet<_> = binding
+        .agents()
+        .map(|agent| {
+            let family = agent.split_once(':').map_or(agent, |(family, _)| family);
+            profile_for(family).map_or(family, |profile| profile.id)
+        })
+        .collect();
+    if families.len() < 2 {
+        return Err(serde::de::Error::custom(format!(
+            "design must list models from at least two agent families; found: {}",
+            families.into_iter().collect::<Vec<_>>().join(", ")
+        )));
     }
+    Ok(binding)
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceManifestWire {
-    lead: String,
-    worker: RoleBinding,
-    reviewer: ReviewerBinding,
-    security: RoleBinding,
-    #[serde(default)]
-    worker_planning: WorkerPlanning,
-    #[serde(default)]
-    checkin: Option<String>,
-    #[serde(default)]
-    recheck: Option<String>,
-}
-
-impl From<WorkspaceManifestWire> for WorkspaceManifest {
-    fn from(wire: WorkspaceManifestWire) -> Self {
-        Self {
-            lead: wire.lead,
-            worker: wire.worker,
-            reviewer: wire.reviewer,
-            security: wire.security,
-            worker_planning: wire.worker_planning,
-            checkin: wire.checkin,
-            recheck: wire.recheck,
-        }
+fn reviewer_binding<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<RoleBinding, D::Error> {
+    let binding = RoleBinding::deserialize(deserializer)?;
+    if binding.scalar().as_deref() == Some("lead") {
+        return Err(serde::de::Error::custom(
+            "reviewer: lead is no longer supported; reviewer must be an agent binding",
+        ));
     }
+    Ok(binding)
 }
 
 impl Default for WorkspaceManifest {
@@ -295,9 +243,13 @@ impl Default for WorkspaceManifest {
         Self {
             lead: "claude".to_owned(),
             worker: "codex".to_owned().into(),
-            reviewer: ReviewerBinding::Agent(DEFAULT_REVIEWER_AGENT.to_owned().into()),
+            reviewer: "claude".to_owned().into(),
             security: "claude".to_owned().into(),
-            worker_planning: WorkerPlanning::default(),
+            design: RoleBinding(vec![AgentGroup {
+                when: None,
+                models: vec!["claude".into(), "codex".into()],
+                efforts: None,
+            }]),
             checkin: None,
             recheck: None,
         }

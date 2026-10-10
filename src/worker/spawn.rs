@@ -7,38 +7,55 @@ use chrono::Utc;
 use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
-    store,
+    session, store,
     tmux::{self, WindowTarget},
-    util::{current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template},
+    util::{
+        append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
+    },
     wake, watch, workspace_manifest,
 };
 
 use super::{
     archive::archive_worker_dir,
-    meta::{WorkerMeta, report_path, write_meta},
+    meta::{WorkerMeta, read_meta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
     role::WorkerRole,
-    snapshot::status_log_len,
+    snapshot::{WorkerSnapshot, status_log, status_log_len},
     validation::{validate_id, validate_task_label},
     worktree::{self, SpawnTree},
 };
 
 const UNLABELED_TASK_LABEL: &str = "-";
 
+#[derive(Debug, clap::Args)]
+pub struct Assignment {
+    /// Which brief the worker gets.
+    #[arg(long, value_enum, default_value_t = WorkerRole::Worker)]
+    pub role: WorkerRole,
+    /// Use the report of this completed design worker as the design record.
+    #[arg(long, value_name = "ID", conflicts_with = "mechanical")]
+    design: Option<String>,
+    /// Skip design for mechanical work, recording why in the lead session log.
+    #[arg(long, value_name = "REASON")]
+    mechanical: Option<String>,
+}
+
 pub fn spawn(
     id: String,
-    role: WorkerRole,
+    assignment: Assignment,
     task_label: Option<String>,
     agent: Option<String>,
     task: String,
     checkin: Option<String>,
     tree: Option<SpawnTree>,
 ) -> Result<()> {
+    let role = assignment.role;
     validate_id(&id)?;
     if let Some(label) = &task_label {
         validate_task_label(label)?;
     }
     let project = current_dir_utf8()?;
+    let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
     let agent = resolve_agent(&project, role, agent, &config)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
@@ -88,10 +105,19 @@ pub fn spawn(
     };
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
+    basis.record_mechanical(&id)?;
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
-    let brief_path = write_brief(&dir, &id, role, task_label.as_deref(), agent_dir, &task)?;
+    let brief_path = write_brief(
+        &dir,
+        &id,
+        role,
+        task_label.as_deref(),
+        agent_dir,
+        &task,
+        &basis,
+    )?;
 
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
@@ -204,10 +230,8 @@ fn resolve_agent(
     let binding = match role {
         // Research changes nothing, so it draws on the worker binding rather than a role of its own.
         WorkerRole::Worker | WorkerRole::Research => &manifest.worker,
-        WorkerRole::Reviewer => match &manifest.reviewer {
-            workspace_manifest::ReviewerBinding::Lead => return agent.with_context(|| format!("reviewer is bound to the lead in manifest {path}; specify --agent to spawn a reviewer")),
-            workspace_manifest::ReviewerBinding::Agent(binding) => binding,
-        },
+        WorkerRole::Reviewer => &manifest.reviewer,
+        WorkerRole::Design => &manifest.design,
         WorkerRole::Security => &manifest.security,
     };
     if let Some(agent) = agent {
@@ -254,6 +278,7 @@ fn write_brief(
     task_label: Option<&str>,
     project: &Utf8Path,
     task: &str,
+    basis: &DesignBasis,
 ) -> Result<Utf8PathBuf> {
     let path = dir.join("brief.md");
     let status_path = wake::status_log_path(dir);
@@ -274,6 +299,13 @@ fn write_brief(
             ("{status_path}", status_path.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
+            (
+                "{design_record}",
+                &match basis {
+                    DesignBasis::Record(path) => format!("\ndesign_record: {path}"),
+                    DesignBasis::Mechanical { .. } | DesignBasis::None => String::new(),
+                },
+            ),
         ],
     );
     fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
@@ -317,5 +349,89 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
         Ok(())
     } else {
         bail!("{}", failures.join("; "))
+    }
+}
+
+#[derive(Debug)]
+enum DesignBasis {
+    Record(Utf8PathBuf),
+    Mechanical { log: Utf8PathBuf, reason: String },
+    None,
+}
+
+impl Assignment {
+    fn resolve(
+        self,
+        project: &Utf8Path,
+        live_worker: impl FnOnce(&str) -> Result<Option<Utf8PathBuf>>,
+    ) -> Result<DesignBasis> {
+        match (
+            self.role,
+            self.design.as_deref(),
+            self.mechanical.as_deref(),
+        ) {
+            (WorkerRole::Worker, None, None) => {
+                bail!("role worker requires exactly one of --design or --mechanical")
+            }
+            (WorkerRole::Reviewer | WorkerRole::Security, _, Some(_)) => {
+                bail!("--mechanical is only accepted for role worker")
+            }
+            (WorkerRole::Design | WorkerRole::Research, Some(_), _)
+            | (WorkerRole::Design | WorkerRole::Research, _, Some(_)) => bail!(
+                "role {} refuses --design and --mechanical",
+                self.role.as_str()
+            ),
+            (WorkerRole::Worker | WorkerRole::Reviewer | WorkerRole::Security, Some(id), _) => {
+                let dir = live_worker(id)?
+                    .with_context(|| format!("no such live design worker '{id}'"))?;
+                let meta = read_meta(&dir)?;
+                if meta.role != WorkerRole::Design {
+                    bail!("worker '{id}' is not a design worker");
+                }
+                let snapshot = WorkerSnapshot::new(id.to_owned(), dir.clone(), status_log(&dir)?);
+                if !snapshot
+                    .last_status_line()
+                    .is_some_and(|line| line.starts_with("done:"))
+                {
+                    bail!("design worker '{id}' latest status is not done:");
+                }
+                Ok(DesignBasis::Record(report_path(&dir)))
+            }
+            (WorkerRole::Worker, None, Some(reason)) => {
+                if reason.trim().is_empty() || reason.chars().any(char::is_control) {
+                    bail!(
+                        "--mechanical reason must be non-empty and contain no control characters"
+                    );
+                }
+                let lead = session::latest_lead(project)?
+                    .context("--mechanical requires a lead session")?;
+                Ok(DesignBasis::Mechanical {
+                    log: session::sessions_dir(project)
+                        .join(lead.id)
+                        .join("decisions.log"),
+                    reason: reason.to_owned(),
+                })
+            }
+            (
+                WorkerRole::Reviewer
+                | WorkerRole::Security
+                | WorkerRole::Design
+                | WorkerRole::Research,
+                None,
+                None,
+            ) => Ok(DesignBasis::None),
+        }
+    }
+}
+
+impl DesignBasis {
+    fn record_mechanical(&self, id: &str) -> Result<()> {
+        if let Self::Mechanical { log, reason } = self {
+            append_line(
+                log,
+                &format!("{} {id} mechanical: {reason}", Utc::now().format("%FT%TZ")),
+            )?;
+        }
+        Ok(())
     }
 }

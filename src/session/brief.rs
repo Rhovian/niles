@@ -9,15 +9,12 @@ use crate::{
     agents,
     telemetry::SessionLink,
     util::{read_dir_utf8_paths, render_template, timestamp_id},
-    workspace_manifest::{self, ReviewerBinding, WorkspaceManifest},
+    workspace_manifest,
 };
 
 use super::{sessions_dir, startup::startup_context};
 
 const LEAD_BRIEF_TEMPLATE: &str = include_str!("../templates/lead_brief.md");
-const LEAD_REVIEW_TEMPLATE: &str = include_str!("../templates/lead_review.md");
-const COMMISSION_REVIEW_TEMPLATE: &str = include_str!("../templates/commission_review.md");
-const REVIEWER_STANDARD: &str = include_str!("../templates/role_reviewer.md");
 
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
@@ -51,7 +48,6 @@ pub(super) struct ManagerSession {
 pub(super) fn write_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
-    manifest: &WorkspaceManifest,
 ) -> Result<ManagerSession> {
     let now = Utc::now();
     let id = timestamp_id(&now);
@@ -59,7 +55,7 @@ pub(super) fn write_manager_session(
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_lead_brief(agent, workspace, &dir, &startup_context, &manifest.reviewer);
+    let body = render_lead_brief(agent, workspace, &dir, &startup_context);
     fs::write(&path, &body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -91,14 +87,9 @@ fn render_lead_brief(
     workspace: &Utf8Path,
     dir: &Utf8Path,
     startup_context: &str,
-    reviewer: &ReviewerBinding,
 ) -> String {
     let manifest_path = workspace_manifest::manifest_path(workspace);
-    let review_instruction = match reviewer {
-        ReviewerBinding::Lead => LEAD_REVIEW_TEMPLATE.trim_end(),
-        ReviewerBinding::Agent(_) => COMMISSION_REVIEW_TEMPLATE.trim_end(),
-    };
-    let mut body = render_template(
+    render_template(
         LEAD_BRIEF_TEMPLATE,
         &[
             ("{workspace}", workspace.as_str()),
@@ -106,12 +97,8 @@ fn render_lead_brief(
             ("{dir}", dir.as_str()),
             ("{manifest}", manifest_path.as_str()),
             ("{startup_context}", startup_context),
-            ("{review_instruction}", review_instruction),
         ],
-    );
-    body.push('\n');
-    body.push_str(REVIEWER_STANDARD);
-    body
+    )
 }
 
 fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
@@ -159,6 +146,36 @@ mod tests {
     fn lead_brief_stays_short() {
         let words = LEAD_BRIEF_TEMPLATE.split_whitespace().count();
         assert!(words <= 1750, "lead brief is {words} words; keep it tight");
+    }
+
+    #[test]
+    fn lead_brief_bounds_the_lead_to_the_request() {
+        for phrase in [
+            "The operator's request sets the scope of what you do",
+            "is not commissioned again",
+            "mean the named object only",
+        ] {
+            assert!(LEAD_BRIEF_TEMPLATE.contains(phrase), "missing {phrase:?}");
+        }
+    }
+
+    /// Designing, estimating and judging security belong to the designers now.
+    #[test]
+    fn lead_brief_only_routes() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You only route"));
+        for moved in [
+            "economy pass",
+            "race accepted",
+            "outbound calls built from untrusted data",
+            "worker_planning",
+            "Lead decision",
+            "{review_instruction}",
+        ] {
+            assert!(
+                !LEAD_BRIEF_TEMPLATE.contains(moved),
+                "lead brief still carries {moved:?}"
+            );
+        }
     }
 
     #[test]
@@ -220,13 +237,7 @@ mod tests {
         let models = agents::ModelRoster::builtin().unwrap();
         let agent = agents::AgentSpec::parse("codex:gpt-5.5:xhigh", &models).unwrap();
 
-        let body = render_lead_brief(
-            &agent,
-            &workspace,
-            &dir,
-            "worker: none",
-            &ReviewerBinding::Agent("claude".to_owned().into()),
-        );
+        let body = render_lead_brief(&agent, &workspace, &dir, "worker: none");
 
         assert!(body.contains(&format!(
             "manifest: {}",
@@ -236,17 +247,8 @@ mod tests {
         assert!(body.contains("worker: none"));
         assert!(body.contains(&format!("workspace: {workspace}\n")));
         assert!(body.contains(&format!("session_dir: {dir}\n")));
-        assert!(body.contains(REVIEWER_STANDARD));
         for placeholder in ["{manifest}", "{workspace}", "{agent}", "{startup_context}"] {
             assert!(!body.contains(placeholder), "unfilled placeholder: {body}");
         }
-        let lead = render_lead_brief(
-            &agent,
-            &workspace,
-            &dir,
-            "worker: none",
-            &ReviewerBinding::Lead,
-        );
-        assert!(lead.contains(REVIEWER_STANDARD));
     }
 }

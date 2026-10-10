@@ -15,7 +15,9 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     let spawn = env
         .niles(
             &workspace_b,
-            &["spawn", "shared", "--agent", "claude", "Fix"],
+            &[
+                "spawn", "--role", "research", "shared", "--agent", "claude", "Fix",
+            ],
         )
         .output()
         .unwrap();
@@ -96,7 +98,9 @@ fn archived_reports_are_workspace_local() {
     let spawn = env
         .niles(
             &workspace_b,
-            &["spawn", "closed", "--agent", "claude", "Fix"],
+            &[
+                "spawn", "--role", "research", "closed", "--agent", "claude", "Fix",
+            ],
         )
         .output()
         .unwrap();

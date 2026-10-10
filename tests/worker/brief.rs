@@ -1,6 +1,80 @@
 use super::support::*;
 use std::{io::Write, process::Stdio};
 
+#[test]
+fn worker_spawn_records_mechanical_decisions_and_design_headers() {
+    let env = TestEnv::new("niles-worker-design-record");
+    let session = env.root.join(".niles/sessions/lead");
+    fs::create_dir_all(&session).unwrap();
+    let meta = serde_json::json!({
+        "id": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
+        "workspace": env.root, "brief": session.join("lead.md")
+    });
+    fs::write(
+        session.join("session.json"),
+        serde_json::to_vec(&meta).unwrap(),
+    )
+    .unwrap();
+    let log = session.join("decisions.log");
+    let mechanical = [
+        "spawn",
+        "mechanical",
+        "--role",
+        "worker",
+        "--agent",
+        "claude",
+        "--mechanical",
+        "rename",
+        "task",
+    ];
+    fs::create_dir(&log).unwrap();
+    assert_failure_contains(
+        "unwritable decisions log",
+        &env.run(&mechanical),
+        "failed to append",
+    );
+    assert!(!env.root.join(".niles/worker/mechanical").exists());
+    fs::remove_dir(&log).unwrap();
+    fs::write(&log, "earlier decision").unwrap();
+    let spawned = env.run(&mechanical);
+    assert_command_success("mechanical worker", &spawned);
+    let logged = fs::read_to_string(&log).unwrap();
+    let line = logged.strip_prefix("earlier decision\n").unwrap();
+    let (timestamp, decision) = line.split_once(' ').unwrap();
+    chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
+    assert_eq!(decision, "mechanical mechanical: rename\n");
+    let workers = env.root.join(".niles/worker");
+    let body = fs::read_to_string(workers.join("mechanical/brief.md")).unwrap();
+    assert!(body.contains("You own the gate"));
+    let (header, _) = body.split_once("\n\n## Task").unwrap();
+    assert!(!header.contains("design_record:"));
+
+    let designer = env.run(&[
+        "spawn", "designer", "--role", "design", "--agent", "claude", "design",
+    ]);
+    assert_command_success("designer", &designer);
+    fs::write(workers.join("designer/status.log"), "done: agreed record\n").unwrap();
+    let spawned = env.run(&[
+        "spawn",
+        "implementation",
+        "--role",
+        "worker",
+        "--agent",
+        "claude",
+        "--design",
+        "designer",
+        "task",
+    ]);
+    assert_command_success("worker with design", &spawned);
+    let body = fs::read_to_string(workers.join("implementation/brief.md")).unwrap();
+    assert!(body.contains("You own the gate"));
+    assert!(body.contains(&format!(
+        "report_file: {}\ndesign_record: {}\n",
+        workers.join("implementation/report.md").display(),
+        workers.join("designer/report.md").display()
+    )));
+}
+
 /// Wiring only: `--role` reaches brief composition and each role gets its own fragment on
 /// top of the shared contract. What each fragment *says* is asserted in `worker::role`.
 #[test]
@@ -8,7 +82,7 @@ fn role_selects_which_fragment_the_brief_carries() {
     let env = TestEnv::new("niles-worker-roles");
 
     let mut briefs = Vec::new();
-    for role in ["worker", "reviewer", "security"] {
+    for role in ["design", "reviewer", "security", "research"] {
         let spawn = env
             .niles(
                 &env.root,
@@ -81,7 +155,9 @@ fn stdin_task_is_composed_with_the_role_and_reporting_contract() {
 fn spawn_accepts_literal_flag_text() {
     let env = TestEnv::new("niles-worker-spawn-message-options");
 
-    let literal = env.run(&["spawn", "literal", "--agent", "claude", "--", "--wait"]);
+    let literal = env.run(&[
+        "spawn", "literal", "--role", "research", "--agent", "claude", "--", "--wait",
+    ]);
     assert_command_success("spawn literal --wait", &literal);
     let literal_brief =
         fs::read_to_string(env.root.join(".niles/worker/literal/brief.md")).unwrap();

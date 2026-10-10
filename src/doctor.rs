@@ -40,13 +40,8 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
     let config = load_project_config_from(workspace)?;
     let bindings = std::iter::once(manifest.lead.as_str())
         .chain(manifest.worker.agents())
-        .chain(
-            manifest
-                .reviewer
-                .as_agent()
-                .into_iter()
-                .flat_map(|binding| binding.agents()),
-        )
+        .chain(manifest.reviewer.agents())
+        .chain(manifest.design.agents())
         .chain(manifest.security.agents());
     let mut binaries = BTreeMap::new();
     for agent in bindings {

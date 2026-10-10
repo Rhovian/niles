@@ -81,7 +81,7 @@ pub(crate) struct Columns {
     pub(super) model: usize,
     pub(super) effort: usize,
     pub(super) column: Column,
-    current: Option<AgentSpec>,
+    current: AgentSpec,
 }
 
 impl Columns {
@@ -89,26 +89,10 @@ impl Columns {
         clippy::disallowed_methods,
         reason = "the picker boundary selects the first family if the current one is no longer configured"
     )]
-    pub(super) fn new(
-        families: &[Family],
-        current: &str,
-        reviewer: bool,
-        config: &ProjectConfig,
-    ) -> Result<Self> {
-        let mut families = families.to_vec();
-        if reviewer {
-            families.push(Family {
-                name: "lead".to_owned(),
-                installed: true,
-                models: Vec::new(),
-            });
-        }
-        let current = if current == "lead" {
-            None
-        } else {
-            Some(AgentSpec::parse(current, &config.models)?)
-        };
-        let name = current.as_ref().map_or("lead", AgentSpec::family);
+    pub(super) fn new(families: &[Family], current: &str, config: &ProjectConfig) -> Result<Self> {
+        let families = families.to_vec();
+        let current = AgentSpec::parse(current, &config.models)?;
+        let name = current.family();
         let family = families
             .iter()
             .position(|family| family.name == name)
@@ -192,10 +176,7 @@ impl Columns {
     )]
     fn select_model(&mut self) {
         let family = &self.families[self.family];
-        let current = self
-            .current
-            .as_ref()
-            .filter(|spec| spec.family() == family.name);
+        let current = Some(&self.current).filter(|spec| spec.family() == family.name);
         let model = current
             .and_then(AgentSpec::model)
             .or_else(|| agents::profile_for(&family.name).map(|profile| profile.default_model));
@@ -212,9 +193,7 @@ impl Columns {
         let Some(model) = family.models.get(self.model) else {
             return;
         };
-        let effort = self
-            .current
-            .as_ref()
+        let effort = Some(&self.current)
             .filter(|spec| {
                 spec.family() == family.name && spec.model() == Some(model.name.as_str())
             })

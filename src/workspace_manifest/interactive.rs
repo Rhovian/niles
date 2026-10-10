@@ -75,7 +75,13 @@ fn save_changes(
     let mut changed = false;
     for role in Role::ALL {
         if role.changed(before, draft) {
-            role.set(&mut latest, role.value(draft));
+            match role {
+                Role::Lead => latest.lead = draft.lead.clone(),
+                Role::Worker => latest.worker = draft.worker.clone(),
+                Role::Reviewer => latest.reviewer = draft.reviewer.clone(),
+                Role::Security => latest.security = draft.security.clone(),
+                Role::Design => latest.design = draft.design.clone(),
+            }
             changed = true;
         }
     }

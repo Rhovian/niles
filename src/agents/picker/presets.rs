@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde::Deserialize;
 
+use super::ScalarRole;
+
 use crate::{
     agents::{self, AgentSpec},
     config::spec::ProjectConfig,
@@ -14,11 +16,13 @@ struct RawPreset {
     worker: String,
     reviewer: String,
     security: String,
+    design: Vec<String>,
 }
 
 pub(crate) struct Preset {
     pub name: String,
-    pub values: Result<[String; 4], String>,
+    pub design: crate::workspace_manifest::RoleBinding,
+    pub values: Result<[(ScalarRole, String); 4], String>,
 }
 
 pub(crate) fn load(config: &ProjectConfig) -> Result<Vec<Preset>> {
@@ -26,16 +30,29 @@ pub(crate) fn load(config: &ProjectConfig) -> Result<Vec<Preset>> {
     Ok(raw
         .into_iter()
         .map(|raw| {
-            let values = [raw.lead, raw.worker, raw.reviewer, raw.security];
-            let valid = values.iter().enumerate().try_for_each(|(index, value)| {
-                if index == 2 && value == "lead" {
-                    return Ok(());
-                }
-                let spec = AgentSpec::parse(value, &config.models)?;
-                agents::canonical_manifest_agent(&spec, config).map(|_| ())
-            });
+            let values = [
+                (ScalarRole::Lead, raw.lead),
+                (ScalarRole::Worker, raw.worker),
+                (ScalarRole::Reviewer, raw.reviewer),
+                (ScalarRole::Security, raw.security),
+            ];
+            let valid = values
+                .iter()
+                .map(|(_, value)| value)
+                .chain(&raw.design)
+                .try_for_each(|value| {
+                    let spec = AgentSpec::parse(value, &config.models)?;
+                    agents::canonical_manifest_agent(&spec, config).map(|_| ())
+                });
             Preset {
                 name: raw.name,
+                design: crate::workspace_manifest::RoleBinding(vec![
+                    crate::workspace_manifest::AgentGroup {
+                        when: None,
+                        models: raw.design,
+                        efforts: None,
+                    },
+                ]),
                 values: valid
                     .map(|()| values)
                     .map_err(|err: anyhow::Error| err.to_string()),

@@ -2,7 +2,7 @@ use anyhow::Result;
 use ratatui::crossterm::event::KeyCode;
 
 use super::{
-    Choice, Role,
+    Choice, Role, ScalarRole,
     columns::{self, Columns, Family, Pick},
     presets::{self, Preset},
 };
@@ -11,7 +11,7 @@ use crate::{config::spec::ProjectConfig, workspace_manifest::WorkspaceManifest};
 pub(super) enum Screen {
     Roles,
     Presets { selected: usize },
-    Editing { role: Role, columns: Columns },
+    Editing { role: ScalarRole, columns: Columns },
     Review,
 }
 
@@ -67,9 +67,10 @@ impl Form {
                 KeyCode::Esc | KeyCode::Left => self.screen = Screen::Roles,
                 KeyCode::Enter => {
                     if let Ok(values) = &self.presets[*selected].values {
-                        for (role, value) in Role::ALL.into_iter().zip(values) {
+                        for (role, value) in values {
                             role.set(&mut self.draft, value.clone());
                         }
+                        self.draft.design = self.presets[*selected].design.clone();
                         self.screen = Screen::Roles;
                     }
                 }
@@ -82,14 +83,12 @@ impl Form {
                 KeyCode::Char('s') => self.screen = Screen::Review,
                 KeyCode::Enter => {
                     let role = Role::ALL[self.selected];
+                    let Some(scalar) = role.scalar() else {
+                        return Ok(None);
+                    };
                     self.screen = Screen::Editing {
-                        role,
-                        columns: Columns::new(
-                            &self.families,
-                            &role.value(&self.draft),
-                            role == Role::Reviewer,
-                            config,
-                        )?,
+                        role: scalar,
+                        columns: Columns::new(&self.families, &role.value(&self.draft), config)?,
                     };
                 }
                 _ => {}

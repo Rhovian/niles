@@ -27,8 +27,6 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 mod tests {
     use super::*;
 
-    use super::super::{PlanningGroup, WorkerPlanning};
-
     use crate::test_support::temp_test_path;
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
@@ -42,7 +40,7 @@ mod tests {
 
     #[test]
     fn groups_load_and_scalar_saves_as_scalar() {
-        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: lead\nsecurity: claude\n";
+        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n";
         let manifest = load_body("manifest-groups", body).unwrap().unwrap();
         assert_eq!(
             manifest.worker.agents().collect::<Vec<_>>(),
@@ -64,8 +62,9 @@ mod tests {
                 "  - when: Standard\n    models: [codex]\n    efforts: []",
             ),
         ] {
-            let body =
-                format!("lead: claude\nworker:\n{worker}\nreviewer: lead\nsecurity: claude\n");
+            let body = format!(
+                "lead: claude\nworker:\n{worker}\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n"
+            );
             assert!(load_body(name, &body).is_err());
         }
     }
@@ -83,6 +82,8 @@ lead: claude
 worker: codex
 reviewer: claude
 security: claude
+design:
+  - models: [claude, codex]
 checkin: 15m
 recheck: backoff
 "#,
@@ -97,6 +98,8 @@ lead: claude
 worker: codex
 reviewer: claude
 security: claude
+design:
+  - models: [claude, codex]
 "#,
         )
         .unwrap();
@@ -108,7 +111,6 @@ security: claude
         assert_eq!(manifest.recheck.as_deref(), Some("backoff"));
         assert_eq!(bare.checkin, None);
         assert_eq!(bare.recheck, None);
-        assert!(bare.worker_planning.is_empty());
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(anonymous).unwrap();
@@ -141,7 +143,7 @@ flow:
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "unknown field `manager`, expected one of lead, worker, reviewer, security, worker_planning, checkin, recheck"
+                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, checkin, recheck"
             ),
             "{err}"
         );
@@ -153,7 +155,7 @@ flow:
         let manifest = WorkspaceManifest {
             lead: "claude".to_owned(),
             worker: "codebot".to_owned().into(),
-            reviewer: super::super::ReviewerBinding::Agent("reviewbot".to_owned().into()),
+            reviewer: "reviewbot".to_owned().into(),
             security: "auditbot".to_owned().into(),
             ..WorkspaceManifest::default()
         };
@@ -184,10 +186,6 @@ flow:
         let configured = WorkspaceManifest {
             checkin: Some("15m".to_owned()),
             recheck: Some("backoff".to_owned()),
-            worker_planning: WorkerPlanning(vec![PlanningGroup {
-                models: vec!["codex:gpt-6-astra".to_owned()],
-                guidance: "Include the API invariants in the handoff.".to_owned(),
-            }]),
             ..manifest
         };
         save(&root, &configured).unwrap();
@@ -197,76 +195,51 @@ flow:
     }
 
     #[test]
-    fn lead_reviewer_round_trips_as_scalar() {
-        let root = temp_test_path("manifest-lead-reviewer");
-        let manifest = WorkspaceManifest {
-            reviewer: super::super::ReviewerBinding::Lead,
-            ..WorkspaceManifest::default()
-        };
-        save(&root, &manifest).unwrap();
-        let body = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(body.contains("reviewer: lead\n"), "{body}");
-        assert_eq!(load(&root).unwrap(), Some(manifest));
-        fs::remove_dir_all(root).unwrap();
+    fn obsolete_and_missing_bindings_fail_with_the_manifest_path() {
+        for (body, expected) in [
+            (
+                "lead: claude\nworker: codex\nreviewer: lead\nsecurity: claude\n",
+                "reviewer: lead is no longer supported; reviewer must be an agent binding",
+            ),
+            (
+                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
+                "missing field `design`",
+            ),
+            ("worker_planning: []\n", "unknown field `worker_planning`"),
+        ] {
+            let err = format!("{:#}", load_body("obsolete-bindings", body).unwrap_err());
+            assert!(
+                err.contains("manifest.yaml") && err.contains(expected),
+                "{err}"
+            );
+        }
     }
 
     #[test]
-    fn legacy_yaml_formatted_manifest_still_round_trips() {
-        let root = temp_test_path("manifest-serde-yaml-format");
-        fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"lead: claude:opus:medium
-worker: codex:gpt-5.6-sol:medium
-reviewer: claude:opus:medium
-security: hermes:tencent/hy3:high
-worker_planning:
-  - models: [claude:haiku, claude:sonnet]
-    guidance: |
-      Settle the implementation approach and edge cases. Decompose the work into
-      concrete changes and dispatch each change individually.
-  - models: [codex:gpt-5.6-sol]
-    guidance: |
-      Supply the objective, constraints, and explicit acceptance criteria with
-      minimal implementation granularity.
-"#,
-        )
-        .unwrap();
-        let expected = WorkspaceManifest {
-            lead: "claude:opus:medium".to_owned(),
-            worker: "codex:gpt-5.6-sol:medium".to_owned().into(),
-            reviewer: super::super::ReviewerBinding::Agent("claude:opus:medium".to_owned().into()),
-            security: "hermes:tencent/hy3:high".to_owned().into(),
-            worker_planning: WorkerPlanning(vec![
-                PlanningGroup {
-                    models: vec!["claude:haiku".to_owned(), "claude:sonnet".to_owned()],
-                    guidance: "Settle the implementation approach and edge cases. Decompose the work into\nconcrete changes and dispatch each change individually.\n".to_owned(),
-                },
-                PlanningGroup {
-                    models: vec!["codex:gpt-5.6-sol".to_owned()],
-                    guidance: "Supply the objective, constraints, and explicit acceptance criteria with\nminimal implementation granularity.\n".to_owned(),
-                },
-            ]),
-            checkin: None,
-            recheck: None,
-        };
-
-        let loaded = load(&root).unwrap().unwrap();
-
-        assert_eq!(loaded, expected);
-        save(&root, &loaded).unwrap();
-        assert_eq!(load(&root).unwrap(), Some(expected));
-
-        fs::remove_dir_all(root).unwrap();
+    fn design_requires_two_distinct_families() {
+        for design in [
+            "claude:opus:high",
+            "[{models: [claude:opus, claude:sonnet]}]",
+            "[{models: [claude, CLAUDE]}]",
+        ] {
+            let body = format!(
+                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: {design}\n"
+            );
+            let err = format!("{:#}", load_body("design-families", &body).unwrap_err());
+            assert!(
+                err.contains("manifest.yaml")
+                    && err.contains(
+                        "design must list models from at least two agent families; found: claude"
+                    ),
+                "{err}"
+            );
+        }
     }
 
     #[test]
     fn malformed_manifest_keeps_saphyr_line_and_column() {
-        let err = load_body(
-            "manifest-malformed-location",
-            "lead: claude\nworker_planning: [\n",
-        )
-        .unwrap_err();
+        let err =
+            load_body("manifest-malformed-location", "lead: claude\nworker: [\n").unwrap_err();
         let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
 
         assert!(chain[0].contains("manifest.yaml"), "{chain:?}");
@@ -277,60 +250,8 @@ worker_planning:
             "{chain:?}"
         );
         assert!(
-            chain
-                .iter()
-                .all(|message| !message.contains("worker_planning: [")),
+            chain.iter().all(|message| !message.contains("worker: [")),
             "{chain:?}"
-        );
-    }
-
-    #[test]
-    fn worker_planning_rejects_non_string_values() {
-        let err = format!(
-            "{:#}",
-            load_body(
-                "manifest-worker-planning-shape",
-                r#"
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
-worker_planning:
-  - models: [codex:gpt-6-astra]
-    guidance:
-      steps: 2
-"#,
-            )
-            .unwrap_err()
-        );
-
-        assert!(err.contains("expected string"), "{err}");
-    }
-
-    #[test]
-    fn worker_planning_rejects_a_model_in_two_groups() {
-        let err = format!(
-            "{:#}",
-            load_body(
-                "manifest-worker-planning-duplicate",
-                r#"
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
-worker_planning:
-  - models: [codex:gpt-6-astra, claude:opus]
-    guidance: Plan lightly.
-  - models: [claude:opus]
-    guidance: Plan in detail.
-"#,
-            )
-            .unwrap_err()
-        );
-
-        assert!(
-            err.contains("claude:opus appears in more than one worker_planning group"),
-            "{err}"
         );
     }
 }

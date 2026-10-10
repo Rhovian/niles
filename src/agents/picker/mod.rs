@@ -20,7 +20,7 @@ pub(crate) use presets::load as load_presets;
 
 use columns::{Columns, Pick};
 use form::Form;
-pub(crate) use role::Role;
+pub(crate) use role::{Role, ScalarRole};
 
 pub(crate) enum Choice {
     Save(WorkspaceManifest),
@@ -64,20 +64,15 @@ fn run_form(
 /// Uses the caller's terminal, including CONFIG's existing raw mode and alternate screen.
 pub(crate) fn role(
     terminal: &mut DefaultTerminal,
-    role: Role,
+    role: ScalarRole,
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
     theme: &Theme,
 ) -> Result<Option<String>> {
     let families = columns::families(config)?;
-    let mut columns = Columns::new(
-        &families,
-        &role.value(manifest),
-        role == Role::Reviewer,
-        config,
-    )?;
+    let mut columns = Columns::new(&families, &Role::from(role).value(manifest), config)?;
     loop {
-        terminal.draw(|frame| draw::single(frame, &columns, role, theme))?;
+        terminal.draw(|frame| draw::single(frame, &columns, role.into(), theme))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {

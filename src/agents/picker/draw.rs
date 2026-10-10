@@ -17,7 +17,7 @@ use crate::{
 
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
-        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", role.name()),
+        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", Role::from(*role).name()),
         Screen::Roles | Screen::Presets { .. } | Screen::Review => "NILES / ROLES".to_owned(),
     };
     let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
@@ -25,7 +25,11 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit · s save"
+            if Role::ALL[form.selected] == Role::Design {
+                "↑↓ role · s save"
+            } else {
+                "↑↓ role · ↵ edit · s save"
+            }
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
@@ -48,7 +52,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         }
         Screen::Editing { role, columns } => {
             columns.draw(frame, body, theme);
-            if role.groups(&form.draft).is_some() {
+            if Role::from(*role).groups(&form.draft).is_some() {
                 warning =
                     Some("Replacing this role drops its hand-edited groups; esc back keeps them.");
             }

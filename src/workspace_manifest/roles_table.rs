@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{agents, config::spec::ProjectConfig};
 
-use super::{ReviewerBinding, RoleBinding, WorkspaceManifest};
+use super::{RoleBinding, WorkspaceManifest};
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -42,22 +42,13 @@ pub(crate) fn print_manifest_roles<W: Write>(
     Ok(())
 }
 
-pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 4] {
-    let reviewer = match &manifest.reviewer {
-        ReviewerBinding::Lead => RoleRow {
-            role: "reviewer",
-            family: "lead".to_owned(),
-            model: MISSING.to_owned(),
-            effort: MISSING.to_owned(),
-            invalid_reason: None,
-        },
-        ReviewerBinding::Agent(agent) => binding_row("reviewer", agent, config),
-    };
+pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 5] {
     [
         role_row("lead", &manifest.lead, config),
         binding_row("worker", &manifest.worker, config),
-        reviewer,
+        binding_row("reviewer", &manifest.reviewer, config),
         binding_row("security", &manifest.security, config),
+        binding_row("design", &manifest.design, config),
     ]
 }
 
@@ -140,11 +131,7 @@ mod tests {
         WorkspaceManifest {
             lead: "codex:gpt-5.5:xhigh".to_owned(),
             worker: "codex".to_owned().into(),
-            reviewer: if reviewer == "lead" {
-                ReviewerBinding::Lead
-            } else {
-                ReviewerBinding::Agent(reviewer.to_owned().into())
-            },
+            reviewer: reviewer.to_owned().into(),
             security: "claude:opus:max".to_owned().into(),
             ..WorkspaceManifest::default()
         }
@@ -169,6 +156,7 @@ lead      codex   gpt-5.5  xhigh
 worker    codex   -        -
 reviewer  claude  opus     max
 security  claude  opus     max
+design    claude  -        -
 "
         );
     }
@@ -207,7 +195,7 @@ security  claude  opus     max
             .lines()
             .filter(|line| !line.starts_with(' '))
             .count();
-        assert_eq!(role_rows, 4, "{rendered}");
+        assert_eq!(role_rows, 5, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 
@@ -243,7 +231,7 @@ security  claude  opus     max
         );
         let effort_columns: Vec<Option<usize>> = rendered
             .lines()
-            .take(4)
+            .take(5)
             .map(|line| line.rfind("  "))
             .collect();
         assert!(

@@ -20,7 +20,7 @@ pub use pane::{peek, send};
 pub use report::report;
 pub use resolve::window_is_gone;
 pub use role::WorkerRole;
-pub use spawn::spawn;
+pub use spawn::{Assignment, spawn};
 pub use usage::usage;
 pub use worktree::SpawnTree;
 

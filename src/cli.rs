@@ -102,7 +102,8 @@ pub enum CommandName {
     ///
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
     /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy,
-    /// `security` is the adversarial pass, and `research` answers one question with cited evidence.
+    /// `security` is the adversarial pass, `design` writes the design record, and `research`
+    /// answers one question with cited evidence. Workers require --design or --mechanical.
     ///
     /// `--wait` then blocks for this worker's first actionable line, so a single-worker turn does
     /// not need a separate `niles wait`. Leave it off when spawning a fleet and block on the group
@@ -114,9 +115,8 @@ pub enum CommandName {
         wait: bool,
         /// Worker task id used for window and metadata names.
         id: String,
-        /// Which brief the worker gets.
-        #[arg(long, value_enum, default_value_t = crate::worker::WorkerRole::Worker)]
-        role: crate::worker::WorkerRole,
+        #[command(flatten)]
+        assignment: crate::worker::Assignment,
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,

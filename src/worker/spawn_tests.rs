@@ -9,19 +9,21 @@ use crate::{
 
 fn resolve_from_cli(project: &Utf8Path, args: &[&str]) -> Result<String> {
     let cli = Cli::try_parse_from(args).unwrap();
-    let Some(CommandName::Spawn { role, agent, .. }) = cli.command else {
+    let Some(CommandName::Spawn {
+        assignment, agent, ..
+    }) = cli.command
+    else {
         panic!("expected spawn");
     };
-    resolve_agent(project, role, agent, &load_project_config_from(project)?)
+    let config = load_project_config_from(project)?;
+    resolve_agent(project, assignment.role, agent, &config)
 }
 
 fn manifest() -> WorkspaceManifest {
     WorkspaceManifest {
         lead: "leadbot".into(),
         worker: "codex:gpt-5.5:xhigh".to_owned().into(),
-        reviewer: crate::workspace_manifest::ReviewerBinding::Agent(
-            "claude:opus:high".to_owned().into(),
-        ),
+        reviewer: "claude:opus:high".to_owned().into(),
         security: "auditbot".to_owned().into(),
         ..WorkspaceManifest::default()
     }
@@ -36,6 +38,7 @@ fn omitted_agent_uses_each_roles_manifest_binding() {
         ("worker", "codex:gpt-5.5:xhigh"),
         ("reviewer", "claude:opus:high"),
         ("security", "auditbot"),
+        ("design", "claude"),
     ] {
         let agent =
             resolve_from_cli(&root, &["niles", "spawn", "job", "--role", role, "task"]).unwrap();
@@ -117,21 +120,6 @@ fn scalar_bindings_keep_colons_in_model_names_and_pin_their_effort() {
 }
 
 #[test]
-fn a_lead_reviewer_cannot_be_spawned_without_an_explicit_agent() {
-    let root = temp_test_path("spawn-lead-reviewer");
-    let mut manifest = manifest();
-    manifest.reviewer = crate::workspace_manifest::ReviewerBinding::Lead;
-    save(&root, &manifest).unwrap();
-    let args = ["niles", "spawn", "job", "--role", "reviewer", "task"];
-    let err = resolve_from_cli(&root, &args).unwrap_err().to_string();
-    assert!(
-        err.contains(manifest_path(&root).as_str()) && err.contains("--agent"),
-        "{err}"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn omitted_agent_requires_a_manifest() {
     let root = temp_test_path("spawn-no-manifest");
     let config = load_project_config_from(&root).unwrap();
@@ -170,4 +158,90 @@ fn omitted_agent_requires_the_roles_entry() {
         assert!(err.contains("missing field"), "{err}");
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+fn assignment(role: WorkerRole, design: Option<&str>, mechanical: Option<&str>) -> Assignment {
+    Assignment {
+        role,
+        design: design.map(str::to_owned),
+        mechanical: mechanical.map(str::to_owned),
+    }
+}
+
+#[test]
+fn assignment_flags_refuse_invalid_combinations_and_reasons() {
+    use WorkerRole::{Design, Research, Reviewer, Security, Worker};
+    let root = temp_test_path("assignment-flags");
+    let flags = "--design or --mechanical";
+    for (role, design, mechanical, message) in [
+        (Worker, None, None, flags),
+        (Reviewer, None, Some("rename"), "--mechanical"),
+        (Security, None, Some("rename"), "--mechanical"),
+        (Design, Some("d"), None, "--design and --mechanical"),
+        (Research, Some("d"), None, "--design and --mechanical"),
+        (Design, None, Some("rename"), "--design and --mechanical"),
+        (Research, None, Some("rename"), "--design and --mechanical"),
+    ] {
+        let err = assignment(role, design, mechanical)
+            .resolve(&root, |_| panic!("invalid flags must not resolve a worker"))
+            .unwrap_err();
+        assert!(err.to_string().contains(message), "{err}");
+    }
+    for reason in ["", "   ", "line\nforged", "tab\t", "escape\u{1b}"] {
+        let err = assignment(Worker, None, Some(reason))
+            .resolve(&root, |_| Ok(None))
+            .unwrap_err();
+        assert!(err.to_string().contains("--mechanical reason"), "{err}");
+    }
+    for role in [Reviewer, Security, Design, Research] {
+        assignment(role, None, None)
+            .resolve(&root, |_| Ok(None))
+            .unwrap();
+    }
+}
+
+#[test]
+fn design_requires_live_designer_latest_done() {
+    use WorkerRole::{Design, Reviewer, Security, Worker};
+    let root = temp_test_path("assignment-design");
+    let request = |role| assignment(role, Some("designer"), None);
+    let err = request(Worker).resolve(&root, |_| Ok(None)).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("no such live design worker 'designer'")
+    );
+    fs::create_dir_all(&root).unwrap();
+    let not_done = "latest status is not done:";
+    for (role, status, message) in [
+        (Reviewer, "done: ready\n", "not a design worker"),
+        (Design, "", not_done),
+        (Design, "done: ready\nworking: amending\n", not_done),
+    ] {
+        let meta = serde_json::json!({
+            "id": "designer", "role": role, "agent": "claude", "created_at": Utc::now(),
+            "project": root, "window": "@1", "brief": root.join("brief.md"),
+            "launch": root.join("launch.sh")
+        });
+        store::write_json(&root.join("meta.json"), &meta).unwrap();
+        fs::write(wake::status_log_path(&root), status).unwrap();
+        let result = request(Worker).resolve(&root, |_| Ok(Some(root.clone())));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("designer") && err.contains(message), "{err}");
+    }
+    fs::write(wake::status_log_path(&root), "done: ready\n").unwrap();
+    for role in [Reviewer, Security] {
+        request(role)
+            .resolve(&root, |_| Ok(Some(root.clone())))
+            .unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mechanical_requires_a_lead_session() {
+    let root = temp_test_path("assignment-mechanical");
+    let err = assignment(WorkerRole::Worker, None, Some("rename"))
+        .resolve(&root, |_| Ok(None))
+        .unwrap_err();
+    assert!(err.to_string().contains("requires a lead session"), "{err}");
 }
