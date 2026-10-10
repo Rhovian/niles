@@ -15,6 +15,16 @@ const VIEW_WIDTH: &str = "75%";
 /// Marks the pane running the nested client, so it is found again from tmux alone.
 const VIEW_OPTION: &str = "@niles-view";
 
+/// The explorer's pane: it is created first, top left, in the home session.
+fn explorer_pane() -> String {
+    format!("={HOME_SESSION}:{{start}}.{{top-left}}")
+}
+
+/// Moves the operator's focus back to the explorer.
+pub(crate) fn focus_explorer() -> Result<()> {
+    run(&["select-pane", "-t", &explorer_pane()])
+}
+
 pub(crate) fn install_home_bindings() -> Result<()> {
     let popup = shell_quote(&session::executable()?);
     let condition = format!("#{{==:#{{session_name}},{HOME_SESSION}}}");
@@ -28,10 +38,7 @@ pub(crate) fn install_home_bindings() -> Result<()> {
     ];
     for key in ["[", "]", ";", "'"] {
         let meta = format!("M-{key}");
-        let send = format!(
-            "send-keys -t '={HOME_SESSION}:{{start}}.{{top-left}}' {}",
-            shell_quote(key)
-        );
+        let send = format!("send-keys -t '{}' {}", explorer_pane(), shell_quote(key));
         args.extend([
             ";".to_owned(),
             "bind-key".to_owned(),
@@ -83,7 +90,7 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
         "failed",
     ])?;
     let explorer = super::display(target.as_str(), "#{pane_id}")?;
-    show_in_view(&target, &open_panel("help")?)?;
+    show_in_view(&target, &open_panel("help", &[])?)?;
     run(&["select-pane", "-t", explorer.trim_end()])?;
     Ok(home)
 }
@@ -162,7 +169,7 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
             };
             // Killing the viewed session moves its clients to another session, which can be home
             // itself. Send the view's client to help there so home never nests inside itself.
-            let help = open_panel("help")?.target_arg();
+            let help = open_panel("help", &[])?.target_arg();
             let switch = format!(
                 "if-shell -F '#{{==:#{{client_tty}},{tty}}}' 'switch-client -c {tty} -t {help}'"
             );
@@ -201,7 +208,7 @@ pub(crate) fn close_view(explorer: &TmuxTarget) -> Result<()> {
             "-c",
             &view.tty,
             "-t",
-            &open_panel("help")?.target_arg(),
+            &open_panel("help", &[])?.target_arg(),
         ]),
         None => Ok(()),
     }

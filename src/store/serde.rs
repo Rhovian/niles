@@ -1,14 +1,14 @@
-use std::{fs, io::ErrorKind};
+use std::fs;
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::util::read_optional_string;
+
 pub(crate) fn read_optional_json<T: DeserializeOwned>(path: &Utf8Path) -> Result<Option<T>> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    let Some(body) = read_optional_string(path)? else {
+        return Ok(None);
     };
     serde_json::from_str(&body)
         .with_context(|| format!("failed to parse {path}"))
@@ -22,10 +22,8 @@ pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Utf8Path, value: &T) -> R
 }
 
 pub(crate) fn read_optional_yaml<T: DeserializeOwned>(path: &Utf8Path) -> Result<Option<T>> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+    let Some(body) = read_optional_string(path)? else {
+        return Ok(None);
     };
     parse_yaml(&body)
         .with_context(|| format!("failed to parse {path}"))

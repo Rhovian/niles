@@ -43,20 +43,30 @@ pub enum PromptMode {
 
 pub(crate) const PROJECT_CONFIG_FILES: [&str; 2] = ["niles.yaml", ".niles.yaml"];
 
-pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
-    let models = ModelRoster::builtin().context("failed to parse embedded model roster")?;
-    for path in PROJECT_CONFIG_FILES {
-        let path = root.join(path);
-        if path.exists() {
-            let body =
-                fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-            return store::parse_yaml(&body)
-                .and_then(|raw| project_config(raw, models))
-                .with_context(|| format!("failed to parse {path}"));
+/// The file of `PROJECT_CONFIG_FILES` that the project's config is read from, if any exists.
+pub(crate) fn project_config_file(root: &Utf8Path) -> Result<Option<&'static str>> {
+    for file in PROJECT_CONFIG_FILES {
+        let path = root.join(file);
+        if path
+            .try_exists()
+            .with_context(|| format!("failed to check {path}"))?
+        {
+            return Ok(Some(file));
         }
     }
+    Ok(None)
+}
 
-    project_config(RawProjectConfig::default(), models)
+pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
+    let models = ModelRoster::builtin().context("failed to parse embedded model roster")?;
+    let Some(file) = project_config_file(root)? else {
+        return project_config(RawProjectConfig::default(), models);
+    };
+    let path = root.join(file);
+    let body = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+    store::parse_yaml(&body)
+        .and_then(|raw| project_config(raw, models))
+        .with_context(|| format!("failed to parse {path}"))
 }
 
 fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectConfig> {
@@ -71,17 +81,7 @@ fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectC
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_support::temp_test_path;
-
-    fn load(body: &str) -> Result<ProjectConfig> {
-        let root = temp_test_path("project-models");
-        fs::create_dir_all(&root)?;
-        fs::write(root.join("niles.yaml"), body)?;
-        let result = load_project_config_from(&root);
-        fs::remove_dir_all(root)?;
-        result
-    }
+    use crate::test_support::project_config as load;
 
     #[test]
     fn model_overrides_add_replace_and_allow_empty_efforts() {
@@ -89,7 +89,7 @@ mod tests {
             r#"
 models:
   codex:
-    gpt-5.7: { efforts: [low, med, xhigh] }
+    gpt-5.7: { efforts: [low, med, xhigh], context_window: 400000 }
     gpt-5.5: { efforts: [high] }
   claude:
     opus: { efforts: [] }
@@ -111,6 +111,16 @@ models:
                 .supported_efforts("claude", "opus")
                 .unwrap()
                 .is_empty()
+        );
+        assert_eq!(
+            config.models.context_window("codex", "gpt-5.7"),
+            Some(400_000)
+        );
+        // An override replaces the whole builtin entry, window included.
+        assert_eq!(config.models.context_window("claude", "opus"), None);
+        assert_eq!(
+            config.models.context_window("claude", "sonnet"),
+            Some(1_000_000)
         );
     }
 

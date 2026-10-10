@@ -228,8 +228,12 @@ mod tests {
                 last_turn_at: None,
                 state: None,
                 estimated_cost_usd: None,
+                buckets: Default::default(),
+                prompt_tokens: None,
+                context_window: None,
             }),
             window_gone,
+            created_at: chrono::DateTime::UNIX_EPOCH,
         };
         let sessions = [
             session(Some(3_000_000), false),

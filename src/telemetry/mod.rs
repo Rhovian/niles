@@ -5,11 +5,15 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod buckets;
+mod cache;
 mod claude;
 mod codex;
 mod hermes;
 mod pi;
 
+pub(crate) use buckets::{BUCKET, Buckets};
+pub(crate) use cache::closed_buckets;
 use claude::read_claude;
 use codex::read_codex;
 use hermes::read_hermes;
@@ -34,6 +38,15 @@ pub(crate) struct Usage {
     pub last_turn_at: Option<DateTime<Utc>>,
     pub state: Option<SessionState>,
     pub estimated_cost_usd: Option<f64>,
+    /// `total_tokens`, spread over the buckets its turns were spent in.
+    #[serde(skip)]
+    pub buckets: Buckets,
+    /// The latest main-transcript turn's prompt: its input, cache read and cache write tokens.
+    #[serde(skip)]
+    pub prompt_tokens: Option<u64>,
+    /// The context window the transcript records, which only Codex does.
+    #[serde(skip)]
+    pub context_window: Option<u64>,
 }
 
 impl Usage {
@@ -90,6 +103,55 @@ fn parse_lines<'a, T: Deserialize<'a>>(body: &'a str) -> Option<Vec<T>> {
         .ok()
 }
 
+/// One small transcript per family, each read by that family's reader.
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use super::*;
+
+    pub(crate) const CLAUDE_MAIN: &str = concat!(
+        r#"{"type":"assistant","timestamp":"2026-10-01T09:05:00Z","message":{"id":"a","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":300,"cache_creation_input_tokens":40}}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-10-01T09:05:00Z","message":{"id":"a","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":300,"cache_creation_input_tokens":40}}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-10-01T11:40:00Z","message":{"id":"b","stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":600,"cache_creation_input_tokens":9}}}"#,
+        "\n",
+    );
+    const CLAUDE_SUBAGENT: &str = concat!(
+        r#"{"type":"assistant","timestamp":"2026-10-01T11:41:00Z","message":{"id":"c","usage":{"input_tokens":1000,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
+        "\n",
+    );
+    const CODEX: &str = concat!(
+        r#"{"type":"event_msg","timestamp":"2026-10-01T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":1},"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":1},"model_context_window":1000}}}"#,
+        "\n",
+        r#"{"type":"event_msg","timestamp":"2026-10-01T10:00:00Z","payload":{"type":"token_count","info":null}}"#,
+        "\n",
+        r#"{"type":"event_msg","timestamp":"2026-10-01T13:30:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"cache_write_input_tokens":50,"output_tokens":40,"reasoning_output_tokens":2},"last_token_usage":{"input_tokens":900,"cached_input_tokens":800,"cache_write_input_tokens":50,"output_tokens":30,"reasoning_output_tokens":1},"model_context_window":1000}}}"#,
+        "\n",
+    );
+    pub(crate) const PI: &str = concat!(
+        r#"{"type":"message","timestamp":"2026-10-01T08:00:00Z","message":{"role":"assistant","stopReason":"toolUse","usage":{"input":2,"output":3,"cacheRead":4,"cacheWrite":5}}}"#,
+        "\n",
+        r#"{"type":"message","timestamp":"2026-10-01T16:00:00Z","message":{"role":"assistant","stopReason":"stop","usage":{"input":20,"output":30,"cacheRead":40,"cacheWrite":50}}}"#,
+        "\n",
+    );
+
+    pub(crate) fn claude() -> Usage {
+        claude::claude_usage(CLAUDE_MAIN, &[CLAUDE_SUBAGENT.to_owned()]).unwrap()
+    }
+
+    pub(crate) fn codex() -> Usage {
+        codex::codex_usage(&parse_lines(CODEX).unwrap()).unwrap()
+    }
+
+    pub(crate) fn pi() -> Usage {
+        pi::pi_usage(PI).unwrap()
+    }
+
+    pub(crate) fn hermes() -> Usage {
+        hermes::tests::fixture_usage()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +159,56 @@ mod tests {
         claude::claude_usage,
         codex::{CodexLine, codex_matches, codex_usage},
     };
+
+    #[test]
+    fn buckets_sum_to_the_total_for_every_family() {
+        for usage in [
+            fixtures::claude(),
+            fixtures::codex(),
+            fixtures::pi(),
+            fixtures::hermes(),
+        ] {
+            assert_eq!(
+                usage.buckets.iter().map(|(_, tokens)| tokens).sum::<u64>(),
+                usage.total_tokens()
+            );
+            assert!(
+                usage
+                    .buckets
+                    .iter()
+                    .all(|(start, _)| start.timestamp() % 900 == 0)
+            );
+        }
+        let claude = fixtures::claude();
+        assert_eq!(
+            claude
+                .buckets
+                .iter()
+                .map(|(start, _)| start.to_rfc3339())
+                .collect::<Vec<_>>(),
+            ["2026-10-01T09:00:00+00:00", "2026-10-01T11:30:00+00:00"]
+        );
+        // The subagent's turn is spent, but the prompt is the main transcript's latest one.
+        assert_eq!(claude.prompt_tokens, Some(5 + 600 + 9));
+        assert_eq!(claude.context_window, None);
+
+        let codex = fixtures::codex();
+        assert_eq!(
+            codex
+                .buckets
+                .iter()
+                .map(|(_, tokens)| tokens)
+                .collect::<Vec<_>>(),
+            [110, 1090 - 110]
+        );
+        assert_eq!(codex.prompt_tokens, Some(900 + 50));
+        assert_eq!(codex.context_window, Some(1000));
+        assert_eq!(fixtures::pi().prompt_tokens, Some(20 + 40 + 50));
+
+        let hermes = fixtures::hermes();
+        assert_eq!(hermes.buckets.iter().count(), 1);
+        assert_eq!(hermes.prompt_tokens, None);
+    }
 
     fn state(usage: Option<Usage>) -> Option<SessionState> {
         usage.and_then(|usage| usage.state)

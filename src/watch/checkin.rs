@@ -77,10 +77,8 @@ impl Checkin {
 
     pub(crate) fn read(worker_dir: &Utf8Path) -> Result<Option<Self>> {
         let path = worker_dir.join(CHECKIN_FILE);
-        let body = match fs::read_to_string(&path) {
-            Ok(body) => body,
-            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+        let Some(body) = crate::util::read_optional_string(&path)? else {
+            return Ok(None);
         };
 
         let fields = body

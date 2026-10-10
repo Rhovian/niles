@@ -9,18 +9,19 @@ const BUILTIN_ROSTER: &str = include_str!("roster.yaml");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRoster {
-    families: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    families: BTreeMap<String, BTreeMap<String, Model>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Model {
+    efforts: Vec<String>,
+    context_window: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct RawRoster(BTreeMap<String, BTreeMap<String, RawModel>>);
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawModel {
-    efforts: Vec<String>,
-}
+pub(crate) struct RawRoster(BTreeMap<String, BTreeMap<String, Model>>);
 
 impl ModelRoster {
     pub(crate) fn builtin() -> Result<Self> {
@@ -51,13 +52,13 @@ impl ModelRoster {
             }
             let mut normalized_models = BTreeSet::new();
             let mut entries = BTreeMap::new();
-            for (name, model) in models {
+            for (name, mut model) in models {
                 let name = normalize_model(&family, &name)?;
                 if !normalized_models.insert(name.clone()) {
                     bail!("duplicate {family} model `{name}` after normalization");
                 }
-                let efforts = normalize_efforts(&family, &name, model.efforts)?;
-                entries.insert(name, efforts);
+                model.efforts = normalize_efforts(&family, &name, model.efforts)?;
+                entries.insert(name, model);
             }
             parsed.insert(family, entries);
         }
@@ -74,18 +75,20 @@ impl ModelRoster {
     }
 
     pub(crate) fn supported_efforts(&self, family: &str, model: &str) -> Option<&[String]> {
-        self.families.get(family)?.get(model).map(Vec::as_slice)
+        Some(&self.families.get(family)?.get(model)?.efforts)
+    }
+
+    pub(crate) fn context_window(&self, family: &str, model: &str) -> Option<u64> {
+        self.families.get(family)?.get(model)?.context_window
     }
 
     pub(crate) fn rows(&self) -> Vec<[String; 3]> {
         let mut rows = Vec::new();
         for family in families::known_agent_ids() {
             if let Some(models) = self.families.get(family) {
-                rows.extend(
-                    models.iter().map(|(model, efforts)| {
-                        [family.to_owned(), model.clone(), efforts.join(" ")]
-                    }),
-                );
+                rows.extend(models.iter().map(|(name, model)| {
+                    [family.to_owned(), name.clone(), model.efforts.join(" ")]
+                }));
             }
         }
         rows

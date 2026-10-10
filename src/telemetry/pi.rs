@@ -1,4 +1,4 @@
-use super::{SessionState, Usage, parse_lines};
+use super::{Buckets, SessionState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -50,13 +50,15 @@ struct PiCounters {
 
 pub(super) fn pi_usage(body: &str) -> Option<Usage> {
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut last_turn, mut state) = (None, None);
+    let (mut last_turn, mut state, mut prompt) = (None, None, None);
+    let mut buckets = Buckets::default();
     for line in parse_lines::<PiLine>(body)? {
         let PiLine::Message { timestamp, message } = line else {
             continue;
         };
         state = Some(SessionState::Working);
         if let PiMessage::Assistant { usage, stop_reason } = message {
+            let prompt_tokens = usage.input + usage.cache_read + usage.cache_write;
             if stop_reason != "toolUse" {
                 state = Some(SessionState::Waiting);
             }
@@ -64,6 +66,8 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
             output += usage.output;
             cache_read += usage.cache_read;
             cache_write += usage.cache_write;
+            buckets.add(timestamp, prompt_tokens + usage.output);
+            prompt = Some(prompt_tokens);
             last_turn =
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
@@ -78,5 +82,8 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
         last_turn_at: last_turn,
         state,
         estimated_cost_usd: None,
+        buckets,
+        prompt_tokens: prompt,
+        context_window: None,
     })
 }

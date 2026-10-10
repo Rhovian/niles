@@ -1,0 +1,15 @@
+- name: all claude
+  lead: claude:opus:medium
+  worker: claude:opus:high
+  reviewer: lead
+  security: claude:sonnet:high
+- name: all codex
+  lead: codex:gpt-6.1-sol:medium
+  worker: codex:gpt-6.1-sol:high
+  reviewer: lead
+  security: codex:gpt-6-luna:high
+- name: codex + claude review
+  lead: claude:opus:medium
+  worker: codex:gpt-6.1-sol:high
+  reviewer: claude:opus:high
+  security: claude:sonnet:high

@@ -5,6 +5,17 @@ use crate::projects::{
     windows::Role,
 };
 
+const PANEL_LABELS: [&str; 8] = [
+    "CONFIG",
+    "├─ global",
+    "└─ ▸ projects",
+    "TELEMETRY",
+    "├─ today",
+    "├─ 7 days",
+    "└─ 30 days",
+    "HELP",
+];
+
 fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
     let entry = Entry {
         name: ProjectName::parse(name).unwrap(),
@@ -79,10 +90,10 @@ fn running_projects_and_role_folders_start_open() {
             "│     ├─ parse",
             "│     └─ gone window lost",
             "└─     old",
-            "CONFIG",
-            "TELEMETRY",
-            "HELP",
         ]
+        .into_iter()
+        .chain(PANEL_LABELS)
+        .collect::<Vec<_>>()
     );
 }
 
@@ -94,12 +105,12 @@ fn collapsed_projects_and_folders_survive_refresh() {
     tree.collapse();
     tree.collapse();
     tree.replace(projects());
-    assert_eq!(tree.items().len(), 6);
+    assert_eq!(tree.items().len(), 11);
     tree.expand();
-    assert_eq!(tree.items().len(), 7);
+    assert_eq!(tree.items().len(), 12);
     tree.down();
     tree.expand();
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 14);
 }
 
 fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
@@ -148,7 +159,7 @@ fn projects_without_agents_do_not_expand() {
     let mut tree = tree();
     tree.select(Key::Project("old"));
     tree.expand();
-    assert_eq!(tree.items().len(), 9);
+    assert_eq!(tree.items().len(), 14);
     tree.down();
     assert_eq!(tree.cursor(), 6);
 }
@@ -159,7 +170,7 @@ fn collapsing_a_child_moves_to_its_project() {
     tree.down();
     tree.collapse();
     assert_eq!(tree.cursor(), 1);
-    assert_eq!(tree.items().len(), 6);
+    assert_eq!(tree.items().len(), 11);
     tree.up();
     assert_eq!(tree.cursor(), 0);
 }
@@ -177,19 +188,59 @@ fn refresh_keeps_the_selection_by_name() {
     ));
     assert_eq!(tree.cursor(), 1);
     tree.replace(Vec::new());
-    assert!(matches!(tree.selected(), Some(Item::Panel(Panel::Config))));
+    assert!(matches!(
+        tree.selected(),
+        Some(Item::Panel(Heading::Config))
+    ));
 }
+#[test]
+fn project_scopes_expand_under_config_and_collapse_to_their_folder() {
+    let mut tree = tree();
+    tree.select(Key::ProjectScopes);
+    tree.expand();
+    let labels = labels(&tree);
+    let config = labels.iter().position(|label| label == "CONFIG").unwrap();
+    assert_eq!(
+        labels[config..config + 5],
+        [
+            "CONFIG",
+            "├─ global",
+            "└─ ▾ projects",
+            "   ├─ api",
+            "   └─ old"
+        ]
+    );
+    tree.select(Key::Scope(Some("old")));
+    tree.collapse();
+    assert!(tree.selected().map(Item::key) == Some(Key::ProjectScopes));
+    assert!(
+        !tree
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Scope(Some(_))))
+    );
+}
+
 #[test]
 fn panels_keep_selection_and_cycle_only_to_windows() {
     let mut tree = tree();
-    for panel in [Panel::Config, Panel::Telemetry, Panel::Help] {
+    let panels = [
+        Item::Panel(Heading::Config),
+        Item::Scope(None),
+        Item::ProjectScopes,
+        Item::Panel(Heading::Telemetry),
+    ]
+    .into_iter()
+    .chain(Range::ALL.map(Item::Range))
+    .chain([Item::Panel(Heading::Help)]);
+    for panel in panels {
         tree.cursor = tree
             .items()
             .iter()
-            .position(|item| item.key() == Key::Panel(panel))
+            .position(|item| item.key() == panel.key())
             .unwrap();
         tree.replace(projects());
-        assert!(matches!(tree.selected(), Some(Item::Panel(selected)) if selected == panel));
+        assert!(tree.selected().map(Item::key) == Some(panel.key()));
         assert!(!tree.cycle_windows(1));
         assert!(tree.cycle_projects(1));
         assert!(tree.selected().map(Item::key) == Some(Key::Project("api")));
@@ -207,7 +258,10 @@ fn waiting_project_shows_warning_and_spinner() {
     tree.replace(vec![waiting_none]);
     assert_eq!(
         labels(&tree),
-        vec!["PROJECTS", "└─   ⚠ wait", "CONFIG", "TELEMETRY", "HELP",]
+        ["PROJECTS", "└─   ⚠ wait",]
+            .into_iter()
+            .chain(PANEL_LABELS)
+            .collect::<Vec<_>>()
     );
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
@@ -256,10 +310,10 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "│     └─ gone window lost",
             "├─   ⚠ web",
             "└─     old",
-            "CONFIG",
-            "TELEMETRY",
-            "HELP"
         ]
+        .into_iter()
+        .chain(PANEL_LABELS)
+        .collect::<Vec<_>>()
     );
     let mut refreshed = self::projects();
     let agents = refreshed[0].agents.as_mut().unwrap();

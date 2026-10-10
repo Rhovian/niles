@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ProjectName(String);
+pub(crate) struct ProjectName(String);
 
 impl ProjectName {
     pub fn parse(name: &str) -> Result<Self> {

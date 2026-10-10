@@ -4,7 +4,8 @@ use super::{SessionName, TmuxTarget, WindowTarget, run, session};
 
 const PANEL_SESSION: &str = "niles+panels";
 
-pub(crate) fn open_panel(name: &str) -> Result<WindowTarget> {
+/// Respawns the panel window `name` with `niles panel <name> <flags>`.
+pub(crate) fn open_panel(name: &str, flags: &[&str]) -> Result<WindowTarget> {
     let session = SessionName::new(PANEL_SESSION)?;
     let target = TmuxTarget::session(&session);
     if !session::has_session(&session)? {
@@ -20,14 +21,18 @@ pub(crate) fn open_panel(name: &str) -> Result<WindowTarget> {
         }
     }
     let window = WindowTarget::new(session, name)?;
-    run(&[
+    let executable = session::executable()?;
+    let target = window.target_arg();
+    let mut command = vec![
         "respawn-window",
         "-k",
         "-t",
-        &window.target_arg(),
-        &session::executable()?,
+        &target,
+        &executable,
         "panel",
         name,
-    ])?;
+    ];
+    command.extend(flags);
+    run(&command)?;
     Ok(window)
 }

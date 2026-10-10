@@ -13,7 +13,7 @@ pub(crate) enum WakeKind {
 }
 
 impl WakeKind {
-    const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Done,
         Self::Failed,
         Self::Blocked,
@@ -34,7 +34,10 @@ impl WakeKind {
     }
 
     pub(crate) fn parse_line(line: &str) -> Option<Self> {
-        let (state, _) = line.split_once(':')?;
+        Self::parse(line.split_once(':')?.0)
+    }
+
+    pub(crate) fn parse(state: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.as_str() == state)
     }
 

@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
 
 use crate::projects::{
-    panels::Panel,
+    panels::{Panel, Range},
     rows::{Row, State},
     windows::{AgentWindow, Role, SessionAgents},
 };
@@ -53,10 +53,37 @@ fn spinner(now: DateTime<Utc>, theme: &Theme) -> &str {
     theme.spinner(now.timestamp_millis() / SPINNER_FRAME.as_millis() as i64)
 }
 
+/// A panel's row; CONFIG and TELEMETRY open their first child.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Heading {
+    Config,
+    Telemetry,
+    Help,
+}
+
+impl Heading {
+    pub fn panel(self) -> Panel {
+        match self {
+            Self::Config => Panel::Config { project: None },
+            Self::Telemetry => Panel::Telemetry {
+                range: Range::Today,
+            },
+            Self::Help => Panel::Help,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Item<'a> {
     Header,
-    Panel(Panel),
+    Panel(Heading),
+    /// A config scope: the global one under CONFIG, or a project's under
+    /// [`Item::ProjectScopes`].
+    Scope(Option<&'a Project>),
+    /// The folder of project scopes under CONFIG, closed by default.
+    ProjectScopes,
+    /// A child of TELEMETRY, which is never collapsed.
+    Range(Range),
     Project(&'a Project),
     Folder(&'a Project, WorkerRole),
     Member(&'a Project, WorkerRole, Member<'a>),
@@ -72,7 +99,10 @@ pub(super) enum Member<'a> {
 #[derive(PartialEq, Eq)]
 enum Key<'a> {
     Header,
-    Panel(Panel),
+    Panel(Heading),
+    Scope(Option<&'a str>),
+    ProjectScopes,
+    Range(Range),
     Project(&'a str),
     Folder(&'a str, WorkerRole),
     Window(&'a str, &'a str),
@@ -85,14 +115,23 @@ impl<'a> Item<'a> {
             Item::Project(project) | Item::Folder(project, _) | Item::Member(project, _, _) => {
                 Some(project)
             }
-            Item::Header | Item::Panel(_) => None,
+            Item::Header
+            | Item::Panel(_)
+            | Item::Scope(_)
+            | Item::ProjectScopes
+            | Item::Range(_) => None,
         }
     }
 
     fn key(self) -> Key<'a> {
         match self {
             Item::Header => Key::Header,
-            Item::Panel(panel) => Key::Panel(panel),
+            Item::Panel(heading) => Key::Panel(heading),
+            Item::Scope(project) => {
+                Key::Scope(project.map(|project| project.row.entry.name.as_str()))
+            }
+            Item::ProjectScopes => Key::ProjectScopes,
+            Item::Range(range) => Key::Range(range),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
             Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
             Item::Member(project, _, Member::Window(window)) => {
@@ -110,15 +149,14 @@ pub(super) struct Tree {
     projects: Vec<Project>,
     collapsed: HashSet<String>,
     collapsed_folders: HashSet<(String, WorkerRole)>,
+    project_scopes_expanded: bool,
     cursor: usize,
 }
 
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
         let old = std::mem::replace(&mut self.projects, projects);
-        let selected = Tree::items_of(&old, &self.collapsed, &self.collapsed_folders)
-            .get(self.cursor)
-            .map(|item| item.key());
+        let selected = self.items_of(&old).get(self.cursor).map(|item| item.key());
         let items = self.items();
         self.cursor = match selected.and_then(|key| items.iter().position(|item| item.key() == key))
         {
@@ -129,21 +167,19 @@ impl Tree {
     }
 
     pub fn items(&self) -> Vec<Item<'_>> {
-        Tree::items_of(&self.projects, &self.collapsed, &self.collapsed_folders)
+        self.items_of(&self.projects)
     }
 
-    fn items_of<'a>(
-        projects: &'a [Project],
-        collapsed: &HashSet<String>,
-        collapsed_folders: &HashSet<(String, WorkerRole)>,
-    ) -> Vec<Item<'a>> {
+    fn items_of<'a>(&self, projects: &'a [Project]) -> Vec<Item<'a>> {
         let mut items = vec![Item::Header];
         for project in projects {
             items.push(Item::Project(project));
-            if project.agents.is_some() && !collapsed.contains(project.row.entry.name.as_str()) {
+            if project.agents.is_some() && !self.collapsed.contains(project.row.entry.name.as_str())
+            {
                 for role in project.roles() {
                     items.push(Item::Folder(project, role));
-                    if !collapsed_folders
+                    if !self
+                        .collapsed_folders
                         .contains(&(project.row.entry.name.as_str().to_owned(), role))
                     {
                         items.extend(project.members(role));
@@ -152,10 +188,16 @@ impl Tree {
             }
         }
         items.extend([
-            Item::Panel(Panel::Config),
-            Item::Panel(Panel::Telemetry),
-            Item::Panel(Panel::Help),
+            Item::Panel(Heading::Config),
+            Item::Scope(None),
+            Item::ProjectScopes,
         ]);
+        if self.project_scopes_expanded {
+            items.extend(projects.iter().map(|project| Item::Scope(Some(project))));
+        }
+        items.push(Item::Panel(Heading::Telemetry));
+        items.extend(Range::ALL.map(Item::Range));
+        items.push(Item::Panel(Heading::Help));
         items
     }
 
@@ -187,7 +229,16 @@ impl Tree {
                 self.collapsed_folders
                     .remove(&(project.row.entry.name.as_str().to_owned(), role));
             }
-            Some(Item::Project(_) | Item::Header | Item::Panel(_) | Item::Member(..)) | None => {}
+            Some(Item::ProjectScopes) => self.project_scopes_expanded = true,
+            Some(
+                Item::Project(_)
+                | Item::Header
+                | Item::Panel(_)
+                | Item::Scope(_)
+                | Item::Range(_)
+                | Item::Member(..),
+            )
+            | None => {}
         }
     }
 
@@ -264,6 +315,11 @@ impl Tree {
         let Some(item) = self.selected() else {
             return;
         };
+        if let Item::ProjectScopes | Item::Scope(Some(_)) = item {
+            self.project_scopes_expanded = false;
+            self.select(Key::ProjectScopes);
+            return;
+        }
         let Some(project) = item.project() else {
             return;
         };
@@ -277,7 +333,11 @@ impl Tree {
                 self.collapsed.insert(name.clone());
                 self.select(Key::Project(&name));
             }
-            Item::Header | Item::Panel(_) => {}
+            Item::Header
+            | Item::Panel(_)
+            | Item::Scope(_)
+            | Item::ProjectScopes
+            | Item::Range(_) => {}
         }
     }
 
@@ -297,10 +357,45 @@ impl Tree {
         let stem = if last { " " } else { theme::STEM };
         match item {
             Item::Header => Line::from(Span::styled("PROJECTS", theme.style(StyleKey::Heading))),
-            Item::Panel(panel) => Line::from(Span::styled(
-                panel.name().to_uppercase(),
+            Item::Panel(heading) => Line::from(Span::styled(
+                heading.panel().name().to_uppercase(),
                 theme.style(StyleKey::Heading),
             )),
+            Item::Scope(None) => Line::from(vec![guide(theme::BRANCH), Span::raw(" global")]),
+            Item::Scope(Some(project)) => {
+                let last = self
+                    .projects
+                    .last()
+                    .is_some_and(|last| last.row.entry.name == project.row.entry.name);
+                Line::from(vec![
+                    Span::raw("   "),
+                    guide(if last { theme::LAST } else { theme::BRANCH }),
+                    Span::raw(format!(" {}", project.row.entry.name.as_str())),
+                ])
+            }
+            Item::ProjectScopes => {
+                let marker = if self.projects.is_empty() {
+                    " "
+                } else if self.project_scopes_expanded {
+                    theme::EXPANDED
+                } else {
+                    theme::COLLAPSED
+                };
+                Line::from(vec![
+                    guide(theme::LAST),
+                    Span::raw(" "),
+                    guide(marker),
+                    Span::raw(" projects"),
+                ])
+            }
+            Item::Range(range) => Line::from(vec![
+                guide(if range == Range::Month {
+                    theme::LAST
+                } else {
+                    theme::BRANCH
+                }),
+                Span::raw(format!(" {}", range.label())),
+            ]),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
                 let marker = if project.roles().next().is_none() {

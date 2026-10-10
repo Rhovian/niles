@@ -20,15 +20,21 @@ codex:
 
 # Claude gates effort levels on model capabilities. Haiku has no effort capability, so its empty
 # ladder means Niles does not pass an effort flag for it.
+# Each alias's window is that of the model Anthropic's API resolves it to:
+# https://code.claude.com/docs/en/model-config and
+# https://platform.claude.com/docs/en/build-with-claude/context-windows
 claude:
   fable:
     efforts: [low, medium, high, xhigh, max]
+    context_window: 1000000
   haiku:
     efforts: []
   opus:
     efforts: [low, medium, high, xhigh, max]
+    context_window: 1000000
   sonnet:
     efforts: [low, medium, high, xhigh, max]
+    context_window: 1000000
 
 # Hermes routes to provider models, but --reasoning has one vocabulary for all of them.
 hermes:

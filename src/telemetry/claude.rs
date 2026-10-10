@@ -1,4 +1,4 @@
-use super::{SessionState, Usage, parse_lines};
+use super::{Buckets, SessionState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -59,6 +59,12 @@ struct ClaudeCounters {
     cache_creation_input_tokens: u64,
     output_tokens_details: Option<ClaudeDetails>,
 }
+
+impl ClaudeCounters {
+    fn prompt(&self) -> u64 {
+        self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
+    }
+}
 #[derive(Deserialize)]
 struct ClaudeDetails {
     thinking_tokens: u64,
@@ -67,7 +73,8 @@ struct ClaudeDetails {
 pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
     let mut seen = HashSet::new();
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut reasoning, mut last_turn, mut state) = (None, None, None);
+    let (mut reasoning, mut last_turn, mut state, mut prompt) = (None, None, None, None);
+    let mut buckets = Buckets::default();
     let mut background_shells = HashSet::new();
     for (body, main_file) in
         std::iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
@@ -76,6 +83,8 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
             let (timestamp, message) = match line {
                 ClaudeLine::Assistant { timestamp, message } => {
                     if main_file {
+                        let usage = &message.usage;
+                        prompt = Some(usage.prompt());
                         state = Some(match message.stop_reason.as_deref() {
                             None | Some("tool_use") => SessionState::Working,
                             Some(_) => SessionState::Waiting,
@@ -132,11 +141,13 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
             if !seen.insert(message.id) {
                 continue;
             }
-            input += message.usage.input_tokens;
-            output += message.usage.output_tokens;
-            cache_read += message.usage.cache_read_input_tokens;
-            cache_write += message.usage.cache_creation_input_tokens;
-            if let Some(details) = message.usage.output_tokens_details {
+            let usage = message.usage;
+            input += usage.input_tokens;
+            output += usage.output_tokens;
+            cache_read += usage.cache_read_input_tokens;
+            cache_write += usage.cache_creation_input_tokens;
+            buckets.add(timestamp, usage.prompt() + usage.output_tokens);
+            if let Some(details) = usage.output_tokens_details {
                 *reasoning.get_or_insert(0) += details.thinking_tokens;
             }
             last_turn =
@@ -159,6 +170,9 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
         last_turn_at: last_turn,
         state,
         estimated_cost_usd: None,
+        buckets,
+        prompt_tokens: prompt,
+        context_window: None,
     })
 }
 

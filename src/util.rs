@@ -82,6 +82,34 @@ pub(crate) fn read_dir_utf8_paths(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
     Ok(paths)
 }
 
+/// The file's text, or `None` when there is no file.
+pub(crate) fn read_optional_string(path: &Utf8Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(body) => Ok(Some(body)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("failed to read {path}")),
+    }
+}
+
+/// The directories in `dir` whose names `parse` reads a timestamp from.
+pub(crate) fn dated_directories(
+    dir: &Utf8Path,
+    parse: fn(&str) -> Option<DateTime<Utc>>,
+) -> Result<Vec<(DateTime<Utc>, Utf8PathBuf)>> {
+    let mut directories = Vec::new();
+    for path in read_dir_utf8_paths(dir)? {
+        let name = path.file_name().context("metadata entry has no name")?;
+        if let Some(timestamp) = parse(name) {
+            let metadata =
+                fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {path}"))?;
+            if metadata.is_dir() {
+                directories.push((timestamp, path));
+            }
+        }
+    }
+    Ok(directories)
+}
+
 pub fn append_line(path: &Utf8Path, line: &str) -> Result<()> {
     let context = || format!("failed to append to {path}");
     let mut file = fs::OpenOptions::new()

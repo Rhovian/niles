@@ -1,4 +1,4 @@
-use super::{SessionState, Usage, parse_lines};
+use super::{Buckets, SessionState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -93,6 +93,8 @@ pub(super) struct CodexEvent {
 #[derive(Deserialize)]
 struct CodexInfo {
     total_token_usage: Option<CodexCounters>,
+    last_token_usage: Option<CodexCounters>,
+    model_context_window: Option<u64>,
 }
 #[derive(Deserialize)]
 struct CodexCounters {
@@ -101,6 +103,17 @@ struct CodexCounters {
     cached_input_tokens: u64,
     cache_write_input_tokens: Option<u64>,
     reasoning_output_tokens: u64,
+}
+
+impl CodexCounters {
+    /// Codex's input count already includes its cached part.
+    fn prompt(&self) -> u64 {
+        self.input_tokens + self.cache_write_input_tokens.into_iter().sum::<u64>()
+    }
+
+    fn total(&self) -> u64 {
+        self.prompt() + self.output_tokens
+    }
 }
 
 pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &Utf8Path) -> bool {
@@ -129,8 +142,8 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
 }
 
 pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
-    let mut last = None;
-    let mut state = None;
+    let (mut last, mut state, mut prompt, mut window, mut spent) = (None, None, None, None, 0);
+    let mut buckets = Buckets::default();
     for line in lines {
         let CodexLine::EventMsg { timestamp, payload } = line else {
             continue;
@@ -143,27 +156,36 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
         if payload.kind != "token_count" {
             continue;
         }
-        let Some(counts) = payload
-            .info
+        let Some(info) = payload.info.as_ref() else {
+            continue;
+        };
+        window = info.model_context_window.or(window);
+        prompt = info
+            .last_token_usage
             .as_ref()
-            .and_then(|info| info.total_token_usage.as_ref())
-        else {
+            .map(CodexCounters::prompt)
+            .or(prompt);
+        let Some(counts) = info.total_token_usage.as_ref() else {
             continue;
         };
         debug_assert!(counts.cached_input_tokens <= counts.input_tokens);
-        last = Some(Usage {
-            input_tokens: counts.input_tokens - counts.cached_input_tokens,
-            output_tokens: counts.output_tokens,
-            cache_read_tokens: counts.cached_input_tokens,
-            cache_write_tokens: counts.cache_write_input_tokens,
-            reasoning_tokens: Some(counts.reasoning_output_tokens),
-            last_turn_at: Some(*timestamp),
-            state: None,
-            estimated_cost_usd: None,
-        });
+        debug_assert!(spent <= counts.total(), "Codex totals only grow");
+        buckets.add(*timestamp, counts.total() - spent);
+        spent = counts.total();
+        last = Some((counts, *timestamp));
     }
-    last.map(|mut usage: Usage| {
-        usage.state = state;
-        usage
+    let (counts, timestamp) = last?;
+    Some(Usage {
+        input_tokens: counts.input_tokens - counts.cached_input_tokens,
+        output_tokens: counts.output_tokens,
+        cache_read_tokens: counts.cached_input_tokens,
+        cache_write_tokens: counts.cache_write_input_tokens,
+        reasoning_tokens: Some(counts.reasoning_output_tokens),
+        last_turn_at: Some(timestamp),
+        state,
+        estimated_cost_usd: None,
+        buckets,
+        prompt_tokens: prompt,
+        context_window: window,
     })
 }

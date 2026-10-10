@@ -34,6 +34,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::{
     tmux::{self, TmuxTarget},
+    wake::WakeKind,
     worker::{self, WorkerSnapshot, worker_snapshot},
     workspace_manifest,
 };
@@ -49,9 +50,9 @@ mod trust;
 
 use cadence::Cadence;
 pub(crate) use checkin::Checkin;
-use decide::{Commit, Nudge, Plan, WatchMemory};
+use decide::{Commit, Nudge, Plan, WatchMemory, parse_report_text};
 
-pub(crate) use cadence::describe_delay;
+pub(crate) use cadence::{DEFAULT_DELAY, Recheck, describe_delay, parse_delay, parse_recheck};
 
 /// How often the workspace is re-read. Report detection is a log-length comparison, so this only
 /// has to be prompt enough that a lead who is idle does not stay idle for long.
@@ -462,6 +463,28 @@ impl Sink for WatchSink {
     fn note(&mut self, line: &str) {
         self.log.note(line);
     }
+}
+
+/// The report nudges a session's `watch.log` records as delivered, with when each was.
+pub(crate) fn delivered_reports(
+    session_dir: &Utf8Path,
+) -> Result<Vec<(DateTime<Utc>, String, WakeKind)>> {
+    let path = session_dir.join(WATCH_LOG);
+    let Some(body) = crate::util::read_optional_string(&path)? else {
+        return Ok(Vec::new());
+    };
+    #[expect(clippy::disallowed_methods, reason = "other notes are not reports")]
+    let reports = body.lines().filter_map(|line| {
+        let (stamp, note) = line.split_once(' ')?;
+        let (_, text) = note.strip_prefix("nudged ")?.split_once(": ")?;
+        let (id, kind) = parse_report_text(text)?;
+        Some((
+            DateTime::parse_from_rfc3339(stamp).ok()?.to_utc(),
+            id.to_owned(),
+            kind,
+        ))
+    });
+    Ok(reports.collect())
 }
 
 /// The watcher's own record of what it did, appended one line at a time.
