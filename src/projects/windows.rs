@@ -61,34 +61,25 @@ pub(super) fn session_agents(
     let windows = windows
         .into_iter()
         .map(|window| {
-            let (role, model, state, tokens, age) =
-                if project.is_some() && window.name == LEAD_WINDOW {
-                    let model = lead
-                        .as_ref()
-                        .map(|lead| lead.model.clone().unwrap_or_else(|| lead.agent.clone()));
-                    let usage = lead.as_ref().map(worker::lead_usage).transpose()?.flatten();
-                    let alert_when_waiting = !workers.iter().any(|worker| {
-                        worker.usage.as_ref().and_then(|usage| usage.state)
-                            == Some(SessionState::Working)
-                    });
-                    let (state, tokens) = usage_fields(usage.as_ref(), alert_when_waiting);
-                    let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
-                    (Role::Lead, model, state, tokens, runtime)
-                } else if let Some(worker) = workers
-                    .iter()
-                    .find(|worker| worker.window == recorded(&window.name))
-                {
-                    let (state, tokens) = usage_fields(worker.usage.as_ref(), false);
-                    (
-                        Role::Worker(worker.id.clone(), worker.role),
-                        Some(worker.model.clone()),
-                        state,
-                        tokens,
-                        Some(age(now, worker.created_at)),
-                    )
-                } else {
-                    (Role::Plain, None, None, None, None)
-                };
+            let (role, state, tokens, age) = if project.is_some() && window.name == LEAD_WINDOW {
+                let usage = lead.as_ref().map(worker::lead_usage).transpose()?.flatten();
+                let (state, tokens) = usage_fields(usage.as_ref());
+                let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
+                (Role::Lead, state, tokens, runtime)
+            } else if let Some(worker) = workers
+                .iter()
+                .find(|worker| worker.window == recorded(&window.name))
+            {
+                let (state, tokens) = usage_fields(worker.usage.as_ref());
+                (
+                    Role::Worker(worker.id.clone(), worker.role),
+                    state,
+                    tokens,
+                    Some(age(now, worker.created_at)),
+                )
+            } else {
+                (Role::Plain, None, None, None)
+            };
             let label = match &role {
                 Role::Lead => "lead".to_owned(),
                 Role::Worker(id, _) => id.clone(),
@@ -100,7 +91,6 @@ pub(super) fn session_agents(
                 role,
                 segment: Segment {
                     label,
-                    model,
                     state,
                     tokens,
                     age,
@@ -112,18 +102,14 @@ pub(super) fn session_agents(
     Ok(Some(SessionAgents { windows, lost }))
 }
 
-fn usage_fields(
-    usage: Option<&Usage>,
-    alert_when_waiting: bool,
-) -> (Option<theme::State>, Option<u64>) {
+fn usage_fields(usage: Option<&Usage>) -> (Option<theme::State>, Option<u64>) {
     match usage {
         Some(usage) => (
             usage.state.map(|state| match state {
                 SessionState::Working => theme::State::Running,
-                SessionState::Waiting if alert_when_waiting => theme::State::Waiting,
                 SessionState::Waiting => theme::State::Idle,
             }),
-            Some(usage.total_tokens()),
+            usage.state.map(|_| usage.total_tokens()),
         ),
         None => (None, None),
     }

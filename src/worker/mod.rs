@@ -34,7 +34,6 @@ pub(crate) struct StatusWorker {
     pub id: String,
     pub role: WorkerRole,
     pub window: String,
-    pub model: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub usage: Option<crate::telemetry::Usage>,
 }
@@ -54,7 +53,6 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
                 id: worker.id.clone(),
                 role: meta.role,
                 window: meta.window.clone(),
-                model: meta.model.clone().unwrap_or_else(|| meta.agent.clone()),
                 created_at: meta.created_at,
                 usage,
             })
