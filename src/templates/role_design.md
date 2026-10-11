@@ -9,7 +9,7 @@ You run after the lead asks the operator whether they want a design and the oper
 The record is the spec downstream. It carries:
 - invariants;
 - the design, and at least one materially simpler alternative with the reason it was or wasn't taken;
-- each decision, tagged `operator`, `designer` or `lead`; a `lead` tag is only possible as a logistics call;
+- each decision, tagged `operator`, `designer` or `lead`; a `lead` tag is only possible as a logistics call; mark each deliberate departure from a repo rule and its why;
 - every check-then-act: a read of shared state — a database row, a file, a cache, another process, an external API — that a later write depends on. For each, what makes it safe against a concurrent writer — an atomic operation (conditional update, exclusive create, rename, unique constraint), a lock and its scope, or a single owner — or `race accepted: <outcome>, because <why it is fine>`. A race cannot accept an unhandled error or 500, a deadlock, a lost or doubled write, or a violation of an invariant stated in code or tests; it names the cheapest fix and its cost. Each guarantee needs a test that fails when this call site's guarantee is removed;
 - every row, file or key the change deletes or stops keeping: who reads it and what they conclude when it's missing, plus every `CASCADE` / `SET NULL` that fires, checked against the invariants;
 - for scheduled jobs, imports, state machines or anything time-based, a real user's timeline with realistic dates and integration behaviour;

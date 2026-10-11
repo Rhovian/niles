@@ -155,16 +155,48 @@ mod tests {
             for phrase in [
                 "the issue as written",
                 "copy of the tree under the system temp directory",
-                "reported as a required test",
+                "choose mutations from the behaviour the change claims",
+                "only when it changes behaviour the issue or record asks for",
+                "only when it kills a mutation the existing suite lets survive",
+                "name the existing test covering the guarantee",
+                "order a wrong implementation would get right by accident",
+                "database or library primitives tests the dependency",
+                "Findings name the gap and mutation, never step-by-step test scripts",
+                "without sleeps, wall-clock dependence or probe apps where a direct call suffices",
+                "Behaviour every entry point shares gets a case in the repo's existing convention test",
+                "not a prescribed fix",
             ] {
                 assert!(fragment.contains(phrase), "{}: {phrase}", role.as_str());
             }
+            for obsolete in [
+                "probe that demonstrates a guarantee is reported as a required test",
+                "Each surviving mutation is a test finding",
+                "Each surviving mutation is a finding",
+            ] {
+                assert!(!fragment.contains(obsolete), "{obsolete}");
+            }
         }
-        assert!(
-            WorkerRole::Reviewer
-                .fragment()
-                .contains("test the requirement itself")
-        );
+        let reviewer = WorkerRole::Reviewer.fragment();
+        for phrase in [
+            "test the requirement itself",
+            "comparison, bound, lock acquisition, constraint and counter in the diff",
+            "skip scaffolding that exists only to implement a reviewer-prescribed fix",
+            "expected literals copied from editable content or config",
+            "a full pass on that commit, including economy and tests, before push",
+            "an unexplained material overrun is an economy finding",
+            "cites in the code the pinned dependency's source or docs",
+        ] {
+            assert!(reviewer.contains(phrase), "{phrase}");
+        }
+        let security = WorkerRole::Security.fragment();
+        for phrase in [
+            "For every new or changed authorisation or tenancy predicate",
+            "guarantees count as asked-for behaviour even when the issue or record is silent",
+            "a surviving mutation or a working attack",
+            "never one that passes both before and after",
+        ] {
+            assert!(security.contains(phrase), "{phrase}");
+        }
     }
 
     #[test]
@@ -172,12 +204,26 @@ mod tests {
         let fragment = WorkerRole::Worker.fragment();
         assert!(fragment.contains("the record wins"));
         assert!(!fragment.contains("size estimate"));
+        for phrase in [
+            "cite in the code the pinned dependency's source or docs",
+            "Overlapping reviewer and security findings get one test per gap",
+            "why at the site as a comment where the repo allows one, and in the PR body",
+            "Your `done:` states production and test lines added",
+            "without a record, report the counts and say there is no target",
+        ] {
+            assert!(fragment.contains(phrase), "{phrase}");
+        }
     }
 
     #[test]
     fn designers_record_the_design_and_its_constraints() {
         let fragment = WorkerRole::Design.fragment();
-        for phrase in ["Done-when map", "race accepted", "never edit the tree"] {
+        for phrase in [
+            "Done-when map",
+            "race accepted",
+            "never edit the tree",
+            "mark each deliberate departure from a repo rule and its why",
+        ] {
             assert!(
                 fragment.contains(phrase),
                 "missing design instruction: {phrase}"
@@ -189,6 +235,12 @@ mod tests {
     fn design_routing_is_optional_and_critique_is_bounded() {
         let lead = include_str!("../templates/lead_brief.md");
         for phrase in [
+            "without a `code`, `design` or `policy` tag goes back to its author to tag or drop",
+            "author's own caveats, quoted",
+            "all reviewer and security `code` findings word for word to the worker in one message",
+            "For work that had a reviewer",
+            "a full pass on that commit, including economy and tests, before push",
+            "An operator ruling settles whether it is wanted, not how it is built",
             "poke holes in it unprompted",
             "recommend do, narrow or close, then wait for the operator's call",
             "ask the operator: \"Do you want a design?\" Wait for the answer",
