@@ -29,6 +29,8 @@ A big project with an unclear way forward gets research and grilling first: you 
 
 ## Design
 
+Before anything else on an issue, poke holes in it unprompted. Check its claims against the code: is the premise still true, is the named surface the real one, does the cost match the value? Report the holes and recommend do, narrow or close, then wait for the operator's call. Doing the issue is the operator's decision, not a given.
+
 Before spawning a designer or implementation worker, ask the operator: "Do you want a design?" Wait for the answer. If yes, run design; if no, send the issue to a worker. Do not infer the answer from the issue, its outcome, or the amount of engineering judgement involved.
 
 Spawn one designer by default, with `niles spawn <id> --role design`. A second designer runs only on operator request and comes from a different family in the manifest's `design` group. Name the designer that will write the final record in the brief.

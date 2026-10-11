@@ -189,6 +189,8 @@ mod tests {
     fn design_routing_is_optional_and_critique_is_bounded() {
         let lead = include_str!("../templates/lead_brief.md");
         for phrase in [
+            "poke holes in it unprompted",
+            "recommend do, narrow or close, then wait for the operator's call",
             "ask the operator: \"Do you want a design?\" Wait for the answer",
             "If yes, run design; if no, send the issue to a worker",
             "Do not infer the answer from the issue",
