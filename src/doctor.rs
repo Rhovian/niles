@@ -42,7 +42,8 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
         .chain(manifest.worker.agents())
         .chain(manifest.reviewer.agents())
         .chain(manifest.design.agents())
-        .chain(manifest.security.agents());
+        .chain(manifest.security.agents())
+        .chain(manifest.research.agents());
     let mut binaries = BTreeMap::new();
     for agent in bindings {
         let agent_config = agents::config_for(&config.agents, agent, &config.models)?;

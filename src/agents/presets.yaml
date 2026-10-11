@@ -1,6 +1,0 @@
-- name: codex + claude review
-  lead: claude:opus:medium
-  worker: codex:gpt-6.1-sol:high
-  reviewer: claude:opus:high
-  security: claude:sonnet:high
-  design: [claude:opus:high, codex:gpt-6.1-sol:high]

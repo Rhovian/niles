@@ -2,7 +2,7 @@ use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyCode};
 
 use super::*;
 use crate::{
-    agents::{self, ModelRoster},
+    agents::ModelRoster,
     config::spec::ProjectConfig,
     test_support::project_config,
     workspace_manifest::{AgentGroup, RoleBinding},
@@ -114,49 +114,6 @@ fn menu_is_effective_roster_only_and_defaults_to_profile_model() {
     );
 }
 
-#[test]
-fn every_builtin_preset_is_valid_and_launchable() {
-    let config = config();
-    let presets = presets::load(&config).unwrap();
-    assert_eq!(presets.len(), 1);
-    for preset in presets {
-        let values = preset.values.unwrap();
-        let agents = values
-            .iter()
-            .map(|(_, value)| value.as_str())
-            .chain(preset.design.agents());
-        for value in agents {
-            agents::invocation(
-                value,
-                None,
-                agents::InvocationDefaults::Worker,
-                &config.models,
-            )
-            .unwrap();
-        }
-    }
-}
-
-#[test]
-fn invalid_presets_are_visible_with_reasons_and_cannot_be_applied() {
-    let config = project_config("models: {claude: {opus: {efforts: [low]}}}").unwrap();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    assert!(
-        form.presets[0]
-            .values
-            .as_ref()
-            .unwrap_err()
-            .contains("unsupported claude effort")
-    );
-    form.key(KeyCode::Char('p'), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert!(matches!(form.screen, Screen::Presets { .. }));
-    assert_eq!(form.draft, form.original);
-    let text = render(&form);
-    assert!(text.contains("codex + claude review"));
-    assert!(text.contains("unsupported claude effort"));
-}
-
 fn grouped() -> WorkspaceManifest {
     WorkspaceManifest {
         worker: RoleBinding(vec![
@@ -227,20 +184,15 @@ fn design_is_shown_but_cannot_be_replaced_with_a_single_agent() {
 }
 
 #[test]
-fn preset_can_be_edited_then_reviewed_and_saved() {
+fn edited_role_is_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(grouped(), &config).unwrap();
-    form.key(KeyCode::Char('p'), &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert_eq!(form.draft.lead, "claude:opus:medium");
-    assert!(form.draft.worker.scalar().is_some());
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
+    form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    assert_eq!(form.draft.lead, "claude:opus:high");
+    assert_eq!(form.draft.lead, "claude:opus:max");
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(
         form.key(KeyCode::Enter, &config).unwrap(),

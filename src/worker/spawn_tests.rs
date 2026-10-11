@@ -25,6 +25,7 @@ fn manifest() -> WorkspaceManifest {
         worker: "codex:gpt-5.5:xhigh".to_owned().into(),
         reviewer: "claude:opus:high".to_owned().into(),
         security: "auditbot".to_owned().into(),
+        research: "researchbot".to_owned().into(),
         ..WorkspaceManifest::default()
     }
 }
@@ -39,6 +40,7 @@ fn omitted_agent_uses_each_roles_manifest_binding() {
         ("reviewer", "claude:opus:high"),
         ("security", "auditbot"),
         ("design", "claude"),
+        ("research", "researchbot"),
     ] {
         let agent =
             resolve_from_cli(&root, &["niles", "spawn", "job", "--role", role, "task"]).unwrap();

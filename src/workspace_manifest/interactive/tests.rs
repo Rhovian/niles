@@ -16,6 +16,7 @@ reviewer: claude
 security: claude
 design:
   - models: [claude, codex]
+research: codex
 checkin: 15m
 recheck: backoff
 ";
@@ -111,30 +112,6 @@ fn no_terminal_missing_or_malformed_manifest_errors() {
     .unwrap_err();
     assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
     fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn every_preset_saves_and_loads_roles() {
-    let config = crate::test_support::project_config("").unwrap();
-    for (index, preset) in crate::agents::picker::load_presets(&config)
-        .unwrap()
-        .into_iter()
-        .enumerate()
-    {
-        let root = temp_test_path(&format!("picker-preset-{index}"));
-        let draft = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
-            for (role, value) in preset.values.unwrap() {
-                role.set(&mut draft, value);
-            }
-            draft.design = preset.design;
-            Ok(Choice::Save(draft))
-        })
-        .unwrap()
-        .unwrap();
-        let loaded = load(&root).unwrap().unwrap();
-        assert_eq!(draft, loaded);
-        fs::remove_dir_all(root).unwrap();
-    }
 }
 
 #[test]

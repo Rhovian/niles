@@ -152,14 +152,7 @@ fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) 
     for (role, row) in Role::ALL.into_iter().zip(manifest_roles(manifest, config)) {
         items.push(Item::Section(format!("roles.{}", row.role)));
         let mut invalid = row.invalid_reason.map(Note::Invalid);
-        let groups = match role {
-            Role::Lead => None,
-            Role::Worker => groups(&manifest.worker),
-            Role::Reviewer => groups(&manifest.reviewer),
-            Role::Security => groups(&manifest.security),
-            Role::Design => groups(&manifest.design),
-        };
-        let Some(groups) = groups else {
+        let Some(groups) = role.binding(manifest).and_then(groups) else {
             let edit = role.scalar().map(|role| Edit::Role {
                 root: root.to_owned(),
                 role,

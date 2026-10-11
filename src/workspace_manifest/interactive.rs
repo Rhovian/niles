@@ -81,6 +81,7 @@ fn save_changes(
                 Role::Reviewer => latest.reviewer = draft.reviewer.clone(),
                 Role::Security => latest.security = draft.security.clone(),
                 Role::Design => latest.design = draft.design.clone(),
+                Role::Research => latest.research = draft.research.clone(),
             }
             changed = true;
         }

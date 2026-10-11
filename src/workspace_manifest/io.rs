@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn groups_load_and_scalar_saves_as_scalar() {
-        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n";
+        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n";
         let manifest = load_body("manifest-groups", body).unwrap().unwrap();
         assert_eq!(
             manifest.worker.agents().collect::<Vec<_>>(),
@@ -63,7 +63,7 @@ mod tests {
             ),
         ] {
             let body = format!(
-                "lead: claude\nworker:\n{worker}\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n"
+                "lead: claude\nworker:\n{worker}\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n"
             );
             assert!(load_body(name, &body).is_err());
         }
@@ -84,6 +84,7 @@ reviewer: claude
 security: claude
 design:
   - models: [claude, codex]
+research: codex
 checkin: 15m
 recheck: backoff
 "#,
@@ -100,6 +101,7 @@ reviewer: claude
 security: claude
 design:
   - models: [claude, codex]
+research: codex
 "#,
         )
         .unwrap();
@@ -143,7 +145,7 @@ flow:
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, checkin, recheck"
+                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, research, checkin, recheck"
             ),
             "{err}"
         );
@@ -205,6 +207,10 @@ flow:
                 "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
                 "missing field `design`",
             ),
+            (
+                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: claude\n",
+                "missing field `research`",
+            ),
             ("worker_planning: []\n", "unknown field `worker_planning`"),
         ] {
             let err = format!("{:#}", load_body("obsolete-bindings", body).unwrap_err());
@@ -223,7 +229,7 @@ flow:
             "[{models: [claude, CLAUDE]}]",
         ] {
             let body = format!(
-                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: {design}\n"
+                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: {design}\nresearch: codex\n"
             );
             let manifest = load_body("design-families", &body).unwrap().unwrap();
             assert_eq!(

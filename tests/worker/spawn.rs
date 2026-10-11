@@ -6,8 +6,8 @@ fn manifest_groups_bound_spawn_before_worker_state() {
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     let path = env.root.join(".niles/manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replace(
-        "worker: codex",
-        "worker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:haiku]\n    efforts: [medium, high]",
+        "research: claude",
+        "research:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:haiku]\n    efforts: [medium, high]",
     );
     fs::write(&path, body).unwrap();
     let default = env.run(&["spawn", "--role", "research", "default", "Task"]);

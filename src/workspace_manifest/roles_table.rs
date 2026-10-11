@@ -42,13 +42,14 @@ pub(crate) fn print_manifest_roles<W: Write>(
     Ok(())
 }
 
-pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 5] {
+pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 6] {
     [
         role_row("lead", &manifest.lead, config),
         binding_row("worker", &manifest.worker, config),
         binding_row("reviewer", &manifest.reviewer, config),
         binding_row("security", &manifest.security, config),
         binding_row("design", &manifest.design, config),
+        binding_row("research", &manifest.research, config),
     ]
 }
 
@@ -152,11 +153,12 @@ mod tests {
         assert_eq!(
             render(&manifest("claude:opus:max")),
             "\
-lead      codex   gpt-5.5  xhigh
-worker    codex   -        -
-reviewer  claude  opus     max
-security  claude  opus     max
-design    claude  -        -
+lead      codex   gpt-5.5     xhigh
+worker    codex   -           -
+reviewer  claude  opus        max
+security  claude  opus        max
+design    claude  -           -
+research  codex   gpt-6-luna  medium
 "
         );
     }
@@ -195,7 +197,7 @@ design    claude  -        -
             .lines()
             .filter(|line| !line.starts_with(' '))
             .count();
-        assert_eq!(role_rows, 5, "{rendered}");
+        assert_eq!(role_rows, 6, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 

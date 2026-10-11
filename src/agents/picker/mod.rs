@@ -10,13 +10,9 @@ use crate::{config::spec::ProjectConfig, theme::Theme, workspace_manifest::Works
 mod columns;
 mod draw;
 mod form;
-mod presets;
 mod role;
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-pub(crate) use presets::load as load_presets;
 
 use columns::{Columns, Pick};
 use form::Form;

@@ -108,6 +108,7 @@ reviewer: claude
 security: claude
 design:
   - models: [claude, codex]
+research: codex:gpt-6-luna:medium
 ```
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:

@@ -20,6 +20,7 @@ pub struct WorkspaceManifest {
     pub reviewer: RoleBinding,
     pub security: RoleBinding,
     pub design: RoleBinding,
+    pub research: RoleBinding,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
     /// default.
@@ -227,6 +228,7 @@ impl Default for WorkspaceManifest {
                 models: vec!["claude".into(), "codex".into()],
                 efforts: None,
             }]),
+            research: "codex:gpt-6-luna:medium".to_owned().into(),
             checkin: None,
             recheck: None,
         }

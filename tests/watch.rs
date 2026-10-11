@@ -114,7 +114,7 @@ impl Fixture {
     fn write_manifest(&self, keys: &str) {
         fs::write(
             self.env.root.join(".niles/manifest.yaml"),
-            format!("lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\n{keys}"),
+            format!("lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: claude\n{keys}"),
         )
         .unwrap();
     }

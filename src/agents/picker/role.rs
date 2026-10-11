@@ -7,15 +7,17 @@ pub(crate) enum Role {
     Reviewer,
     Security,
     Design,
+    Research,
 }
 
 impl Role {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Lead,
         Self::Worker,
         Self::Reviewer,
         Self::Security,
         Self::Design,
+        Self::Research,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -25,16 +27,18 @@ impl Role {
             Self::Reviewer => "reviewer",
             Self::Security => "security",
             Self::Design => "design",
+            Self::Research => "research",
         }
     }
 
-    fn binding(self, manifest: &WorkspaceManifest) -> Option<&RoleBinding> {
+    pub(crate) fn binding(self, manifest: &WorkspaceManifest) -> Option<&RoleBinding> {
         match self {
             Self::Lead => None,
             Self::Worker => Some(&manifest.worker),
             Self::Reviewer => Some(&manifest.reviewer),
             Self::Security => Some(&manifest.security),
             Self::Design => Some(&manifest.design),
+            Self::Research => Some(&manifest.research),
         }
     }
 
@@ -51,6 +55,7 @@ impl Role {
             Self::Reviewer => binding_value(&manifest.reviewer),
             Self::Security => binding_value(&manifest.security),
             Self::Design => binding_value(&manifest.design),
+            Self::Research => binding_value(&manifest.research),
         }
     }
 
@@ -61,6 +66,7 @@ impl Role {
             Self::Reviewer => Some(ScalarRole::Reviewer),
             Self::Security => Some(ScalarRole::Security),
             Self::Design => None,
+            Self::Research => Some(ScalarRole::Research),
         }
     }
 
@@ -71,6 +77,7 @@ impl Role {
             Self::Reviewer => before.reviewer != after.reviewer,
             Self::Security => before.security != after.security,
             Self::Design => before.design != after.design,
+            Self::Research => before.research != after.research,
         }
     }
 }
@@ -88,6 +95,7 @@ pub(crate) enum ScalarRole {
     Worker,
     Reviewer,
     Security,
+    Research,
 }
 
 impl ScalarRole {
@@ -97,6 +105,7 @@ impl ScalarRole {
             Self::Worker => manifest.worker = value.into(),
             Self::Reviewer => manifest.reviewer = value.into(),
             Self::Security => manifest.security = value.into(),
+            Self::Research => manifest.research = value.into(),
         }
     }
 }
@@ -108,6 +117,7 @@ impl From<ScalarRole> for Role {
             ScalarRole::Worker => Self::Worker,
             ScalarRole::Reviewer => Self::Reviewer,
             ScalarRole::Security => Self::Security,
+            ScalarRole::Research => Self::Research,
         }
     }
 }
