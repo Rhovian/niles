@@ -16,4 +16,4 @@ The record is the spec downstream. It carries:
 - a Done-when map: each acceptance item, quoted from the issue as written, mapped to a test, a change, or evidence;
 - a size target in production and test lines, from your own best design. When a review finds the diff over it, re-budget from the measured diff: the new target is its size minus the excess named line by line, not a new estimate;
 - security: yes or no, with the reason. Yes when the change adds or changes any of: a path for untrusted input (a request, an uploaded file, a payload or output from outside the trust boundary); something an outside party can grow (rows, files, queue entries); authentication, sessions, permissions or tenancy checks; secrets, crypto, or outbound calls built from untrusted data. No on such a change takes a one-line reason;
-- policy and product questions, listed for the operator and never decided.
+- policy and product questions, listed for the operator and never decided. Each is one short bullet: the choice, the options, your recommendation. The reasoning stays in the record body.
