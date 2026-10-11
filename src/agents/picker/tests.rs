@@ -184,6 +184,25 @@ fn design_is_shown_but_cannot_be_replaced_with_a_single_agent() {
 }
 
 #[test]
+fn research_is_edited_in_its_own_binding() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    for _ in 0..5 {
+        form.key(KeyCode::Down, &config).unwrap();
+    }
+    form.key(KeyCode::Enter, &config).unwrap();
+    assert!(render(&form).contains("ROLES / research"));
+    for _ in 0..3 {
+        form.key(KeyCode::Enter, &config).unwrap();
+    }
+    assert_eq!(
+        form.draft.research,
+        "codex:gpt-6-luna:medium".to_owned().into()
+    );
+    assert_eq!(form.draft.worker, form.original.worker);
+}
+
+#[test]
 fn edited_role_is_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(grouped(), &config).unwrap();

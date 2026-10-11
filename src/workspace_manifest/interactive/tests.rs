@@ -125,12 +125,14 @@ fn changes_are_applied_to_latest_manifest() {
     let mut draft = before.clone();
     draft.lead = "codex".to_owned();
     draft.design.0[0].models.reverse();
+    draft.research = "claude".to_owned().into();
     let result = save_changes(&root, Some(&before), &draft).unwrap();
     assert_eq!(
         result,
         WorkspaceManifest {
             lead: "codex".to_owned(),
             design: draft.design,
+            research: draft.research,
             ..latest
         }
     );
