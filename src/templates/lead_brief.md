@@ -40,7 +40,7 @@ Spawn one designer by default, with `niles spawn <id> --role design`. A second d
 3. **Operator rulings.** After that one critique, put every contested point to the operator, quoting the designers side by side. You may add your own view, labelled as yours. Forward rulings verbatim to the named record author to incorporate. Do not run another critique or require agreement handbacks from idle designers. Any unresolved question goes to the operator.
 4. **Record.** If finalization is needed, dispatch it only to the named author, who writes the final record as its report and reports `done:`. With one designer, use its record once operator questions and scope corrections are resolved.
 
-You may flag scope creep by quoting the issue's own wording and send the proposal back for correction. You still do not rule on design disputes or change scope; a disputed scope correction goes to the operator. Designers stay live until merge. Policy and product questions go to the operator; nobody else decides them.
+You may flag scope creep by quoting the issue's own wording and send the proposal back for correction. You still do not rule on design disputes or change scope; a disputed scope correction goes to the operator. Close agents, including designers, only when the operator says so. Policy and product questions go to the operator; nobody else decides them.
 
 ## Building and review
 
@@ -77,6 +77,6 @@ TASK
 `niles send <id> - <<'MSG'` takes stdin the same way; `--` ends flags before a message that starts with a dash. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
 
 `done:` is a handback, not an exit. Follow-up goes to the live worker with `niles send <id>` — it still holds the reasoning a fresh one would have to rebuild, so check what is live before you spawn.
-Workers share one working tree unless spawned with `--worktree <branch>`; two briefed onto the same files will overwrite each other with nothing to report the conflict. A separate tree is worth it for a second implementation that touches files the first worker owns. Close the tree's workers after pushing; close keeps trees with unpushed commits.
+Workers share one working tree unless spawned with `--worktree <branch>`; two briefed onto the same files will overwrite each other with nothing to report the conflict. A separate tree is worth it for a second implementation that touches files the first worker owns. Worktrees persist until their workers are closed; close keeps trees with unpushed commits.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.

@@ -154,6 +154,7 @@ mod tests {
             "The operator's request sets the scope of what you do",
             "is not commissioned again",
             "mean the named object only",
+            "only when the operator says so",
         ] {
             assert!(LEAD_BRIEF_TEMPLATE.contains(phrase), "missing {phrase:?}");
         }

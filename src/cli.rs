@@ -142,8 +142,9 @@ pub enum CommandName {
     /// Close spawned worker windows and archive their metadata
     ///
     /// `done:` is a handback, not a finish: a worker that reported it is waiting for a follow-up,
-    /// not asking to exit. Keep workers warm through the send/wait loop and close at integration
-    /// time. Closing archives the worker's directory, so `niles report <id>` still works after.
+    /// not asking to exit. Keep workers warm through the send/wait loop and close only when the
+    /// operator says so. Closing archives the worker's directory, so `niles report <id>` still
+    /// works after.
     #[command(verbatim_doc_comment)]
     Close {
         /// Worker id to close.
