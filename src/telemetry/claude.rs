@@ -104,6 +104,9 @@ pub(super) fn claude_usage(main: &str, subagents: &[String]) -> Option<Usage> {
                         {
                             background_shells.insert(id.to_owned());
                         }
+                        if let Some(id) = tool_use_result.as_ref().and_then(stopped_task) {
+                            background_shells.remove(id);
+                        }
                         state = Some(
                             if message.content.as_array().is_some_and(|blocks| {
                                 blocks.iter().any(|block| {
@@ -184,4 +187,89 @@ fn ended_task(notification: &str) -> Option<&str> {
     }
     let (_, rest) = notification.split_once("<task-id>")?;
     Some(rest.split_once("</task-id>")?.0)
+}
+
+fn stopped_task(result: &serde_json::Value) -> Option<&str> {
+    let message = result.get("message")?.as_str()?;
+    if !message.starts_with("Successfully stopped task: ") {
+        return None;
+    }
+    result.get("task_id")?.as_str()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const END_TURN: &str = r#"{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+
+    fn user_result(result: serde_json::Value) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": []},
+            "toolUseResult": result,
+        })
+        .to_string()
+    }
+
+    fn shell_and_stop() -> (String, String) {
+        let shell = user_result(serde_json::json!({"backgroundTaskId": "b1"}));
+        let stopped = user_result(serde_json::json!({
+            "message": "Successfully stopped task: b1 (sleep 60)",
+            "task_id": "b1",
+            "task_type": "local_bash",
+            "command": "sleep 60",
+        }));
+        (shell, stopped)
+    }
+
+    #[test]
+    fn task_stop_releases_background_shell_without_notification() {
+        let (shell, stopped) = shell_and_stop();
+        let transcript = format!("{shell}\n{stopped}\n{END_TURN}\n");
+        assert_eq!(
+            claude_usage(&transcript, &[]).unwrap().state,
+            Some(SessionState::Waiting)
+        );
+    }
+
+    #[test]
+    fn task_stop_preserves_other_running_shells_and_active_turns() {
+        let (shell, stopped) = shell_and_stop();
+        for result in [
+            serde_json::json!({"task_id": "b1", "message": "Task is still running"}),
+            serde_json::json!({"task_id": "b2", "message": "Successfully stopped task: b2"}),
+            serde_json::json!({"message": "Successfully stopped task: b1"}),
+        ] {
+            let result = user_result(result);
+            assert_eq!(
+                claude_usage(&format!("{shell}\n{result}\n{END_TURN}\n"), &[])
+                    .unwrap()
+                    .state,
+                Some(SessionState::Working)
+            );
+        }
+        let other_shell = user_result(serde_json::json!({"backgroundTaskId": "b2"}));
+        assert_eq!(
+            claude_usage(
+                &format!("{shell}\n{other_shell}\n{stopped}\n{END_TURN}\n"),
+                &[]
+            )
+            .unwrap()
+            .state,
+            Some(SessionState::Working)
+        );
+        assert_eq!(
+            claude_usage(&format!("{END_TURN}\n{shell}\n{stopped}\n"), &[])
+                .unwrap()
+                .state,
+            Some(SessionState::Working)
+        );
+        assert_eq!(
+            claude_usage(&format!("{shell}\n{END_TURN}\n"), &[format!("{stopped}\n")])
+                .unwrap()
+                .state,
+            Some(SessionState::Working)
+        );
+    }
 }

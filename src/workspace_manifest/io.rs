@@ -216,7 +216,7 @@ flow:
     }
 
     #[test]
-    fn design_requires_two_distinct_families() {
+    fn design_accepts_a_single_family() {
         for design in [
             "claude:opus:high",
             "[{models: [claude:opus, claude:sonnet]}]",
@@ -225,13 +225,10 @@ flow:
             let body = format!(
                 "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: {design}\n"
             );
-            let err = format!("{:#}", load_body("design-families", &body).unwrap_err());
-            assert!(
-                err.contains("manifest.yaml")
-                    && err.contains(
-                        "design must list models from at least two agent families; found: claude"
-                    ),
-                "{err}"
+            let manifest = load_body("design-families", &body).unwrap().unwrap();
+            assert_eq!(
+                manifest.design.agents().count(),
+                if design.starts_with('[') { 2 } else { 1 }
             );
         }
     }

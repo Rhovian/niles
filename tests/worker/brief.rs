@@ -82,7 +82,7 @@ fn role_selects_which_fragment_the_brief_carries() {
     let env = TestEnv::new("niles-worker-roles");
 
     let mut briefs = Vec::new();
-    for role in ["design", "reviewer", "security", "research"] {
+    for role in ["design", "reviewer", "security", "research", "worker"] {
         let spawn = env
             .niles(
                 &env.root,
@@ -99,6 +99,12 @@ fn role_selects_which_fragment_the_brief_carries() {
         assert!(brief.contains(&format!("You are the {role}")), "{brief}");
         assert!(brief.contains("## Reporting"), "{brief}");
         assert!(brief.contains("done: <short result>; report:"), "{brief}");
+        if role == "worker" {
+            let (header, _) = brief.split_once("\n\n## Task").unwrap();
+            assert!(!header.contains("design_record:"));
+            assert!(brief.contains("Without a design record, implement the issue directly"));
+            assert!(!env.root.join(".niles/sessions").exists());
+        }
         briefs.push(brief);
     }
 

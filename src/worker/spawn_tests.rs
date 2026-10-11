@@ -172,9 +172,7 @@ fn assignment(role: WorkerRole, design: Option<&str>, mechanical: Option<&str>) 
 fn assignment_flags_refuse_invalid_combinations_and_reasons() {
     use WorkerRole::{Design, Research, Reviewer, Security, Worker};
     let root = temp_test_path("assignment-flags");
-    let flags = "--design or --mechanical";
     for (role, design, mechanical, message) in [
-        (Worker, None, None, flags),
         (Reviewer, None, Some("rename"), "--mechanical"),
         (Security, None, Some("rename"), "--mechanical"),
         (Design, Some("d"), None, "--design and --mechanical"),
@@ -193,7 +191,7 @@ fn assignment_flags_refuse_invalid_combinations_and_reasons() {
             .unwrap_err();
         assert!(err.to_string().contains("--mechanical reason"), "{err}");
     }
-    for role in [Reviewer, Security, Design, Research] {
+    for role in [Worker, Reviewer, Security, Design, Research] {
         assignment(role, None, None)
             .resolve(&root, |_| Ok(None))
             .unwrap();

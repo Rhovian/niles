@@ -185,6 +185,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn design_routing_is_optional_and_critique_is_bounded() {
+        let lead = include_str!("../templates/lead_brief.md");
+        for phrase in [
+            "ask the operator: \"Do you want a design?\" Wait for the answer",
+            "If yes, run design; if no, send the issue to a worker",
+            "Do not infer the answer from the issue",
+            "Spawn one designer by default",
+            "A second designer runs only on operator request",
+            "send both designers the same message naming both report paths",
+            "put every contested point to the operator",
+            "Do not run another critique or require agreement handbacks from idle designers",
+            "You may flag scope creep by quoting the issue's own wording",
+            "You still do not rule on design disputes",
+        ] {
+            assert!(lead.contains(phrase), "missing lead instruction: {phrase}");
+        }
+        let designer = WorkerRole::Design.fragment();
+        assert!(designer.contains("exactly one critique"));
+        assert!(designer.contains("No further critique rounds or agreement handbacks"));
+        assert!(!lead.contains("issue leaves the destination open"));
+        assert!(!lead.contains("critique and rulings repeat"));
+        assert!(!designer.contains("through the same loop"));
+    }
+
     /// The shared contract is the only channel that tells a worker how to spell a status line, so
     /// it must name every non-`Closed` wake state exactly as `wake.rs` parses it. `Closed` is
     /// niles-owned and withheld from workers, so it is deliberately absent here.

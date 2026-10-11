@@ -1,9 +1,7 @@
-use std::collections::BTreeSet;
-
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::agents::{AgentSpec, ModelRoster, profile_for, roster};
+use crate::agents::{AgentSpec, ModelRoster, roster};
 
 /// Which agent plays each role, plus check-in settings.
 ///
@@ -21,7 +19,6 @@ pub struct WorkspaceManifest {
     #[serde(deserialize_with = "reviewer_binding")]
     pub reviewer: RoleBinding,
     pub security: RoleBinding,
-    #[serde(deserialize_with = "design_binding")]
     pub design: RoleBinding,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
@@ -204,26 +201,6 @@ impl RoleBinding {
             .collect::<Vec<_>>()
             .join("; ")
     }
-}
-
-fn design_binding<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<RoleBinding, D::Error> {
-    let binding = RoleBinding::deserialize(deserializer)?;
-    let families: BTreeSet<_> = binding
-        .agents()
-        .map(|agent| {
-            let family = agent.split_once(':').map_or(agent, |(family, _)| family);
-            profile_for(family).map_or(family, |profile| profile.id)
-        })
-        .collect();
-    if families.len() < 2 {
-        return Err(serde::de::Error::custom(format!(
-            "design must list models from at least two agent families; found: {}",
-            families.into_iter().collect::<Vec<_>>().join(", ")
-        )));
-    }
-    Ok(binding)
 }
 
 fn reviewer_binding<'de, D: serde::Deserializer<'de>>(

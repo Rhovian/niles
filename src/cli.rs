@@ -103,7 +103,7 @@ pub enum CommandName {
     /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
     /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy,
     /// `security` is the adversarial pass, `design` writes the design record, and `research`
-    /// answers one question with cited evidence. Workers require --design or --mechanical.
+    /// answers one question with cited evidence. Workers may use --design for a record or --mechanical to log mechanical work.
     ///
     /// `--wait` then blocks for this worker's first actionable line, so a single-worker turn does
     /// not need a separate `niles wait`. Leave it off when spawning a fleet and block on the group

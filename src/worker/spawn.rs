@@ -35,7 +35,7 @@ pub struct Assignment {
     /// Use the report of this completed design worker as the design record.
     #[arg(long, value_name = "ID", conflicts_with = "mechanical")]
     design: Option<String>,
-    /// Skip design for mechanical work, recording why in the lead session log.
+    /// Optionally record mechanical work in the lead session log.
     #[arg(long, value_name = "REASON")]
     mechanical: Option<String>,
 }
@@ -370,9 +370,6 @@ impl Assignment {
             self.design.as_deref(),
             self.mechanical.as_deref(),
         ) {
-            (WorkerRole::Worker, None, None) => {
-                bail!("role worker requires exactly one of --design or --mechanical")
-            }
             (WorkerRole::Reviewer | WorkerRole::Security, _, Some(_)) => {
                 bail!("--mechanical is only accepted for role worker")
             }
@@ -413,7 +410,8 @@ impl Assignment {
                 })
             }
             (
-                WorkerRole::Reviewer
+                WorkerRole::Worker
+                | WorkerRole::Reviewer
                 | WorkerRole::Security
                 | WorkerRole::Design
                 | WorkerRole::Research,
