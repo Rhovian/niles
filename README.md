@@ -106,6 +106,9 @@ lead: codex
 worker: codex
 reviewer: claude
 security: claude
+design:
+  - models: [claude, codex]
+research: codex:gpt-6-luna:medium
 ```
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
@@ -130,7 +133,7 @@ against; without one, the panel shows the session's tokens and no percentage.
 
 Bindings accept `family[:model[:effort]]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`. Built-in families are `codex`, `claude`, `hermes`, and `pi`. Scalar role bindings still work. When a manifest exists, an `--agent` the role does not list is rejected.
 
-Worker, reviewer, and security roles can list model groups with a `when` for the work they suit and allowed efforts. The first model in the first group is the default when `--agent` is omitted. For example:
+Worker, reviewer, security, and design roles can list model groups with a `when` for the work they suit and allowed efforts. The first model in the first group is the default when `--agent` is omitted. For example:
 
 ```yaml
 worker:
@@ -145,16 +148,25 @@ worker:
     efforts: [high, xhigh]
 ```
 
-Set `reviewer: lead` to have the lead review worker diffs inline. This saves a separate reviewer
-session, but the lead reviews its own plan and must question its design during the economy pass.
+The lead routes design and review to separate agents. `reviewer: lead` is no longer supported.
 Run `niles models` to list the effective models and effort levels for the current workspace.
 
-Optional manifest keys include `worker_planning`, a list of entries pairing exact `family:model`
-names (`models`) with planning guidance the lead reads (`guidance`), and `checkin` / `recheck` for watcher cadence. Check-ins default
+Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
 followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
 fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
 `--checkin` overrides the manifest.
+
+`niles spawn --role` accepts `worker`, `design`, `reviewer`, `security`, and `research`.
+Workers can spawn directly without either design flag. `--design <id>` uses a completed live
+designer's report as the design record; `--mechanical <reason>` optionally logs mechanical work
+in the latest lead session. The flags conflict. Before spawning a designer or implementation worker,
+the lead asks the operator whether they want a design and waits for the answer; it does not
+infer the answer from the issue. Yes runs design; no sends the issue to a worker. Design uses
+one designer by default, a second family only on operator request. Two designers get one blind
+round and one critique; all contested points then go to the operator, with no further critique rounds. The lead may send back scope creep against the
+issue's wording but does not rule on disputes.
+Reviewers and security agents may use `--design`; design and research accept neither flag.
 
 ## Contributing and security
 

@@ -32,9 +32,9 @@ an operator to launch Niles from the clone.
 
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`. An agent entry can replace its executable and argument list. The
-`.niles/manifest.yaml` file selects the agent for each role (lead, worker, reviewer, and
-security), and its `worker_planning` strings can influence lead instructions for implementation
-assignments. See
+`.niles/manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
+design, and research), and the `when` text of its role groups can influence which listed agent the
+lead picks. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`src/templates/lead_brief.md`](../src/templates/lead_brief.md).

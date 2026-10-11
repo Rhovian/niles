@@ -17,38 +17,27 @@ use crate::{
 
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
-        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", role.name()),
-        Screen::Roles | Screen::Presets { .. } | Screen::Review => "NILES / ROLES".to_owned(),
+        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", Role::from(*role).name()),
+        Screen::Roles | Screen::Review => "NILES / ROLES".to_owned(),
     };
     let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
     let mut warning = None;
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit · s save"
+            if Role::ALL[form.selected] == Role::Design {
+                "↑↓ role · s save"
+            } else {
+                "↑↓ role · ↵ edit · s save"
+            }
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
             "↵ save · esc back"
         }
-        Screen::Presets { selected } => {
-            let items = form
-                .presets
-                .iter()
-                .map(|preset| match &preset.values {
-                    Ok(_) => ListItem::new(preset.name.as_str()),
-                    Err(reason) => {
-                        ListItem::new(format!("{} — {}", preset.name, clamp(reason, 120)))
-                            .style(theme.style(StyleKey::Muted))
-                    }
-                })
-                .collect();
-            list(frame, body, "PRESETS", items, *selected, true, theme);
-            "↑↓ preset · ↵ apply · esc back"
-        }
         Screen::Editing { role, columns } => {
             columns.draw(frame, body, theme);
-            if role.groups(&form.draft).is_some() {
+            if Role::from(*role).groups(&form.draft).is_some() {
                 warning =
                     Some("Replacing this role drops its hand-edited groups; esc back keeps them.");
             }
@@ -57,13 +46,6 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     };
     let muted = theme.style(StyleKey::Muted);
     let mut hints = Line::styled(hints, muted);
-    if matches!(form.screen, Screen::Roles) {
-        hints.spans.extend([
-            Span::styled(" · ", muted),
-            Span::styled("p", theme.style(StyleKey::Waiting)),
-            Span::styled(" preset", muted),
-        ]);
-    }
     hints.spans.extend([
         Span::styled(" · ", muted),
         Span::styled("c", theme.style(StyleKey::Running)),

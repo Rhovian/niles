@@ -64,7 +64,7 @@ pub(super) enum Edit {
     /// Runs the role's picker, then saves only that role into the manifest at `root`.
     Role {
         root: Utf8PathBuf,
-        role: Role,
+        role: ScalarRole,
     },
     Step(Step),
     /// The registry is a directory of links, changed from the explorer rather than a file.
@@ -79,7 +79,8 @@ pub(super) enum Step {
     Recheck(Utf8PathBuf),
 }
 
-pub(super) use crate::agents::picker::Role;
+use crate::agents::picker::Role;
+pub(super) use crate::agents::picker::ScalarRole;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
@@ -132,14 +133,6 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
                 Err(error) => items.extend([Item::Section("roles".to_owned()), broken(error)]),
             }
             items.extend(watch(root, &manifest));
-            items.push(Item::Section("worker_planning".to_owned()));
-            items.extend(listed(manifest.worker_planning.0.iter().map(|group| {
-                plain(
-                    &group.models.join(", "),
-                    &group.guidance.lines().take(1).collect::<String>(),
-                    MANIFEST,
-                )
-            })));
         }
         Ok(None) => items.extend([
             Item::Section(MANIFEST.to_owned()),
@@ -159,17 +152,11 @@ fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) 
     for (role, row) in Role::ALL.into_iter().zip(manifest_roles(manifest, config)) {
         items.push(Item::Section(format!("roles.{}", row.role)));
         let mut invalid = row.invalid_reason.map(Note::Invalid);
-        let groups = match role {
-            Role::Lead => None,
-            Role::Worker => groups(&manifest.worker),
-            Role::Reviewer => manifest.reviewer.as_agent().and_then(groups),
-            Role::Security => groups(&manifest.security),
-        };
-        let Some(groups) = groups else {
-            let edit = Edit::Role {
+        let Some(groups) = role.binding(manifest).and_then(groups) else {
+            let edit = role.scalar().map(|role| Edit::Role {
                 root: root.to_owned(),
                 role,
-            };
+            });
             items.extend(
                 [
                     ("agent", row.family),
@@ -179,7 +166,7 @@ fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) 
                 .map(|(key, value)| {
                     let from = if value == MISSING { BUILTIN } else { MANIFEST };
                     let mut setting = plain(key, &value, from);
-                    setting.edit = Some(edit.clone());
+                    setting.edit = edit.clone();
                     if let Some(note) = invalid.take() {
                         setting.note = note;
                     }

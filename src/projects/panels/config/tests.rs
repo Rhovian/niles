@@ -86,11 +86,9 @@ reviewer: ghost
 security: claude
 checkin: 15m
 recheck: nope
-worker_planning:
-  - models: [codex:gpt-5.5, claude:opus]
-    guidance: |
-      Plan lightly.
-      Then hand off.
+design:
+  - models: [claude, codex]
+research: codex:gpt-6-luna:medium
 ";
 
 fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
@@ -138,11 +136,15 @@ fn project_rows_show_builtin_overridden_multi_group_and_invalid_values() {
             "agent | claude | manifest | ",
             "model | - | builtin | ",
             "effort | - | builtin | ",
+            "[roles.design]",
+            "group 1 | claude, codex | manifest | ",
+            "[roles.research]",
+            "agent | codex | manifest | ",
+            "model | gpt-6-luna | manifest | ",
+            "effort | medium | manifest | ",
             "[watch]",
             "checkin | 15m | manifest | builtin: 5m",
             "recheck | nope | manifest | ✗ `nope` is not a duration",
-            "[worker_planning]",
-            "codex:gpt-5.5, claude:opus | Plan lightly. | manifest | ",
             "[agents]",
             "bot | bot --fast | .niles.yaml | ",
             "[models]",
@@ -153,14 +155,15 @@ fn project_rows_show_builtin_overridden_multi_group_and_invalid_values() {
         root: root.clone(),
         role,
     };
-    assert_eq!(items[1].edit(), Some(&role(Role::Lead)));
+    assert_eq!(items[1].edit(), Some(&role(ScalarRole::Lead)));
     assert_eq!(items[5].edit(), None);
-    assert_eq!(items[8].edit(), Some(&role(Role::Reviewer)));
+    assert_eq!(items[8].edit(), Some(&role(ScalarRole::Reviewer)));
+    assert_eq!(items[18].edit(), Some(&role(ScalarRole::Research)));
     assert_eq!(
-        items[17].edit(),
+        items[23].edit(),
         Some(&Edit::Step(Step::Recheck(root.clone())))
     );
-    for index in [19, 21, 23] {
+    for index in [16, 25, 27] {
         assert_eq!(items[index].edit(), None);
     }
     fs::remove_dir_all(root).unwrap();
@@ -215,7 +218,7 @@ fn saving_a_role_and_checkin_keeps_the_other_fields() {
     })
     .unwrap();
     let rows = items::project(&root).unwrap();
-    let Item::Setting(setting) = &rows[16] else {
+    let Item::Setting(setting) = &rows[22] else {
         panic!("missing checkin row")
     };
     let Some(Edit::Step(step)) = &setting.edit else {

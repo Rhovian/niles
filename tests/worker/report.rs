@@ -66,7 +66,9 @@ fn report_falls_back_to_most_recent_local_archive() {
         let spawn = env
             .niles(
                 &workspace,
-                &["spawn", "reviewer", "--agent", "claude", task],
+                &[
+                    "spawn", "--role", "research", "reviewer", "--agent", "claude", task,
+                ],
             )
             .output()
             .unwrap();

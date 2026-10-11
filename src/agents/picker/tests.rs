@@ -2,7 +2,7 @@ use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyCode};
 
 use super::*;
 use crate::{
-    agents::{self, ModelRoster},
+    agents::ModelRoster,
     config::spec::ProjectConfig,
     test_support::project_config,
     workspace_manifest::{AgentGroup, RoleBinding},
@@ -17,15 +17,9 @@ fn config() -> ProjectConfig {
     }
 }
 
-fn columns(value: &str, reviewer: bool) -> Columns {
+fn columns(value: &str) -> Columns {
     let config = config();
-    Columns::new(
-        &columns::families(&config).unwrap(),
-        value,
-        reviewer,
-        &config,
-    )
-    .unwrap()
+    Columns::new(&columns::families(&config).unwrap(), value, &config).unwrap()
 }
 
 fn selected(pick: Pick) -> String {
@@ -37,7 +31,7 @@ fn selected(pick: Pick) -> String {
 
 #[test]
 fn current_value_is_selected_and_back_undoes_every_level() {
-    let mut picker = columns("codex:gpt-6.1-sol:high", false);
+    let mut picker = columns("codex:gpt-6.1-sol:high");
     assert_eq!(picker.families[picker.family].name, "codex");
     assert_eq!(
         picker.families[picker.family].models[picker.model].name,
@@ -67,19 +61,19 @@ fn current_value_is_selected_and_back_undoes_every_level() {
 
 #[test]
 fn cli_default_is_last_and_models_without_efforts_skip_the_column() {
-    let mut picker = columns("claude:opus", false);
+    let mut picker = columns("claude:opus");
     picker.key(KeyCode::Enter);
     picker.key(KeyCode::Enter);
     let model = &picker.families[picker.family].models[picker.model];
     assert_eq!(picker.effort, model.efforts.len());
     assert_eq!(selected(picker.key(KeyCode::Enter)), "claude:opus");
-    let mut picker = columns("claude:haiku", false);
+    let mut picker = columns("claude:haiku");
     picker.key(KeyCode::Enter);
     assert_eq!(selected(picker.key(KeyCode::Enter)), "claude:haiku");
 }
 
 #[test]
-fn custom_agents_follow_builtins_and_lead_completes_immediately() {
+fn custom_agents_follow_builtins_and_complete_immediately() {
     let config = project_config(
         "agents: {bot: {binary: /nonexistent/niles-test-bot}, zed: {binary: /bin/sh}}\n",
     )
@@ -94,12 +88,10 @@ fn custom_agents_follow_builtins_and_lead_completes_immediately() {
     );
     assert!(!families[4].installed);
     assert!(families[5].installed);
-    let mut picker = Columns::new(&families, "bot", false, &config).unwrap();
+    let mut picker = Columns::new(&families, "bot", &config).unwrap();
     assert_eq!(selected(picker.key(KeyCode::Enter)), "bot");
-    let mut picker = columns("lead", true);
-    assert_eq!(selected(picker.key(KeyCode::Right)), "lead");
     assert!(
-        !columns("claude", false)
+        !columns("claude")
             .families
             .iter()
             .any(|family| family.name == "lead")
@@ -108,7 +100,7 @@ fn custom_agents_follow_builtins_and_lead_completes_immediately() {
 
 #[test]
 fn menu_is_effective_roster_only_and_defaults_to_profile_model() {
-    let mut picker = columns("codex:gpt-5.4:high", false);
+    let mut picker = columns("codex:gpt-5.4:high");
     let family = &picker.families[picker.family];
     assert!(!family.models.iter().any(|model| model.name == "gpt-5.4"));
     assert_eq!(family.models[picker.model].name, "gpt-5.5");
@@ -120,47 +112,6 @@ fn menu_is_effective_roster_only_and_defaults_to_profile_model() {
         picker.model,
         picker.families[picker.family].models.len() - 1
     );
-}
-
-#[test]
-fn every_builtin_preset_is_valid_and_launchable() {
-    let config = config();
-    let presets = presets::load(&config).unwrap();
-    assert_eq!(presets.len(), 3);
-    for preset in presets {
-        for (index, value) in preset.values.unwrap().iter().enumerate() {
-            if index == 2 && value == "lead" {
-                continue;
-            }
-            agents::invocation(
-                value,
-                None,
-                agents::InvocationDefaults::Worker,
-                &config.models,
-            )
-            .unwrap();
-        }
-    }
-}
-
-#[test]
-fn invalid_presets_are_visible_with_reasons_and_cannot_be_applied() {
-    let config = project_config("models: {claude: {opus: {efforts: [low]}}}").unwrap();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    assert!(
-        form.presets[0]
-            .values
-            .as_ref()
-            .unwrap_err()
-            .contains("unsupported claude effort")
-    );
-    form.key(KeyCode::Char('p'), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert!(matches!(form.screen, Screen::Presets { .. }));
-    assert_eq!(form.draft, form.original);
-    let text = render(&form);
-    assert!(text.contains("all claude"));
-    assert!(text.contains("unsupported claude effort"));
 }
 
 fn grouped() -> WorkspaceManifest {
@@ -219,20 +170,48 @@ fn cancelling_group_replacement_keeps_groups_and_other_picks() {
 }
 
 #[test]
-fn preset_can_be_edited_then_reviewed_and_saved() {
+fn design_is_shown_but_cannot_be_replaced_with_a_single_agent() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    form.selected = Role::ALL
+        .iter()
+        .position(|role| *role == Role::Design)
+        .unwrap();
+    form.key(KeyCode::Enter, &config).unwrap();
+    assert!(matches!(form.screen, Screen::Roles));
+    assert_eq!(form.draft.design, form.original.design);
+    assert!(!render(&form).contains("↵ edit"));
+}
+
+#[test]
+fn research_is_edited_in_its_own_binding() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    for _ in 0..5 {
+        form.key(KeyCode::Down, &config).unwrap();
+    }
+    form.key(KeyCode::Enter, &config).unwrap();
+    assert!(render(&form).contains("ROLES / research"));
+    for _ in 0..3 {
+        form.key(KeyCode::Enter, &config).unwrap();
+    }
+    assert_eq!(
+        form.draft.research,
+        "codex:gpt-6-luna:medium".to_owned().into()
+    );
+    assert_eq!(form.draft.worker, form.original.worker);
+}
+
+#[test]
+fn edited_role_is_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(grouped(), &config).unwrap();
-    form.key(KeyCode::Char('p'), &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert_eq!(form.draft.lead, "codex:gpt-6.1-sol:medium");
-    assert!(form.draft.worker.scalar().is_some());
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Down, &config).unwrap();
+    form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    assert_eq!(form.draft.lead, "codex:gpt-6.1-sol:high");
+    assert_eq!(form.draft.lead, "claude:opus:max");
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(
         form.key(KeyCode::Enter, &config).unwrap(),

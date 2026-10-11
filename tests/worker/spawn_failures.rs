@@ -11,6 +11,8 @@ fn missing_agent_binary_leaves_no_worker_state() {
 
     let output = env.run(&[
         "spawn",
+        "--role",
+        "research",
         "missing-cli",
         "--agent",
         "claude",
@@ -76,7 +78,9 @@ esac
     let failed = env
         .niles(
             &env.root,
-            &["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"],
+            &[
+                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
+            ],
         )
         .env("TMUX_FAIL_NEW_WINDOW", "1")
         .output()
@@ -95,7 +99,9 @@ esac
     let respawn = env
         .niles(
             &env.root,
-            &["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"],
+            &[
+                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
+            ],
         )
         .output()
         .unwrap();
@@ -126,7 +132,9 @@ esac
     let failed = env
         .niles(
             &env.root,
-            &["spawn", "auth-fix", "--agent", "claude", "Fix", "auth"],
+            &[
+                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
+            ],
         )
         .env(
             "META_PATH",

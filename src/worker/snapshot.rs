@@ -115,7 +115,7 @@ pub(crate) fn status_log_len(worker_dir: &Utf8Path) -> Result<u64> {
     Ok(status_log(worker_dir)?.map_or(0, |log| log.len() as u64))
 }
 
-fn status_log(worker_dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
+pub(super) fn status_log(worker_dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
     let status_path = wake::status_log_path(worker_dir);
     match fs::read(&status_path) {
         Ok(body) => Ok(Some(body)),

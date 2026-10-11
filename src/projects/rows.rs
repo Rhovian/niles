@@ -35,17 +35,10 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
                 .map(|meta| worker::lead_usage(&meta))
                 .transpose()?
                 .flatten();
-            match usage {
-                Some(usage) => {
-                    let workers_working = usage.state == Some(SessionState::Waiting)
-                        && worker::status_workers(&entry.path)?.iter().any(|worker| {
-                            worker.usage.as_ref().and_then(|usage| usage.state)
-                                == Some(SessionState::Working)
-                        });
-                    lead_state(&usage, workers_working)
-                }
-                None => State::Running,
-            }
+            let workers_working = worker::status_workers(&entry.path)?.iter().any(|worker| {
+                worker.usage.as_ref().and_then(|usage| usage.state) == Some(SessionState::Working)
+            });
+            project_state(usage.as_ref(), workers_working)
         };
         rows.push(Row { entry, state });
     }
@@ -61,11 +54,11 @@ fn sort_rows(rows: &mut [Row]) {
     });
 }
 
-fn lead_state(usage: &Usage, workers_working: bool) -> State {
-    match usage.state {
-        Some(SessionState::Waiting) if !workers_working => State::Waiting(usage.last_turn_at),
-        Some(SessionState::Waiting) => State::Running,
-        Some(SessionState::Working) | None => State::Running,
+fn project_state(usage: Option<&Usage>, workers_working: bool) -> State {
+    if workers_working || usage.and_then(|usage| usage.state) == Some(SessionState::Working) {
+        State::Running
+    } else {
+        State::Waiting(usage.and_then(|usage| usage.last_turn_at))
     }
 }
 
@@ -129,8 +122,8 @@ mod tests {
         );
     }
     #[test]
-    fn waiting_without_turn_time_stays_waiting() {
-        let usage = Usage {
+    fn project_activity_requires_a_known_working_agent() {
+        let mut usage = Usage {
             input_tokens: 1,
             output_tokens: 2,
             cache_read_tokens: 3,
@@ -143,7 +136,28 @@ mod tests {
             prompt_tokens: None,
             context_window: None,
         };
-        assert!(matches!(lead_state(&usage, false), State::Waiting(None)));
-        assert!(matches!(lead_state(&usage, true), State::Running));
+        for lead_state in [
+            Some(SessionState::Waiting),
+            Some(SessionState::Working),
+            None,
+        ] {
+            usage.state = lead_state;
+            for workers_working in [false, true] {
+                let active = workers_working || lead_state == Some(SessionState::Working);
+                assert_eq!(
+                    matches!(project_state(Some(&usage), workers_working), State::Running),
+                    active,
+                    "lead={lead_state:?}, workers_working={workers_working}",
+                );
+            }
+        }
+        assert!(matches!(project_state(None, false), State::Waiting(None)));
+        assert!(matches!(project_state(None, true), State::Running));
+        usage.state = Some(SessionState::Waiting);
+        usage.last_turn_at = Some(Utc::now());
+        assert!(matches!(
+            project_state(Some(&usage), false),
+            State::Waiting(Some(since)) if Some(since) == usage.last_turn_at
+        ));
     }
 }

@@ -17,7 +17,6 @@ use camino::Utf8PathBuf;
 
 pub(crate) struct Segment {
     pub label: String,
-    pub model: Option<String>,
     pub state: Option<theme::State>,
     pub tokens: Option<u64>,
     pub age: Option<String>,
@@ -92,7 +91,6 @@ fn from_rows(rows: &[Row], session_name: &str) -> Vec<Segment> {
             Some(Segment {
                 highlighted: row.entry.name.as_str() == session_name,
                 label: row.entry.name.as_str().to_owned(),
-                model: None,
                 state: None,
                 tokens: None,
                 age: None,
@@ -126,26 +124,7 @@ pub(crate) fn render(segments: &[Segment], theme: &Theme) -> String {
             } else {
                 String::new()
             };
-            let glyph = segment.state.map(|state| {
-                let (glyph, style) = theme.state(state);
-                format!(
-                    "{}{}#[default]{base}",
-                    style.tmux(),
-                    glyph.replace('#', "##")
-                )
-            });
-            let tokens = segment.tokens.map(rows::abbreviate);
-            let text = [
-                Some(segment.label.replace('#', "##")),
-                segment.model.as_ref().map(|s| s.replace('#', "##")),
-                glyph,
-                tokens,
-                segment.age.clone(),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
+            let text = segment.label.replace('#', "##");
             if segment.highlighted {
                 format!("{base}{text}#[default]")
             } else {
@@ -164,25 +143,18 @@ mod tests {
     fn session_segments_render_lead_worker_plain_and_active() {
         let theme = Theme::parse(None).unwrap();
         let pill = theme.style(StyleKey::Pill).tmux();
-        let running = theme.style(StyleKey::Running).tmux();
-        let waiting = theme.style(StyleKey::Waiting).tmux();
-        let segment =
-            |label: &str, model: Option<&str>, state, tokens, age: Option<&str>, highlighted| {
-                Segment {
-                    label: label.into(),
-                    model: model.map(str::to_owned),
-                    state,
-                    tokens,
-                    age: age.map(str::to_owned),
-                    highlighted,
-                }
-            };
+        let segment = |label: &str, state, tokens, age: Option<&str>, highlighted| Segment {
+            label: label.into(),
+            state,
+            tokens,
+            age: age.map(str::to_owned),
+            highlighted,
+        };
         assert_eq!(
             render(
                 &[
                     segment(
                         "0:lead",
-                        Some("opus"),
                         Some(theme::State::Waiting),
                         Some(12_000),
                         None,
@@ -190,19 +162,16 @@ mod tests {
                     ),
                     segment(
                         "1:w#parse",
-                        Some("gpt-6"),
                         Some(theme::State::Running),
                         Some(840_000),
                         Some("6m"),
                         true
                     ),
-                    segment("2:shell", None, None, None, None, false),
+                    segment("2:shell", None, None, None, false),
                 ],
                 &theme
             ),
-            format!(
-                "0:lead opus {waiting}⚠#[default] 12k │ {pill}1:w##parse gpt-6 {running}●#[default]{pill} 840k 6m#[default] │ 2:shell"
-            )
+            format!("0:lead │ {pill}1:w##parse#[default] │ 2:shell")
         );
     }
     #[test]
@@ -258,7 +227,6 @@ mod tests {
     fn projects_render_live_names_and_escape_names() {
         let theme = Theme::parse(None).unwrap();
         let pill = theme.style(StyleKey::Pill).tmux();
-        let running = theme.style(StyleKey::Running).tmux();
         let now = Utc::now();
         let row = |name, state| Row {
             entry: registry::Entry {
@@ -282,15 +250,11 @@ mod tests {
         );
         let escaped = Segment {
             label: "a#b".into(),
-            model: None,
             state: Some(theme::State::Running),
             tokens: None,
             age: None,
             highlighted: false,
         };
-        assert_eq!(
-            render(&[escaped], &theme),
-            format!("a##b {running}●#[default]")
-        );
+        assert_eq!(render(&[escaped], &theme), "a##b");
     }
 }

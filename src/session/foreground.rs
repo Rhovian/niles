@@ -24,8 +24,7 @@ pub(super) fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = &manifest.lead;
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
-    let ManagerSession { meta, brief, dir } =
-        write_manager_session(workspace, &invocation.spec, manifest)?;
+    let ManagerSession { meta, brief, dir } = write_manager_session(workspace, &invocation.spec)?;
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
     }

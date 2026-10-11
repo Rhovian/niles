@@ -1,9 +1,11 @@
 use super::*;
 use crate::projects::{
     registry::{Entry, ProjectName},
+    rows::State,
     status::Segment,
     windows::Role,
 };
+use crate::theme::{State as ThemeState, StyleKey};
 
 const PANEL_LABELS: [&str; 8] = [
     "CONFIG",
@@ -28,7 +30,6 @@ fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
 fn window(index: u32, name: &str, role: Role, label: &str) -> AgentWindow {
     let segment = Segment {
         label: label.into(),
-        model: Some("opus".into()),
         state: Some(ThemeState::Running),
         tokens: None,
         age: None,
@@ -87,7 +88,7 @@ fn running_projects_and_role_folders_start_open() {
             "PROJECTS",
             "├─ ▾ ⣾ api",
             "│  └─ ▾ workers 2",
-            "│     ├─ parse",
+            "│     ├─ ● parse",
             "│     └─ gone window lost",
             "└─     old",
         ]
@@ -306,7 +307,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "├─ ▾ ⣾ api                        3m",
             "│  ├─ ▸ workers 2",
             "│  └─ ▾ reviewers 2",
-            "│     ├─ review-parse",
+            "│     ├─ ● review-parse",
             "│     └─ gone window lost",
             "├─   ⚠ web",
             "└─     old",
@@ -370,4 +371,40 @@ fn headings_guides_and_counts_carry_theme_styles() {
         folder.spans.last().unwrap().style,
         theme.style(StyleKey::Muted)
     );
+}
+
+#[test]
+fn worker_rows_show_activity_and_right_aligned_tokens() {
+    let mut tree = tree();
+    let theme = Theme::parse(None).unwrap();
+    let now = DateTime::UNIX_EPOCH;
+    for (state, glyph, style) in [
+        (Some(ThemeState::Running), "●", StyleKey::Running),
+        (Some(ThemeState::Idle), "○", StyleKey::Idle),
+        (None, "○", StyleKey::Idle),
+    ] {
+        let worker = &mut tree.projects[0].agents.as_mut().unwrap().windows[1];
+        worker.segment.state = state;
+        worker.segment.tokens = Some(12_000);
+        let project = &tree.projects[0];
+        let worker = &project.agents.as_ref().unwrap().windows[1];
+        let item = Item::Member(project, WorkerRole::Worker, Member::Window(worker));
+        let line = tree.label(item, now, &theme, 36);
+        let prefix = format!("│     ├─ {glyph} parse");
+        let expected = if state.is_some() {
+            format!("{prefix}{}12k", " ".repeat(36 - prefix.chars().count() - 3))
+        } else {
+            prefix
+        };
+        assert_eq!(line.to_string(), expected);
+        assert_eq!(line.spans[6].style, theme.style(style));
+        if state.is_some() {
+            assert_eq!(line.width(), 36);
+            assert!(
+                tree.label(item, now, &theme, 10)
+                    .to_string()
+                    .ends_with("parse 12k")
+            );
+        }
+    }
 }

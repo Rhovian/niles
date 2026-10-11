@@ -81,7 +81,16 @@ impl Repo {
     }
 
     fn spawn(&self, id: &str, base: bool) {
-        let mut args = vec!["spawn", id, "--agent", "claude", "--worktree", "fix/x"];
+        let mut args = vec![
+            "spawn",
+            "--role",
+            "research",
+            id,
+            "--agent",
+            "claude",
+            "--worktree",
+            "fix/x",
+        ];
         if base {
             args.extend(["--base", "origin/main"]);
         }

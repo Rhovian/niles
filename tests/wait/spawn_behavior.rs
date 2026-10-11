@@ -8,7 +8,8 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
     // Dispatch flags remain options even when they follow every task word.
     let child = lab
         .niles(&[
-            "spawn", "w1", "--agent", "codex", "fix", "the", "login", "bug", "--wait",
+            "spawn", "--role", "research", "w1", "--agent", "codex", "fix", "the", "login", "bug",
+            "--wait",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

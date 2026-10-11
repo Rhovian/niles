@@ -7,7 +7,9 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let first = env
         .niles(
             &env.root,
-            &["spawn", "reviewer", "--agent", "claude", "FIRST"],
+            &[
+                "spawn", "--role", "research", "reviewer", "--agent", "claude", "FIRST",
+            ],
         )
         .output()
         .unwrap();
@@ -34,7 +36,9 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let second = env
         .niles(
             &env.root,
-            &["spawn", "reviewer", "--agent", "claude", "SECOND"],
+            &[
+                "spawn", "--role", "research", "reviewer", "--agent", "claude", "SECOND",
+            ],
         )
         .output()
         .unwrap();

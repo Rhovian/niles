@@ -31,6 +31,11 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         "#!/bin/sh\nprintf 'tmux 3.5\\nsecond line\\n'\n",
     );
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
+    let path = env.root.join(".niles/manifest.yaml");
+    let body = fs::read_to_string(&path)
+        .unwrap()
+        .replace("research: claude", "research: hermes");
+    fs::write(&path, body).unwrap();
     write_executable(
         &env.bin.join("claude"),
         "#!/bin/sh\nprintf 'Claude CLI 1.0.0\\nsecond line\\n'\n",
@@ -38,6 +43,10 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     write_executable(
         &env.bin.join("codex"),
         "#!/bin/sh\nprintf 'Codex CLI 1.0.0\\n'\n",
+    );
+    write_executable(
+        &env.bin.join("hermes"),
+        "#!/bin/sh\nprintf 'Hermes CLI 1.0.0\\n'\n",
     );
 
     let output = env.run(&["doctor"]);
@@ -53,6 +62,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         "agent codex: {} — Codex CLI 1.0.0; tested ",
         env.bin.join("codex").display()
     )));
+    assert!(stdout.contains("agent hermes:"), "{stdout}");
     assert_eq!(stdout.matches("agent claude:").count(), 1);
     assert!(!stdout.contains("second line"));
 }
@@ -60,7 +70,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
 #[test]
 fn doctor_reports_custom_missing_and_unavailable_versions() {
     let env = TestEnv::new("niles-doctor-custom");
-    write_workspace_manifest(&env.root, "custom", "codex", "lead", "claude");
+    write_workspace_manifest(&env.root, "custom", "codex", "claude", "claude");
     fs::write(
         env.root.join("niles.yaml"),
         "agents:\n  custom:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",

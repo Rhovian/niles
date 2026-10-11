@@ -1,7 +1,7 @@
 use std::fs;
 
 use super::*;
-use crate::{agents::picker::Role, test_support::temp_test_path, workspace_manifest::save};
+use crate::{test_support::temp_test_path, workspace_manifest::save};
 
 const MANIFEST: &str = "\
 # workspace α
@@ -12,13 +12,11 @@ worker:
     efforts: [medium, high]
   - when: design
     models: [claude:opus]
-reviewer: lead
+reviewer: claude
 security: claude
-worker_planning:
-  - models: [codex:gpt-5.5]
-    guidance: |
-      Plan carefully.
-      Then implement.
+design:
+  - models: [claude, codex]
+research: codex
 checkin: 15m
 recheck: backoff
 ";
@@ -31,7 +29,7 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 }
 
 #[test]
-fn changing_only_lead_preserves_worker_groups_and_planning() {
+fn changing_only_lead_preserves_worker_and_design_groups() {
     let root = root("picker-preserve-groups", MANIFEST);
     let before = load(&root).unwrap().unwrap();
     let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
@@ -43,7 +41,7 @@ fn changing_only_lead_preserves_worker_groups_and_planning() {
     let after = load(&root).unwrap().unwrap();
     assert_eq!(after.lead, "codex:gpt-6.1-sol:high");
     assert_eq!(after.worker, before.worker);
-    assert_eq!(after.worker_planning, before.worker_planning);
+    assert_eq!(after.design, before.design);
     assert_eq!(after.checkin, before.checkin);
     assert_eq!(after.recheck, before.recheck);
     assert_eq!(after, saved);
@@ -117,29 +115,6 @@ fn no_terminal_missing_or_malformed_manifest_errors() {
 }
 
 #[test]
-fn every_preset_saves_and_loads_roles() {
-    let config = crate::test_support::project_config("").unwrap();
-    for (index, preset) in crate::agents::picker::load_presets(&config)
-        .unwrap()
-        .into_iter()
-        .enumerate()
-    {
-        let root = temp_test_path(&format!("picker-preset-{index}"));
-        let draft = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
-            for (role, value) in Role::ALL.into_iter().zip(preset.values.unwrap()) {
-                role.set(&mut draft, value);
-            }
-            Ok(Choice::Save(draft))
-        })
-        .unwrap()
-        .unwrap();
-        let loaded = load(&root).unwrap().unwrap();
-        assert_eq!(draft, loaded);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[test]
 fn changes_are_applied_to_latest_manifest() {
     let root = root("picker-reread", MANIFEST);
     let before = load(&root).unwrap().unwrap();
@@ -149,11 +124,15 @@ fn changes_are_applied_to_latest_manifest() {
     save(&root, &latest).unwrap();
     let mut draft = before.clone();
     draft.lead = "codex".to_owned();
+    draft.design.0[0].models.reverse();
+    draft.research = "claude".to_owned().into();
     let result = save_changes(&root, Some(&before), &draft).unwrap();
     assert_eq!(
         result,
         WorkspaceManifest {
             lead: "codex".to_owned(),
+            design: draft.design,
+            research: draft.research,
             ..latest
         }
     );

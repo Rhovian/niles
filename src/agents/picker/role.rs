@@ -1,4 +1,4 @@
-use crate::workspace_manifest::{ReviewerBinding, RoleBinding, WorkspaceManifest};
+use crate::workspace_manifest::{RoleBinding, WorkspaceManifest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -6,10 +6,19 @@ pub(crate) enum Role {
     Worker,
     Reviewer,
     Security,
+    Design,
+    Research,
 }
 
 impl Role {
-    pub(crate) const ALL: [Self; 4] = [Self::Lead, Self::Worker, Self::Reviewer, Self::Security];
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Lead,
+        Self::Worker,
+        Self::Reviewer,
+        Self::Security,
+        Self::Design,
+        Self::Research,
+    ];
 
     pub(crate) fn name(self) -> &'static str {
         match self {
@@ -17,15 +26,19 @@ impl Role {
             Self::Worker => "worker",
             Self::Reviewer => "reviewer",
             Self::Security => "security",
+            Self::Design => "design",
+            Self::Research => "research",
         }
     }
 
-    fn binding(self, manifest: &WorkspaceManifest) -> Option<&RoleBinding> {
+    pub(crate) fn binding(self, manifest: &WorkspaceManifest) -> Option<&RoleBinding> {
         match self {
             Self::Lead => None,
             Self::Worker => Some(&manifest.worker),
-            Self::Reviewer => manifest.reviewer.as_agent(),
+            Self::Reviewer => Some(&manifest.reviewer),
             Self::Security => Some(&manifest.security),
+            Self::Design => Some(&manifest.design),
+            Self::Research => Some(&manifest.research),
         }
     }
 
@@ -39,26 +52,21 @@ impl Role {
         match self {
             Self::Lead => manifest.lead.clone(),
             Self::Worker => binding_value(&manifest.worker),
-            Self::Reviewer => match &manifest.reviewer {
-                ReviewerBinding::Lead => "lead".to_owned(),
-                ReviewerBinding::Agent(binding) => binding_value(binding),
-            },
+            Self::Reviewer => binding_value(&manifest.reviewer),
             Self::Security => binding_value(&manifest.security),
+            Self::Design => binding_value(&manifest.design),
+            Self::Research => binding_value(&manifest.research),
         }
     }
 
-    pub(crate) fn set(self, manifest: &mut WorkspaceManifest, value: String) {
+    pub(crate) fn scalar(self) -> Option<ScalarRole> {
         match self {
-            Self::Lead => manifest.lead = value,
-            Self::Worker => manifest.worker = value.into(),
-            Self::Reviewer => {
-                manifest.reviewer = if value == "lead" {
-                    ReviewerBinding::Lead
-                } else {
-                    ReviewerBinding::Agent(value.into())
-                }
-            }
-            Self::Security => manifest.security = value.into(),
+            Self::Lead => Some(ScalarRole::Lead),
+            Self::Worker => Some(ScalarRole::Worker),
+            Self::Reviewer => Some(ScalarRole::Reviewer),
+            Self::Security => Some(ScalarRole::Security),
+            Self::Design => None,
+            Self::Research => Some(ScalarRole::Research),
         }
     }
 
@@ -68,6 +76,8 @@ impl Role {
             Self::Worker => before.worker != after.worker,
             Self::Reviewer => before.reviewer != after.reviewer,
             Self::Security => before.security != after.security,
+            Self::Design => before.design != after.design,
+            Self::Research => before.research != after.research,
         }
     }
 }
@@ -76,5 +86,38 @@ fn binding_value(binding: &RoleBinding) -> String {
     match binding.scalar() {
         Some(value) => value,
         None => binding.default_model().to_owned(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScalarRole {
+    Lead,
+    Worker,
+    Reviewer,
+    Security,
+    Research,
+}
+
+impl ScalarRole {
+    pub(crate) fn set(self, manifest: &mut WorkspaceManifest, value: String) {
+        match self {
+            Self::Lead => manifest.lead = value,
+            Self::Worker => manifest.worker = value.into(),
+            Self::Reviewer => manifest.reviewer = value.into(),
+            Self::Security => manifest.security = value.into(),
+            Self::Research => manifest.research = value.into(),
+        }
+    }
+}
+
+impl From<ScalarRole> for Role {
+    fn from(role: ScalarRole) -> Self {
+        match role {
+            ScalarRole::Lead => Self::Lead,
+            ScalarRole::Worker => Self::Worker,
+            ScalarRole::Reviewer => Self::Reviewer,
+            ScalarRole::Security => Self::Security,
+            ScalarRole::Research => Self::Research,
+        }
     }
 }
