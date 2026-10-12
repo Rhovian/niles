@@ -32,7 +32,7 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 fn changing_only_lead_preserves_worker_and_design_groups() {
     let root = root("picker-preserve-groups", MANIFEST);
     let before = load(&root).unwrap().unwrap();
-    let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _| {
+    let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _, _| {
         draft.lead = "codex:gpt-6.1-sol:high".to_owned();
         Ok(Choice::Save(draft))
     })
@@ -59,7 +59,7 @@ fn continue_quit_and_unchanged_save_write_nothing() {
         (Choice::Quit, &None),
         (Choice::Save(manifest.clone().unwrap()), &manifest),
     ] {
-        let result = ensure(&root, true, &mut Vec::new(), |_, _, _| Ok(choice)).unwrap();
+        let result = ensure(&root, true, &mut Vec::new(), |_, _, _, _| Ok(choice)).unwrap();
         assert_eq!(&result, launched);
         assert_eq!(fs::read_to_string(&path).unwrap(), MANIFEST);
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
@@ -70,7 +70,7 @@ fn continue_quit_and_unchanged_save_write_nothing() {
 #[test]
 fn continuing_first_run_errors_without_a_file() {
     let root = temp_test_path("picker-first-continue");
-    let error = ensure(&root, true, &mut Vec::new(), |_, _, _| Ok(Choice::Keep)).unwrap_err();
+    let error = ensure(&root, true, &mut Vec::new(), |_, _, _, _| Ok(Choice::Keep)).unwrap_err();
     assert_eq!(error.to_string(), "no workspace manifest written");
     assert!(!manifest_path(&root).exists());
 }
@@ -79,7 +79,7 @@ fn continuing_first_run_errors_without_a_file() {
 fn no_terminal_uses_existing_manifest_and_prints_roles() {
     let root = root("picker-noninteractive", MANIFEST);
     let mut output = Vec::new();
-    let result = ensure(&root, false, &mut output, |_, _, _| {
+    let result = ensure(&root, false, &mut output, |_, _, _, _| {
         panic!("opened picker without terminal")
     })
     .unwrap();
@@ -96,7 +96,7 @@ fn no_terminal_uses_existing_manifest_and_prints_roles() {
 #[test]
 fn no_terminal_missing_or_malformed_manifest_errors() {
     let missing = temp_test_path("picker-missing");
-    let error = ensure(&missing, false, &mut Vec::new(), |_, _, _| {
+    let error = ensure(&missing, false, &mut Vec::new(), |_, _, _, _| {
         panic!("opened picker")
     })
     .unwrap_err();
@@ -106,7 +106,7 @@ fn no_terminal_missing_or_malformed_manifest_errors() {
             .contains("run `niles` from an interactive terminal")
     );
     let root = root("picker-malformed", "lead: [\n");
-    let error = ensure(&root, false, &mut Vec::new(), |_, _, _| {
+    let error = ensure(&root, false, &mut Vec::new(), |_, _, _, _| {
         panic!("opened picker")
     })
     .unwrap_err();
@@ -154,4 +154,79 @@ fn only_a_single_model_and_effort_is_scalar() {
         Some("codex:gpt-5.5:high")
     );
     assert_eq!(binding(Some(&["medium", "high"])).scalar(), None);
+}
+
+#[test]
+fn invalid_manifests_reopen_with_defaults_and_save_a_complete_replacement() {
+    for body in [
+        "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
+        "manager: claude\n",
+        "lead: [\n",
+    ] {
+        let root = root("picker-replace", body);
+        let saved = ensure(&root, true, &mut Vec::new(), |_, draft, _, reason| {
+            assert_eq!(draft, WorkspaceManifest::default());
+            let reason = reason.unwrap();
+            assert!(reason.contains("Cannot parse manifest"), "{reason}");
+            assert!(reason.contains("manifest.yaml"), "{reason}");
+            Ok(Choice::Save(draft))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(saved, WorkspaceManifest::default());
+        assert_eq!(load(&root).unwrap(), Some(saved));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn quitting_replacement_preserves_the_invalid_manifest() {
+    let body = "lead: claude\n";
+    let root = root("picker-replace-quit", body);
+    let result = ensure(&root, true, &mut Vec::new(), |_, _, _, reason| {
+        assert!(reason.is_some());
+        Ok(Choice::Quit)
+    })
+    .unwrap();
+    assert_eq!(result, None);
+    assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), body);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn manifest_read_failures_do_not_open_replacement() {
+    let root = temp_test_path("picker-read-failure");
+    fs::create_dir_all(manifest_path(&root)).unwrap();
+    let error = ensure(&root, true, &mut Vec::new(), |_, _, _, _| {
+        panic!("opened picker for a read failure")
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("failed to read"), "{error:#}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn noninteractive_stale_manifest_fails_without_writing() {
+    let body = "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n";
+    let root = root("picker-stale-noninteractive", body);
+    let error = ensure(&root, false, &mut Vec::new(), |_, _, _, _| {
+        panic!("opened picker without terminal")
+    })
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("missing field `design`"));
+    assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), body);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn replacement_write_failure_stops_launch() {
+    let root = root("picker-replace-write-failure", "lead: [\n");
+    let error = ensure(&root, true, &mut Vec::new(), |_, draft, _, _| {
+        fs::remove_file(manifest_path(&root)).unwrap();
+        fs::create_dir(manifest_path(&root)).unwrap();
+        Ok(Choice::Save(draft))
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("failed to write"), "{error:#}");
+    fs::remove_dir_all(root).unwrap();
 }

@@ -18,6 +18,7 @@ pub(super) struct Form {
     pub draft: WorkspaceManifest,
     pub screen: Screen,
     pub selected: usize,
+    pub replacement_reason: Option<String>,
     families: Vec<Family>,
 }
 
@@ -28,6 +29,7 @@ impl Form {
             draft: manifest,
             screen: Screen::Roles,
             selected: 0,
+            replacement_reason: None,
             families: columns::families(config)?,
         })
     }
@@ -39,7 +41,9 @@ impl Form {
     /// The operator's choice, or `None` while the form stays open.
     pub fn key(&mut self, key: KeyCode, config: &ProjectConfig) -> Result<Option<Choice>> {
         match key {
-            KeyCode::Char('c') => return Ok(Some(Choice::Keep)),
+            KeyCode::Char('c') if self.replacement_reason.is_none() => {
+                return Ok(Some(Choice::Keep));
+            }
             KeyCode::Char('q') => return Ok(Some(Choice::Quit)),
             _ => {}
         }

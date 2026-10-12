@@ -247,3 +247,28 @@ fn render(form: &Form) -> String {
         .map(|cell| cell.symbol())
         .collect()
 }
+
+#[test]
+fn replacement_explains_why_and_requires_save_or_quit() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    form.replacement_reason =
+        Some("Cannot parse manifest: missing field `design`\u{1b}".to_owned());
+    let text = render(&form);
+    assert!(
+        text.contains("Cannot parse manifest: missing field `design`"),
+        "{text}"
+    );
+    assert!(!text.contains('\u{1b}'), "{text}");
+    assert!(!text.contains("continue"), "{text}");
+    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
+    form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(
+        form.key(KeyCode::Enter, &config).unwrap(),
+        Some(Choice::Save(_))
+    ));
+    assert!(matches!(
+        form.key(KeyCode::Char('q'), &config).unwrap(),
+        Some(Choice::Quit)
+    ));
+}

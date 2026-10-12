@@ -20,7 +20,18 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         Screen::Editing { role, .. } => format!("NILES / ROLES / {}", Role::from(*role).name()),
         Screen::Roles | Screen::Review => "NILES / ROLES".to_owned(),
     };
-    let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
+    let (mut body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
+    if let Some(reason) = &form.replacement_reason {
+        let [notice, rest] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(body);
+        frame.render_widget(
+            Paragraph::new(clamp(reason, 400))
+                .wrap(ratatui::widgets::Wrap { trim: true })
+                .style(theme.style(StyleKey::Accent)),
+            notice,
+        );
+        body = rest;
+    }
     let mut warning = None;
     let hints = match &form.screen {
         Screen::Roles => {
@@ -46,10 +57,15 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     };
     let muted = theme.style(StyleKey::Muted);
     let mut hints = Line::styled(hints, muted);
+    if form.replacement_reason.is_none() {
+        hints.spans.extend([
+            Span::styled(" · ", muted),
+            Span::styled("c", theme.style(StyleKey::Running)),
+            Span::styled(" continue", muted),
+        ]);
+    }
     hints.spans.extend([
         Span::styled(" · ", muted),
-        Span::styled("c", theme.style(StyleKey::Running)),
-        Span::styled(" continue · ", muted),
         Span::styled("q", theme.style(StyleKey::Lost)),
         Span::styled(" quit", muted),
     ]);

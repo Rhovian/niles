@@ -67,8 +67,10 @@ explorer on the left, a view pane on the right and a shell along the bottom. Mov
 keys, expand a running project into its lead and workers with →, and press Enter to show one in
 the view, where you can type to it; `r` registers a directory. Opening a project that isn't
 running creates its own tmux session with the lead running in a window named `niles`. The first launch in a workspace prompts
-for all four roles and writes `.niles/manifest.yaml`; later launches show the roles before
-starting.
+for roles and writes `.niles/manifest.yaml`; later launches show the roles before
+starting. If an older or malformed manifest cannot parse, the picker explains why and starts
+from defaults. Save replaces that file without a backup; quit leaves it unchanged.
+Non-interactive launches still fail on invalid manifests.
 
 See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
