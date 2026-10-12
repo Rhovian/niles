@@ -27,10 +27,22 @@ fn ensure(
         &Utf8Path,
         WorkspaceManifest,
         &crate::config::spec::ProjectConfig,
+        Option<&str>,
     ) -> Result<Choice>,
 ) -> Result<Option<WorkspaceManifest>> {
     let config = load_project_config_from(root)?;
-    let existing = load(root)?;
+    // serde-saphyr 1.3.0's from_str_with_options returns its typed deserialization Error
+    // (src/de/api.rs); only that error opens replacement, never a filesystem failure.
+    let (existing, replacement_reason) = match load(root) {
+        Ok(existing) => (existing, None),
+        Err(error) if interactive && error.is::<serde_saphyr::Error>() => (
+            None,
+            Some(format!(
+                "Cannot parse manifest: {error:#}. Pick roles and save to replace it with defaults; q leaves it unchanged."
+            )),
+        ),
+        Err(error) => return Err(error),
+    };
     if !interactive {
         let Some(manifest) = existing else {
             bail!(
@@ -45,7 +57,11 @@ fn ensure(
         Some(manifest) => manifest.clone(),
         None => WorkspaceManifest::default(),
     };
-    match pick(root, defaults, &config)? {
+    match pick(root, defaults, &config, replacement_reason.as_deref())? {
+        Choice::Save(draft) if replacement_reason.is_some() => {
+            save(root, &draft)?;
+            Ok(Some(draft))
+        }
         Choice::Save(draft) => save_changes(root, existing.as_ref(), &draft).map(Some),
         Choice::Keep => existing.context("no workspace manifest written").map(Some),
         Choice::Quit => Ok(None),

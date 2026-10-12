@@ -122,6 +122,9 @@ by writing to their own logs.
 are clamped and stripped of control characters before terminal rendering. The shared roles picker
 also clamps repository-authored family names and role values. It probes configured executables
 with the same PATH lookup as doctor; it does not execute them.
+When a manifest cannot deserialize, the interactive roles picker displays a clamped, control-stripped
+parse error and starts from built-in defaults. Only an explicit save replaces the invalid manifest;
+quitting leaves it unchanged, and non-interactive launches still fail.
 
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
