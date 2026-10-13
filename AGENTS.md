@@ -71,3 +71,6 @@ subset of it.
   12, 22) are a contract the lead relies on.
 - Changes that move a trust boundary (agent execution, workspace state, pane text) update the
   [threat model](docs/security.md).
+
+To check new agent CLI releases or what Niles should change for them, follow
+[CONTRIBUTING.md#agent-cli-compatibility](CONTRIBUTING.md#agent-cli-compatibility).

@@ -4,6 +4,7 @@ mod agent_window;
 mod agents;
 mod build_info;
 mod cli;
+mod compat;
 mod config;
 mod doctor;
 mod duration;
@@ -65,6 +66,7 @@ fn run() -> Result<ExitCode> {
             });
         }
         Some(CommandName::Doctor) => doctor::doctor()?,
+        Some(CommandName::Compat { families }) => return compat::compat(&families),
         Some(CommandName::Prune { older_than, apply }) => projects::prune::run(older_than, apply)?,
         Some(CommandName::Spawn {
             wait,

@@ -20,6 +20,7 @@ const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;
 pub enum InvocationDefaults {
     Foreground,
     Worker,
+    Headless,
 }
 
 #[derive(Debug, Clone)]
@@ -91,11 +92,17 @@ fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentIn
         Some(profile) => {
             let (args, brief) = match defaults {
                 InvocationDefaults::Foreground => (profile.foreground_args, profile.lead_brief),
-                InvocationDefaults::Worker => (profile.worker_args, profile.worker_brief),
+                InvocationDefaults::Worker | InvocationDefaults::Headless => {
+                    (profile.worker_args, profile.worker_brief)
+                }
             };
+            let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+            if matches!(defaults, InvocationDefaults::Headless) {
+                args.extend(profile.headless.iter().map(|arg| (*arg).to_owned()));
+            }
             AgentInvocation {
                 binary: profile.binary.to_owned(),
-                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+                args,
                 brief,
                 env: profile
                     .launch_env

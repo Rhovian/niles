@@ -75,7 +75,7 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
-fn version_line(path: &Utf8Path, flag: &str) -> String {
+pub(crate) fn version_line(path: &Utf8Path, flag: &str) -> String {
     let (line, prefix) = match Command::new(path).arg(flag).output() {
         Ok(output) if output.status.success() => (
             first_line(&output.stdout).or_else(|| first_line(&output.stderr)),
