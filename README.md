@@ -55,7 +55,8 @@ latest tested; if a newer release breaks something, report it with that version.
 Install with Homebrew, the shell installer or Cargo:
 
 ```sh
-brew install Rhovian/niles/niles
+brew tap Rhovian/niles
+brew install niles
 ```
 
 ```sh
