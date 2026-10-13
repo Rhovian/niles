@@ -9,6 +9,7 @@ keywords = ["ai", "agents", "tmux", "claude", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Rhovian/niles"
+homepage = "https://github.com/Rhovian/niles"
 exclude = [".github/**"]
 
 [lints.clippy]

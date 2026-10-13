@@ -52,7 +52,12 @@ latest tested; if a newer release breaks something, report it with that version.
 
 ## Quickstart
 
-Install with the shell installer or with Cargo:
+Install with Homebrew, the shell installer or Cargo:
+
+```sh
+brew tap Rhovian/niles
+brew install niles
+```
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
