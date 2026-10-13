@@ -29,6 +29,8 @@ family, and reviews what comes back before it reaches you.
 - **One Rust binary.** tmux and plain files: no server, no plugins, and your agent CLIs run
   unmodified.
 
+See the [roadmap](ROADMAP.md) for what's next. Star and watch the repository to follow along.
+
 ## Requirements
 
 - `tmux`. Rust 1.89+ is required when installing with Cargo or building from source.
