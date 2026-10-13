@@ -22,6 +22,24 @@ named const. Where a site truly owns it, use `#[expect(…, reason = "…")]` an
 
 ## Releases
 
+Run `scripts/cli-versions.sh` with the GitHub CLI (`gh`) installed and authenticated to show
+installed, tested, and latest stable agent CLI versions. Installed versions come from each CLI's
+`--version`, tested versions from `src/agents/families.rs`, and latest versions from each project's
+GitHub latest stable release, regardless of install method. The script checks all four projects
+even when a CLI is absent. Exit codes are 0 when all releases are covered, 1 when a release is
+newer than tested, and 2 when a release lookup, installed version, or tested version cannot be
+read. A newer release is a cue to run compatibility tests before bumping the tested versions.
+
+`scripts/cli-versions.sh --update` updates all four CLIs without confirmation. It identifies
+global npm installs by resolving the executable into npm's actual global package directory,
+and Hermes Git installs from its reported install method and official repository remote.
+Unrecognized methods or missing CLIs fail loudly before any update runs. npm updates target
+the GitHub latest stable version in the same global prefix; legacy pi installs migrate to
+`@earendil-works/pi-coding-agent`. Hermes uses its native stable-channel updater. Update failures
+stop with exit 2; the newer-than-tested exit 1 still applies after a successful update.
+`scripts/cli-versions.sh --plan` shows detected methods and commands without updating. Updating
+requires the detected installer tools; npm detection also uses the Unix `realpath` utility.
+
 From 1.0, patch releases cover fixes and internal changes. Minor releases cover any user-visible
 change, including adding, removing, or renaming commands or flags, changing `--json` output or
 `niles wait`'s exit codes, and adding manifest keys. When a change breaks existing usage, such as
