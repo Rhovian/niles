@@ -25,6 +25,19 @@ The operator's `~/.niles/config.yaml` controls the theme and optional tmux bindi
 
 ## Boundaries
 
+### Maintainer CLI updates
+
+`scripts/cli-versions.sh` reads installed CLI versions and GitHub release metadata. Its explicit
+`--update` mode also changes host installations without confirmation. It preflights all four
+CLIs before invoking npm or Hermes's native updater, identifies npm ownership by the resolved
+executable's location in npm's global tree, and admits Hermes Git updates only for the official
+repository. Unsupported ownership fails rather than selecting an installer. `--plan` performs
+the same lookups without running updates. Release versions are parsed as numeric stable versions
+and commands use argument arrays; feed and CLI output are never evaluated as shell code.
+The operator trusts the installed tools and upstream release/package publishers, including npm
+install scripts and Hermes's dependency preparation and service restarts. Updates across CLIs
+are sequential and are not a transaction; a later failure does not undo earlier updates.
+
 ### Cloned repository manifest and configuration
 
 **Attacker.** A malicious repository author who can choose committed repository content and induce
