@@ -164,16 +164,8 @@ followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable
 fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
 `--checkin` overrides the manifest.
 
-`niles spawn --role` accepts `worker`, `design`, `reviewer`, `security`, and `research`.
-Workers can spawn directly without either design flag. `--design <id>` uses a completed live
-designer's report as the design record; `--mechanical <reason>` optionally logs mechanical work
-in the latest lead session. The flags conflict. Before spawning a designer or implementation worker,
-the lead asks the operator whether they want a design and waits for the answer; it does not
-infer the answer from the issue. Yes runs design; no sends the issue to a worker. Design uses
-one designer by default, a second family only on operator request. Two designers get one blind
-round and one critique; all contested points then go to the operator, with no further critique rounds. The lead may send back scope creep against the
-issue's wording but does not rule on disputes.
-Reviewers and security agents may use `--design`; design and research accept neither flag.
+See [role workflows](docs/roles.md#design-and-implementation) for design, implementation,
+and the `--design` and `--mechanical` spawn flags.
 
 ## Contributing and security
 
