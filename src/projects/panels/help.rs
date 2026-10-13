@@ -12,7 +12,8 @@ use crate::{
     tmux,
 };
 
-const WORDMARK: &str = include_str!("help/wordmark.txt");
+mod splash;
+use splash::Splash;
 
 const FIRST_RUN: &str = "niles
 
@@ -41,10 +42,11 @@ With the bindings in docs/setup.md, M-[ M-] M-; M-' do the same from any pane.
 
 pub(super) fn run(first_run: bool, theme: &Theme) -> Result<()> {
     let text = help_text(first_run, theme);
+    let splash = Splash::load()?;
     let mut terminal = ratatui::init();
     let result = (|| -> Result<()> {
         loop {
-            terminal.draw(|frame| draw(frame, &text, theme))?;
+            terminal.draw(|frame| draw(frame, &text, &splash, theme))?;
             if let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
                 && key.code == KeyCode::Esc
@@ -80,44 +82,27 @@ fn help_text(first_run: bool, theme: &Theme) -> Text<'static> {
     )
 }
 
-fn draw(frame: &mut Frame, text: &Text<'_>, theme: &Theme) {
+// ratatui-widgets 0.3.2 measures wrapped help but does not reserve space for another widget:
+// https://docs.rs/ratatui-widgets/0.3.2/ratatui_widgets/paragraph/struct.Paragraph.html#method.line_count
+fn draw(frame: &mut Frame, text: &Text<'_>, splash: &Splash, theme: &Theme) {
     let area = frame.area();
     let help = Paragraph::new(text.clone()).wrap(Wrap { trim: false });
-    let available = usize::from(area.height).saturating_sub(help.line_count(area.width));
-    let art = splash(area.width, available);
-    let height = art.map_or(0, |art| art.lines().count() + 1);
-    // Every selected splash fits the frame, whose height is a u16.
+    let available = usize::from(area.height).saturating_sub(help.line_count(area.width) + 1);
+    // Available rows are bounded by the frame's u16 height.
+    let art = splash.text(area.width, available as u16);
+    let height = if art.height() == 0 {
+        0
+    } else {
+        art.height() + 1
+    };
     debug_assert!(height <= usize::from(area.height));
-    let height = height as u16;
     let [banner, body] =
-        Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
-    if let Some(art) = art {
-        frame.render_widget(
-            Paragraph::new(art).style(theme.style(StyleKey::Heading)),
-            banner,
-        );
-    }
+        Layout::vertical([Constraint::Length(height as u16), Constraint::Fill(1)]).areas(area);
+    frame.render_widget(
+        Paragraph::new(art).style(theme.style(StyleKey::Heading)),
+        banner,
+    );
     frame.render_widget(help, body);
-}
-
-// ratatui-widgets 0.3.2 Paragraph::line_count accounts for wrapping, but neither it nor
-// Layout selects among alternative artwork: https://docs.rs/ratatui-widgets/0.3.2/ratatui_widgets/paragraph/struct.Paragraph.html#method.line_count
-fn splash(width: u16, available_rows: usize) -> Option<&'static str> {
-    [
-        concat!(
-            include_str!("help/butler.txt"),
-            "\n",
-            include_str!("help/wordmark.txt")
-        ),
-        WORDMARK,
-    ]
-    .into_iter()
-    .find(|art| {
-        art.lines().count() < available_rows
-            && art
-                .lines()
-                .all(|line| line.chars().count() <= usize::from(width))
-    })
 }
 
 #[cfg(test)]
