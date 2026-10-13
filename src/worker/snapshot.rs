@@ -6,6 +6,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::{
     store,
+    wait::cursor::{cursor_path, parse_cursor, wait_running},
     wake::{self, WakeKind},
 };
 
@@ -37,6 +38,11 @@ pub(crate) struct WorkerSnapshot {
     /// `done:` → follow-up → `done:` counts as two reports.
     pub(crate) log_len: u64,
     pub(crate) last_actionable: Option<ActionableWake>,
+    /// The wake cursor: how far `niles wait` has delivered. No cursor means no wait has ever
+    /// consumed a line, which is position zero.
+    cursor: u64,
+    /// Whether a `niles wait` on this worker was running when the snapshot was taken.
+    pub(crate) wait_running: bool,
 }
 
 impl WorkerSnapshot {
@@ -52,6 +58,8 @@ impl WorkerSnapshot {
             log,
             log_len,
             last_actionable,
+            cursor: 0,
+            wait_running: false,
         }
     }
 
@@ -64,15 +72,21 @@ impl WorkerSnapshot {
             .map(str::to_owned)
     }
 
-    /// The bytes the given cursor has not consumed yet. A cursor that cannot slice this log — past
-    /// its end, or mid-character in one that has been rewritten — describes a log `wait` will
-    /// rescan from the start, so nothing is delivered.
-    pub(super) fn undelivered(&self, delivered: usize) -> Option<&[u8]> {
+    /// How far into this log `niles wait` has delivered. A cursor past the end describes a log that
+    /// has since been replaced, which `wait` rescans from the start, so it has delivered none of it.
+    pub(crate) fn delivered(&self) -> u64 {
+        if self.cursor <= self.log_len {
+            self.cursor
+        } else {
+            0
+        }
+    }
+
+    /// The bytes `niles wait` has not delivered yet.
+    pub(super) fn undelivered(&self) -> Option<&[u8]> {
         let log = self.log.as_deref()?;
-        Some(match log.get(delivered..) {
-            Some(undelivered) => undelivered,
-            None => log,
-        })
+        // `delivered` is at most `log_len`, which is `log.len()`.
+        Some(&log[self.delivered() as usize..])
     }
 
     /// The recorded pane and workspace while an otherwise-silent worker is still starting.
@@ -102,12 +116,27 @@ pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot
             Err(err) => (None, Some(format!("{err:#}"))),
         };
         let log = status_log(&entry.worker_dir)?;
+        // Probed before the cursor is read: a wait that finishes in between has advanced the
+        // cursor before it stopped running, so a line read above is either being delivered or
+        // shows as delivered.
+        let wait_running = wait_running(&entry.worker_dir)?;
+        let cursor = read_wake_cursor(&entry.worker_dir)?;
         let mut snapshot = WorkerSnapshot::new(entry.id, entry.worker_dir, log);
         snapshot.meta = meta;
         snapshot.read_error = read_error;
+        snapshot.cursor = cursor;
+        snapshot.wait_running = wait_running;
         workers.push(snapshot);
     }
     Ok(workers)
+}
+
+fn read_wake_cursor(worker_dir: &Utf8Path) -> Result<u64> {
+    let path = cursor_path(worker_dir);
+    let Some(body) = crate::util::read_optional_string(&path)? else {
+        return Ok(0);
+    };
+    parse_cursor(&body, &path)
 }
 
 /// How long a worker's status log is, in bytes, without reading it twice.
@@ -207,13 +236,14 @@ mod tests {
 
     #[test]
     fn undelivered_slices_from_the_cursor_and_falls_back_to_the_whole_log() {
-        let worker = snapshot("impl", "done: one\ndone: two\n");
+        let mut worker = snapshot("impl", "done: one\ndone: two\n");
 
-        assert_eq!(worker.undelivered(10), Some(&b"done: two\n"[..]));
-        assert_eq!(worker.undelivered(0), Some(&b"done: one\ndone: two\n"[..]));
-        assert_eq!(
-            worker.undelivered(200),
-            Some(&b"done: one\ndone: two\n"[..])
-        );
+        worker.cursor = 10;
+        assert_eq!(worker.undelivered(), Some(&b"done: two\n"[..]));
+        worker.cursor = 0;
+        assert_eq!(worker.undelivered(), Some(&b"done: one\ndone: two\n"[..]));
+        worker.cursor = 200;
+        assert_eq!(worker.delivered(), 0);
+        assert_eq!(worker.undelivered(), Some(&b"done: one\ndone: two\n"[..]));
     }
 }

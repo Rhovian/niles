@@ -68,6 +68,6 @@ subset of it.
 - Agent families and their launch mechanics are defined in `src/agents/families.rs`; models and
   effort levels in `src/agents/roster.yaml`.
 - `niles wait` reserves stdout for wake lines; diagnostics go to stderr. Its exit codes (0, 10, 11,
-  22) are a contract the lead relies on.
+  12, 22) are a contract the lead relies on.
 - Changes that move a trust boundary (agent execution, workspace state, pane text) update the
   [threat model](docs/security.md).

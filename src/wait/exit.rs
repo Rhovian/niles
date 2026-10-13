@@ -20,6 +20,9 @@ pub(super) enum Outcome {
     AlreadyWaiting {
         id: String,
     },
+    Idle {
+        id: String,
+    },
     Timeout {
         subject: String,
         timeout: Duration,
@@ -73,6 +76,17 @@ impl WaitExit {
                     field(&id),
                     detail(&format!(
                         "another wait is already running on worker '{id}'; it gets the next line"
+                    ))
+                )),
+            },
+            Outcome::Idle { id } => Self {
+                code: super::EXIT_WORKER_IDLE,
+                stdout: None,
+                stderr: Some(format!(
+                    "wait: worker-idle worker={} detail={}",
+                    field(&id),
+                    detail(&format!(
+                        "worker '{id}' went idle without a new status line"
                     ))
                 )),
             },

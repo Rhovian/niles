@@ -183,7 +183,8 @@ pub enum CommandName {
     /// Advances the worker's wake cursor first, so a status line written before the message
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
     ///
-    /// `--wait` then blocks for that worker's reply.
+    /// `--wait` then blocks for that worker's reply, with `niles wait`'s exit codes. Exit 11 means
+    /// the message was sent but another wait on the worker gets the reply: do not resend.
     #[command(verbatim_doc_comment)]
     Send {
         /// Block for this worker's next actionable wake after sending.
@@ -206,10 +207,12 @@ pub enum CommandName {
     ///
     /// A worker whose tmux window has gone ends the wait rather than blocking on a log nothing
     /// can append to again — but only once its log holds no further line, so a worker that
-    /// reported and then exited still hands that report over.
+    /// reported and then exited still hands that report over. A worker that sits idle for 30s
+    /// with nothing new in its log ends the wait the same way.
     ///
     /// Exits 0 on a wake, 10 when the worker closed or its window is gone, 11 when another wait is
-    /// already running on the worker, 22 on timeout.
+    /// already running on the worker, 12 when the worker went idle without reporting, 22 on
+    /// timeout.
     #[command(verbatim_doc_comment)]
     Wait {
         /// Worker id to wait on.

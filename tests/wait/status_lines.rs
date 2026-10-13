@@ -138,16 +138,21 @@ fn a_truncated_log_rescans_from_the_start() {
 }
 
 #[test]
-fn a_second_wait_on_a_worker_is_refused_and_leaves_the_line() {
+fn a_second_wait_on_a_worker_is_refused_and_the_running_wait_gets_the_line() {
     let workspace = temp_workspace("niles-wait-held");
-    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: only once\n");
-    let args = ["auth-fix", "--interval", "50ms", "--timeout", "0"];
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"");
 
-    // Stands in for a running wait: the claim is the lock, whoever holds it.
-    let claim = std::fs::File::create(worker_dir.join("status.waiter")).unwrap();
-    claim.lock().unwrap();
+    let running = spawn_wait(
+        &workspace,
+        &["auth-fix", "--interval", "50ms", "--timeout", "10s"],
+    );
+    // A wait opens the cursor only once it holds its claim.
+    wait_for_file(&worker_dir.join("status.cursor"));
 
-    let refused = run_wait(&workspace, &args);
+    let refused = run_wait(
+        &workspace,
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
+    );
     assert_eq!(refused.status.code(), Some(11), "{}", stderr_of(&refused));
     assert!(stdout_of(&refused).is_empty());
     let stderr = stderr_of(&refused);
@@ -155,9 +160,16 @@ fn a_second_wait_on_a_worker_is_refused_and_leaves_the_line() {
         stderr.contains("already-waiting worker=auth-fix"),
         "stderr: {stderr}"
     );
+    // What the watcher probes to tell a wait is running, and it is released with the wait.
+    let waiting = fs::File::open(worker_dir.join("status.waiting")).unwrap();
+    assert!(matches!(
+        waiting.try_lock(),
+        Err(fs::TryLockError::WouldBlock)
+    ));
 
-    drop(claim);
-    let delivered = run_wait(&workspace, &args);
-    assert_command_success("wait after the claim is released", &delivered);
+    append_status(&worker_dir.join("status.log"), b"done: only once\n");
+    let delivered = running.wait_with_output().unwrap();
+    assert_command_success("the running wait", &delivered);
     assert_eq!(stdout_of(&delivered), "done: only once\n");
+    waiting.try_lock().unwrap();
 }

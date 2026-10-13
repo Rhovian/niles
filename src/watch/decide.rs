@@ -64,8 +64,8 @@ pub(crate) enum Commit {
 /// What the thread remembers between ticks.
 ///
 /// In memory because the process is the lead's: there is no lock file, no recorded pid and no
-/// second process to agree with. Nothing here is shared with `niles wait`, whose cursor stays the
-/// only thing that consumes a status line.
+/// second process to agree with. `niles wait`'s cursor stays the only thing that consumes a status
+/// line; this only reads it, so a line the lead already took from a wait is not reported again.
 #[derive(Debug, Default)]
 pub(crate) struct WatchMemory {
     seen: BTreeMap<String, u64>,
@@ -115,7 +115,14 @@ impl WatchMemory {
             if worker.log_len < *seen {
                 *seen = 0;
             }
-            let accounted = *seen;
+            // A line a wait has handed the lead, or is about to, is already the lead's: a nudge
+            // for it would only send the lead to look again at nothing new.
+            let taken = if worker.wait_running {
+                worker.log_len
+            } else {
+                worker.delivered()
+            };
+            let accounted = (*seen).max(taken);
 
             if let Some(checkin) = checkins.get(&worker.id) {
                 match worker.last_actionable {

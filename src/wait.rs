@@ -7,10 +7,12 @@
 //! cursor advance happen together.
 //!
 //! One wait per worker. A wait holds an exclusive `flock` on `<worker-dir>/status.waiter` for its
-//! whole life, and a second wait on that worker is refused at start. A separate per-poll `flock`
-//! on the cursor, held across the read-scan-advance window, serialises the wait against `send`'s
-//! cursor skip. The kernel releases both when the holder dies, which is why this needs no pid,
-//! token, heartbeat, staleness threshold, or takeover path to recover from a waiter that went away.
+//! whole life, and a second wait on that worker is refused at start. It also holds a shared `flock`
+//! on `<worker-dir>/status.waiting`, which is how the watcher tells a wait is running. A separate
+//! per-poll `flock` on the cursor, held across the read-scan-advance window, serialises the wait
+//! against `send`'s cursor skip. The kernel releases every one of them when the holder dies, which
+//! is why this needs no pid, token, heartbeat, staleness threshold, or takeover path to recover
+//! from a waiter that went away.
 
 use std::{
     fs::{self, File, TryLockError},
@@ -25,6 +27,7 @@ use camino::Utf8PathBuf;
 
 use crate::{
     duration::parse_duration,
+    telemetry::SessionState,
     wake::{self, WakeKind},
     worker,
 };
@@ -32,13 +35,14 @@ use crate::{
 pub(crate) mod cursor;
 mod exit;
 
-use cursor::{cursor_path, open_lock_file, read_cursor, waiter_path, write_cursor};
+use cursor::{cursor_path, open_lock_file, read_cursor, waiter_path, waiting_path, write_cursor};
 use exit::Outcome;
 pub(crate) use exit::WaitExit;
 
 pub const EXIT_WAKE: u8 = 0;
 pub const EXIT_WORKER_CLOSED: u8 = 10;
 pub const EXIT_ALREADY_WAITING: u8 = 11;
+pub const EXIT_WORKER_IDLE: u8 = 12;
 pub const EXIT_TIMEOUT: u8 = 22;
 
 /// Poll interval used by `niles wait` and by `niles send --wait`.
@@ -52,8 +56,12 @@ const MAX_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// manager's terminal should not have to absorb it.
 const MAX_LINE_BYTES: usize = 4096;
 
-/// Backstop only; each check costs a tmux subprocess per worker.
-const WINDOW_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// Backstop only; each check costs a tmux subprocess and a transcript read.
+const STOP_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How long a worker must look idle, with nothing new in its log, before a wait gives up on it.
+/// Covers the gap between `send` pasting a message and the worker picking it up.
+const IDLE_GRACE: Duration = Duration::from_secs(30);
 
 pub fn wait(id: String, interval: Duration, timeout: Duration) -> Result<WaitExit> {
     let mut target = Target::resolve(id)?;
@@ -63,6 +71,7 @@ pub fn wait(id: String, interval: Duration, timeout: Duration) -> Result<WaitExi
             id: target.id,
         }));
     };
+    let _running = target.announce()?;
 
     let deadline = Instant::now() + timeout;
     loop {
@@ -101,7 +110,8 @@ struct Target {
     dir: Utf8PathBuf,
     status: Utf8PathBuf,
     scanned: u64,
-    window_checked_at: Option<Instant>,
+    stop_checked_at: Option<Instant>,
+    idle_since: Option<Instant>,
 }
 
 impl Target {
@@ -113,7 +123,8 @@ impl Target {
             dir,
             status,
             scanned: 0,
-            window_checked_at: None,
+            stop_checked_at: None,
+            idle_since: None,
         })
     }
 
@@ -129,6 +140,18 @@ impl Target {
                 Err(err).with_context(|| format!("failed to lock {path}"))
             }
         }
+    }
+
+    /// Marks this wait as running for as long as the returned file stays open, so the watcher does
+    /// not nudge the lead about a line this wait is about to hand it.
+    fn announce(&self) -> Result<File> {
+        let path = waiting_path(&self.dir);
+        let running = open_lock_file(&path)?;
+        // Blocking: only a probe contends for this lock, and only for an instant.
+        running
+            .lock_shared()
+            .with_context(|| format!("failed to lock {path}"))?;
+        Ok(running)
     }
 
     fn poll(&mut self) -> Result<Option<Outcome>> {
@@ -153,7 +176,7 @@ impl Target {
             drop(cursor);
             // Only once the log holds nothing further to deliver. A worker can report `done:`
             // and then exit, and that line must still be handed over.
-            return self.window_gone_if_confirmed();
+            return self.stopped_if_confirmed();
         };
         write_cursor(&mut cursor, &path, end)?;
         self.scanned = end;
@@ -233,24 +256,29 @@ impl Target {
         Ok(skipped)
     }
 
-    /// Reports a worker whose tmux window has gone, so nothing can append to its log again.
-    /// Rate-limited, and silent about anything short of a confirmed absence.
-    fn window_gone_if_confirmed(&mut self) -> Result<Option<Outcome>> {
+    /// Reports a worker that will not append to its log: its tmux window has gone, or it has
+    /// sat idle for [`IDLE_GRACE`]. Rate-limited, and silent about anything short of that.
+    fn stopped_if_confirmed(&mut self) -> Result<Option<Outcome>> {
         let now = Instant::now();
-        if let Some(checked_at) = self.window_checked_at
-            && now.duration_since(checked_at) < WINDOW_CHECK_INTERVAL
+        if let Some(checked_at) = self.stop_checked_at
+            && now.duration_since(checked_at) < STOP_CHECK_INTERVAL
         {
             return Ok(None);
         }
-        self.window_checked_at = Some(now);
+        self.stop_checked_at = Some(now);
 
-        if !worker::window_is_gone(&self.id)? {
-            return Ok(None);
+        if worker::window_is_gone(&self.id)? {
+            return Ok(Some(Outcome::WindowGone {
+                id: self.id.clone(),
+                status: self.status.clone(),
+            }));
         }
-        Ok(Some(Outcome::WindowGone {
-            id: self.id.clone(),
-            status: self.status.clone(),
-        }))
+        let state = worker::session_state(&self.dir)?;
+        Ok(
+            idle_past_grace(&mut self.idle_since, state, now).then(|| Outcome::Idle {
+                id: self.id.clone(),
+            }),
+        )
     }
 
     fn closed(&self, line: String) -> Outcome {
@@ -260,6 +288,20 @@ impl Target {
             line,
         }
     }
+}
+
+/// Whether the worker has looked idle on every check since `idle_since` and for at least
+/// [`IDLE_GRACE`]. Any other state restarts the clock.
+fn idle_past_grace(
+    idle_since: &mut Option<Instant>,
+    state: Option<SessionState>,
+    now: Instant,
+) -> bool {
+    if state != Some(SessionState::Waiting) {
+        *idle_since = None;
+        return false;
+    }
+    now.duration_since(*idle_since.get_or_insert(now)) >= IDLE_GRACE
 }
 
 /// Escapes control characters so a status line cannot rewrite the manager's terminal, and caps
@@ -301,6 +343,40 @@ pub(crate) fn parse_timeout(value: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_ends_the_wait_only_after_the_grace_and_any_other_state_restarts_it() {
+        let start = Instant::now();
+        let mut idle_since = None;
+        let waiting = Some(SessionState::Waiting);
+
+        assert!(!idle_past_grace(&mut idle_since, waiting, start));
+        assert!(!idle_past_grace(
+            &mut idle_since,
+            Some(SessionState::Working),
+            start + IDLE_GRACE
+        ));
+        assert!(!idle_past_grace(
+            &mut idle_since,
+            waiting,
+            start + IDLE_GRACE
+        ));
+        assert!(!idle_past_grace(
+            &mut idle_since,
+            None,
+            start + IDLE_GRACE * 2
+        ));
+        assert!(!idle_past_grace(
+            &mut idle_since,
+            waiting,
+            start + IDLE_GRACE * 3
+        ));
+        assert!(idle_past_grace(
+            &mut idle_since,
+            waiting,
+            start + IDLE_GRACE * 4
+        ));
+    }
 
     #[test]
     fn interval_is_positive_and_at_most_one_hour() {

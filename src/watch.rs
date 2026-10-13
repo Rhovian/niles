@@ -8,7 +8,9 @@
 //! Two triggers type one line into the lead's pane: a worker's status log grew with an actionable
 //! line, or a check-in came due with no report. Both are STATE, not events — the nudge says where
 //! things stand, carries no status-line content, and consumes nothing. `niles wait` stays the only
-//! consumer of the wake cursor, so a nudge that is lost, doubled or read twice costs a look.
+//! consumer of the wake cursor, so a nudge that is lost, doubled or read twice costs a look. The
+//! watcher only reads that cursor, and whether a wait is running, so a line the lead takes from a
+//! wait is not reported to it a second time.
 //!
 //! The lead's stdout and stderr are its TUI, so nothing here writes to them: diagnostics go to
 //! `watch.log` in the session directory, and the only thing that leaves the process is the nudge
@@ -231,6 +233,7 @@ pub(crate) fn arm_checkin(
     armed_len: u64,
     now: DateTime<Utc>,
 ) -> Result<Option<Duration>> {
+    let _lock = Checkin::lock(worker_dir)?;
     let Some(delay) = cadence.delay else {
         // `off`/`0` asks for no check-in and has to mean it: leaving the previous one armed would
         // make the `checkin: off` the lead was just printed a lie.
@@ -244,7 +247,9 @@ pub(crate) fn arm_checkin(
 /// `niles quiet <id>`: the lead disarming a check-in by hand, for a worker that is idle on purpose.
 /// Returns whether one was armed to begin with.
 pub(crate) fn quiet(id: &str) -> Result<bool> {
-    Checkin::disarm(&worker::worker_dir(id)?)
+    let worker_dir = worker::worker_dir(id)?;
+    let _lock = Checkin::lock(&worker_dir)?;
+    Checkin::disarm(&worker_dir)
 }
 
 fn watch(workspace: Utf8PathBuf, mut sink: WatchSink, stop: Arc<AtomicBool>) {
@@ -393,6 +398,13 @@ fn with_planned_checkin(
     sink: &mut dyn Sink,
     action: impl FnOnce(&Utf8Path, &mut dyn Sink),
 ) {
+    let _lock = match Checkin::lock(worker_dir) {
+        Ok(lock) => lock,
+        Err(err) => {
+            sink.note(&format!("failed to lock the check-in for {id}: {err:#}"));
+            return;
+        }
+    };
     match Checkin::read(worker_dir) {
         Ok(Some(current)) if current == *planned => action(worker_dir, sink),
         // Nothing armed: `niles quiet` got there first, or the worker reported twice.
