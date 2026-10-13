@@ -138,40 +138,26 @@ fn a_truncated_log_rescans_from_the_start() {
 }
 
 #[test]
-fn concurrent_waits_deliver_the_line_to_exactly_one() {
-    let workspace = temp_workspace("niles-wait-concurrent");
-    worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    let args = ["auth-fix", "--interval", "50ms", "--timeout", "5s"];
+fn a_second_wait_on_a_worker_is_refused_and_leaves_the_line() {
+    let workspace = temp_workspace("niles-wait-held");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: only once\n");
+    let args = ["auth-fix", "--interval", "50ms", "--timeout", "0"];
 
-    let first = spawn_wait(&workspace, &args);
-    let second = spawn_wait(&workspace, &args);
-    settle();
+    // Stands in for a running wait: the claim is the lock, whoever holds it.
+    let claim = std::fs::File::create(worker_dir.join("status.waiter")).unwrap();
+    claim.lock().unwrap();
 
-    append_status(
-        &workspace.join(".niles/worker/auth-fix/status.log"),
-        b"done: only once\n",
+    let refused = run_wait(&workspace, &args);
+    assert_eq!(refused.status.code(), Some(11), "{}", stderr_of(&refused));
+    assert!(stdout_of(&refused).is_empty());
+    let stderr = stderr_of(&refused);
+    assert!(
+        stderr.contains("already-waiting worker=auth-fix"),
+        "stderr: {stderr}"
     );
 
-    let first = first.wait_with_output().unwrap();
-    let second = second.wait_with_output().unwrap();
-
-    // Neither wait is rejected for the other's existence; exactly one is handed the line.
-    let winners = [&first, &second]
-        .into_iter()
-        .filter(|output| stdout_of(output).contains("done: only once"))
-        .count();
-    assert_eq!(
-        winners,
-        1,
-        "first: {:?}/{:?}\nsecond: {:?}/{:?}",
-        stdout_of(&first),
-        stderr_of(&first),
-        stdout_of(&second),
-        stderr_of(&second)
-    );
-    let losers = [&first, &second]
-        .into_iter()
-        .filter(|output| output.status.code() == Some(22))
-        .count();
-    assert_eq!(losers, 1, "the wait that lost the race should time out");
+    drop(claim);
+    let delivered = run_wait(&workspace, &args);
+    assert_command_success("wait after the claim is released", &delivered);
+    assert_eq!(stdout_of(&delivered), "done: only once\n");
 }

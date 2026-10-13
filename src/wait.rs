@@ -6,21 +6,21 @@
 //! coordination mechanism: each actionable line is delivered exactly once because delivery and
 //! cursor advance happen together.
 //!
-//! Two concurrent waits on one worker are allowed. They are serialised by an exclusive `flock`
-//! held across the read-scan-advance window, so exactly one of them is handed any given line and
-//! the other simply keeps waiting. The lock is the whole mutual-exclusion story: the kernel
-//! releases it when the holder dies, which is why this needs no pid, token, heartbeat, staleness
-//! threshold, or takeover path to recover from a waiter that went away.
+//! One wait per worker. A wait holds an exclusive `flock` on `<worker-dir>/status.waiter` for its
+//! whole life, and a second wait on that worker is refused at start. A separate per-poll `flock`
+//! on the cursor, held across the read-scan-advance window, serialises the wait against `send`'s
+//! cursor skip. The kernel releases both when the holder dies, which is why this needs no pid,
+//! token, heartbeat, staleness threshold, or takeover path to recover from a waiter that went away.
 
 use std::{
-    fs,
+    fs::{self, File, TryLockError},
     io::{ErrorKind, Read, Seek, SeekFrom},
     os::unix::fs::OpenOptionsExt,
     thread,
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 
 use crate::{
@@ -32,12 +32,13 @@ use crate::{
 pub(crate) mod cursor;
 mod exit;
 
-use cursor::{cursor_path, open_cursor, read_cursor, write_cursor};
+use cursor::{cursor_path, open_lock_file, read_cursor, waiter_path, write_cursor};
 use exit::Outcome;
 pub(crate) use exit::WaitExit;
 
 pub const EXIT_WAKE: u8 = 0;
 pub const EXIT_WORKER_CLOSED: u8 = 10;
+pub const EXIT_ALREADY_WAITING: u8 = 11;
 pub const EXIT_TIMEOUT: u8 = 22;
 
 /// Poll interval used by `niles wait` and by `niles send --wait`.
@@ -54,30 +55,27 @@ const MAX_LINE_BYTES: usize = 4096;
 /// Backstop only; each check costs a tmux subprocess per worker.
 const WINDOW_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
-pub(crate) enum WaitOn {
-    Workers(Vec<String>),
-    Task(String),
-}
-
-pub fn wait(on: WaitOn, interval: Duration, timeout: Duration) -> Result<WaitExit> {
-    let mut targets = resolve_targets(on)?;
-    let prefix_worker_id = targets.len() > 1;
-    let subject = timeout_subject(&targets);
+pub fn wait(id: String, interval: Duration, timeout: Duration) -> Result<WaitExit> {
+    let mut target = Target::resolve(id)?;
+    // Held, unread, until this function returns: the lock lives as long as the file stays open.
+    let Some(_claim) = target.claim()? else {
+        return Ok(WaitExit::from_outcome(Outcome::AlreadyWaiting {
+            id: target.id,
+        }));
+    };
 
     let deadline = Instant::now() + timeout;
     loop {
-        for target in &mut targets {
-            if let Some(outcome) = target.poll()? {
-                return Ok(WaitExit::from_outcome(outcome, prefix_worker_id));
-            }
+        if let Some(outcome) = target.poll()? {
+            return Ok(WaitExit::from_outcome(outcome));
         }
 
         let now = Instant::now();
         if now >= deadline {
-            return Ok(WaitExit::from_outcome(
-                Outcome::Timeout { subject, timeout },
-                prefix_worker_id,
-            ));
+            return Ok(WaitExit::from_outcome(Outcome::Timeout {
+                subject: target.status.to_string(),
+                timeout,
+            }));
         }
         thread::sleep(interval.min(deadline - now));
     }
@@ -119,6 +117,20 @@ impl Target {
         })
     }
 
+    /// Takes this worker's wait claim, held for as long as the returned file stays open, or `None`
+    /// when another wait holds it.
+    fn claim(&self) -> Result<Option<File>> {
+        let path = waiter_path(&self.dir);
+        let waiter = open_lock_file(&path)?;
+        match waiter.try_lock() {
+            Ok(()) => Ok(Some(waiter)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(err)) => {
+                Err(err).with_context(|| format!("failed to lock {path}"))
+            }
+        }
+    }
+
     fn poll(&mut self) -> Result<Option<Outcome>> {
         if !self.dir.exists() {
             return Ok(Some(self.closed(wake::line(
@@ -128,12 +140,12 @@ impl Target {
         }
 
         let path = cursor_path(&self.dir);
-        let mut cursor = open_cursor(&path)?;
+        let mut cursor = open_lock_file(&path)?;
         cursor
             .lock()
             .with_context(|| format!("failed to lock {path}"))?;
 
-        // Another wait may have consumed past our in-memory position since the last poll.
+        // A `send` may have skipped past our in-memory position since the last poll.
         let persisted = read_cursor(&mut cursor, &path)?;
         self.scanned = self.scanned.max(persisted);
 
@@ -150,10 +162,7 @@ impl Target {
         Ok(Some(if kind == WakeKind::Closed {
             self.closed(line)
         } else {
-            Outcome::Wake {
-                id: self.id.clone(),
-                line,
-            }
+            Outcome::Wake { line }
         }))
     }
 
@@ -206,7 +215,7 @@ impl Target {
     /// Consumes every actionable line currently in the log and persists the end position.
     fn skip_to_end(&mut self) -> Result<Vec<String>> {
         let path = cursor_path(&self.dir);
-        let mut cursor = open_cursor(&path)?;
+        let mut cursor = open_lock_file(&path)?;
         cursor
             .lock()
             .with_context(|| format!("failed to lock {path}"))?;
@@ -250,53 +259,6 @@ impl Target {
             status: self.status.clone(),
             line,
         }
-    }
-}
-
-fn resolve_targets(on: WaitOn) -> Result<Vec<Target>> {
-    let ids = match on {
-        WaitOn::Workers(ids) => dedup(ids),
-        WaitOn::Task(label) => task_worker_ids(&label)?,
-    };
-    ids.into_iter().map(Target::resolve).collect()
-}
-
-fn task_worker_ids(label: &str) -> Result<Vec<String>> {
-    worker::validate_task_label(label)?;
-    let selection = worker::select_worker_ids_by_task(label)?;
-    // A worker with unreadable metadata carries no label, so it cannot be in scope for `label`;
-    // surface it but do not let it block a wait on a label it could never carry.
-    if !selection.unreadable.is_empty() {
-        let ids = selection
-            .unreadable
-            .iter()
-            .map(|(id, _)| id.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!(
-            "warning: worker(s) with unreadable metadata skipped (remove their directories to recover): {ids}"
-        );
-    }
-    if selection.ids.is_empty() {
-        bail!("no live workers with task label {label}");
-    }
-    Ok(selection.ids)
-}
-
-fn dedup(ids: Vec<String>) -> Vec<String> {
-    let mut deduped: Vec<String> = Vec::new();
-    for id in ids {
-        if !deduped.contains(&id) {
-            deduped.push(id);
-        }
-    }
-    deduped
-}
-
-fn timeout_subject(targets: &[Target]) -> String {
-    match targets {
-        [only] => only.status.to_string(),
-        _ => "requested workers".to_owned(),
     }
 }
 

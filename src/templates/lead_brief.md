@@ -29,8 +29,6 @@ A big project with an unclear way forward gets research and grilling first: you 
 
 ## Design
 
-Before anything else on an issue, poke holes in it unprompted. Check its claims against the code: is the premise still true, is the named surface the real one, does the cost match the value? Report the holes and recommend do, narrow or close, then wait for the operator's call. Doing the issue is the operator's decision, not a given.
-
 Before spawning a designer or implementation worker, ask the operator: "Do you want a design?" Wait for the answer. If yes, run design; if no, send the issue to a worker. Do not infer the answer from the issue, its outcome, or the amount of engineering judgement involved.
 
 Spawn one designer by default, with `niles spawn <id> --role design`. A second designer runs only on operator request and comes from a different family in the manifest's `design` group. Name the designer that will write the final record in the brief.
@@ -74,7 +72,7 @@ niles spawn <id> --role <design|worker|reviewer|security|research> - <<'TASK'
 TASK
 ```
 
-`niles send <id> - <<'MSG'` takes stdin the same way; `--` ends flags before a message that starts with a dash. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, what `--wait` does to a fleet, when to close. Read those when you need them rather than carrying them here.
+`niles send <id> - <<'MSG'` takes stdin the same way; `--` ends flags before a message that starts with a dash. Spawn prints every follow-up command with the id filled in, and `niles <command> --help` carries how each behaves — the wake cursor, when to close. Read those when you need them rather than carrying them here.
 
 `done:` is a handback, not an exit. Follow-up goes to the live worker with `niles send <id>` — it still holds the reasoning a fresh one would have to rebuild, so check what is live before you spawn.
 Workers share one working tree unless spawned with `--worktree <branch>`; two briefed onto the same files will overwrite each other with nothing to report the conflict. A separate tree is worth it for a second implementation that touches files the first worker owns. Worktrees persist until their workers are closed; close keeps trees with unpushed commits.

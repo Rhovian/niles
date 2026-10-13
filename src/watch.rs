@@ -345,7 +345,7 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
                 // mechanism, and it is why a failure here is not an error.
                 memory.commit(nudge);
                 if let Commit::Checkin { planned, next } = &nudge.commit {
-                    rearm(nudge, planned, next, sink);
+                    rearm(nudge, planned, next.as_ref(), sink);
                 }
                 sink.note(&format!("nudged {}: {}", nudge.id, nudge.text));
             }
@@ -357,15 +357,20 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
     }
 }
 
-/// Writes the next check-in, but only over the state this tick planned on.
-fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) {
+/// Writes the next check-in, or removes it when there is none, but only over the state this tick
+/// planned on.
+fn rearm(nudge: &Nudge, planned: &Checkin, next: Option<&Checkin>, sink: &mut dyn Sink) {
     with_planned_checkin(
         &nudge.id,
         &nudge.worker_dir,
         planned,
         sink,
         |worker_dir, sink| {
-            if let Err(err) = next.write(worker_dir) {
+            let written = match next {
+                Some(next) => next.write(worker_dir),
+                None => Checkin::disarm(worker_dir).map(|_| ()),
+            };
+            if let Err(err) = written {
                 sink.note(&format!(
                     "the check-in for {} is still armed at its old deadline, so it fires again: \
                      {err:#}",

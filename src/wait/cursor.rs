@@ -8,14 +8,20 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 const CURSOR_FILE: &str = "status.cursor";
+const WAITER_FILE: &str = "status.waiter";
 
 pub(crate) fn cursor_path(dir: &Utf8Path) -> Utf8PathBuf {
     dir.join(CURSOR_FILE)
 }
 
-/// Opens the cursor for locking and rewriting. `O_NOFOLLOW` keeps a symlink planted at the cursor
-/// path from redirecting the write out of the worker directory.
-pub(super) fn open_cursor(path: &Utf8Path) -> Result<File> {
+/// The empty file whose `flock` is a worker's wait claim. It is never written.
+pub(super) fn waiter_path(dir: &Utf8Path) -> Utf8PathBuf {
+    dir.join(WAITER_FILE)
+}
+
+/// Opens the cursor or the wait claim for locking. `O_NOFOLLOW` keeps a symlink planted at either
+/// path from redirecting the open out of the worker directory.
+pub(super) fn open_lock_file(path: &Utf8Path) -> Result<File> {
     fs::OpenOptions::new()
         .read(true)
         .write(true)

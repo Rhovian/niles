@@ -105,9 +105,8 @@ pub enum CommandName {
     /// `security` is the adversarial pass, `design` writes the design record, and `research`
     /// answers one question with cited evidence. Workers may use --design for a record or --mechanical to log mechanical work.
     ///
-    /// `--wait` then blocks for this worker's first actionable line, so a single-worker turn does
-    /// not need a separate `niles wait`. Leave it off when spawning a fleet and block on the group
-    /// with `niles wait --task <label>` instead.
+    /// `--wait` then blocks for this worker's first actionable line, so the turn does not need a
+    /// separate `niles wait`.
     #[command(verbatim_doc_comment)]
     Spawn {
         /// Block for this worker's first actionable wake after spawning.
@@ -184,9 +183,7 @@ pub enum CommandName {
     /// Advances the worker's wake cursor first, so a status line written before the message
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
     ///
-    /// `--wait` then blocks for that worker's reply. With several workers in flight prefer plain
-    /// `send` followed by `niles wait --task <label>`: `--wait` blocks on one worker and will not
-    /// notice another finishing.
+    /// `--wait` then blocks for that worker's reply.
     #[command(verbatim_doc_comment)]
     Send {
         /// Block for this worker's next actionable wake after sending.
@@ -204,22 +201,19 @@ pub enum CommandName {
     /// Wait for the next actionable status-log wake and print it
     ///
     /// Each wait consumes one actionable line and records how far it read, so after a wake and a
-    /// follow-up you run it again for the next one. Waiting on several workers returns the first
-    /// line any of them produces, prefixed with its id.
+    /// follow-up you run it again for the next one. One wait per worker: a second wait on a worker
+    /// that is already being waited on exits at once, and the running wait gets the line.
     ///
     /// A worker whose tmux window has gone ends the wait rather than blocking on a log nothing
     /// can append to again — but only once its log holds no further line, so a worker that
     /// reported and then exited still hands that report over.
     ///
-    /// Exits 0 on a wake, 10 when the worker closed or its window is gone, 22 on timeout.
+    /// Exits 0 on a wake, 10 when the worker closed or its window is gone, 11 when another wait is
+    /// already running on the worker, 22 on timeout.
     #[command(verbatim_doc_comment)]
     Wait {
-        /// Worker ids to wait on. Pass several to wait on a fleet.
-        #[arg(required_unless_present = "task", conflicts_with = "task")]
-        worker: Vec<String>,
-        /// Wait on every live worker carrying this task label.
-        #[arg(long, required_unless_present = "worker", conflicts_with = "worker")]
-        task: Option<String>,
+        /// Worker id to wait on.
+        worker: String,
         /// Poll interval: a duration such as 500ms, 90s, 5m or 1h. Must be greater than zero.
         #[arg(
             long,
