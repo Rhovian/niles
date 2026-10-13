@@ -7,23 +7,11 @@
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
-**Run Claude Code, Codex, Hermes and pi as one team in tmux.**
-
-You talk to one agent. It plans the change, hands the work to others, often from another model
-family, and reviews what comes back before it reaches you.
-
-- **Diffs stay small.** Every handoff carries a line budget. A worker that passes it stops, and the
-  overrun is trimmed line by line before review.
-- **Independent review.** One model family writes the change and another reviews it.
-- **Nothing goes quiet.** Niles checks in on quiet workers, wakes the lead when they report, and
-  shows ⚠ in your status bar when a lead is waiting on you.
-- **One Rust binary.** tmux and plain files: no server, no plugins, and your agent CLIs run
-  unmodified.
+An opinionated orchestration harness across your agent CLIs, featuring research, design, and security
+roles; small diffs, telemetry, and options to make it your own. See the [roadmap](ROADMAP.md) for
+what's next and the [releases](https://github.com/Rhovian/niles/releases) for what changed.
 
 ![Niles demo](docs/assets/niles-demo.gif)
-
-See the [roadmap](ROADMAP.md) for what's next and the [releases](https://github.com/Rhovian/niles/releases)
-for what changed. Star and watch the repository to follow along.
 
 ## Requirements
 
