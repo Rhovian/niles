@@ -9,6 +9,9 @@ pub struct AgentProfile {
     pub tested_version: &'static str,
     pub foreground_args: &'static [&'static str],
     pub worker_args: &'static [&'static str],
+    /// Switches a worker launch to a single non-interactive turn; appended after
+    /// `worker_args` because codex's subcommand must follow its root flags.
+    pub headless: &'static [&'static str],
     pub worker_brief: BriefDelivery,
     pub lead_brief: BriefDelivery,
     pub default_model: &'static str,
@@ -90,11 +93,12 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
-        tested_version: "0.160.0",
+        tested_version: "0.162.1",
         // The shared daemon lets a running session continue in the background, out of its tmux
         // pane.
         foreground_args: &["--no-daemon"],
         worker_args: &["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"],
+        headless: &["exec", "--skip-git-repo-check"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::Arg,
         default_model: "gpt-5.5",
@@ -111,9 +115,10 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
-        tested_version: "2.1.288",
+        tested_version: "2.1.296",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
+        headless: &["-p"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
         default_model: "opus",
@@ -134,6 +139,7 @@ const PROFILES: &[AgentProfile] = &[
         tested_version: "0.21.3",
         foreground_args: &["chat"],
         worker_args: &["chat", "--yolo"],
+        headless: &["--oneshot"],
         worker_brief: HERMES_QUERY,
         // The lead's turn has no single file, so it goes by value.
         lead_brief: HERMES_QUERY,
@@ -148,9 +154,10 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "pi",
         binary: "pi",
-        tested_version: "0.73.1",
+        tested_version: "1.2.0",
         foreground_args: &[],
         worker_args: &[],
+        headless: &["-p"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
         default_model: "tencent/hy3",

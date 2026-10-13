@@ -136,8 +136,11 @@ queue_update() {
     update_lengths+=("$#")
     update_argv+=("$@")
 }
+# gh returns release names, not the embedded CLI version (Hermes tags can be dates):
+# https://cli.github.com/manual/gh_release_view
+version_pattern='(^|[[:space:]])v?([0-9]+\.[0-9]+\.[0-9]+([-+][[:alnum:].+-]+)?)'
 exit_code=0
-printf '%-8s %-28s %-12s %-12s %s\n' CLI INSTALLED TESTED LATEST RESULT
+printf 'cli\tinstalled\ttested\tlatest\trepo\tresult\n'
 for cli in codex claude hermes pi; do
     case $cli in
         codex) repo=openai/codex ;;
@@ -145,54 +148,54 @@ for cli in codex claude hermes pi; do
         hermes) repo=NousResearch/hermes-agent ;;
         pi) repo=earendil-works/pi ;;
     esac
-    installed='not installed'
+    installed=missing
     output=''
     if command -v "$cli" >/dev/null; then
         if output=$("$cli" --version 2>&1); then
             first_line=${output%%$'\n'*}
-            version_pattern='(^|[[:space:]])v?([0-9]+\.[0-9]+\.[0-9]+([-+][[:alnum:].+-]+)?)'
             if [[ $first_line =~ $version_pattern ]]; then
                 installed=${BASH_REMATCH[2]}
             else
                 printf 'ERROR: %s --version output unrecognized: %s\n' "$cli" "$output" >&2
-                installed=ERROR
+                installed=error
                 exit_code=2
             fi
         else
             printf 'ERROR: %s --version failed: %s\n' "$cli" "$output" >&2
-            installed=ERROR
+            installed=error
             exit_code=2
         fi
     fi
-    tested=ERROR
+    tested=error
     if ! raw=$(tested_version "$cli") || ! tested=$(stable_version "$raw"); then
         printf 'ERROR: %s tested version lookup failed\n' "$cli" >&2
-        tested=ERROR
+        tested=error
         exit_code=2
     fi
-    latest=ERROR
-    result='lookup failed'
-    if tag=$(gh release view --repo "$repo" --json tagName --jq .tagName); then
-        if latest=$(stable_version "$tag"); then
-            if [[ $tested != ERROR ]]; then
-                result='covered by tested version'
+    latest=error
+    result=error
+    if name=$(gh release view --repo "$repo" --json name --jq .name); then
+        if [[ $name =~ $version_pattern ]] && latest=$(stable_version "${BASH_REMATCH[2]}"); then
+            if [[ $tested != error ]]; then
+                result=covered
                 if newer_than "$latest" "$tested"; then
-                    result='newer than tested'
+                    result=newer
                     if (( exit_code == 0 )); then exit_code=1; fi
                 fi
             fi
         else
-            printf 'ERROR: %s latest release tag unrecognized (%s)\n' "$cli" "$repo" >&2
-            latest=ERROR
+            printf 'ERROR: %s latest release name unrecognized (%s)\n' "$cli" "$repo" >&2
+            latest=error
             exit_code=2
         fi
     else
         printf 'ERROR: %s GitHub latest release lookup failed (%s)\n' "$cli" "$repo" >&2
         exit_code=2
     fi
-    printf '%-8s %-28s %-12s %-12s %s\n' "$cli" "$installed" "$tested" "$latest" "$result"
+    if [[ $installed == error || $tested == error || $latest == error ]]; then result=error; fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$cli" "$installed" "$tested" "$latest" "$repo" "$result"
     if [[ $mode != check ]]; then
-        if [[ $installed == 'not installed' || $installed == ERROR || $latest == ERROR ]]; then
+        if [[ $installed == missing || $installed == error || $latest == error ]]; then
             printf 'ERROR: cannot plan an update for %s without installed/latest versions\n' "$cli" >&2
             exit_code=2
         elif detect_update "$cli" "$output" "$latest"; then

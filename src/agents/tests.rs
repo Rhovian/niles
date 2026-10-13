@@ -297,3 +297,44 @@ fn hermes_sources_are_unique_per_launch() {
     assert!(a.starts_with("niles:worker:"));
     assert_ne!(a, b);
 }
+
+#[test]
+fn headless_invocation_orders_worker_headless_and_tier_args() {
+    for family in known_agent_ids() {
+        let profile = profile_for(family).unwrap();
+        let invocation = invocation(
+            &format!("{family}:{}:low", profile.default_model),
+            None,
+            InvocationDefaults::Headless,
+            &models(),
+        )
+        .unwrap();
+        let expected: Vec<String> = profile
+            .worker_args
+            .iter()
+            .chain(profile.headless)
+            .map(|arg| (*arg).to_owned())
+            .chain(families::tier_args(
+                profile,
+                Some(profile.default_model),
+                Some("low"),
+            ))
+            .collect();
+        assert_eq!(invocation.args, expected, "{family}");
+        if family == "codex" {
+            assert_eq!(
+                invocation.args,
+                [
+                    "--no-daemon",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "exec",
+                    "--skip-git-repo-check",
+                    "--model",
+                    "gpt-5.5",
+                    "--config",
+                    "model_reasoning_effort=\"low\"",
+                ]
+            );
+        }
+    }
+}
