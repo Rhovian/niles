@@ -5,12 +5,13 @@ use ratatui::style::Style;
 use super::registry::{self, ProjectName};
 use crate::{
     session,
-    theme::{State, StyleKey, StyleRender, Theme},
+    theme::{StyleRender, Theme},
     tmux,
     worker::usage::{self, SessionUsage},
 };
 
 mod config;
+mod help;
 mod telemetry;
 
 pub(crate) use telemetry::Range;
@@ -60,7 +61,7 @@ pub(crate) fn open(panel: Panel) -> Result<tmux::WindowTarget> {
 pub(crate) fn render(panel: Panel) -> Result<()> {
     let theme = Theme::load()?;
     let text = match panel {
-        Panel::Help => help_text(registry::entries()?.is_empty(), &theme),
+        Panel::Help => return help::run(registry::entries()?.is_empty(), &theme),
         // Interactive, so it draws for itself until its window is respawned.
         Panel::Config { project } => return config::run(project.as_ref(), &theme),
         Panel::Telemetry { range } => telemetry::panel(&registry::entries()?, range, &theme)?,
@@ -85,51 +86,6 @@ fn lead_running(entry: &registry::Entry) -> Result<bool> {
         tmux::project_session(&session)?.as_deref() == Some(entry.path.as_str())
             && tmux::lead_running(&session)?,
     )
-}
-
-const FIRST_RUN: &str = "niles
-
-Coordinates coding agents from different model families in tmux.
-
-Get started
-  r    register a project directory, in the explorer on the left
-  ↵    start its lead and show it here
-
-Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
-";
-
-const KEYS: &str = "Choose a project on the left.
-
-  ↵      open                 → ←    expand / collapse
-  [ ]    previous / next project
-  ; '    previous / next window
-  r      register a project
-  c      close a worker or project
-  ?      this help            esc    back
-
-  {running} running   {waiting} waiting
-
-With the bindings in docs/setup.md, M-[ M-] M-; M-' do the same from any pane.
-";
-
-fn help_text(first_run: bool, theme: &Theme) -> String {
-    if first_run {
-        FIRST_RUN
-            .split('\n')
-            .map(|line| match line {
-                "niles" | "Get started" => theme.style(StyleKey::Heading).paint(line),
-                _ => line.to_owned(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        let (waiting, style) = theme.state(State::Waiting);
-        KEYS.replace(
-            "{running}",
-            &theme.state(State::Running).1.paint(theme.spinner(0)),
-        )
-        .replace("{waiting}", &style.paint(waiting))
-    }
 }
 
 struct Cell {
@@ -180,6 +136,3 @@ fn table(rows: &[Vec<Cell>]) -> (Vec<String>, usize) {
     let width = widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
     (lines, width)
 }
-
-#[cfg(test)]
-mod tests;
