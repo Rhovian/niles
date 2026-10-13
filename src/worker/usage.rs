@@ -5,14 +5,14 @@ use serde::Serialize;
 
 use crate::{
     session, store,
-    telemetry::{self, Buckets, SessionLink},
+    telemetry::{self, Buckets, SessionLink, SessionState},
     util::{current_dir_utf8, parse_timestamp_id},
 };
 
 use super::{
     WorkerSnapshot,
     list::print_json,
-    meta::{WorkerMeta, meta_path, report_path},
+    meta::{WorkerMeta, meta_path, read_meta_if_exists, report_path},
     resolve::window_state,
     snapshot::worker_snapshot,
 };
@@ -91,16 +91,28 @@ pub(crate) fn collect(
 }
 
 pub(crate) fn worker_usage(worker: &WorkerSnapshot) -> Result<Option<telemetry::Usage>> {
-    let Some(meta) = worker.meta.as_ref() else {
+    match worker.meta.as_ref() {
+        Some(meta) => meta_usage(meta, &worker.worker_dir),
+        None => Ok(None),
+    }
+}
+
+/// The worker's session state, or `None` when its family reports none.
+pub(crate) fn session_state(worker_dir: &Utf8Path) -> Result<Option<SessionState>> {
+    let Some(meta) = read_meta_if_exists(worker_dir)? else {
         return Ok(None);
     };
+    Ok(meta_usage(&meta, worker_dir)?.and_then(|usage| usage.state))
+}
+
+fn meta_usage(meta: &WorkerMeta, worker_dir: &Utf8Path) -> Result<Option<telemetry::Usage>> {
     let Some(link) = meta.session_link.as_ref() else {
         return Ok(None);
     };
     telemetry::read(
         link,
         meta.agent_dir(),
-        &report_path(&worker.worker_dir),
+        &report_path(worker_dir),
         meta.created_at,
     )
 }

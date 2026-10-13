@@ -47,7 +47,9 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    settle();
+    // The wait takes its claim only after `send` has moved the cursor past the stale line, so the
+    // reply appended now cannot be skipped by that advance.
+    wait_for_file(&worker_dir.join("status.waiter"));
 
     append_status(&worker_dir.join("status.log"), b"done: second pass\n");
 

@@ -54,14 +54,18 @@ pub(crate) enum Commit {
     /// Everything up to this log length has been reported; the next report is a later line.
     Seen(u64),
     /// This check-in landed: `next` replaces `planned`, if `planned` is still what is on disk.
-    Checkin { planned: Checkin, next: Checkin },
+    /// `None` disarms it: an idle worker stays idle until the lead acts, so one nudge is enough.
+    Checkin {
+        planned: Checkin,
+        next: Option<Checkin>,
+    },
 }
 
 /// What the thread remembers between ticks.
 ///
 /// In memory because the process is the lead's: there is no lock file, no recorded pid and no
-/// second process to agree with. Nothing here is shared with `niles wait`, whose cursor stays the
-/// only thing that consumes a status line.
+/// second process to agree with. `niles wait`'s cursor stays the only thing that consumes a status
+/// line; this only reads it, so a line the lead already took from a wait is not reported again.
 #[derive(Debug, Default)]
 pub(crate) struct WatchMemory {
     seen: BTreeMap<String, u64>,
@@ -111,7 +115,14 @@ impl WatchMemory {
             if worker.log_len < *seen {
                 *seen = 0;
             }
-            let accounted = *seen;
+            // A line a wait has handed the lead, or is about to, is already the lead's: a nudge
+            // for it would only send the lead to look again at nothing new.
+            let taken = if worker.wait_running {
+                worker.log_len
+            } else {
+                worker.delivered()
+            };
+            let accounted = (*seen).max(taken);
 
             if let Some(checkin) = checkins.get(&worker.id) {
                 match worker.last_actionable {
@@ -120,21 +131,23 @@ impl WatchMemory {
                         worker_dir: worker.worker_dir.clone(),
                         planned: *checkin,
                     }),
-                    _ if now >= checkin.deadline => plan.nudges.push(Nudge {
-                        id: worker.id.clone(),
-                        worker_dir: worker.worker_dir.clone(),
-                        text: no_report_text(
-                            &worker.id,
-                            self.activity
-                                .get(&worker.id)
-                                .filter(|(deadline, _)| *deadline == checkin.deadline)
-                                .and_then(|(_, state)| *state),
-                        ),
-                        commit: Commit::Checkin {
-                            planned: *checkin,
-                            next: checkin.rearmed(now),
-                        },
-                    }),
+                    _ if now >= checkin.deadline => {
+                        let state = self
+                            .activity
+                            .get(&worker.id)
+                            .filter(|(deadline, _)| *deadline == checkin.deadline)
+                            .and_then(|(_, state)| *state);
+                        plan.nudges.push(Nudge {
+                            id: worker.id.clone(),
+                            worker_dir: worker.worker_dir.clone(),
+                            text: no_report_text(&worker.id, state),
+                            commit: Commit::Checkin {
+                                planned: *checkin,
+                                next: (state != Some(SessionState::Waiting))
+                                    .then(|| checkin.rearmed(now)),
+                            },
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -332,10 +345,16 @@ mod tests {
             "impl".to_owned(),
             (armed["impl"].deadline, Some(SessionState::Waiting)),
         );
+        let idle = memory.plan(&[busy()], &armed, at(1300));
         assert_eq!(
-            memory.plan(&[busy()], &armed, at(1300)).nudges[0].text,
+            idle.nudges[0].text,
             "niles: impl stopped without a report — check it"
         );
+        // An idle worker is told about once; it stays idle until the lead acts.
+        assert!(matches!(
+            idle.nudges[0].commit,
+            Commit::Checkin { next: None, .. }
+        ));
 
         memory.activity.clear();
         // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
@@ -356,7 +375,10 @@ mod tests {
             // from firing the same check-in again.
             let nudge = plan.nudges[0].clone();
             memory.commit(&nudge);
-            let Commit::Checkin { next, .. } = nudge.commit else {
+            let Commit::Checkin {
+                next: Some(next), ..
+            } = nudge.commit
+            else {
                 panic!("a check-in nudge must carry its re-arm");
             };
             armed = BTreeMap::from([("impl".to_owned(), next)]);

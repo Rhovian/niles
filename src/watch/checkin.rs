@@ -1,19 +1,26 @@
 //! Check-in arm state: `.niles/worker/<id>/checkin`.
 //!
-//! `armed_len` keeps an old report from satisfying a fresh assignment. No lock guards this file:
-//! a tick that catches a write in progress retries on the next pass.
+//! `armed_len` keeps an old report from satisfying a fresh assignment. Every write and removal
+//! happens under [`Checkin::lock`]; a plain read takes no lock, because writes rename a whole file
+//! into place.
 
-use std::{collections::BTreeMap, fs, io::ErrorKind, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::ErrorKind,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
-use crate::{telemetry::SessionState, worker::ActionableWake};
+use crate::{telemetry::SessionState, wait::cursor::open_lock_file, worker::ActionableWake};
 
 use super::cadence::{Recheck, parse_recheck};
 
 const CHECKIN_FILE: &str = "checkin";
+const LOCK_FILE: &str = "checkin.lock";
 
 /// Where a check-in is written before it is renamed into place. Never read: a leftover one is a
 /// write that never landed, and the next write overwrites it.
@@ -73,6 +80,17 @@ impl Checkin {
     /// Whether `wake` answers the assignment this check-in was armed for.
     pub(crate) fn answered_by(&self, wake: ActionableWake) -> bool {
         wake.end > self.armed_len
+    }
+
+    /// Holds this worker's check-in lock until the returned file is dropped. It makes the watcher's
+    /// re-read and the write or removal that follows one step, so a check-in `send` arms cannot
+    /// land between them and be removed or overwritten.
+    pub(crate) fn lock(worker_dir: &Utf8Path) -> Result<File> {
+        let path = worker_dir.join(LOCK_FILE);
+        let file = open_lock_file(&path)?;
+        file.lock()
+            .with_context(|| format!("failed to lock {path}"))?;
+        Ok(file)
     }
 
     pub(crate) fn read(worker_dir: &Utf8Path) -> Result<Option<Self>> {

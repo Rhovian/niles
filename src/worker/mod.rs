@@ -24,11 +24,10 @@ pub use spawn::{Assignment, spawn};
 pub use usage::usage;
 pub use worktree::SpawnTree;
 
-pub(crate) use close::select_worker_ids_by_task;
 pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub(crate) use resolve::resolve_worker as worker_dir;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
-pub(crate) use usage::{lead_usage, worker_usage};
+pub(crate) use usage::{lead_usage, session_state, worker_usage};
 
 pub(crate) struct StatusWorker {
     pub id: String,
@@ -59,4 +58,3 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
         })
         .collect()
 }
-pub(crate) use validation::validate_task_label;

@@ -138,40 +138,38 @@ fn a_truncated_log_rescans_from_the_start() {
 }
 
 #[test]
-fn concurrent_waits_deliver_the_line_to_exactly_one() {
-    let workspace = temp_workspace("niles-wait-concurrent");
-    worker_with_status(&workspace, "auth-fix", b"working: still running\n");
-    let args = ["auth-fix", "--interval", "50ms", "--timeout", "5s"];
+fn a_second_wait_on_a_worker_is_refused_and_the_running_wait_gets_the_line() {
+    let workspace = temp_workspace("niles-wait-held");
+    let worker_dir = worker_with_status(&workspace, "auth-fix", b"");
 
-    let first = spawn_wait(&workspace, &args);
-    let second = spawn_wait(&workspace, &args);
-    settle();
-
-    append_status(
-        &workspace.join(".niles/worker/auth-fix/status.log"),
-        b"done: only once\n",
+    let running = spawn_wait(
+        &workspace,
+        &["auth-fix", "--interval", "50ms", "--timeout", "10s"],
     );
+    // A wait opens the cursor only once it holds its claim.
+    wait_for_file(&worker_dir.join("status.cursor"));
 
-    let first = first.wait_with_output().unwrap();
-    let second = second.wait_with_output().unwrap();
-
-    // Neither wait is rejected for the other's existence; exactly one is handed the line.
-    let winners = [&first, &second]
-        .into_iter()
-        .filter(|output| stdout_of(output).contains("done: only once"))
-        .count();
-    assert_eq!(
-        winners,
-        1,
-        "first: {:?}/{:?}\nsecond: {:?}/{:?}",
-        stdout_of(&first),
-        stderr_of(&first),
-        stdout_of(&second),
-        stderr_of(&second)
+    let refused = run_wait(
+        &workspace,
+        &["auth-fix", "--interval", "50ms", "--timeout", "0"],
     );
-    let losers = [&first, &second]
-        .into_iter()
-        .filter(|output| output.status.code() == Some(22))
-        .count();
-    assert_eq!(losers, 1, "the wait that lost the race should time out");
+    assert_eq!(refused.status.code(), Some(11), "{}", stderr_of(&refused));
+    assert!(stdout_of(&refused).is_empty());
+    let stderr = stderr_of(&refused);
+    assert!(
+        stderr.contains("already-waiting worker=auth-fix"),
+        "stderr: {stderr}"
+    );
+    // What the watcher probes to tell a wait is running, and it is released with the wait.
+    let waiting = fs::File::open(worker_dir.join("status.waiting")).unwrap();
+    assert!(matches!(
+        waiting.try_lock(),
+        Err(fs::TryLockError::WouldBlock)
+    ));
+
+    append_status(&worker_dir.join("status.log"), b"done: only once\n");
+    let delivered = running.wait_with_output().unwrap();
+    assert_command_success("the running wait", &delivered);
+    assert_eq!(stdout_of(&delivered), "done: only once\n");
+    waiting.try_lock().unwrap();
 }

@@ -1,21 +1,6 @@
 use super::support::*;
 
 #[test]
-fn waiting_on_several_workers_prefixes_the_winning_id() {
-    let workspace = temp_workspace("niles-wait-fleet");
-    worker_with_status(&workspace, "alpha", b"working: nothing yet\n");
-    worker_with_status(&workspace, "beta", b"done: beta finished\n");
-
-    let output = run_wait(
-        &workspace,
-        &["alpha", "beta", "--interval", "50ms", "--timeout", "0"],
-    );
-
-    assert_command_success("fleet wait", &output);
-    assert_eq!(stdout_of(&output), "beta: done: beta finished\n");
-}
-
-#[test]
 fn corrupt_cursor_fails_loudly_and_names_the_file() {
     let workspace = temp_workspace("niles-wait-corrupt");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: ready\n");
@@ -99,23 +84,6 @@ fn a_symlinked_cursor_path_is_refused_rather_than_followed() {
 }
 
 #[test]
-fn rejects_both_worker_and_task_selectors() {
-    let workspace = temp_workspace("niles-wait-selectors");
-
-    let output = run_wait(
-        &workspace,
-        &["auth-fix", "--task", "auth", "--timeout", "0"],
-    );
-
-    assert!(!output.status.success());
-    let combined = format!("{}{}", stdout_of(&output), stderr_of(&output));
-    assert!(
-        combined.contains("cannot be used with") || combined.contains("use either"),
-        "output: {combined}"
-    );
-}
-
-#[test]
 fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
     let workspace = temp_workspace("niles-wait-huge");
     let mut status = b"done: ".to_vec();
@@ -133,37 +101,6 @@ fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
     assert!(stdout.starts_with("done: xxx"));
     assert!(stdout.contains("(truncated)"), "stdout was not capped");
     assert!(stdout.len() < 8 * 1024, "stdout was {} bytes", stdout.len());
-}
-
-#[test]
-fn task_label_waits_on_every_live_worker_carrying_it() {
-    let lab = Lab::start("niles-wait-task");
-    // The fabricated workers need real tmux windows so the window-gone check does not win.
-    for (id, task, status) in [
-        ("alpha", "auth", b"working: nothing yet\n".as_slice()),
-        ("beta", "auth", b"blocked: needs a decision\n".as_slice()),
-        ("gamma", "other", b"done: unrelated task\n".as_slice()),
-    ] {
-        lab.server.new_window(&format!("niles-{id}"));
-        lab.worker(id, Some(task), status);
-    }
-
-    let output = lab
-        .niles(&[
-            "wait",
-            "--task",
-            "auth",
-            "--interval",
-            "50ms",
-            "--timeout",
-            "0",
-        ])
-        .output()
-        .unwrap();
-
-    assert_command_success("wait --task", &output);
-    // gamma carries a different label, so its wake must not satisfy this wait.
-    assert_eq!(stdout_of(&output), "beta: blocked: needs a decision\n");
 }
 
 #[test]

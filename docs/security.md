@@ -64,13 +64,18 @@ Niles subsequently creates and reads manifests, session artifacts, worker direct
 briefs, launch scripts, reports, status logs, and cursors in that tree. See
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
-**Existing mitigations.** Worker IDs and task labels accept only ASCII letters, digits, hyphens,
-and underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's
-own file appends (through `append_line` or the trust watcher's held descriptor), spawn's log
-creation, and the open of `status.cursor` use `O_NOFOLLOW`. An exclusive advisory `flock` on
-`status.cursor` covers the cursor read, status scan, and cursor advance, serializing concurrent
-waiters. See
-[`src/worker/validation.rs`](../src/worker/validation.rs) and [`src/wait.rs`](../src/wait.rs).
+**Existing mitigations.** Worker IDs and task labels accept only ASCII letters, digits, hyphens, and
+underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's own
+file appends (through `append_line` or the trust watcher's held descriptor), spawn's log creation,
+and the opens of `status.cursor`, `status.waiter`, `status.waiting` and `checkin.lock` use
+`O_NOFOLLOW`. An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan,
+and cursor advance, serializing a wait against `send`'s cursor skip. A wait holds an exclusive
+`flock` on `status.waiter` for its whole life, so a second wait on the same worker is refused, and a
+shared `flock` on `status.waiting`, which the watcher probes to leave the lines that wait will
+deliver unreported. Every write or removal of a worker's check-in holds an exclusive `flock` on
+`checkin.lock`, so the watcher's re-read and the action that follows cannot interleave with a `send`
+arming a fresh one. See [`src/worker/validation.rs`](../src/worker/validation.rs) and
+[`src/wait.rs`](../src/wait.rs).
 
 `niles prune` previews deletions unless `--apply` is supplied. It removes registry links whose
 targets are not directories, and dated archive and session directories, always retaining the
@@ -82,10 +87,11 @@ files are left alone. Unparseable names are also retained. See
 other filesystem operations are not protected globally against symlink traversal or replacement.
 The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
 `O_NOFOLLOW`.
-The cursor itself is the locked file—there is no separate persistent lock file—and the advisory
-lock authenticates neither writers nor status content. Other `.niles` state is not universally
-locked. Niles does not defend its state from a process that already has the operator's filesystem
-permissions.
+The advisory locks authenticate neither writers nor status content, and any process with the
+operator's permissions can hold `status.waiter`'s lock and so refuse every wait on that worker, or
+hold `status.waiting`'s and so silence the watcher's report nudges for it.
+Other `.niles` state is not universally locked. Niles does not defend its state from a process that
+already has the operator's filesystem permissions.
 
 Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
 colors and styling modifiers are rendered into tmux formats.

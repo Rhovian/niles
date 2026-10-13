@@ -1,16 +1,11 @@
 use std::io::Write;
 
 use anyhow::{Context, Result};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::{
-    tmux::TargetState,
-    util::current_dir_utf8,
-    wait::cursor::{cursor_path, parse_cursor},
-    wake, watch,
-};
+use crate::{tmux::TargetState, util::current_dir_utf8, wake, watch};
 
 use super::snapshot::{WorkerSnapshot, worker_snapshot};
 
@@ -67,7 +62,7 @@ impl WorkerOutput {
     fn read(worker: &WorkerSnapshot) -> Result<Self> {
         let meta = worker.meta.as_ref();
         let wake = match meta {
-            Some(_) if has_pending_wake(worker)? => Some(WakeState::Pending),
+            Some(_) if has_pending_wake(worker) => Some(WakeState::Pending),
             Some(_) => Some(WakeState::Clear),
             None => None,
         };
@@ -108,23 +103,10 @@ struct CheckinOutput {
 /// `niles wait` records how far into the status log it has delivered, so everything past that
 /// cursor is owed. Only actionable lines count: a trailing `working:` line wakes nobody, and
 /// reporting it as pending would send the lead into a `wait` that blocks.
-fn has_pending_wake(worker: &WorkerSnapshot) -> Result<bool> {
-    let delivered = delivered_bytes(&worker.worker_dir)?;
-    let Some(undelivered) = worker.undelivered(delivered) else {
-        return Ok(false);
-    };
-    Ok(String::from_utf8_lossy(undelivered)
-        .lines()
-        .any(wake::is_actionable_wake))
-}
-
-/// How far `niles wait` has delivered into this worker's status log. No cursor means no wait has
-/// ever consumed a line from it, which is position zero.
-fn delivered_bytes(worker_dir: &Utf8Path) -> Result<usize> {
-    let path = cursor_path(worker_dir);
-    let Some(body) = crate::util::read_optional_string(&path)? else {
-        return Ok(0);
-    };
-    usize::try_from(parse_cursor(&body, &path)?)
-        .with_context(|| format!("wake cursor in {path} exceeds this platform's address space"))
+fn has_pending_wake(worker: &WorkerSnapshot) -> bool {
+    worker.undelivered().is_some_and(|undelivered| {
+        String::from_utf8_lossy(undelivered)
+            .lines()
+            .any(wake::is_actionable_wake)
+    })
 }

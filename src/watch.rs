@@ -8,7 +8,9 @@
 //! Two triggers type one line into the lead's pane: a worker's status log grew with an actionable
 //! line, or a check-in came due with no report. Both are STATE, not events — the nudge says where
 //! things stand, carries no status-line content, and consumes nothing. `niles wait` stays the only
-//! consumer of the wake cursor, so a nudge that is lost, doubled or read twice costs a look.
+//! consumer of the wake cursor, so a nudge that is lost, doubled or read twice costs a look. The
+//! watcher only reads that cursor, and whether a wait is running, so a line the lead takes from a
+//! wait is not reported to it a second time.
 //!
 //! The lead's stdout and stderr are its TUI, so nothing here writes to them: diagnostics go to
 //! `watch.log` in the session directory, and the only thing that leaves the process is the nudge
@@ -231,6 +233,7 @@ pub(crate) fn arm_checkin(
     armed_len: u64,
     now: DateTime<Utc>,
 ) -> Result<Option<Duration>> {
+    let _lock = Checkin::lock(worker_dir)?;
     let Some(delay) = cadence.delay else {
         // `off`/`0` asks for no check-in and has to mean it: leaving the previous one armed would
         // make the `checkin: off` the lead was just printed a lie.
@@ -244,7 +247,9 @@ pub(crate) fn arm_checkin(
 /// `niles quiet <id>`: the lead disarming a check-in by hand, for a worker that is idle on purpose.
 /// Returns whether one was armed to begin with.
 pub(crate) fn quiet(id: &str) -> Result<bool> {
-    Checkin::disarm(&worker::worker_dir(id)?)
+    let worker_dir = worker::worker_dir(id)?;
+    let _lock = Checkin::lock(&worker_dir)?;
+    Checkin::disarm(&worker_dir)
 }
 
 fn watch(workspace: Utf8PathBuf, mut sink: WatchSink, stop: Arc<AtomicBool>) {
@@ -345,7 +350,7 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
                 // mechanism, and it is why a failure here is not an error.
                 memory.commit(nudge);
                 if let Commit::Checkin { planned, next } = &nudge.commit {
-                    rearm(nudge, planned, next, sink);
+                    rearm(nudge, planned, next.as_ref(), sink);
                 }
                 sink.note(&format!("nudged {}: {}", nudge.id, nudge.text));
             }
@@ -357,15 +362,20 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
     }
 }
 
-/// Writes the next check-in, but only over the state this tick planned on.
-fn rearm(nudge: &Nudge, planned: &Checkin, next: &Checkin, sink: &mut dyn Sink) {
+/// Writes the next check-in, or removes it when there is none, but only over the state this tick
+/// planned on.
+fn rearm(nudge: &Nudge, planned: &Checkin, next: Option<&Checkin>, sink: &mut dyn Sink) {
     with_planned_checkin(
         &nudge.id,
         &nudge.worker_dir,
         planned,
         sink,
         |worker_dir, sink| {
-            if let Err(err) = next.write(worker_dir) {
+            let written = match next {
+                Some(next) => next.write(worker_dir),
+                None => Checkin::disarm(worker_dir).map(|_| ()),
+            };
+            if let Err(err) = written {
                 sink.note(&format!(
                     "the check-in for {} is still armed at its old deadline, so it fires again: \
                      {err:#}",
@@ -388,6 +398,13 @@ fn with_planned_checkin(
     sink: &mut dyn Sink,
     action: impl FnOnce(&Utf8Path, &mut dyn Sink),
 ) {
+    let _lock = match Checkin::lock(worker_dir) {
+        Ok(lock) => lock,
+        Err(err) => {
+            sink.note(&format!("failed to lock the check-in for {id}: {err:#}"));
+            return;
+        }
+    };
     match Checkin::read(worker_dir) {
         Ok(Some(current)) if current == *planned => action(worker_dir, sink),
         // Nothing armed: `niles quiet` got there first, or the worker reported twice.

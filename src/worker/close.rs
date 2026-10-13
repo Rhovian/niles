@@ -84,12 +84,12 @@ fn close_all_workers() -> Result<()> {
     close_worker_group("--all".to_owned(), ids, Vec::new())
 }
 
-pub(crate) struct WorkerCloseSelection {
-    pub(crate) ids: Vec<String>,
+struct WorkerCloseSelection {
+    ids: Vec<String>,
     /// Workers whose `meta.json` could not be read at all. They cannot be matched or skipped by
     /// label, and niles cannot reach them (the tmux target lives only in `meta.json`), so they are
     /// surfaced for manual removal rather than treated as outside the requested task label.
-    pub(crate) unreadable: Vec<(String, String)>,
+    unreadable: Vec<(String, String)>,
 }
 
 fn close_worker_group(
@@ -130,7 +130,7 @@ fn close_worker_group(
     }
 }
 
-pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
+fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
     let mut unreadable = Vec::new();
     for entry in store::worker_locations(&crate::util::current_dir_utf8()?)? {
@@ -138,7 +138,7 @@ pub(crate) fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelect
             Ok(Some(meta)) if meta.task_label.as_deref() == Some(label) => ids.push(entry.id),
             Ok(_) => {}
             // An unreadable worker carries no label, so it can neither match nor be skipped by
-            // `label`; it is kept apart so `wait` can ignore it instead of refusing every label.
+            // `label`; it is kept apart and surfaced for manual removal.
             Err(err) => unreadable.push((entry.id, format!("{err:#}"))),
         }
     }

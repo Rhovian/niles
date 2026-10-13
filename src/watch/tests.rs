@@ -5,12 +5,14 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::{
+    telemetry::SessionState,
     test_support::{at, temp_test_path},
     tmux::TmuxTarget,
     worker::worker_snapshot,
 };
 
 mod hold;
+mod taken;
 
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
@@ -285,6 +287,31 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     let mut next = RecordingSink::default();
     tick(&root, at(1301), &mut memory, &mut next, &running());
     assert!(next.attempts.is_empty(), "{next:?}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn the_tick_disarms_a_check_in_fired_at_an_idle_worker_on_disk() {
+    let root = workspace("idle-disarm");
+    write_worker(&root, "impl", WINDOW);
+    let dir = worker_dir(&root, "impl");
+    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
+    checkin.write(&dir).unwrap();
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    memory.activity.insert(
+        "impl".to_owned(),
+        (checkin.deadline, Some(SessionState::Waiting)),
+    );
+
+    let mut sink = RecordingSink::default();
+    tick(&root, at(1300), &mut memory, &mut sink, &running());
+
+    assert_eq!(
+        sink.sent,
+        vec!["niles: impl stopped without a report — check it"]
+    );
+    assert_eq!(Checkin::read(&dir).unwrap(), None, "{sink:?}");
 
     fs::remove_dir_all(&root).unwrap();
 }
