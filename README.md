@@ -50,9 +50,29 @@ latest tested; if a newer release breaks something, report it with that version.
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
 
+## For agents
+
+Agents: if you are setting Niles up for someone, load the `niles-setup` skill and follow it.
+Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
+
+- [Install Niles](skills/niles-setup/SKILL.md#2-install).
+- [Write `.niles/manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
+- [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
+
+Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
+or Hermes (third line). Then ask "set up Niles here":
+
+```sh
+mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
+mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
+mkdir -p ~/.hermes/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.hermes/skills/niles-setup/SKILL.md
+```
+
+Rerun these lines to update the skill.
+
 ## Quickstart
 
-Install with Homebrew, the shell installer or Cargo:
+1. Install with Homebrew, the shell installer or Cargo:
 
 ```sh
 brew tap Rhovian/niles
@@ -67,15 +87,25 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/
 cargo install niles
 ```
 
-Then run `niles`. It opens the home view, a tmux session named `niles+home` with a project
-explorer on the left, a view pane on the right and a shell along the bottom. Move with the arrow
-keys, expand a running project into its lead and workers with →, and press Enter to show one in
-the view, where you can type to it; `r` registers a directory. Opening a project that isn't
-running creates its own tmux session with the lead running in a window named `niles`. The first launch in a workspace prompts
-for roles and writes `.niles/manifest.yaml`; later launches show the roles before
-starting. If an older or malformed manifest cannot parse, the picker explains why and starts
-from defaults. Save replaces that file without a backup; quit leaves it unchanged.
+2. Start with `niles` from the repository. It opens the home view, a tmux session named
+`niles+home` with a project explorer on the left, a view pane on the right and a shell along
+the bottom. Move with the arrow keys, expand a running project into its lead and workers with
+→, and press Enter to show one in the view, where you can type to it. If your project is
+already listed, select it with the arrow keys and press Enter. Otherwise press `r`, type the
+repository's absolute path and press Enter, then Enter to accept the name (or enter an unused
+name if it is taken). The directory prompt's default may belong to an earlier home session.
+After registration, select your project with the arrow keys and press Enter. If registration
+says "already registered as <name>", press Esc and select that project instead.
+Opening a project that isn't running creates its own tmux session with the lead running in a
+window named `niles`. The first launch in a workspace prompts for roles and writes
+`.niles/manifest.yaml`; later launches show the roles before starting. Press `c` to keep an
+existing manifest. If an older or malformed manifest cannot parse, the picker explains why
+and starts from defaults. Save replaces that file without a backup; quit leaves it unchanged.
 Non-interactive launches still fail on invalid manifests.
+
+3. Check with `niles doctor` in another terminal in the repository after saving the roles.
+It reports tmux and each bound agent CLI with its tested version; it does not check logins.
+Without `.niles/manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
 
 See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 

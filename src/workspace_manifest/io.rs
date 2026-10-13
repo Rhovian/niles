@@ -39,6 +39,39 @@ mod tests {
     }
 
     #[test]
+    fn setup_skill_templates_parse_and_resolve() {
+        let skill = include_str!("../../skills/niles-setup/SKILL.md");
+        let templates = skill
+            .split("```yaml\n")
+            .skip(1)
+            .map(|block| {
+                store::parse_yaml::<WorkspaceManifest>(block.split_once("```").unwrap().0).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(templates.len(), 3);
+        assert_eq!(templates[0], WorkspaceManifest::default());
+        let config = crate::config::spec::ProjectConfig {
+            agents: std::collections::BTreeMap::new(),
+            models: crate::agents::ModelRoster::builtin().unwrap(),
+        };
+        for manifest in templates {
+            let bindings = [
+                &manifest.worker,
+                &manifest.reviewer,
+                &manifest.security,
+                &manifest.design,
+                &manifest.research,
+            ];
+            for agent in std::iter::once(manifest.lead.as_str())
+                .chain(bindings.into_iter().flat_map(|binding| binding.agents()))
+            {
+                let spec = crate::agents::AgentSpec::parse(agent, &config.models).unwrap();
+                crate::agents::canonical_manifest_agent(&spec, &config).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn groups_load_and_scalar_saves_as_scalar() {
         let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n";
         let manifest = load_body("manifest-groups", body).unwrap().unwrap();
