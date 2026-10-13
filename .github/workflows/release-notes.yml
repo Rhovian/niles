@@ -1,5 +1,5 @@
 # Called by release.yml (cargo-dist) after the GitHub release is announced.
-name: Add tested CLI versions to release notes
+name: Add changes and tested CLI versions to release notes
 
 on:
   workflow_call:
@@ -19,9 +19,13 @@ jobs:
       - run: |
           gh release view "$TAG" --json body -q .body > body.md
           if grep -q '^## Tested agent CLIs' body.md; then exit 0; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -q .body > changes.md
           {
             printf '## Tested agent CLIs\n\n'
             awk '/^\| CLI \| Tested version \|/{t=1} t&&/^\|/{print;next} t{exit}' README.md
+            printf '\n'
+            cat changes.md
             printf '\n'
             cat body.md
           } > notes.md
