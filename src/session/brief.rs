@@ -162,8 +162,8 @@ mod tests {
 
     /// Designing, estimating and judging security belong to the designers now.
     #[test]
-    fn lead_brief_only_routes() {
-        assert!(LEAD_BRIEF_TEMPLATE.contains("You only route"));
+    fn lead_brief_coordinates() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("You coordinate"));
         for moved in [
             "economy pass",
             "race accepted",
