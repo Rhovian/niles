@@ -41,17 +41,20 @@ mod tests {
     #[test]
     fn setup_skill_templates_parse_and_resolve() {
         let skill = include_str!("../../skills/niles-setup/SKILL.md");
-        // serde-saphyr accepts YAML, not Markdown fences:
-        // https://docs.rs/serde-saphyr/1.3.0/serde_saphyr/fn.from_str.html
         let templates = skill
             .split("```yaml\n")
             .skip(1)
-            .map(|block| block.split_once("```").unwrap().0)
+            .map(|block| {
+                store::parse_yaml::<WorkspaceManifest>(block.split_once("```").unwrap().0).unwrap()
+            })
             .collect::<Vec<_>>();
         assert_eq!(templates.len(), 3);
-        let roster = crate::agents::ModelRoster::builtin().unwrap();
-        for template in templates {
-            let manifest = store::parse_yaml::<WorkspaceManifest>(template).unwrap();
+        assert_eq!(templates[0], WorkspaceManifest::default());
+        let config = crate::config::spec::ProjectConfig {
+            agents: std::collections::BTreeMap::new(),
+            models: crate::agents::ModelRoster::builtin().unwrap(),
+        };
+        for manifest in templates {
             let bindings = [
                 &manifest.worker,
                 &manifest.reviewer,
@@ -62,7 +65,8 @@ mod tests {
             for agent in std::iter::once(manifest.lead.as_str())
                 .chain(bindings.into_iter().flat_map(|binding| binding.agents()))
             {
-                crate::agents::AgentSpec::parse(agent, &roster).unwrap();
+                let spec = crate::agents::AgentSpec::parse(agent, &config.models).unwrap();
+                crate::agents::canonical_manifest_agent(&spec, &config).unwrap();
             }
         }
     }

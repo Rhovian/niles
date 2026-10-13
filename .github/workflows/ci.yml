@@ -2,10 +2,10 @@ name: CI
 
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**']
+    paths: ['**', '!**.md', '!docs/**', 'skills/**']
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**']
+    paths: ['**', '!**.md', '!docs/**', 'skills/**']
 
 permissions:
   contents: read

@@ -7,7 +7,7 @@ description: Install Niles, write .niles/manifest.yaml for this repository with 
 
 ## 1. Prerequisites
 
-Niles is Unix only. Work in the repository root the user named; “here” means the current directory.
+Niles is Unix only. Work in the repository root the user named; "here" means the current directory.
 Check `command -v tmux claude codex hermes pi`. You need tmux and at least one agent CLI,
 installed and logged in. If tmux is missing, ask before installing it: `brew install tmux` on
 macOS, or the system package manager on Linux. If no agent CLI is installed, ask which to install.
@@ -89,9 +89,15 @@ Doctor does not check logins. Ask the user to confirm each bound CLI is logged i
 ## 5. Hand off to start
 
 Do not run bare `niles`, `niles lead`, or any command that attaches or switches tmux yourself:
-it takes over the user's terminal. Tell the user: “In a terminal, `cd <repo>` and run `niles`.
-Press `r`, Enter to accept this directory, Enter to accept the name, then Enter on the project
-to open it. The roles picker shows the manifest; press `c` to keep it.”
+it takes over the user's terminal. Give the user the repository's absolute path and say:
+"In a terminal, `cd <absolute-repo-path>` and run `niles`. If the project is already listed,
+use the arrow keys to select it and press Enter. Otherwise press `r`, type
+`<absolute-repo-path>` in the directory prompt and press Enter, then Enter to accept the name
+(or enter an unused name if it is taken). Use the arrow keys to select the registered project
+and press Enter. If registration says 'already registered as <name>', press Esc, select that
+project with the arrow keys and press Enter. When the roles picker appears, press `c` to keep
+the manifest." Never rely on the directory prompt's default: an existing home session may
+have started in another directory.
 
 Built-in worker defaults bypass approval prompts. Point the user to the
 [threat model](https://github.com/Rhovian/niles/blob/main/docs/security.md) before they start.

@@ -60,7 +60,7 @@ Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKIL
 - [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
 
 Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
-or Hermes (third line). Then ask “set up Niles here”:
+or Hermes (third line). Then ask "set up Niles here":
 
 ```sh
 mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
@@ -87,19 +87,25 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/
 cargo install niles
 ```
 
-2. Check with `niles doctor`. It reports tmux and each bound agent CLI with its tested version;
-   it does not check logins.
-
-3. Start with `niles`. It opens the home view, a tmux session named `niles+home` with a project
-explorer on the left, a view pane on the right and a shell along the bottom. Move with the arrow
-keys, expand a running project into its lead and workers with →, and press Enter to show one in
-the view, where you can type to it. Press `r`, Enter to accept the current directory, Enter to
-accept the name, then Enter on the project to open it. Opening a project that isn't
-running creates its own tmux session with the lead running in a window named `niles`. The first launch in a workspace prompts
-for roles and writes `.niles/manifest.yaml`; later launches show the roles before
-starting; press `c` to keep the manifest. If an older or malformed manifest cannot parse, the picker explains why and starts
-from defaults. Save replaces that file without a backup; quit leaves it unchanged.
+2. Start with `niles` from the repository. It opens the home view, a tmux session named
+`niles+home` with a project explorer on the left, a view pane on the right and a shell along
+the bottom. Move with the arrow keys, expand a running project into its lead and workers with
+→, and press Enter to show one in the view, where you can type to it. If your project is
+already listed, select it with the arrow keys and press Enter. Otherwise press `r`, type the
+repository's absolute path and press Enter, then Enter to accept the name (or enter an unused
+name if it is taken). The directory prompt's default may belong to an earlier home session.
+After registration, select your project with the arrow keys and press Enter. If registration
+says "already registered as <name>", press Esc and select that project instead.
+Opening a project that isn't running creates its own tmux session with the lead running in a
+window named `niles`. The first launch in a workspace prompts for roles and writes
+`.niles/manifest.yaml`; later launches show the roles before starting. Press `c` to keep an
+existing manifest. If an older or malformed manifest cannot parse, the picker explains why
+and starts from defaults. Save replaces that file without a backup; quit leaves it unchanged.
 Non-interactive launches still fail on invalid manifests.
+
+3. Check with `niles doctor` in another terminal in the repository after saving the roles.
+It reports tmux and each bound agent CLI with its tested version; it does not check logins.
+Without `.niles/manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
 
 See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 

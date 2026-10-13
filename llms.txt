@@ -6,10 +6,10 @@ To set Niles up in a repository, load the `niles-setup` skill, or read it direct
 
 ## Set up
 
-- [Install](https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md#2-install): Homebrew, the shell installer, or Cargo.
-- [Write the manifest](https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md#3-write-the-manifest): `.niles/manifest.yaml`, chosen with the user.
-- [Check with niles doctor](https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md#4-check-with-niles-doctor)
-- [Start the workspace](https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md#5-hand-off-to-start): the user runs `niles`.
+- [Install](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#2-install): Homebrew, the shell installer, or Cargo.
+- [Write the manifest](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#3-write-the-manifest): `.niles/manifest.yaml`, chosen with the user.
+- [Check with niles doctor](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#4-check-with-niles-doctor)
+- [Start the workspace](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#5-hand-off-to-start): the user runs `niles`.
 
 ## Docs
 
