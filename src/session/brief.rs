@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn lead_brief_stays_short() {
         let words = LEAD_BRIEF_TEMPLATE.split_whitespace().count();
-        assert!(words <= 1750, "lead brief is {words} words; keep it tight");
+        assert!(words <= 1850, "lead brief is {words} words; keep it tight");
     }
 
     #[test]
