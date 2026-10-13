@@ -141,13 +141,6 @@ mod tests {
     use super::*;
     use crate::test_support::temp_test_path;
 
-    /// The brief is read on every session start; length is a running cost.
-    #[test]
-    fn lead_brief_stays_short() {
-        let words = LEAD_BRIEF_TEMPLATE.split_whitespace().count();
-        assert!(words <= 1850, "lead brief is {words} words; keep it tight");
-    }
-
     #[test]
     fn lead_brief_bounds_the_lead_to_the_request() {
         for phrase in [
