@@ -50,9 +50,29 @@ latest tested; if a newer release breaks something, report it with that version.
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
 
+## For agents
+
+Agents: if you are setting Niles up for someone, load the `niles-setup` skill and follow it.
+Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
+
+- [Install Niles](skills/niles-setup/SKILL.md#2-install).
+- [Write `.niles/manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
+- [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
+
+Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
+or Hermes (third line). Then ask “set up Niles here”:
+
+```sh
+mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
+mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
+mkdir -p ~/.hermes/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.hermes/skills/niles-setup/SKILL.md
+```
+
+Rerun these lines to update the skill.
+
 ## Quickstart
 
-Install with Homebrew, the shell installer or Cargo:
+1. Install with Homebrew, the shell installer or Cargo:
 
 ```sh
 brew tap Rhovian/niles
@@ -67,13 +87,17 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/
 cargo install niles
 ```
 
-Then run `niles`. It opens the home view, a tmux session named `niles+home` with a project
+2. Check with `niles doctor`. It reports tmux and each bound agent CLI with its tested version;
+   it does not check logins.
+
+3. Start with `niles`. It opens the home view, a tmux session named `niles+home` with a project
 explorer on the left, a view pane on the right and a shell along the bottom. Move with the arrow
 keys, expand a running project into its lead and workers with →, and press Enter to show one in
-the view, where you can type to it; `r` registers a directory. Opening a project that isn't
+the view, where you can type to it. Press `r`, Enter to accept the current directory, Enter to
+accept the name, then Enter on the project to open it. Opening a project that isn't
 running creates its own tmux session with the lead running in a window named `niles`. The first launch in a workspace prompts
 for roles and writes `.niles/manifest.yaml`; later launches show the roles before
-starting. If an older or malformed manifest cannot parse, the picker explains why and starts
+starting; press `c` to keep the manifest. If an older or malformed manifest cannot parse, the picker explains why and starts
 from defaults. Save replaces that file without a backup; quit leaves it unchanged.
 Non-interactive launches still fail on invalid manifests.
 

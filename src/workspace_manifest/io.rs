@@ -39,6 +39,35 @@ mod tests {
     }
 
     #[test]
+    fn setup_skill_templates_parse_and_resolve() {
+        let skill = include_str!("../../skills/niles-setup/SKILL.md");
+        // serde-saphyr accepts YAML, not Markdown fences:
+        // https://docs.rs/serde-saphyr/1.3.0/serde_saphyr/fn.from_str.html
+        let templates = skill
+            .split("```yaml\n")
+            .skip(1)
+            .map(|block| block.split_once("```").unwrap().0)
+            .collect::<Vec<_>>();
+        assert_eq!(templates.len(), 3);
+        let roster = crate::agents::ModelRoster::builtin().unwrap();
+        for template in templates {
+            let manifest = store::parse_yaml::<WorkspaceManifest>(template).unwrap();
+            let bindings = [
+                &manifest.worker,
+                &manifest.reviewer,
+                &manifest.security,
+                &manifest.design,
+                &manifest.research,
+            ];
+            for agent in std::iter::once(manifest.lead.as_str())
+                .chain(bindings.into_iter().flat_map(|binding| binding.agents()))
+            {
+                crate::agents::AgentSpec::parse(agent, &roster).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn groups_load_and_scalar_saves_as_scalar() {
         let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n";
         let manifest = load_body("manifest-groups", body).unwrap().unwrap();

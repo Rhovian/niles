@@ -52,6 +52,8 @@ may intentionally execute the configured binary with the configured arguments, s
 a trust mechanism for a deliberately selected executable. Role bindings select what is launched,
 and planning text is instruction input to the lead. Niles does not currently execute
 repository-defined hooks; configuration parsing should not be interpreted as a hook facility.
+`niles doctor` also executes repository-chosen agent binaries with `--version`; the `niles-setup`
+skill has the agent show a project `agents:` block to the user and get approval before running it.
 
 ### Local `.niles` state, symlinks, and locks
 
