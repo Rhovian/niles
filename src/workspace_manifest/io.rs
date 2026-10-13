@@ -72,6 +72,45 @@ mod tests {
     }
 
     #[test]
+    fn example_manifests_load_and_resolve() {
+        let models = crate::agents::ModelRoster::builtin().unwrap();
+        for (name, body) in [
+            (
+                "claude-lead",
+                include_str!("../../examples/claude-lead.yaml"),
+            ),
+            ("codex-lead", include_str!("../../examples/codex-lead.yaml")),
+        ] {
+            let manifest = load_body(name, body).unwrap().unwrap();
+            let lead = crate::agents::AgentSpec::parse(&manifest.lead, &models).unwrap();
+            crate::agents::validate_model(&lead, &models).unwrap();
+            assert_eq!(lead.effort(), Some("medium"));
+            for binding in [
+                &manifest.worker,
+                &manifest.reviewer,
+                &manifest.security,
+                &manifest.design,
+                &manifest.research,
+            ] {
+                let default = binding.default_agent(&models).unwrap();
+                let default = crate::agents::AgentSpec::parse(&default, &models).unwrap();
+                assert_eq!(default.effort(), Some("medium"));
+                for group in &binding.0 {
+                    assert!(!group.when.as_ref().unwrap().trim().is_empty());
+                    assert_eq!(group.efforts.as_ref().unwrap(), &["medium"]);
+                    for model in &group.models {
+                        let agent =
+                            crate::agents::AgentSpec::parse(&format!("{model}:medium"), &models)
+                                .unwrap();
+                        crate::agents::validate_model(&agent, &models).unwrap();
+                        assert!(binding.allows(&agent, &models).unwrap());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn groups_load_and_scalar_saves_as_scalar() {
         let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n";
         let manifest = load_body("manifest-groups", body).unwrap().unwrap();

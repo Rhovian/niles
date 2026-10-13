@@ -151,6 +151,13 @@ design:
 research: codex:gpt-6-luna:medium
 ```
 
+For ready-made setups, see [examples/](examples/): [Claude lead](examples/claude-lead.yaml)
+and [Codex lead](examples/codex-lead.yaml). They swap Opus and GPT-6.1 Sol across lead,
+worker, design, and review roles, with cheaper Luna workers, Sonnet/Luna research, and
+Hermes/pi security options. All use medium effort and `when:` groups to describe suitable work.
+Copy one to `.niles/manifest.yaml` (create `.niles/` first), then run `niles doctor` to check
+the required CLIs. The `claude:opus` binding follows Claude Code's newest Opus alias.
+
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
 
 ```yaml
