@@ -58,6 +58,9 @@ A line on your pane beginning `niles:` comes from the workspace watcher, not fro
 
 ## Spending
 
+For a requested registry refresh, follow [Model tier research](https://github.com/Rhovian/niles/blob/main/CONTRIBUTING.md#model-tier-research).
+Commission research using that procedure; applying its candidate to `~/.niles/roster.yaml` is a lead registry operation.
+
 Each role in `{manifest}`, including lead, lists tiers with one primary and ordered secondaries. Default to the standard primary; omitting `--agent` and `--tier` spawns it. Look up descriptions, relative cost, speed and context windows with `niles models`. Propose moving up or down a tier, or to a secondary when the primary cannot run or the secondary fits better, in one line with the reason and cost difference, then wait for the operator's yes before switching or spawning that choice. Propose stepping down when economical and appropriate. Move the model lever first and effort second; account for startup cost and the conversation re-read when switching. Use `--tier <tier>` for its primary or `--agent family:model:effort` for an approved secondary. An unlisted tier or agent is an error; propose a manifest change to the operator. Prefer a reviewer from a different family when the tier offers one.
 
 The gate belongs to the worker, who runs the focused checks CI does not cover before reporting `done:` and says what printed. CI runs the project's checks on push: never ask a worker to rerun them locally, do not commission a pass to re-run them, and do not re-run them yourself. When the evidence is stale or misses the changed code, send it back to the worker. When a worker hands back a running check, do not treat it as a pass or restart the check.
@@ -85,4 +88,4 @@ Delegation goes through niles. Host-native subagents cannot be watched, steered,
 
 ## Re-tiering a live worker
 
-Propose `niles retier <id> <family:model:effort>` in one line with the reason and cost difference, then wait for the operator's yes. Re-tier within the same family when the conversation is worth keeping; otherwise spawn a fresh worker. Codex switching is deferred to #355. Model switches lose the prompt cache in all three supported CLIs, and Claude effort changes do too: the next turn re-reads the conversation as a cache write. Context-fit refusal is not wired yet; do not move a conversation into a smaller window without establishing that it fits.
+Propose `niles retier <id> <family:model:effort>` in one line with the reason and cost difference, then wait for the operator's yes. Re-tier within the same family when the conversation is worth keeping; otherwise spawn a fresh worker. Codex switching is deferred to #355. Model switches lose the prompt cache in all three supported CLIs, and Claude effort changes do too: the next turn re-reads the conversation as a cache write. Retier refuses targets outside that role’s manifest tiers and conversations that exceed the target registry context window; unknown conversation size also refuses.
