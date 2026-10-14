@@ -1,4 +1,4 @@
-use super::{Buckets, Turn, Usage, parse_lines, read_transcript};
+use super::{Buckets, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -67,22 +67,26 @@ pub(super) fn pi_session(body: &str) -> Option<super::SessionRecord> {
         return None;
     }
     let mut turn = None;
+    let mut started_at = None;
     let mut buckets = Buckets::default();
     for line in lines {
         let PiLine::Message { timestamp, message } = line else {
             continue;
         };
+        if matches!(message, PiMessage::User) {
+            started_at = Some(timestamp);
+        }
         turn = match &message {
             PiMessage::Other => continue,
-            PiMessage::User | PiMessage::ToolResult => Some(Turn::InProgress),
+            PiMessage::User | PiMessage::ToolResult => Some(TurnState::InProgress),
             PiMessage::Assistant {
                 stop_reason,
                 error_message,
                 ..
             } => match stop_reason.as_str() {
-                "stop" | "length" | "aborted" => Some(Turn::Ended),
-                "pending" | "toolUse" | "deferred" => Some(Turn::InProgress),
-                "error" => Some(Turn::Failed(super::SessionFailure {
+                "stop" | "length" | "aborted" => Some(TurnState::Ended),
+                "pending" | "toolUse" | "deferred" => Some(TurnState::InProgress),
+                "error" => Some(TurnState::Failed(super::SessionFailure {
                     at: timestamp,
                     message: match error_message {
                         Some(message) => message.clone(),
@@ -119,6 +123,7 @@ pub(super) fn pi_session(body: &str) -> Option<super::SessionRecord> {
         prompt_tokens: prompt,
         context_window: None,
     });
+    let turn = turn.map(|state| Turn { state, started_at });
     Some(super::SessionRecord { turn, usage })
 }
 

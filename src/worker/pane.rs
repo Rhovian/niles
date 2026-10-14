@@ -3,6 +3,7 @@ use camino::Utf8PathBuf;
 use chrono::Utc;
 
 use crate::{
+    agent_window::shell_quote,
     tmux::{self, WindowTarget},
     wait, watch,
 };
@@ -19,12 +20,19 @@ struct WorkerPane {
     /// The workspace the worker belongs to, where its check-in defaults are read.
     project: Utf8PathBuf,
 }
-pub fn peek(id: String, lines: usize) -> Result<()> {
+pub fn peek(id: String, lines: usize, quiet: bool) -> Result<()> {
     let target = worker_target(id)?;
     print!(
         "{}",
         tmux::capture_pane(&tmux::TmuxTarget::window(&target.target), lines)?
     );
+    if quiet {
+        if watch::quiet(&target.id)? {
+            eprintln!("quiet: {}", target.id);
+        } else {
+            eprintln!("quiet: {} (no check-in armed)", target.id);
+        }
+    }
     Ok(())
 }
 
@@ -55,6 +63,22 @@ pub fn send(
     }
 
     let dir = worker_dir(&id)?;
+    let message = format!(
+        "{message}\n\n{}",
+        include_str!("../templates/followup_reporting.md")
+            .replace("{report_path}", dir.join("report.md").as_str())
+            .replace(
+                "{status_command}",
+                &format!(
+                    "printf '%s\\n' {} >> {}",
+                    shell_quote(&format!(
+                        "done: <short result>; report: {}",
+                        dir.join("report.md")
+                    )),
+                    shell_quote(dir.join("status.log").as_str())
+                )
+            )
+    );
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
     let armed_len = crate::worker::status_log_len(&dir)?;

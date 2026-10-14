@@ -115,8 +115,8 @@ pub(crate) fn lead_session(
         meta.created_at,
         telemetry::initial_deadline(meta.created_at, None),
         now,
-        || match &meta.lead_pane {
-            Some(pane) => crate::tmux::pane_alive(pane),
+        |since| match &meta.lead_pane {
+            Some(pane) => telemetry::process_activity(&crate::tmux::TmuxTarget::pane(pane)?, since),
             None => Ok(Some(false)),
         },
     )
@@ -235,6 +235,18 @@ pub(crate) fn worker_session(
         meta.created_at,
         starting_until,
         now,
-        || Ok(window_state(meta).liveness()),
+        |since| {
+            let state = window_state(meta);
+            let target = match &state {
+                crate::tmux::TargetState::Live => crate::tmux::WindowTarget::parse(&meta.window)?,
+                crate::tmux::TargetState::OrphanRecovered { actual } => actual.clone(),
+                crate::tmux::TargetState::PaneExited
+                | crate::tmux::TargetState::WindowDead
+                | crate::tmux::TargetState::OrphanGone
+                | crate::tmux::TargetState::OrphanLegacyCandidate { .. }
+                | crate::tmux::TargetState::Unknown { .. } => return Ok(state.liveness()),
+            };
+            telemetry::process_activity(&crate::tmux::TmuxTarget::window(&target), since)
+        },
     )
 }

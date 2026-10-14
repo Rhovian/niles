@@ -12,9 +12,10 @@ mod claude;
 mod codex;
 mod hermes;
 mod pi;
+mod processes;
 
 pub(crate) use activity::{
-    Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, initial_deadline,
+    Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, TurnState, initial_deadline,
     resolve_session,
 };
 
@@ -24,6 +25,7 @@ use claude::read_claude;
 use codex::read_codex;
 use hermes::read_hermes;
 use pi::read_pi;
+pub(crate) use processes::process_activity;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "lowercase")]
@@ -247,9 +249,9 @@ mod tests {
     fn state(record: Option<SessionRecord>) -> Option<SessionState> {
         record
             .and_then(|record| record.turn)
-            .map(|turn| match turn {
-                Turn::InProgress => SessionState::Working,
-                Turn::Ended | Turn::Failed(_) => SessionState::Waiting,
+            .map(|turn| match turn.state {
+                TurnState::InProgress => SessionState::Working,
+                TurnState::Ended | TurnState::Failed(_) => SessionState::Waiting,
             })
     }
     #[test]
@@ -349,29 +351,6 @@ mod tests {
             )),
             Some(SessionState::Working)
         );
-
-        let shell = r#"{"type":"user","message":{"role":"user","content":[]},"toolUseResult":{"backgroundTaskId":"b1"}}"#;
-        let notified = |body: &str| {
-            format!(
-                r#"{{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>b1</task-id>\n{body}</task-notification>"}}"#
-            )
-        };
-        let event = notified("<event>tick</event>");
-        let killed = notified("<status>killed</status>");
-        assert_eq!(
-            state(claude::claude_session(
-                &format!("{shell}\n{assistant}\n{event}\n"),
-                &[]
-            )),
-            Some(SessionState::Working)
-        );
-        assert_eq!(
-            state(claude::claude_session(
-                &format!("{shell}\n{assistant}\n{killed}\n"),
-                &[]
-            )),
-            Some(SessionState::Waiting)
-        );
     }
 
     #[test]
@@ -441,6 +420,14 @@ mod tests {
             Some(SessionState::Working)
         );
         let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n{complete}\n")).unwrap();
+        assert_eq!(
+            codex::codex_activity(&lines)
+                .unwrap()
+                .started_at
+                .unwrap()
+                .to_rfc3339(),
+            "2026-10-01T00:01:00+00:00"
+        );
         assert_eq!(
             state(Some(SessionRecord {
                 turn: codex::codex_activity(&lines),

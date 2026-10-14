@@ -180,11 +180,15 @@ pub enum CommandName {
         /// Number of lines to capture. Use 0 for full tmux history.
         #[arg(short, long, default_value_t = crate::worker::DEFAULT_PEEK_LINES)]
         lines: usize,
+        /// Disarm this worker's check-in after successfully capturing the pane.
+        #[arg(long)]
+        quiet: bool,
     },
     /// Send a message to a worker tmux pane
     ///
     /// Advances the worker's wake cursor first, so a status line written before the message
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
+    /// Appends a reminder with this worker's report path and status-line command.
     ///
     /// `--wait` then blocks for that worker's reply, with `niles wait`'s exit codes. Exit 11 means
     /// the message was sent but another wait on the worker gets the reply: do not resend.

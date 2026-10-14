@@ -102,7 +102,7 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Usage) => worker::usage()?,
         Some(CommandName::Models) => models::models()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
-        Some(CommandName::Peek { id, lines }) => worker::peek(id, lines)?,
+        Some(CommandName::Peek { id, lines, quiet }) => worker::peek(id, lines, quiet)?,
         Some(CommandName::Send {
             wait,
             checkin,
