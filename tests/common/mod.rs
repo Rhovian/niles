@@ -18,6 +18,7 @@ case "$1" in
   display-message)
     if [ "$5" = '#{pane_dead}' ]; then
       if [ "${TMUX_PANE_MISSING:-}" = 1 ]; then printf "can't find pane\n" >&2; exit 1; fi
+      if [ "${TMUX_PANE_EMPTY:-}" = 1 ]; then printf '\n'; exit 0; fi
       if [ "${TMUX_PANE_UNCERTAIN:-}" = 1 ]; then printf "server unreachable\n" >&2; exit 1; fi
       printf '%s\n' "${TMUX_PANE_DEAD:-0}"; exit 0
     fi

@@ -47,7 +47,12 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     assert_eq!(rows[1]["usage"]["input_tokens"], 11);
     assert_eq!(rows[1]["state"], "working");
     assert!(rows[1]["usage"].get("state").is_none());
-    for flag in ["TMUX_PANE_MISSING", "TMUX_PANE_UNCERTAIN", "TMUX_PANE_DEAD"] {
+    for flag in [
+        "TMUX_PANE_MISSING",
+        "TMUX_PANE_EMPTY",
+        "TMUX_PANE_UNCERTAIN",
+        "TMUX_PANE_DEAD",
+    ] {
         let output = env
             .niles(&env.root, &["usage"])
             .env("HOME", &env.home)
