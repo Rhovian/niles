@@ -107,7 +107,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 
 #[test]
 fn send_accepts_stdin_and_literal_flag_text() {
-    let env = TestEnv::new("niles-worker-send-message-input");
+    let env = TestEnv::new("niles-worker-send message'input");
     let pane_file = env.root.join("pane.txt");
     let spawn = env.run(&[
         "spawn", "--role", "research", "worker", "--agent", "claude", "task",
@@ -130,10 +130,9 @@ fn send_accepts_stdin_and_literal_flag_text() {
         .unwrap();
     let stdin = child.wait_with_output().unwrap();
     assert_command_success("send stdin", &stdin);
-    assert_eq!(
-        fs::read_to_string(&pane_file).unwrap(),
-        "composer:   stdin first\nstdin second\n\nsubmitted\n"
-    );
+    let delivered = fs::read_to_string(&pane_file).unwrap();
+    assert!(delivered.starts_with("composer:   stdin first\nstdin second\n\n\n## Reporting"));
+    assert!(delivered.ends_with("\nsubmitted\n"));
 
     let literal = env
         .niles(&env.root, &["send", "worker", "--", "--wait"])
@@ -144,6 +143,29 @@ fn send_accepts_stdin_and_literal_flag_text() {
     assert!(stdout_of(&literal).contains("wait: niles wait worker"));
 
     let log = env.tmux_log();
+    let dir = env.root.join(".niles/worker/worker");
+    let quoted_dir = dir.display().to_string().replace('\'', "'\\''");
+    let command = format!(
+        "printf '%s\\n' 'done: <short result>; report: {quoted_dir}/report.md' >> '{quoted_dir}/status.log'"
+    );
+    assert_eq!(log.matches(&command).count(), 2, "{log}");
+    let report_status = std::process::Command::new("sh")
+        .args(["-c", &command])
+        .output()
+        .unwrap();
+    assert_command_success("follow-up status command", &report_status);
+    assert_eq!(
+        fs::read_to_string(dir.join("status.log")).unwrap(),
+        format!(
+            "done: <short result>; report: {}/report.md\n",
+            dir.display()
+        )
+    );
+    assert_eq!(
+        log.matches("Use `done:`, `blocked:`, `needs-decision:` or `failed:`")
+            .count(),
+        2
+    );
     for message in ["  stdin first\nstdin second\n", "--wait"] {
         assert!(
             log.contains(&format!(

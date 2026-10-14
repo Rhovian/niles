@@ -68,9 +68,10 @@ fn send_exits_copy_mode_and_delivers_the_message_once() {
     let delivered = lab.workspace.join("delivered");
     let ready = lab.workspace.join("ready");
     let complete = lab.workspace.join("complete");
+    // Literal newlines belong to the paste; only the submit key completes the message.
     let command = format!(
-        "touch {}; IFS= read -r line; printf '%s\\n' \"$line\" >> {}; touch {}; printf \
-         'complete\\n'; exec sleep 600",
+        "stty -icanon -icrnl; touch {}; perl -e '$/ = \"\\r\"; print scalar <STDIN>' > {}; \
+         touch {}; printf 'complete\\n'; exec sleep 600",
         ready.display(),
         delivered.display(),
         complete.display()
@@ -93,7 +94,9 @@ fn send_exits_copy_mode_and_delivers_the_message_once() {
 
     assert_command_success("send from copy mode", &send);
     wait_for_file(&complete);
-    assert_eq!(fs::read_to_string(delivered).unwrap(), "delivered\n");
+    let message = fs::read_to_string(delivered).unwrap();
+    assert!(message.starts_with("delivered\n\n## Reporting this follow-up\n"));
+    assert_eq!(message.matches("## Reporting this follow-up").count(), 1);
 }
 
 /// A submit that the pane swallows must fail the send, not be reported as `sent:`. The pane's
