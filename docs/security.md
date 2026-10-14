@@ -153,8 +153,11 @@ as state only and never submits captured text.
 
 Agent-written session records supply turn state and start times; live process descendants of the
 tmux pane can keep an ended turn Working. The shared resolver uses `ps` PID/PPID/state/elapsed
-time, excluding zombies and the querying Niles/probe branch, without interpreting command names.
-Processes predating the turn are standing helpers; helpers restarted mid-turn count as work.
+time and executable names, excluding zombies and the querying Niles/probe branch. Only processes
+started during the turn that are shells (executable name ending in `sh`) or have a shell ancestor
+below the pane root count as work. Directly launched helpers remain standing even if started
+mid-turn. Helpers launched through shells can count as work; shell `exec` and reparenting can
+hide command ancestry. This is a naming convention, not authenticated shell identity.
 Elapsed-time precision gets a one-second tolerance favoring work detection. Reparented processes
 outside the pane tree cannot be attributed, and snapshots race with exits. Same-user processes
 can forge session records and affect process-tree evidence; this is state detection, not isolation.
