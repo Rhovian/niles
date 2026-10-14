@@ -144,19 +144,15 @@ mod tests {
             context_window: None,
         };
         for lead_state in [
-            Some(SessionState::Waiting),
-            Some(SessionState::Working),
-            None,
+            SessionState::Waiting,
+            SessionState::Working,
+            SessionState::Unknown,
         ] {
             for workers_working in [false, true] {
-                let active = workers_working || lead_state == Some(SessionState::Working);
+                let active = workers_working || lead_state == SessionState::Working;
                 assert_eq!(
                     matches!(
-                        project_state(
-                            lead_state.map_or(SessionState::Unknown, |state| state),
-                            Some(&usage),
-                            workers_working
-                        ),
+                        project_state(lead_state, Some(&usage), workers_working),
                         State::Running
                     ),
                     active,
