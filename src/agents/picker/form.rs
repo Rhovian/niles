@@ -57,7 +57,7 @@ impl Form {
                 }
             },
             Screen::Review => match key {
-                KeyCode::Enter => return Ok(Some(Choice::Save(self.draft.clone()))),
+                KeyCode::Enter => return Ok(Some(Choice::Save(Box::new(self.draft.clone())))),
                 KeyCode::Esc | KeyCode::Left => self.screen = Screen::Roles,
                 _ => {}
             },

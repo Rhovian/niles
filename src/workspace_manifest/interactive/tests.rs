@@ -18,7 +18,7 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
     let before = load(&root).unwrap().unwrap();
     let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _, _| {
         draft.lead = "codex:gpt-6.1-sol:high".to_owned().into();
-        Ok(Choice::Save(draft))
+        Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap()
     .unwrap();
@@ -41,7 +41,7 @@ fn continue_quit_and_unchanged_save_write_nothing() {
     for (choice, launched) in [
         (Choice::Keep, &manifest),
         (Choice::Quit, &None),
-        (Choice::Save(manifest.clone().unwrap()), &manifest),
+        (Choice::Save(Box::new(manifest.clone().unwrap())), &manifest),
     ] {
         let result = ensure(&root, true, &mut Vec::new(), |_, _, _, _| Ok(choice)).unwrap();
         assert_eq!(&result, launched);
@@ -136,7 +136,7 @@ fn invalid_manifests_reopen_with_defaults_and_save_a_complete_replacement() {
             let reason = reason.unwrap();
             assert!(reason.contains("Cannot parse manifest"), "{reason}");
             assert!(reason.contains("manifest.yaml"), "{reason}");
-            Ok(Choice::Save(draft))
+            Ok(Choice::Save(Box::new(draft)))
         })
         .unwrap()
         .unwrap();
@@ -191,7 +191,7 @@ fn replacement_write_failure_stops_launch() {
     let error = ensure(&root, true, &mut Vec::new(), |_, draft, _, _| {
         fs::remove_file(manifest_path(&root)).unwrap();
         fs::create_dir(manifest_path(&root)).unwrap();
-        Ok(Choice::Save(draft))
+        Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap_err();
     assert!(error.to_string().contains("failed to write"), "{error:#}");

@@ -60,7 +60,7 @@ fn ensure(
     match pick(root, defaults, &config, replacement_reason.as_deref())? {
         Choice::Save(draft) if replacement_reason.is_some() => {
             save(root, &draft)?;
-            Ok(Some(draft))
+            Ok(Some(*draft))
         }
         Choice::Save(draft) => save_changes(root, existing.as_ref(), &draft).map(Some),
         Choice::Keep => existing.context("no workspace manifest written").map(Some),

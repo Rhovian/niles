@@ -272,7 +272,7 @@ fn pick_role(
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;
     if let Some(value) = picker::role(terminal, role, &manifest, &config, theme)?
-        && value != picker::Role::from(role).value(&manifest)
+        && value != role.value(&manifest)
     {
         save_manifest(root, |manifest| role.set(manifest, value))?;
     }

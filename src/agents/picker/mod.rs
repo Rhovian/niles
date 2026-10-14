@@ -19,7 +19,7 @@ use form::Form;
 pub(crate) use role::Role;
 
 pub(crate) enum Choice {
-    Save(WorkspaceManifest),
+    Save(Box<WorkspaceManifest>),
     /// Launch with the manifest as it is.
     Keep,
     /// Stop the launch.

@@ -17,7 +17,7 @@ use crate::{
 
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
-        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", Role::from(*role).name()),
+        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", role.name()),
         Screen::Roles | Screen::Review => "NILES / ROLES".to_owned(),
     };
     let (mut body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
