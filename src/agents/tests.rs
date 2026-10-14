@@ -85,7 +85,14 @@ fn parses_agent_model_effort_specs() {
 
 #[test]
 fn model_names_may_contain_colons() {
-    let models = roster::parse("pi:\n  nvidia/nemotron:free:\n    efforts: [low, high]\n").unwrap();
+    let models = roster::parse(
+        r#"pi:
+  nvidia/nemotron:free:
+    - &entry {effort: low, tier: economy, description: colon fixture, cost: null, speed: null, context_window: 1024}
+    - {<<: *entry, effort: high, tier: standard}
+"#,
+    )
+    .unwrap();
     let bare = AgentSpec::parse("pi:nvidia/nemotron:free", &models).unwrap();
     assert_eq!(
         (bare.model(), bare.effort()),

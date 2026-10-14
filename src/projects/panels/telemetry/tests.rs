@@ -182,9 +182,12 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
             (superseded_id, "lead", pi_total),
         ]
     );
-    // A running lead is live, and the roster names no window for its model.
+    // Losing a live transcript does not erase the registry's context capacity.
     let live = second.sessions[0].live.as_ref().unwrap();
-    assert_eq!((live.prompt_tokens, live.context_window), (None, None));
+    assert_eq!(
+        (live.prompt_tokens, live.context_window),
+        (None, Some(262_144))
+    );
     assert!(!latest.join("usage.json").exists());
     fs::remove_dir_all(&root).unwrap();
 }
