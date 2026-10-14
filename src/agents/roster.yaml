@@ -1,55 +1,103 @@
-# Codex reports a separate effort ladder for each model. Keeping those ladders per model avoids
-# accepting a level that the installed CLI rejects.
+# Judgment placements and provider metadata researched 2026-10-14.
+# Cost: 1 cheapest to 4 most expensive. Speed: 1 fastest to 4 slowest.
+# null means unverified; model-level ranks are proxies, not per-task forecasts.
+# Sources: https://developers.openai.com/api/docs/models
+# https://platform.claude.com/docs/en/models/overview
+# https://openrouter.ai/api/v1/models (exact routed reasoning.supported_efforts).
 codex:
   gpt-5.5:
-    efforts: [low, medium, high, xhigh]
+    - {effort: "low", tier: "standard", description: "flagship professional/coding work; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "flagship professional/coding work; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "frontier", description: "flagship professional/coding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "frontier", description: "flagship professional/coding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
   gpt-5.6-luna:
-    efforts: [low, medium, high, xhigh, max]
+    - {effort: "low", tier: "mechanical", description: "efficient, high-volume focused tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "economy", description: "efficient, high-volume focused tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "economy", description: "efficient, high-volume focused tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "economy", description: "efficient, high-volume focused tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "economy", description: "efficient, high-volume focused tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
   gpt-5.6-sol:
-    efforts: [low, medium, high, xhigh, max, ultra]
+    - {effort: "low", tier: "standard", description: "flagship capability; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "flagship capability; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "frontier", description: "flagship capability; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "frontier", description: "flagship capability; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "frontier", description: "flagship capability; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "ultra", tier: "frontier", description: "flagship capability; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
   gpt-5.6-terra:
-    efforts: [low, medium, high, xhigh, max, ultra]
+    - {effort: "low", tier: "economy", description: "strong performance balancing intelligence and cost; efficient or smaller model", cost: 3, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "strong performance balancing intelligence and cost; flagship at medium / mid model at high", cost: 3, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "standard", description: "strong performance balancing intelligence and cost; flagship at medium / mid model at high", cost: 3, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "standard", description: "strong performance balancing intelligence and cost; flagship at medium / mid model at high", cost: 3, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "economy", description: "strong performance balancing intelligence and cost; efficient or smaller model", cost: 3, speed: null, context_window: 1050000}
+    - {effort: "ultra", tier: "economy", description: "strong performance balancing intelligence and cost; efficient or smaller model", cost: 3, speed: null, context_window: 1050000}
   gpt-6-astra:
-    efforts: [low, medium, high, xhigh, max, ultra]
+    - {effort: "low", tier: "standard", description: "most capable for demanding work; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "most capable for demanding work; flagship at medium / mid model at high", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "frontier", description: "most capable for demanding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "frontier", description: "most capable for demanding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "frontier", description: "most capable for demanding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
+    - {effort: "ultra", tier: "frontier", description: "most capable for demanding work; vendor top model at high effort or above", cost: 4, speed: null, context_window: 1050000}
   gpt-6-luna:
-    efforts: [low, medium, high, xhigh, max]
+    - {effort: "low", tier: "mechanical", description: "efficient model for focused, high-volume tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "economy", description: "efficient model for focused, high-volume tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "economy", description: "efficient model for focused, high-volume tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "economy", description: "efficient model for focused, high-volume tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "economy", description: "efficient model for focused, high-volume tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1050000}
   gpt-6-sol:
-    efforts: [low, medium, high, xhigh, max, ultra]
+    - {effort: "low", tier: "economy", description: "complex work, balance of intelligence and cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "complex work, balance of intelligence and cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "standard", description: "complex work, balance of intelligence and cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "standard", description: "complex work, balance of intelligence and cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "economy", description: "complex work, balance of intelligence and cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "ultra", tier: "economy", description: "complex work, balance of intelligence and cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
   gpt-6.1-sol:
-    efforts: [low, medium, high, xhigh, max, ultra]
-
-# Claude gates effort levels on model capabilities. Haiku has no effort capability, so its empty
-# ladder means Niles does not pass an effort flag for it.
-# Each alias's window is that of the model Anthropic's API resolves it to:
-# https://code.claude.com/docs/en/model-config and
-# https://platform.claude.com/docs/en/build-with-claude/context-windows
+    - {effort: "low", tier: "economy", description: "near-flagship performance at lower cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "medium", tier: "standard", description: "near-flagship performance at lower cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "high", tier: "standard", description: "near-flagship performance at lower cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "xhigh", tier: "standard", description: "near-flagship performance at lower cost; flagship at medium / mid model at high", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "max", tier: "economy", description: "near-flagship performance at lower cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
+    - {effort: "ultra", tier: "economy", description: "near-flagship performance at lower cost; efficient or smaller model", cost: 2, speed: null, context_window: 1050000}
 claude:
   fable:
-    efforts: [low, medium, high, xhigh, max]
-    context_window: 1000000
+    - {effort: "low", tier: "mechanical", description: "demanding reasoning and long-horizon agentic work; smallest-model low-effort work", cost: 4, speed: 4, context_window: 1000000}
+    - {effort: "medium", tier: "economy", description: "demanding reasoning and long-horizon agentic work; efficient or smaller model", cost: 4, speed: 4, context_window: 1000000}
+    - {effort: "high", tier: "frontier", description: "demanding reasoning and long-horizon agentic work; vendor top model at high effort or above", cost: 4, speed: 4, context_window: 1000000}
+    - {effort: "xhigh", tier: "frontier", description: "demanding reasoning and long-horizon agentic work; vendor top model at high effort or above", cost: 4, speed: 4, context_window: 1000000}
+    - {effort: "max", tier: "frontier", description: "demanding reasoning and long-horizon agentic work; vendor top model at high effort or above", cost: 4, speed: 4, context_window: 1000000}
   haiku:
-    efforts: []
+    - {tier: "mechanical", description: "latency-sensitive classification/extraction/routing; smallest-model work without effort", cost: 1, speed: 1, context_window: 1000000}
   opus:
-    efforts: [low, medium, high, xhigh, max]
-    context_window: 1000000
+    - {effort: "low", tier: "mechanical", description: "long-running agentic coding and knowledge work; smallest-model low-effort work", cost: 3, speed: 3, context_window: 1000000}
+    - {effort: "medium", tier: "economy", description: "long-running agentic coding and knowledge work; efficient or smaller model", cost: 3, speed: 3, context_window: 1000000}
+    - {effort: "high", tier: "frontier", description: "long-running agentic coding and knowledge work; vendor top model at high effort or above", cost: 3, speed: 3, context_window: 1000000}
+    - {effort: "xhigh", tier: "frontier", description: "long-running agentic coding and knowledge work; vendor top model at high effort or above", cost: 3, speed: 3, context_window: 1000000}
+    - {effort: "max", tier: "frontier", description: "long-running agentic coding and knowledge work; vendor top model at high effort or above", cost: 3, speed: 3, context_window: 1000000}
   sonnet:
-    efforts: [low, medium, high, xhigh, max]
-    context_window: 1000000
-
-# Hermes routes to provider models, but --reasoning has one vocabulary for all of them.
+    - {effort: "low", tier: "mechanical", description: "speed and intelligence balance; smallest-model low-effort work", cost: 2, speed: 2, context_window: 1000000}
+    - {effort: "medium", tier: "economy", description: "speed and intelligence balance; efficient or smaller model", cost: 2, speed: 2, context_window: 1000000}
+    - {effort: "high", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
+    - {effort: "xhigh", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
+    - {effort: "max", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
 hermes:
   deepseek/deepseek-v4.1-flash:
-    efforts: [none, minimal, low, medium, high, xhigh, max, ultra]
+    - {effort: "low", tier: "mechanical", description: "sparse MoE; efficient reasoning and long-context tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "high", tier: "economy", description: "sparse MoE; efficient reasoning and long-context tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "max", tier: "economy", description: "sparse MoE; efficient reasoning and long-context tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
   tencent/hy3:
-    efforts: [none, minimal, low, medium, high, xhigh, max, ultra]
+    - {effort: "none", tier: "mechanical", description: "agentic MoE reasoning model; smallest-model low-effort work", cost: 1, speed: null, context_window: 262144}
+    - {effort: "low", tier: "mechanical", description: "agentic MoE reasoning model; smallest-model low-effort work", cost: 1, speed: null, context_window: 262144}
+    - {effort: "high", tier: "economy", description: "agentic MoE reasoning model; efficient or smaller model", cost: 1, speed: null, context_window: 262144}
   z-ai/glm-5.3-flash:
-    efforts: [none, minimal, low, medium, high, xhigh, max, ultra]
-
-# Pi's --thinking vocabulary is model-independent.
+    - {effort: "low", tier: "mechanical", description: "efficient coding and long-horizon agent tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "high", tier: "economy", description: "efficient coding and long-horizon agent tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "max", tier: "economy", description: "efficient coding and long-horizon agent tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
 pi:
   deepseek/deepseek-v4.1-flash:
-    efforts: [off, minimal, low, medium, high, xhigh]
+    - {effort: "low", tier: "mechanical", description: "sparse MoE; efficient reasoning and long-context tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "high", tier: "economy", description: "sparse MoE; efficient reasoning and long-context tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
   tencent/hy3:
-    efforts: [off, minimal, low, medium, high, xhigh]
+    - {effort: "low", tier: "mechanical", description: "agentic MoE reasoning model; smallest-model low-effort work", cost: 1, speed: null, context_window: 262144}
+    - {effort: "high", tier: "economy", description: "agentic MoE reasoning model; efficient or smaller model", cost: 1, speed: null, context_window: 262144}
   z-ai/glm-5.3-flash:
-    efforts: [off, minimal, low, medium, high, xhigh]
+    - {effort: "low", tier: "mechanical", description: "efficient coding and long-horizon agent tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
+    - {effort: "high", tier: "economy", description: "efficient coding and long-horizon agent tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}

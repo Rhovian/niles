@@ -15,7 +15,7 @@ without asking. It asks “Do you want a design?” only when the approach is ge
 A trivial change, such as a line or a wording fix, never gets the question.
 
 Design uses one designer by default; a second runs only on operator request and comes from a
-different family in the manifest's `design` group. Designers get one blind round. With two
+different family in the manifest's selected `design` tier. Designers get one blind round. With two
 designers, there is one critique; all contested points then go to the operator, with no further
 critique rounds. The named record author incorporates the operator's rulings. With one designer,
 its report becomes the record once operator questions and scope corrections are resolved.

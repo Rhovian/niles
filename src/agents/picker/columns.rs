@@ -21,14 +21,9 @@ pub(super) struct Model {
 }
 
 pub(super) fn families(config: &ProjectConfig) -> Result<Vec<Family>> {
-    let mut names = agents::known_agent_ids()
+    let names = agents::known_agent_ids()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    for name in config.agents.keys() {
-        if !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
     names
         .into_iter()
         .map(|name| {
@@ -121,7 +116,7 @@ impl Columns {
                     Column::Model => (&mut self.model, self.families[self.family].models.len()),
                     Column::Effort => (
                         &mut self.effort,
-                        self.families[self.family].models[self.model].efforts.len() + 1,
+                        self.families[self.family].models[self.model].efforts.len(),
                     ),
                 };
                 *index = if key == KeyCode::Up {
@@ -204,7 +199,7 @@ impl Columns {
             .position(|entry| Some(entry.as_str()) == effort)
         {
             Some(index) => index,
-            None => model.efforts.len(),
+            None => FIRST,
         };
     }
 }

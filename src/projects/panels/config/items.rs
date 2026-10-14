@@ -13,9 +13,7 @@ use crate::{
     },
     projects::registry,
     watch,
-    workspace_manifest::{
-        self, AgentGroup, MISSING, RoleBinding, WorkspaceManifest, clamp, manifest_roles,
-    },
+    workspace_manifest::{self, MISSING, WorkspaceManifest, clamp, manifest_roles},
 };
 
 const BUILTIN: &str = "builtin";
@@ -64,7 +62,7 @@ pub(super) enum Edit {
     /// Runs the role's picker, then saves only that role into the manifest at `root`.
     Role {
         root: Utf8PathBuf,
-        role: ScalarRole,
+        role: Role,
     },
     Step(Step),
     /// The registry is a directory of links, changed from the explorer rather than a file.
@@ -79,8 +77,7 @@ pub(super) enum Step {
     Recheck(Utf8PathBuf),
 }
 
-use crate::agents::picker::Role;
-pub(super) use crate::agents::picker::ScalarRole;
+pub(super) use crate::agents::picker::Role;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
@@ -152,52 +149,39 @@ fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) 
     for (role, row) in Role::ALL.into_iter().zip(manifest_roles(manifest, config)) {
         items.push(Item::Section(format!("roles.{}", row.role)));
         let mut invalid = row.invalid_reason.map(Note::Invalid);
-        let Some(groups) = role.binding(manifest).and_then(groups) else {
-            let edit = role.scalar().map(|role| Edit::Role {
-                root: root.to_owned(),
-                role,
-            });
-            items.extend(
-                [
-                    ("agent", row.family),
-                    ("model", row.model),
-                    ("effort", row.effort),
-                ]
-                .map(|(key, value)| {
-                    let from = if value == MISSING { BUILTIN } else { MANIFEST };
-                    let mut setting = plain(key, &value, from);
-                    setting.edit = edit.clone();
-                    if let Some(note) = invalid.take() {
-                        setting.note = note;
-                    }
-                    Item::Setting(setting)
-                }),
-            );
-            continue;
-        };
-        items.extend(groups.iter().enumerate().map(|(index, group)| {
-            let models = group.models.join(", ");
-            let value = match &group.efforts {
-                Some(efforts) => format!("{models} [{}]", efforts.join(", ")),
-                None => models,
-            };
-            let key = match &group.when {
-                Some(when) => when.clone(),
-                None => format!("group {}", index + 1),
-            };
-            let mut setting = plain(&key, &value, MANIFEST);
-            if let Some(note) = invalid.take() {
-                setting.note = note;
-            }
-            Item::Setting(setting)
-        }));
+        let edit = Some(Edit::Role {
+            root: root.to_owned(),
+            role,
+        });
+        items.extend(
+            [
+                ("agent", row.family),
+                ("model", row.model),
+                ("effort", row.effort),
+            ]
+            .map(|(key, value)| {
+                let from = if value == MISSING { BUILTIN } else { MANIFEST };
+                let mut setting = plain(key, &value, from);
+                setting.edit = edit.clone();
+                if let Some(note) = invalid.take() {
+                    setting.note = note;
+                }
+                Item::Setting(setting)
+            }),
+        );
+        for (tier, binding) in role.binding(manifest).tiers() {
+            items.push(Item::Setting(plain(
+                tier.as_str(),
+                &format!(
+                    "{}; secondaries: {}",
+                    binding.primary,
+                    binding.secondaries.join(", ")
+                ),
+                MANIFEST,
+            )));
+        }
     }
     items
-}
-
-/// A role written as groups, which is read-only; `None` for one model.
-fn groups(binding: &RoleBinding) -> Option<&[AgentGroup]> {
-    binding.scalar().is_none().then_some(binding.0.as_slice())
 }
 
 fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> [Item; 3] {

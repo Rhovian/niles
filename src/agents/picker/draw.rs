@@ -36,22 +36,15 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            if Role::ALL[form.selected] == Role::Design {
-                "↑↓ role · s save"
-            } else {
-                "↑↓ role · ↵ edit · s save"
-            }
+            "↑↓ role · ↵ edit standard primary · s save"
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
             "↵ save · esc back"
         }
-        Screen::Editing { role, columns } => {
+        Screen::Editing { columns, .. } => {
             columns.draw(frame, body, theme);
-            if Role::from(*role).groups(&form.draft).is_some() {
-                warning =
-                    Some("Replacing this role drops its hand-edited groups; esc back keeps them.");
-            }
+            warning = Some("Editing the standard primary; other tiers and secondaries are kept.");
             COLUMN_KEYS
         }
     };
@@ -117,10 +110,7 @@ fn roles(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool
     let mut rows = Vec::new();
     for role in Role::ALL {
         let changed = role.changed(&form.original, &form.draft);
-        let value = match role.groups(&form.draft) {
-            Some(count) => format!("{count} groups (hand-edited)"),
-            None => clamp(&role.value(&form.draft), 120),
-        };
+        let value = clamp(&role.value(&form.draft), 120);
         let status = if changed { "changed" } else { "kept" };
         let row = Row::new([role.name().to_owned(), value, status.to_owned()]);
         rows.push(if changed {
@@ -204,7 +194,6 @@ impl Columns {
             .efforts
             .iter()
             .map(|effort| ListItem::new(effort.as_str()))
-            .chain(std::iter::once(ListItem::new("cli default")))
             .collect();
         render_list(efforts, "EFFORT", items, self.effort, Column::Effort);
     }

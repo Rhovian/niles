@@ -72,7 +72,7 @@ fn session_activity_missing_after_one_interval_reports_unknown_once() {
     assert_command_success("lead", &output);
     assert_eq!(
         fs::read_to_string(fixture.status_log("impl")).unwrap(),
-        "blocked: session state unknown (claude): session activity unavailable after one check-in interval\n"
+        "blocked: session state unknown (claude:sonnet): session activity unavailable after one check-in interval\n"
     );
     assert!(!fixture.checkin_path("impl").exists());
     let log = fixture.env.tmux_log();

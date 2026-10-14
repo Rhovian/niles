@@ -2,14 +2,14 @@ use anyhow::Result;
 use ratatui::crossterm::event::KeyCode;
 
 use super::{
-    Choice, Role, ScalarRole,
+    Choice, Role,
     columns::{self, Columns, Family, Pick},
 };
 use crate::{config::spec::ProjectConfig, workspace_manifest::WorkspaceManifest};
 
 pub(super) enum Screen {
     Roles,
-    Editing { role: ScalarRole, columns: Columns },
+    Editing { role: Role, columns: Columns },
     Review,
 }
 
@@ -67,11 +67,8 @@ impl Form {
                 KeyCode::Char('s') => self.screen = Screen::Review,
                 KeyCode::Enter => {
                     let role = Role::ALL[self.selected];
-                    let Some(scalar) = role.scalar() else {
-                        return Ok(None);
-                    };
                     self.screen = Screen::Editing {
-                        role: scalar,
+                        role,
                         columns: Columns::new(&self.families, &role.value(&self.draft), config)?,
                     };
                 }

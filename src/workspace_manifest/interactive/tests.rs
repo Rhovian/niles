@@ -3,23 +3,7 @@ use std::fs;
 use super::*;
 use crate::{test_support::temp_test_path, workspace_manifest::save};
 
-const MANIFEST: &str = "\
-# workspace α
-lead: claude
-worker:
-  - when: 'settled plan' # keep this spelling
-    models: [codex:gpt-5.5]
-    efforts: [medium, high]
-  - when: design
-    models: [claude:opus]
-reviewer: claude
-security: claude
-design:
-  - models: [claude, codex]
-research: codex
-checkin: 15m
-recheck: backoff
-";
+const MANIFEST: &str = include_str!("../../../examples/claude-lead.yaml");
 
 fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
     let root = temp_test_path(label);
@@ -29,17 +13,17 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 }
 
 #[test]
-fn changing_only_lead_preserves_worker_and_design_groups() {
-    let root = root("picker-preserve-groups", MANIFEST);
+fn changing_only_lead_preserves_worker_and_design_tiers() {
+    let root = root("picker-preserve-tiers", MANIFEST);
     let before = load(&root).unwrap().unwrap();
     let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _, _| {
-        draft.lead = "codex:gpt-6.1-sol:high".to_owned();
+        draft.lead = "codex:gpt-6.1-sol:high".to_owned().into();
         Ok(Choice::Save(draft))
     })
     .unwrap()
     .unwrap();
     let after = load(&root).unwrap().unwrap();
-    assert_eq!(after.lead, "codex:gpt-6.1-sol:high");
+    assert_eq!(after.lead.standard.primary, "codex:gpt-6.1-sol:high");
     assert_eq!(after.worker, before.worker);
     assert_eq!(after.design, before.design);
     assert_eq!(after.checkin, before.checkin);
@@ -120,40 +104,23 @@ fn changes_are_applied_to_latest_manifest() {
     let before = load(&root).unwrap().unwrap();
     let mut latest = before.clone();
     latest.checkin = Some("1h".to_owned());
-    latest.security = "hermes".to_owned().into();
+    latest.security.standard.primary = "hermes:z-ai/glm-5.3-flash:high".into();
     save(&root, &latest).unwrap();
     let mut draft = before.clone();
-    draft.lead = "codex".to_owned();
-    draft.design.0[0].models.reverse();
-    draft.research = "claude".to_owned().into();
+    draft.lead.standard.primary = "codex:gpt-6.1-sol:medium".into();
+    draft.design.standard.secondaries.reverse();
+    draft.research.standard.primary = "claude:sonnet:high".into();
     let result = save_changes(&root, Some(&before), &draft).unwrap();
     assert_eq!(
         result,
         WorkspaceManifest {
-            lead: "codex".to_owned(),
+            lead: draft.lead,
             design: draft.design,
             research: draft.research,
             ..latest
         }
     );
     fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn only_a_single_model_and_effort_is_scalar() {
-    let binding = |efforts: Option<&[&str]>| {
-        crate::workspace_manifest::RoleBinding(vec![crate::workspace_manifest::AgentGroup {
-            when: None,
-            models: vec!["codex:gpt-5.5".to_owned()],
-            efforts: efforts.map(|efforts| efforts.iter().map(|e| (*e).to_owned()).collect()),
-        }])
-    };
-    assert_eq!(binding(None).scalar().as_deref(), Some("codex:gpt-5.5"));
-    assert_eq!(
-        binding(Some(&["high"])).scalar().as_deref(),
-        Some("codex:gpt-5.5:high")
-    );
-    assert_eq!(binding(Some(&["medium", "high"])).scalar(), None);
 }
 
 #[test]
@@ -213,7 +180,7 @@ fn noninteractive_stale_manifest_fails_without_writing() {
         panic!("opened picker without terminal")
     })
     .unwrap_err();
-    assert!(format!("{error:#}").contains("missing field `design`"));
+    assert!(format!("{error:#}").contains("manifest.yaml"));
     assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), body);
     fs::remove_dir_all(root).unwrap();
 }

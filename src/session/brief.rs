@@ -173,7 +173,16 @@ mod tests {
     }
 
     #[test]
-    fn lead_brief_does_not_name_model_tiers() {
+    fn lead_brief_routes_tiers_with_operator_approval_without_hardcoding_models() {
+        for rule in [
+            "Default to the standard primary",
+            "`niles models`",
+            "reason and cost difference",
+            "then wait for the operator's yes",
+            "Propose stepping down when economical and appropriate",
+        ] {
+            assert!(LEAD_BRIEF_TEMPLATE.contains(rule), "missing {rule:?}");
+        }
         for model in ["opus", "sonnet", "gpt-5", "claude:", "codex:gpt"] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(model),

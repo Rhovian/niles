@@ -82,7 +82,14 @@ impl Fixture {
     /// one whose output they read.
     fn spawn(&self, id: &str) -> Output {
         self.niles(&[
-            "spawn", "--role", "research", id, "--agent", "claude", "Fix", "auth",
+            "spawn",
+            "--role",
+            "research",
+            id,
+            "--agent",
+            "claude:sonnet:high",
+            "Fix",
+            "auth",
         ])
     }
 
@@ -95,7 +102,7 @@ impl Fixture {
             "research",
             id,
             "--agent",
-            "claude",
+            "claude:sonnet:high",
             "--checkin",
             delay,
             "Fix",
@@ -114,11 +121,10 @@ impl Fixture {
     /// The workspace manifest with extra keys under the role bindings: the `checkin`/`recheck`
     /// cadence a test is about, and nothing else changed.
     fn write_manifest(&self, keys: &str) {
-        fs::write(
-            self.env.root.join(".niles/manifest.yaml"),
-            format!("lead: claude\nworker: claude\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: claude\n{keys}"),
-        )
-        .unwrap();
+        write_workspace_manifest(&self.env.root, "claude", "claude", "claude", "claude");
+        let path = self.env.root.join(".niles/manifest.yaml");
+        let body = fs::read_to_string(&path).unwrap();
+        fs::write(path, format!("{body}{keys}")).unwrap();
     }
 
     fn status_log(&self, id: &str) -> PathBuf {

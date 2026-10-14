@@ -38,7 +38,9 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
         return Ok(());
     };
     let config = load_project_config_from(workspace)?;
-    let bindings = std::iter::once(manifest.lead.as_str())
+    let bindings = manifest
+        .lead
+        .agents()
         .chain(manifest.worker.agents())
         .chain(manifest.reviewer.agents())
         .chain(manifest.design.agents())

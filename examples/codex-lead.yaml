@@ -1,33 +1,54 @@
-lead: codex:gpt-6.1-sol:medium
+lead:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: [claude:sonnet:high]
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: [claude:opus:high]
 worker:
-  - when: High-end workhorse for implementation across modules, debugging unknown failures, and changes to shared contracts.
-    models: [claude:opus]
-    efforts: [medium]
-  - when: Cheaper option for small changes with specified edits, routine maintenance, and focused tests.
-    models: [codex:gpt-6-luna]
-    efforts: [medium]
-research:
-  - when: Surveying documentation and code to compare approaches or answer an open-ended technical question.
-    models: [claude:sonnet]
-    efforts: [medium]
-  - when: Cheaper option for focused lookups, locating existing behavior, and checking a narrow claim.
-    models: [codex:gpt-6-luna]
-    efforts: [medium]
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: [claude:sonnet:high]
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: [claude:opus:high]
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: [claude:sonnet:medium]
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: [claude:haiku]
 design:
-  - when: Settling architecture, module boundaries, and tradeoffs before implementation.
-    models: [codex:gpt-6.1-sol]
-    efforts: [medium]
+  standard:
+    primary: claude:sonnet:high
+    secondaries: [codex:gpt-6.1-sol:medium]
+  frontier:
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
 reviewer:
-  - when: Reviewing implementation correctness, regressions, and whether tests cover the changed behavior.
-    models: [claude:opus]
-    efforts: [medium]
-  - when: Reviewing architectural fit, API clarity, and whether a simpler design meets the requirements.
-    models: [codex:gpt-6.1-sol]
-    efforts: [medium]
+  standard:
+    primary: claude:sonnet:high
+    secondaries: [codex:gpt-6.1-sol:medium]
+  frontier:
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: [codex:gpt-6-luna:medium]
 security:
-  - when: Reviewing trust boundaries, untrusted input, and agent execution through GLM.
-    models: [hermes:z-ai/glm-5.3-flash, pi:z-ai/glm-5.3-flash]
-    efforts: [medium]
-  - when: Taking an independent security pass through DeepSeek to challenge assumptions and trace attack paths.
-    models: [hermes:deepseek/deepseek-v4.1-flash, pi:deepseek/deepseek-v4.1-flash]
-    efforts: [medium]
+  standard:
+    primary: codex:gpt-6.1-sol:high
+    secondaries: []
+  economy:
+    primary: hermes:z-ai/glm-5.3-flash:high
+    secondaries: [pi:deepseek/deepseek-v4.1-flash:high]
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: []
+research:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: [claude:sonnet:high]
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: [claude:sonnet:medium]

@@ -3,8 +3,8 @@ use std::fs;
 use camino::Utf8PathBuf;
 
 use super::*;
+use crate::test_support::temp_test_path;
 use crate::workspace_manifest::RoleBinding;
-use crate::{agents::ModelRoster, test_support::temp_test_path};
 
 /// Each row as `key | value | from | note`, so a whole scope reads as one table.
 fn table(items: &[Item]) -> Vec<String> {
@@ -75,21 +75,7 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-const MANIFEST: &str = "\
-lead: claude:opus:max
-worker:
-  - when: settled plan
-    models: [codex:gpt-5.5]
-    efforts: [medium, high]
-  - models: [claude:opus]
-reviewer: ghost
-security: claude
-checkin: 15m
-recheck: nope
-design:
-  - models: [claude, codex]
-research: codex:gpt-6-luna:medium
-";
+const MANIFEST: &str = include_str!("../../../../examples/claude-lead.yaml");
 
 fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
     let root = temp_test_path(label);
@@ -104,68 +90,23 @@ fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathB
 }
 
 #[test]
-fn project_rows_show_builtin_overridden_multi_group_and_invalid_values() {
-    let root = project(
-        "config-project",
-        Some(MANIFEST),
-        Some(
-            "agents: {bot: {binary: bot, args: [--fast]}}\nmodels: {codex: {gpt-5.5: {efforts: [high]}}}\n",
-        ),
-    );
-    let builtin = ModelRoster::builtin().unwrap();
-    let efforts = builtin
-        .supported_efforts("codex", "gpt-5.5")
-        .unwrap()
-        .join(" ");
+fn project_rows_show_tiers_and_standard_primary_is_editable() {
+    let root = project("config-project-tiers", Some(MANIFEST), None);
     let items = items::project(&root).unwrap();
-    assert_rows(
-        &items,
-        &[
-            "[roles.lead]",
-            "agent | claude | manifest | ",
-            "model | opus | manifest | ",
-            "effort | max | manifest | ",
-            "[roles.worker]",
-            "settled plan | codex:gpt-5.5 [medium, high] | manifest | ✗ model gpt-5.5 does not support listed effort medium",
-            "group 2 | claude:opus | manifest | ",
-            "[roles.reviewer]",
-            "agent | ghost | manifest | ✗ unknown agent `ghost`",
-            "model | - | builtin | ",
-            "effort | - | builtin | ",
-            "[roles.security]",
-            "agent | claude | manifest | ",
-            "model | - | builtin | ",
-            "effort | - | builtin | ",
-            "[roles.design]",
-            "group 1 | claude, codex | manifest | ",
-            "[roles.research]",
-            "agent | codex | manifest | ",
-            "model | gpt-6-luna | manifest | ",
-            "effort | medium | manifest | ",
-            "[watch]",
-            "checkin | 15m | manifest | builtin: 5m",
-            "recheck | nope | manifest | ✗ `nope` is not a duration",
-            "[agents]",
-            "bot | bot --fast | .niles.yaml | ",
-            "[models]",
-            &format!("codex:gpt-5.5 | high | .niles.yaml | builtin: {efforts}"),
-        ],
-    );
-    let role = |role| Edit::Role {
-        root: root.clone(),
-        role,
-    };
-    assert_eq!(items[1].edit(), Some(&role(ScalarRole::Lead)));
-    assert_eq!(items[5].edit(), None);
-    assert_eq!(items[8].edit(), Some(&role(ScalarRole::Reviewer)));
-    assert_eq!(items[18].edit(), Some(&role(ScalarRole::Research)));
+    let rows = table(&items);
+    assert!(rows.iter().any(|row| {
+        row.starts_with("standard | claude:sonnet:high; secondaries: codex:gpt-6.1-sol:medium")
+    }));
+    assert!(rows.iter().any(|row| {
+        row.starts_with("mechanical | codex:gpt-6-luna:low; secondaries: claude:haiku")
+    }));
     assert_eq!(
-        items[23].edit(),
-        Some(&Edit::Step(Step::Recheck(root.clone())))
+        items[1].edit(),
+        Some(&Edit::Role {
+            root: root.clone(),
+            role: Role::Lead
+        })
     );
-    for index in [16, 25, 27] {
-        assert_eq!(items[index].edit(), None);
-    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -195,9 +136,9 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
         Some("agents: {lead: {}}\n"),
     );
     let rows = table(&items::project(&root).unwrap());
-    assert_eq!(rows[0], "[roles]");
+    assert_eq!(rows[0], "[manifest]");
     assert!(
-        rows[1].starts_with("✗ custom agent name `lead` is reserved"),
+        rows[1].contains("custom agent name `lead` is reserved"),
         "{rows:?}"
     );
     assert_eq!(rows[rows.len() - 2], "[.niles.yaml]");
@@ -210,7 +151,7 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
 
 #[test]
 fn saving_a_role_and_checkin_keeps_the_other_fields() {
-    let text = MANIFEST.replace("15m", "300s").replace("nope", "backoff");
+    let text = format!("{MANIFEST}checkin: 300s\nrecheck: backoff\n");
     let root = project("config-save", Some(&text), None);
     let before = workspace_manifest::load(&root).unwrap().unwrap();
     save_manifest(&root, |manifest| {
@@ -218,7 +159,11 @@ fn saving_a_role_and_checkin_keeps_the_other_fields() {
     })
     .unwrap();
     let rows = items::project(&root).unwrap();
-    let Item::Setting(setting) = &rows[22] else {
+    let Item::Setting(setting) = rows
+        .iter()
+        .find(|item| matches!(item, Item::Setting(setting) if setting.key == "checkin"))
+        .unwrap()
+    else {
         panic!("missing checkin row")
     };
     let Some(Edit::Step(step)) = &setting.edit else {

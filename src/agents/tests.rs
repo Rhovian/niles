@@ -267,20 +267,21 @@ fn hermes_carries_a_roster_like_every_other_family() {
 }
 
 #[test]
-fn hermes_reasoning_levels_cover_the_cli_vocabulary() {
-    for effort in [
-        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
-    ] {
+fn hermes_reasoning_levels_match_verified_provider_support() {
+    for effort in ["none", "low", "high"] {
         AgentSpec::parse(&format!("hermes:tencent/hy3:{effort}"), &models()).unwrap();
     }
 
-    let unsupported = AgentSpec::parse("hermes:tencent/hy3:turbo", &models()).unwrap_err();
-    assert!(
-        unsupported
-            .to_string()
-            .contains("unsupported hermes effort"),
-        "{unsupported}"
-    );
+    for effort in ["minimal", "medium", "xhigh", "max", "ultra", "turbo"] {
+        let unsupported =
+            AgentSpec::parse(&format!("hermes:tencent/hy3:{effort}"), &models()).unwrap_err();
+        assert!(
+            unsupported
+                .to_string()
+                .contains("unsupported hermes effort"),
+            "{unsupported}"
+        );
+    }
 }
 
 #[test]

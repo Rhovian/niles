@@ -23,6 +23,12 @@ CLI, its launch flags, and operating-system controls.
 
 The operator's `~/.niles/config.yaml` controls the theme and optional tmux bindings; those bindings run only the shell-quoted Niles executable.
 
+The operator's `~/.niles/roster.yaml` can replace model efforts, tiers and metadata before project
+model overrides are applied. Registry parsing rejects unknown fields/families, malformed or
+normalized duplicate models/efforts, invalid ranks/windows and control-bearing descriptions.
+`niles models` JSON-quotes descriptions and restricts displayed pairs to manifest allowances.
+This local file is operator-controlled data; Niles does not authenticate its research claims.
+
 ## Boundaries
 
 ### Maintainer CLI updates
@@ -52,13 +58,16 @@ an operator to launch Niles from the clone.
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`. An agent entry can replace its executable and argument list. The
 `.niles/manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
-design, and research), and the `when` text of its role groups can influence which listed agent the
-lead picks. See
+design, and research), and its per-role tiers and ordered secondaries can influence which
+listed agent the lead picks. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`src/templates/lead_brief.md`](../src/templates/lead_brief.md).
 
-**Existing mitigations.** The manifest's listed agents bound what spawn will launch. Deserializing YAML does not itself execute shell commands. Unknown
+**Existing mitigations.** Spawn defaults to the role's standard primary and rejects unlisted
+tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
+secondary changes; the CLI does not enforce that conversational approval. Deserializing YAML
+does not itself execute shell commands. Unknown
 manifest fields are rejected, and built-in agent families reject unsupported model names. Worker
 launch scripts quote the selected binary and arguments, while foreground launches pass them as
 separate `Command` arguments; these measures prevent incidental shell parsing. See

@@ -211,11 +211,30 @@ pub fn write_workspace_manifest(
     security: &str,
 ) {
     fs::create_dir_all(workspace.join(".niles")).unwrap();
-    fs::write(
-        workspace.join(".niles/manifest.yaml"),
-        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\ndesign:\n  - models: [claude, codex]\nresearch: claude\n"),
-    )
-    .unwrap();
+    let exact = |agent: &str| {
+        match agent {
+            "claude" => "claude:sonnet:high",
+            "codex" => "codex:gpt-6.1-sol:medium",
+            _ => agent,
+        }
+        .to_owned()
+    };
+    let body = [
+        ("lead", lead),
+        ("worker", worker),
+        ("reviewer", reviewer),
+        ("security", security),
+        ("design", "claude"),
+        ("research", "claude"),
+    ]
+    .map(|(role, agent)| {
+        format!(
+            "{role}:\n  standard: {{primary: {}, secondaries: []}}\n",
+            exact(agent)
+        )
+    })
+    .join("");
+    fs::write(workspace.join(".niles/manifest.yaml"), body).unwrap();
 }
 
 pub fn write_worker(

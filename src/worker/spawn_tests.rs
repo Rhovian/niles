@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     cli::{Cli, CommandName},
     test_support::temp_test_path,
-    workspace_manifest::{WorkspaceManifest, manifest_path, save},
+    workspace_manifest::{WorkspaceManifest, save},
 };
 
 fn resolve_from_cli(project: &Utf8Path, args: &[&str]) -> Result<String> {
@@ -16,154 +16,88 @@ fn resolve_from_cli(project: &Utf8Path, args: &[&str]) -> Result<String> {
         panic!("expected spawn");
     };
     let config = load_project_config_from(project)?;
-    resolve_agent(project, assignment.role, agent, &config)
-}
-
-fn manifest() -> WorkspaceManifest {
-    WorkspaceManifest {
-        lead: "leadbot".into(),
-        worker: "codex:gpt-5.5:xhigh".to_owned().into(),
-        reviewer: "claude:opus:high".to_owned().into(),
-        security: "auditbot".to_owned().into(),
-        research: "researchbot".to_owned().into(),
-        ..WorkspaceManifest::default()
-    }
+    resolve_agent(project, assignment.role, assignment.tier, agent, &config)
 }
 
 #[test]
-fn omitted_agent_uses_each_roles_manifest_binding() {
-    let root = temp_test_path("spawn-role-agents");
-    let manifest = manifest();
+fn spawn_resolves_role_tier_primary_and_exact_secondary() {
+    let root = temp_test_path("spawn-role-tiers");
+    let manifest = WorkspaceManifest::default();
     save(&root, &manifest).unwrap();
-    for (role, expected) in [
-        ("worker", "codex:gpt-5.5:xhigh"),
-        ("reviewer", "claude:opus:high"),
-        ("security", "auditbot"),
-        ("design", "claude"),
-        ("research", "researchbot"),
-    ] {
-        let agent =
-            resolve_from_cli(&root, &["niles", "spawn", "job", "--role", role, "task"]).unwrap();
-        assert_eq!(agent, expected);
+    for role in crate::agents::picker::Role::ALL.into_iter().skip(1) {
+        let expected = role.binding(&manifest).default_model();
+        assert_eq!(
+            resolve_from_cli(
+                &root,
+                &["niles", "spawn", "job", "--role", role.name(), "task"]
+            )
+            .unwrap(),
+            expected
+        );
     }
     assert_eq!(
-        resolve_from_cli(&root, &["niles", "spawn", "job", "task"]).unwrap(),
-        "codex:gpt-5.5:xhigh"
+        resolve_from_cli(
+            &root,
+            &["niles", "spawn", "job", "--tier", "economy", "task"]
+        )
+        .unwrap(),
+        manifest.worker.economy.as_ref().unwrap().primary
     );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn explicit_agent_requires_membership_when_manifest_exists() {
-    let root = temp_test_path("spawn-explicit-agent");
-    let args = [
-        "niles", "spawn", "job", "--role", "reviewer", "--agent", "custom", "task",
-    ];
-    assert_eq!(resolve_from_cli(&root, &args).unwrap(), "custom");
-    save(&root, &manifest()).unwrap();
-    let err = resolve_from_cli(&root, &args).unwrap_err().to_string();
-    assert!(
-        err.contains("reviewer")
-            && err.contains(manifest_path(&root).as_str())
-            && err.contains("claude:opus:high"),
-        "{err}"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn groups_choose_default_effort_or_report_unsupported_effort() {
-    let models = agents::ModelRoster::builtin().unwrap();
-    let mut binding =
-        crate::workspace_manifest::RoleBinding(vec![crate::workspace_manifest::AgentGroup {
-            when: Some("standard".into()),
-            models: vec!["claude:haiku".into()],
-            efforts: Some(vec!["medium".into()]),
-        }]);
-    assert_eq!(binding.default_agent(&models).unwrap(), "claude:haiku");
-    binding.0[0].models = vec!["codex:gpt-6-sol".into()];
+    let error = resolve_from_cli(
+        &root,
+        &[
+            "niles", "spawn", "job", "--role", "design", "--tier", "economy", "task",
+        ],
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("does not list tier economy"));
+    let secondary = &manifest.worker.standard.secondaries[0];
     assert_eq!(
-        binding.default_agent(&models).unwrap(),
-        "codex:gpt-6-sol:medium"
+        resolve_from_cli(
+            &root,
+            &["niles", "spawn", "job", "--agent", secondary, "task"]
+        )
+        .unwrap(),
+        *secondary
     );
-    binding.0[0].efforts = Some(vec!["veryhigh".into()]);
-    let err = binding.default_agent(&models).unwrap_err().to_string();
-    assert!(
-        err.contains("gpt-6-sol") && err.contains("veryhigh"),
-        "{err}"
-    );
-    binding.0[0].models = vec!["codex:gpt-6-sol:high".into()];
-    let err = binding.default_agent(&models).unwrap_err().to_string();
-    assert!(err.contains("must not carry an effort"), "{err}");
-}
-
-#[test]
-fn scalar_bindings_keep_colons_in_model_names_and_pin_their_effort() {
-    let models =
-        agents::roster::parse("pi:\n  nvidia/nemotron:free:\n    efforts: [low, high]\n").unwrap();
-    let parse = |agent| agents::AgentSpec::parse(agent, &models).unwrap();
-    for (scalar, allowed, refused) in [
-        (
-            "pi:nvidia/nemotron:free",
-            "pi:nvidia/nemotron:free:low",
-            None,
-        ),
-        (
-            "pi:nvidia/nemotron:free:high",
-            "pi:nvidia/nemotron:free:high",
-            Some("pi:nvidia/nemotron:free:low"),
-        ),
-    ] {
-        let binding = crate::workspace_manifest::RoleBinding::from(scalar.to_owned());
-        assert_eq!(binding.default_agent(&models).unwrap(), scalar);
-        assert!(binding.allows(&parse(allowed), &models).unwrap());
-        assert!(refused.is_none_or(|agent| !binding.allows(&parse(agent), &models).unwrap()));
+    for denied in ["claude:sonnet:medium", "claude:sonnet", "claude"] {
+        assert!(
+            resolve_from_cli(
+                &root,
+                &[
+                    "niles", "spawn", "job", "--role", "design", "--agent", denied, "task"
+                ]
+            )
+            .is_err()
+        );
     }
+    assert!(
+        Cli::try_parse_from([
+            "niles", "spawn", "job", "--tier", "frontier", "--agent", secondary, "task"
+        ])
+        .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn omitted_agent_requires_a_manifest() {
     let root = temp_test_path("spawn-no-manifest");
-    let config = load_project_config_from(&root).unwrap();
-    let err = resolve_agent(&root, WorkerRole::Reviewer, None, &config)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains(manifest_path(&root).as_str()), "{err}");
-    assert!(err.contains("role 'reviewer'"), "{err}");
-    assert!(err.contains("does not exist"), "{err}");
-}
-
-#[test]
-fn omitted_agent_requires_the_roles_entry() {
-    let root = temp_test_path("spawn-missing-role");
-    let config = load_project_config_from(&root).unwrap();
-    for role in [
-        WorkerRole::Worker,
-        WorkerRole::Reviewer,
-        WorkerRole::Security,
-    ] {
-        save(&root, &manifest()).unwrap();
-        let path = manifest_path(&root);
-        let body = fs::read_to_string(&path).unwrap();
-        let body = body
-            .lines()
-            .filter(|line| !line.starts_with(&format!("{}:", role.as_str())))
-            .collect::<Vec<_>>()
-            .join("\n");
-        fs::write(&path, body).unwrap();
-        let err = format!(
-            "{:#}",
-            resolve_agent(&root, role, None, &config).unwrap_err()
-        );
-        assert!(err.contains(path.as_str()), "{err}");
-        assert!(err.contains(&format!("role '{}'", role.as_str())), "{err}");
-        assert!(err.contains("missing field"), "{err}");
-    }
-    fs::remove_dir_all(root).unwrap();
+    let error = resolve_from_cli(&root, &["niles", "spawn", "job", "task"]).unwrap_err();
+    assert!(error.to_string().contains("does not exist"));
+    assert_eq!(
+        resolve_from_cli(
+            &root,
+            &["niles", "spawn", "job", "--agent", "custom", "task"]
+        )
+        .unwrap(),
+        "custom"
+    );
 }
 
 fn assignment(role: WorkerRole, design: Option<&str>, mechanical: Option<&str>) -> Assignment {
     Assignment {
+        tier: agents::roster::Tier::Standard,
         role,
         design: design.map(str::to_owned),
         mechanical: mechanical.map(str::to_owned),
