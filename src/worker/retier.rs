@@ -2,7 +2,7 @@ use super::{
     meta::{read_meta, write_meta},
     worker_dir,
 };
-use crate::{agents, config, tmux, util};
+use crate::{agents, config, tmux, util, workspace_manifest};
 use anyhow::{Context, Result, bail, ensure};
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,17 @@ pub fn retier(id: String, agent: String) -> Result<()> {
     let model = target.model().context("expected family:model:effort")?;
     let effort = target.effort().context("expected family:model:effort")?;
     let steps = agents::switch_steps(target.family(), model, effort)?;
+    let manifest =
+        workspace_manifest::load(&meta.project)?.context("retier requires a workspace manifest")?;
+    ensure!(
+        meta.role.binding(&manifest).allows(&target, &models)?,
+        "agent {agent} is not allowed for role '{}' in the manifest",
+        meta.role.as_str()
+    );
+    let target_window = models
+        .entry(target.family(), model, Some(effort))?
+        .context_window
+        .get();
     ensure!(
         matches!(super::resolve::window_state(&meta), tmux::TargetState::Live),
         "worker window not live"
@@ -33,10 +44,9 @@ pub fn retier(id: String, agent: String) -> Result<()> {
         session.state == crate::telemetry::SessionState::Waiting,
         "worker must be idle"
     );
-    // #335 integration seam: supply the registry window here once conversation sizing is settled.
     check_context_fit(
         session.usage.as_ref().and_then(|usage| usage.prompt_tokens),
-        None,
+        target_window,
     )?;
     let pane = tmux::TmuxTarget::window(&tmux::WindowTarget::parse(&meta.window)?);
     let cursor = tmux::cursor_position(&pane)?;
@@ -60,14 +70,12 @@ pub fn retier(id: String, agent: String) -> Result<()> {
     Ok(())
 }
 
-fn check_context_fit(conversation_tokens: Option<u64>, target_window: Option<u64>) -> Result<()> {
-    if let Some(window) = target_window {
-        let tokens = conversation_tokens.context("unknown conversation size")?;
-        ensure!(
-            tokens <= window,
-            "conversation {tokens} exceeds window {window}"
-        );
-    }
+fn check_context_fit(conversation_tokens: Option<u64>, target_window: u64) -> Result<()> {
+    let tokens = conversation_tokens.context("unknown conversation size")?;
+    ensure!(
+        tokens <= target_window,
+        "conversation {tokens} exceeds window {target_window}"
+    );
     Ok(())
 }
 

@@ -44,8 +44,14 @@ fn retier_inline_sequences_confirm_model_before_effort() {
 
 #[test]
 fn retier_context_seam_refuses_oversize_and_unknown_conversations() {
-    assert!(check_context_fit(Some(101), Some(100)).is_err());
-    assert!(check_context_fit(None, Some(100)).is_err());
-    assert!(check_context_fit(Some(100), Some(100)).is_ok());
-    assert!(check_context_fit(None, None).is_ok());
+    assert!(check_context_fit(Some(101), 100).is_err());
+    assert!(check_context_fit(None, 100).is_err());
+    assert!(check_context_fit(Some(100), 100).is_ok());
+}
+
+#[test]
+fn retier_context_uses_the_exact_effort_entry() {
+    let models = agents::roster::parse(agents::roster::FIXTURE_REGISTRY).unwrap();
+    let high = models.entry("codex", "fixture", Some("high")).unwrap();
+    assert!(check_context_fit(Some(1500), high.context_window.get()).is_ok());
 }

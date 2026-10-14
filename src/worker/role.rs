@@ -61,6 +61,19 @@ pub enum WorkerRole {
 }
 
 impl WorkerRole {
+    pub(super) fn binding(
+        self,
+        manifest: &crate::workspace_manifest::WorkspaceManifest,
+    ) -> &crate::workspace_manifest::RoleBinding {
+        match self {
+            Self::Worker => &manifest.worker,
+            Self::Reviewer => &manifest.reviewer,
+            Self::Design => &manifest.design,
+            Self::Security => &manifest.security,
+            Self::Research => &manifest.research,
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Design => "design",

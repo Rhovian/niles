@@ -237,13 +237,7 @@ fn resolve_agent(
     let Some(manifest) = manifest else {
         return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
-    let binding = match role {
-        WorkerRole::Worker => &manifest.worker,
-        WorkerRole::Reviewer => &manifest.reviewer,
-        WorkerRole::Design => &manifest.design,
-        WorkerRole::Security => &manifest.security,
-        WorkerRole::Research => &manifest.research,
-    };
+    let binding = role.binding(&manifest);
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
         if !binding.allows(&requested, &config.models)? {
