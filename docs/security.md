@@ -62,7 +62,7 @@ design, and research), and its per-role tiers and ordered secondaries can influe
 listed agent the lead picks. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
-[`src/templates/lead_brief.md`](../src/templates/lead_brief.md).
+[`prompts/lead_brief.md`](../prompts/lead_brief.md).
 
 **Existing mitigations.** Spawn defaults to the role's standard primary and rejects unlisted
 tiers or exact model/effort pairs. The lead brief requires operator approval for tier and

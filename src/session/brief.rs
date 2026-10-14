@@ -14,7 +14,7 @@ use crate::{
 
 use super::{sessions_dir, startup::startup_context};
 
-const LEAD_BRIEF_TEMPLATE: &str = include_str!("../templates/lead_brief.md");
+const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
 
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";

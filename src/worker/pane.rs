@@ -65,7 +65,7 @@ pub fn send(
     let dir = worker_dir(&id)?;
     let message = format!(
         "{message}\n\n{}",
-        include_str!("../templates/followup_reporting.md")
+        include_str!("../../prompts/followup_reporting.md")
             .replace("{report_path}", dir.join("report.md").as_str())
             .replace(
                 "{status_command}",

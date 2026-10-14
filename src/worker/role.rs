@@ -34,11 +34,11 @@ Stay open after `done:` — it means you have something to hand back, not that y
 Report uncertainty as uncertainty. `blocked:` and `needs-decision:` are far cheaper than a confident wrong answer.
 "#;
 
-const ROLE_WORKER_TEMPLATE: &str = include_str!("../templates/role_worker.md");
-const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../templates/role_reviewer.md");
-const ROLE_SECURITY_TEMPLATE: &str = include_str!("../templates/role_security.md");
-const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../templates/role_research.md");
-const ROLE_DESIGN_TEMPLATE: &str = include_str!("../templates/role_design.md");
+const ROLE_WORKER_TEMPLATE: &str = include_str!("../../prompts/role_worker.md");
+const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../../prompts/role_reviewer.md");
+const ROLE_SECURITY_TEMPLATE: &str = include_str!("../../prompts/role_security.md");
+const ROLE_RESEARCH_TEMPLATE: &str = include_str!("../../prompts/role_research.md");
+const ROLE_DESIGN_TEMPLATE: &str = include_str!("../../prompts/role_design.md");
 
 /// Which role a spawned worker is playing.
 ///
