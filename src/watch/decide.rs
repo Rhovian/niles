@@ -195,7 +195,10 @@ pub(super) fn parse_report_text(text: &str) -> Option<(&str, WakeKind)> {
 fn no_report_text(id: &str, state: Option<SessionState>) -> String {
     match state {
         Some(SessionState::Waiting) => format!("niles: {id} stopped without a report — check it"),
-        Some(SessionState::Working) | None => format!("niles: no report from {id} — check it"),
+        // Unknown here is uncertain liveness or a declined report: re-armed, so it is asked again.
+        Some(SessionState::Starting | SessionState::Working | SessionState::Unknown) | None => {
+            format!("niles: no report from {id} — check it")
+        }
     }
 }
 
@@ -436,6 +439,22 @@ mod tests {
             at(1300),
         );
         assert_eq!(plan.disarms.len(), 1, "{plan:?}");
+    }
+
+    #[test]
+    fn unknown_and_unread_state_nudge_and_rearm() {
+        let checkins = armed_over(WINDOW, 300, at(1000));
+        for state in [None, Some(SessionState::Unknown)] {
+            let mut memory = WatchMemory::at_start(&[worker("impl", WINDOW)]);
+            let deadline = checkins["impl"].deadline;
+            memory.activity.insert("impl".into(), (deadline, state));
+            let plan = memory.plan(&[worker("impl", WINDOW)], &checkins, at(1300));
+            assert_eq!(plan.nudges[0].text, "niles: no report from impl — check it");
+            assert!(matches!(
+                plan.nudges[0].commit,
+                Commit::Checkin { next: Some(_), .. }
+            ));
+        }
     }
 
     #[test]

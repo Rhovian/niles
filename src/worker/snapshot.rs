@@ -48,19 +48,42 @@ pub(crate) struct WorkerSnapshot {
 impl WorkerSnapshot {
     /// Snapshots a worker's status log. The display fields are the reader's to fill.
     pub(crate) fn new(id: String, worker_dir: Utf8PathBuf, log: Option<Vec<u8>>) -> Self {
-        let log_len = log.as_ref().map_or(0, |bytes| bytes.len() as u64);
-        let last_actionable = log.as_deref().and_then(last_actionable_wake);
-        Self {
+        let mut snapshot = Self {
             id,
             worker_dir,
             meta: None,
             read_error: None,
-            log,
-            log_len,
-            last_actionable,
+            log: None,
+            log_len: 0,
+            last_actionable: None,
             cursor: 0,
             wait_running: false,
-        }
+        };
+        snapshot.set_log(log);
+        snapshot
+    }
+
+    pub(crate) fn provider_tier(&self) -> Option<String> {
+        let meta = self.meta.as_ref()?;
+        let family = match &meta.agent_family {
+            Some(family) => family.as_str(),
+            None => meta.agent.as_str(),
+        };
+        Some(match &meta.model {
+            Some(model) => format!("{family}:{model}"),
+            None => family.to_owned(),
+        })
+    }
+
+    fn set_log(&mut self, log: Option<Vec<u8>>) {
+        self.log_len = log.as_ref().map_or(0, |log| log.len() as u64);
+        self.last_actionable = log.as_deref().and_then(last_actionable_wake);
+        self.log = log;
+    }
+
+    pub(crate) fn refresh_log(&mut self) -> Result<()> {
+        self.set_log(status_log(&self.worker_dir)?);
+        Ok(())
     }
 
     /// The last non-empty status line, as `niles workers` renders it.

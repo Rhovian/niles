@@ -22,6 +22,7 @@ pub(crate) struct SessionUsage {
     pub(crate) id: String,
     pub(crate) role: &'static str,
     pub(crate) agent: String,
+    pub(crate) state: SessionState,
     pub(crate) usage: Option<telemetry::Usage>,
     /// Always `false` for the lead.
     #[serde(skip)]
@@ -66,23 +67,25 @@ pub(crate) fn collect(
                 worker.id
             );
         };
-        let usage = worker_usage(&worker)?;
+        let record = worker_session(&worker, Utc::now())?;
         sessions.push(SessionUsage {
             id: worker.id,
             role: meta.role.as_str(),
             agent: meta.agent.clone(),
-            usage,
+            state: record.state.displayed(),
+            usage: record.usage,
             window_gone: window_state(meta).is_gone(),
             created_at: meta.created_at,
         });
     }
     if let Some(meta) = lead {
-        let usage = lead_usage(&meta)?;
+        let record = lead_session(&meta, Utc::now())?;
         sessions.push(SessionUsage {
             id: meta.id,
             role: "lead",
             agent: meta.agent,
-            usage,
+            state: record.state.displayed(),
+            usage: record.usage,
             window_gone: false,
             created_at: meta.created_at,
         });
@@ -90,30 +93,32 @@ pub(crate) fn collect(
     Ok(sessions)
 }
 
-pub(crate) fn worker_usage(worker: &WorkerSnapshot) -> Result<Option<telemetry::Usage>> {
-    match worker.meta.as_ref() {
-        Some(meta) => meta_usage(meta, &worker.worker_dir),
-        None => Ok(None),
-    }
-}
-
-/// The worker's session state, or `None` when its family reports none.
+/// The resolved worker state, or `None` when there is no worker metadata.
 pub(crate) fn session_state(worker_dir: &Utf8Path) -> Result<Option<SessionState>> {
     let Some(meta) = read_meta_if_exists(worker_dir)? else {
         return Ok(None);
     };
-    Ok(meta_usage(&meta, worker_dir)?.and_then(|usage| usage.state))
+    let mut worker = WorkerSnapshot::new(meta.id.clone(), worker_dir.to_path_buf(), None);
+    worker.meta = Some(meta);
+    Ok(Some(worker_session(&worker, Utc::now())?.state))
 }
 
-fn meta_usage(meta: &WorkerMeta, worker_dir: &Utf8Path) -> Result<Option<telemetry::Usage>> {
-    let Some(link) = meta.session_link.as_ref() else {
-        return Ok(None);
-    };
-    telemetry::read(
-        link,
-        meta.agent_dir(),
-        &report_path(worker_dir),
+pub(crate) fn lead_session(
+    meta: &session::SessionMeta,
+    now: DateTime<Utc>,
+) -> Result<telemetry::ResolvedSession> {
+    let dir = meta.brief.parent().context("lead brief has no parent")?;
+    telemetry::resolve_session(
+        meta.session_link.as_ref(),
+        &meta.workspace,
+        dir,
         meta.created_at,
+        telemetry::initial_deadline(meta.created_at, None),
+        now,
+        || match &meta.lead_pane {
+            Some(pane) => crate::tmux::pane_alive(pane),
+            None => Ok(Some(false)),
+        },
     )
 }
 
@@ -150,7 +155,7 @@ pub(crate) fn closed_workers(
             Some(link) => serde_json::from_value(link.clone()).with_context(context)?,
         };
         let meta: WorkerMeta = serde_json::from_value(body).with_context(context)?;
-        // Codex finds the transcript by the report path its brief named: the live one.
+        // Legacy Codex sessions match the live report path named in their brief.
         let buckets = telemetry::closed_buckets(&dir, || {
             let worker_dir = meta.brief.parent().context("worker brief has no parent")?;
             telemetry::read(
@@ -210,4 +215,26 @@ pub(crate) fn superseded_leads(
         });
     }
     Ok(closed)
+}
+pub(crate) fn worker_session(
+    worker: &WorkerSnapshot,
+    now: DateTime<Utc>,
+) -> Result<telemetry::ResolvedSession> {
+    let meta = worker
+        .meta
+        .as_ref()
+        .context("worker metadata is unreadable")?;
+    let starting_until = match meta.starting_until {
+        Some(deadline) => deadline,
+        None => telemetry::initial_deadline(meta.created_at, None),
+    };
+    telemetry::resolve_session(
+        meta.session_link.as_ref(),
+        meta.agent_dir(),
+        &report_path(&worker.worker_dir),
+        meta.created_at,
+        starting_until,
+        now,
+        || Ok(window_state(meta).liveness()),
+    )
 }

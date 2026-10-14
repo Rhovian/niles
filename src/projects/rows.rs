@@ -17,6 +17,7 @@ pub(super) enum State {
     Missing,
     NotRunning,
     Running,
+    Starting,
     Waiting(Option<DateTime<Utc>>),
 }
 
@@ -31,14 +32,19 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
         {
             State::NotRunning
         } else {
-            let usage = session::latest_lead(&entry.path)?
-                .map(|meta| worker::lead_usage(&meta))
-                .transpose()?
-                .flatten();
-            let workers_working = worker::status_workers(&entry.path)?.iter().any(|worker| {
-                worker.usage.as_ref().and_then(|usage| usage.state) == Some(SessionState::Working)
-            });
-            project_state(usage.as_ref(), workers_working)
+            let lead = session::latest_lead(&entry.path)?;
+            let record = lead
+                .as_ref()
+                .map(|meta| worker::lead_session(meta, Utc::now()))
+                .transpose()?;
+            let state = record
+                .as_ref()
+                .map_or(SessionState::Unknown, |record| record.state);
+            let usage = record.and_then(|record| record.usage);
+            let workers_working = worker::status_workers(&entry.path)?
+                .iter()
+                .any(|worker| worker.state == SessionState::Working);
+            project_state(state, usage.as_ref(), workers_working)
         };
         rows.push(Row { entry, state });
     }
@@ -50,13 +56,15 @@ fn sort_rows(rows: &mut [Row]) {
     rows.sort_by_key(|row| match row.state {
         State::Waiting(Some(since)) => (0, Some(since)),
         State::Waiting(None) => (1, None),
-        State::Missing | State::NotRunning | State::Running => (2, None),
+        State::Missing | State::NotRunning | State::Running | State::Starting => (2, None),
     });
 }
 
-fn project_state(usage: Option<&Usage>, workers_working: bool) -> State {
-    if workers_working || usage.and_then(|usage| usage.state) == Some(SessionState::Working) {
+fn project_state(state: SessionState, usage: Option<&Usage>, workers_working: bool) -> State {
+    if workers_working || state == SessionState::Working {
         State::Running
+    } else if state == SessionState::Starting {
+        State::Starting
     } else {
         State::Waiting(usage.and_then(|usage| usage.last_turn_at))
     }
@@ -130,7 +138,6 @@ mod tests {
             cache_write_tokens: None,
             reasoning_tokens: None,
             last_turn_at: None,
-            state: Some(SessionState::Waiting),
             estimated_cost_usd: None,
             buckets: Default::default(),
             prompt_tokens: None,
@@ -141,22 +148,33 @@ mod tests {
             Some(SessionState::Working),
             None,
         ] {
-            usage.state = lead_state;
             for workers_working in [false, true] {
                 let active = workers_working || lead_state == Some(SessionState::Working);
                 assert_eq!(
-                    matches!(project_state(Some(&usage), workers_working), State::Running),
+                    matches!(
+                        project_state(
+                            lead_state.map_or(SessionState::Unknown, |state| state),
+                            Some(&usage),
+                            workers_working
+                        ),
+                        State::Running
+                    ),
                     active,
                     "lead={lead_state:?}, workers_working={workers_working}",
                 );
             }
         }
-        assert!(matches!(project_state(None, false), State::Waiting(None)));
-        assert!(matches!(project_state(None, true), State::Running));
-        usage.state = Some(SessionState::Waiting);
+        assert!(matches!(
+            project_state(SessionState::Unknown, None, false),
+            State::Waiting(None)
+        ));
+        assert!(matches!(
+            project_state(SessionState::Unknown, None, true),
+            State::Running
+        ));
         usage.last_turn_at = Some(Utc::now());
         assert!(matches!(
-            project_state(Some(&usage), false),
+            project_state(SessionState::Waiting, Some(&usage), false),
             State::Waiting(Some(since)) if Some(since) == usage.last_turn_at
         ));
     }

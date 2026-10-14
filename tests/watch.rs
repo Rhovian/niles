@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "watch/activity.rs"]
+mod activity;
 mod common;
 
 use common::*;

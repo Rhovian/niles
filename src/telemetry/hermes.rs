@@ -1,4 +1,4 @@
-use super::{Buckets, SessionState, Usage};
+use super::{Buckets, Turn, Usage};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::DateTime;
@@ -35,7 +35,7 @@ fn hermes_home(home: &Utf8Path, configured: Option<&str>) -> Result<Utf8PathBuf>
     Ok(root)
 }
 
-pub(super) fn read_hermes(home: &Utf8Path, source: &str) -> Result<Option<Usage>> {
+pub(super) fn read_hermes(home: &Utf8Path, source: &str) -> Result<Option<super::SessionRecord>> {
     let configured = match env::var("HERMES_HOME") {
         Ok(path) => Some(path),
         Err(env::VarError::NotPresent) => None,
@@ -47,7 +47,7 @@ pub(super) fn read_hermes(home: &Utf8Path, source: &str) -> Result<Option<Usage>
     read_session(&db, source)
 }
 
-fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
+fn read_session(db: &Connection, source: &str) -> Result<Option<super::SessionRecord>> {
     db.query_row(SESSION, params![source], |row| {
         let ended: bool = row.get("ended")?;
         let replied: Option<bool> = row.get("replied")?;
@@ -63,17 +63,6 @@ fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
             reasoning_tokens: Some(row.get("reasoning_tokens")?),
             estimated_cost_usd: row.get("estimated_cost_usd")?,
             last_turn_at,
-            state: if ended {
-                Some(SessionState::Waiting)
-            } else {
-                replied.map(|waiting| {
-                    if waiting {
-                        SessionState::Waiting
-                    } else {
-                        SessionState::Working
-                    }
-                })
-            },
             buckets: Buckets::default(),
             prompt_tokens: None,
             context_window: None,
@@ -83,7 +72,15 @@ fn read_session(db: &Connection, source: &str) -> Result<Option<Usage>> {
         if let Some(at) = last_turn_at {
             usage.buckets.add(at, usage.total_tokens());
         }
-        Ok(usage)
+        let turn = match (ended, replied) {
+            (true, _) | (false, Some(true)) => Some(Turn::Ended),
+            (false, Some(false)) => Some(Turn::InProgress),
+            (false, None) => None,
+        };
+        Ok(super::SessionRecord {
+            turn,
+            usage: Some(usage),
+        })
     })
     .optional()
     .context("query Hermes session")
@@ -95,7 +92,11 @@ pub(super) mod tests {
 
     /// The fixture's main session, which has activity and so lands in one bucket.
     pub(in crate::telemetry) fn fixture_usage() -> Usage {
-        read_session(&fixture(), "niles:test").unwrap().unwrap()
+        read_session(&fixture(), "niles:test")
+            .unwrap()
+            .unwrap()
+            .usage
+            .unwrap()
     }
 
     fn fixture() -> Connection {
@@ -123,7 +124,8 @@ pub(super) mod tests {
     fn selects_latest_non_delegate_with_all_counters_and_epoch_time() {
         let db = fixture();
         assert!(read_session(&db, "missing").unwrap().is_none());
-        let usage = read_session(&db, "niles:test").unwrap().unwrap();
+        let record = read_session(&db, "niles:test").unwrap().unwrap();
+        let usage = record.usage.unwrap();
         assert_eq!(
             (
                 usage.input_tokens,
@@ -144,22 +146,22 @@ pub(super) mod tests {
     #[test]
     fn waiting_working_and_ended_states() {
         let db = fixture();
-        assert_eq!(
-            read_session(&db, "niles:test").unwrap().unwrap().state,
-            Some(SessionState::Waiting)
-        );
+        assert!(matches!(
+            read_session(&db, "niles:test").unwrap().unwrap().turn,
+            Some(Turn::Ended)
+        ));
         db.execute("UPDATE messages SET tool_calls = '[{}]' WHERE id = 1", [])
             .unwrap();
-        assert_eq!(
-            read_session(&db, "niles:test").unwrap().unwrap().state,
-            Some(SessionState::Working)
-        );
+        assert!(matches!(
+            read_session(&db, "niles:test").unwrap().unwrap().turn,
+            Some(Turn::InProgress)
+        ));
         db.execute("UPDATE sessions SET ended_at = 4 WHERE id = 'main'", [])
             .unwrap();
-        assert_eq!(
-            read_session(&db, "niles:test").unwrap().unwrap().state,
-            Some(SessionState::Waiting)
-        );
+        assert!(matches!(
+            read_session(&db, "niles:test").unwrap().unwrap().turn,
+            Some(Turn::Ended)
+        ));
     }
 
     #[test]
@@ -170,8 +172,9 @@ pub(super) mod tests {
             UPDATE sessions SET last_activity_at = NULL WHERE id = 'main';",
         )
         .unwrap();
-        let usage = read_session(&db, "niles:test").unwrap().unwrap();
-        assert_eq!(usage.state, None);
+        let record = read_session(&db, "niles:test").unwrap().unwrap();
+        let usage = record.usage.unwrap();
+        assert!(record.turn.is_none());
         assert_eq!(usage.last_turn_at, None);
     }
 

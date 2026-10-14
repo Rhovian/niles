@@ -17,7 +17,6 @@
 //! itself, through the same `send_line` that `niles send` uses.
 
 use std::{
-    collections::BTreeMap,
     fs,
     io::Write,
     panic,
@@ -35,9 +34,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::{
-    tmux::{self, TmuxTarget},
+    tmux::TmuxTarget,
     wake::WakeKind,
-    worker::{self, WorkerSnapshot, worker_snapshot},
+    worker::{self, worker_snapshot},
     workspace_manifest,
 };
 
@@ -46,6 +45,8 @@ mod checkin;
 pub(crate) mod composer;
 mod decide;
 mod due;
+mod report;
+mod sink;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -53,6 +54,8 @@ mod trust;
 use cadence::Cadence;
 pub(crate) use checkin::Checkin;
 use decide::{Commit, Nudge, Plan, WatchMemory, parse_report_text};
+use due::read_checkins;
+use sink::{Sink, WatchSink};
 
 pub(crate) use cadence::{DEFAULT_DELAY, Recheck, describe_delay, parse_delay, parse_recheck};
 
@@ -293,7 +296,7 @@ fn tick(
     sink: &mut dyn Sink,
     stop: &AtomicBool,
 ) {
-    let snapshot = match worker_snapshot(workspace) {
+    let mut snapshot = match worker_snapshot(workspace) {
         Ok(snapshot) => snapshot,
         Err(err) => {
             sink.note(&format!(
@@ -304,7 +307,7 @@ fn tick(
     };
     trust::inspect_starting_workers(&snapshot, now, sink);
     let mut checkins = read_checkins(&snapshot, sink);
-    due::check_due(&snapshot, &mut checkins, now, memory, sink);
+    due::check_due(&mut snapshot, &mut checkins, now, memory, sink);
     let mut plan = memory.plan(&snapshot, &checkins, now);
     let has_draft = !plan.nudges.is_empty() && sink.has_draft();
     if memory.hold_nudge(has_draft, now) {
@@ -415,70 +418,6 @@ fn with_planned_checkin(
             current.armed_len, planned.armed_len
         )),
         Err(err) => sink.note(&format!("failed to re-read the check-in for {id}: {err:#}")),
-    }
-}
-
-fn read_checkins(snapshot: &[WorkerSnapshot], sink: &mut dyn Sink) -> BTreeMap<String, Checkin> {
-    let mut checkins = BTreeMap::new();
-    for worker in snapshot {
-        match Checkin::read(&worker.worker_dir) {
-            Ok(Some(checkin)) => {
-                checkins.insert(worker.id.clone(), checkin);
-            }
-            Ok(None) => {}
-            // Unreadable arm state disarms nothing and nudges nothing: the next tick reads it
-            // again, and a checker that guessed at half a file would be worse than one that waits.
-            Err(err) => sink.note(&format!(
-                "ignoring the unreadable check-in for {}: {err:#}",
-                worker.id
-            )),
-        }
-    }
-    checkins
-}
-
-/// The edge: read worker panes, send lead nudges, and record diagnostics without using stdout.
-trait Sink {
-    fn nudge(&mut self, text: &str) -> Result<()>;
-    fn has_draft(&mut self) -> bool;
-    fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String>;
-    fn note(&mut self, line: &str);
-}
-
-struct WatchSink {
-    target: TmuxTarget,
-    log: WatchLog,
-    composer: Option<&'static str>,
-}
-
-impl Sink for WatchSink {
-    fn has_draft(&mut self) -> bool {
-        let Some(marker) = self.composer else {
-            return false;
-        };
-        let screen = tmux::capture_visible_rows(&self.target);
-        let cursor = tmux::cursor_position(&self.target);
-        match (screen, cursor) {
-            (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, marker),
-            (Err(err), _) | (_, Err(err)) => {
-                self.note(&format!("could not read lead composer: {err:#}"));
-                false
-            }
-        }
-    }
-    fn nudge(&mut self, text: &str) -> Result<()> {
-        // Deliberately not `nudge_line` or a hand-rolled send-keys: `send_line` is the one place
-        // that knows how to confirm a submit took, and a nudge that silently sat in the lead's
-        // composer is the failure this whole feature exists to avoid.
-        tmux::send_line(&self.target, text)
-    }
-
-    fn capture_visible(&mut self, target: &TmuxTarget) -> Result<String> {
-        tmux::capture_visible_pane(target)
-    }
-
-    fn note(&mut self, line: &str) {
-        self.log.note(line);
     }
 }
 

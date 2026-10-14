@@ -45,4 +45,19 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     assert_eq!(rows[1]["id"], "lead-one");
     assert_eq!(rows[1]["agent"], "claude");
     assert_eq!(rows[1]["usage"]["input_tokens"], 11);
+    assert_eq!(rows[1]["state"], "working");
+    assert!(rows[1]["usage"].get("state").is_none());
+    for flag in ["TMUX_PANE_MISSING", "TMUX_PANE_UNCERTAIN", "TMUX_PANE_DEAD"] {
+        let output = env
+            .niles(&env.root, &["usage"])
+            .env("HOME", &env.home)
+            .env("TMUX_PANE", "%9")
+            .env(flag, "1")
+            .output()
+            .unwrap();
+        assert_command_success("usage with unavailable lead", &output);
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["sessions"][1]["state"], "waiting");
+        assert_eq!(json["sessions"][1]["usage"]["input_tokens"], 11);
+    }
 }

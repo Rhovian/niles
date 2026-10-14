@@ -132,6 +132,7 @@ pub fn spawn(
     // The status log exists and is empty; read it as the check-in baseline *before* the window is
     // launched, so a line the worker writes on its way up can still answer this dispatch.
     let armed_len = status_log_len(&dir)?;
+    let created_at = Utc::now();
     let target = match agent_window::launch_worker_window(
         &session,
         &window_name,
@@ -162,7 +163,11 @@ pub fn spawn(
         model: agent_spec.model().map(str::to_owned),
         effort: agent_spec.effort().map(str::to_owned),
         task_label,
-        created_at: Utc::now(),
+        created_at,
+        starting_until: Some(crate::telemetry::initial_deadline(
+            created_at,
+            cadence.delay,
+        )),
         project: project.clone(),
         tree,
         window: target.render(),
@@ -184,7 +189,7 @@ pub fn spawn(
     // The lead arms the check-in and is the only one who does: a worker can disarm it by
     // reporting, never by staying quiet about it. The cadence was resolved before the launch —
     // this only writes it.
-    let armed = watch::arm_checkin(&dir, cadence, armed_len, Utc::now())?;
+    let armed = watch::arm_checkin(&dir, cadence, armed_len, created_at)?;
 
     println!("spawned: {id}");
     println!("window: {window_name}");

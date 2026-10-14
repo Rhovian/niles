@@ -1,12 +1,18 @@
-use super::{Buckets, SessionState, Usage, parse_lines};
+use super::{Buckets, Turn, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use std::fs;
 
-pub(super) fn read_pi(session_dir: &Utf8Path) -> Result<Option<Usage>> {
+pub(super) fn read_pi(session_dir: &Utf8Path) -> Result<Option<super::SessionRecord>> {
+    let Some(body) = read_body(session_dir)? else {
+        return Ok(None);
+    };
+    Ok(pi_session(&body))
+}
+
+fn read_body(session_dir: &Utf8Path) -> Result<Option<String>> {
     let Some(path) = read_dir_utf8_paths(session_dir)?
         .into_iter()
         .filter(|path| path.extension() == Some("jsonl"))
@@ -14,8 +20,7 @@ pub(super) fn read_pi(session_dir: &Utf8Path) -> Result<Option<Usage>> {
     else {
         return Ok(None);
     };
-    let body = fs::read_to_string(&path).with_context(|| format!("read {path}"))?;
-    Ok(pi_usage(&body))
+    Ok(Some(read_transcript(&path)?))
 }
 
 #[derive(Deserialize)]
@@ -32,10 +37,14 @@ enum PiLine {
 #[serde(tag = "role", rename_all = "camelCase")]
 enum PiMessage {
     Assistant {
-        usage: PiCounters,
+        usage: Option<PiCounters>,
         #[serde(rename = "stopReason")]
         stop_reason: String,
+        #[serde(rename = "errorMessage")]
+        error_message: Option<String>,
     },
+    User,
+    ToolResult,
     #[serde(other)]
     Other,
 }
@@ -48,20 +57,46 @@ struct PiCounters {
     cache_write: u64,
 }
 
-pub(super) fn pi_usage(body: &str) -> Option<Usage> {
+// pi-ai 1.2.0 AssistantMessage.stopReason/errorMessage in dist/types.d.ts;
+// pi-coding-agent session-manager.js persists these fields, not inferred prose.
+pub(super) fn pi_session(body: &str) -> Option<super::SessionRecord> {
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut last_turn, mut state, mut prompt) = (None, None, None);
+    let (mut last_turn, mut prompt) = (None, None);
+    let lines = parse_lines::<PiLine>(body)?;
+    if lines.is_empty() {
+        return None;
+    }
+    let mut turn = None;
     let mut buckets = Buckets::default();
-    for line in parse_lines::<PiLine>(body)? {
+    for line in lines {
         let PiLine::Message { timestamp, message } = line else {
             continue;
         };
-        state = Some(SessionState::Working);
-        if let PiMessage::Assistant { usage, stop_reason } = message {
+        turn = match &message {
+            PiMessage::Other => continue,
+            PiMessage::User | PiMessage::ToolResult => Some(Turn::InProgress),
+            PiMessage::Assistant {
+                stop_reason,
+                error_message,
+                ..
+            } => match stop_reason.as_str() {
+                "stop" | "length" | "aborted" => Some(Turn::Ended),
+                "pending" | "toolUse" | "deferred" => Some(Turn::InProgress),
+                "error" => Some(Turn::Failed(super::SessionFailure {
+                    at: timestamp,
+                    message: match error_message {
+                        Some(message) => message.clone(),
+                        None => "provider error (no message recorded)".into(),
+                    },
+                })),
+                _ => None,
+            },
+        };
+        if let PiMessage::Assistant {
+            usage: Some(usage), ..
+        } = message
+        {
             let prompt_tokens = usage.input + usage.cache_read + usage.cache_write;
-            if stop_reason != "toolUse" {
-                state = Some(SessionState::Waiting);
-            }
             input += usage.input;
             output += usage.output;
             cache_read += usage.cache_read;
@@ -72,18 +107,22 @@ pub(super) fn pi_usage(body: &str) -> Option<Usage> {
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
     }
-    last_turn?;
-    Some(Usage {
+    let usage = last_turn.map(|_| Usage {
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: cache_read,
         cache_write_tokens: Some(cache_write),
         reasoning_tokens: None,
         last_turn_at: last_turn,
-        state,
         estimated_cost_usd: None,
         buckets,
         prompt_tokens: prompt,
         context_window: None,
-    })
+    });
+    Some(super::SessionRecord { turn, usage })
+}
+
+#[cfg(test)]
+pub(super) fn pi_usage(body: &str) -> Option<Usage> {
+    pi_session(body).and_then(|record| record.usage)
 }

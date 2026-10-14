@@ -16,6 +16,11 @@ const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message)
+    if [ "$5" = '#{pane_dead}' ]; then
+      if [ "${TMUX_PANE_MISSING:-}" = 1 ]; then printf "can't find pane\n" >&2; exit 1; fi
+      if [ "${TMUX_PANE_UNCERTAIN:-}" = 1 ]; then printf "server unreachable\n" >&2; exit 1; fi
+      printf '%s\n' "${TMUX_PANE_DEAD:-0}"; exit 0
+    fi
     if [ "$3" = '#{client_width} #{client_height}' ]; then printf '160 45\n'; exit 0; fi
     if [ "$3" = "-t" ]; then printf '%s\n' "${TMUX_PROJECT_TAG:-}"; else printf 'niles-test-session\n'; fi
     exit 0 ;;

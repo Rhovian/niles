@@ -1,17 +1,30 @@
-use super::{Buckets, SessionState, Usage, parse_lines};
+use super::{Buckets, Turn, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
-use std::fs;
 
 pub(super) fn read_codex(
     home: &Utf8Path,
     workspace: &Utf8Path,
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
-) -> Result<Option<Usage>> {
+) -> Result<Option<super::SessionRecord>> {
+    Ok(read_codex_lines(home, workspace, needle, created_at)?
+        .as_deref()
+        .map(|lines| super::SessionRecord {
+            turn: codex_activity(lines),
+            usage: codex_usage(lines),
+        }))
+}
+
+fn read_codex_lines(
+    home: &Utf8Path,
+    workspace: &Utf8Path,
+    needle: &Utf8Path,
+    created_at: DateTime<Utc>,
+) -> Result<Option<Vec<CodexLine>>> {
     let start = created_at.with_timezone(&Local);
     let deadline = start + Duration::minutes(2);
     for day in [start.date_naive(), deadline.date_naive()]
@@ -33,11 +46,11 @@ pub(super) fn read_codex(
             if local + Duration::seconds(1) < start || local > deadline {
                 continue;
             }
-            let body = fs::read_to_string(&path).with_context(|| format!("read {path}"))?;
+            let body = read_transcript(&path)?;
             if let Some(lines) = parse_lines::<CodexLine>(&body)
                 && codex_matches(&lines, workspace, needle)
             {
-                return Ok(codex_usage(&lines));
+                return Ok(Some(lines));
             }
         }
     }
@@ -88,6 +101,7 @@ struct CodexContent {
 pub(super) struct CodexEvent {
     #[serde(rename = "type")]
     kind: String,
+    error: Option<CodexError>,
     info: Option<CodexInfo>,
 }
 #[derive(Deserialize)]
@@ -142,16 +156,11 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
 }
 
 pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
-    let (mut last, mut state, mut prompt, mut window, mut spent) = (None, None, None, None, 0);
+    let (mut last, mut prompt, mut window, mut spent) = (None, None, None, 0);
     let mut buckets = Buckets::default();
     for line in lines {
         let CodexLine::EventMsg { timestamp, payload } = line else {
             continue;
-        };
-        state = match payload.kind.as_str() {
-            "task_started" => Some(SessionState::Working),
-            "task_complete" | "turn_aborted" | "error" => Some(SessionState::Waiting),
-            _ => state,
         };
         if payload.kind != "token_count" {
             continue;
@@ -182,10 +191,74 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
         cache_write_tokens: counts.cache_write_input_tokens,
         reasoning_tokens: Some(counts.reasoning_output_tokens),
         last_turn_at: Some(timestamp),
-        state,
         estimated_cost_usd: None,
         buckets,
         prompt_tokens: prompt,
         context_window: window,
     })
+}
+
+#[derive(Deserialize)]
+struct CodexError {
+    message: String,
+}
+
+// Terminal errors are durable TurnCompleteEvent.error records; standalone ErrorEvent
+// is transient and is not a turn-end signal (rollout/src/policy.rs in the same pinned source).
+// https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/protocol/src/protocol.rs
+pub(super) fn codex_activity(lines: &[CodexLine]) -> Option<Turn> {
+    let mut turn = None;
+    for line in lines {
+        let CodexLine::EventMsg { timestamp, payload } = line else {
+            continue;
+        };
+        match payload.kind.as_str() {
+            "task_started" => turn = Some(Turn::InProgress),
+            "task_complete" => {
+                turn = Some(match &payload.error {
+                    Some(error) => Turn::Failed(super::SessionFailure {
+                        at: *timestamp,
+                        message: error.message.clone(),
+                    }),
+                    None => Turn::Ended,
+                })
+            }
+            "turn_aborted" => turn = Some(Turn::Ended),
+            _ => {}
+        }
+    }
+    turn
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    #[test]
+    fn codex_terminal_error_is_failure_without_usage() {
+        let body = concat!(
+            r#"{"type":"event_msg","timestamp":"2026-10-01T00:00:00Z","payload":{"type":"task_complete","error":{"message":"Provider stopped","codex_error_info":"cyber_policy"}}}"#,
+            "\n"
+        );
+        let lines = parse_lines::<CodexLine>(body).unwrap();
+        let Some(Turn::Failed(failure)) = codex_activity(&lines) else {
+            panic!("terminal error must end the turn");
+        };
+        assert_eq!(failure.message, "Provider stopped");
+        assert!(codex_usage(&lines).is_none());
+    }
+
+    #[test]
+    fn an_unparseable_rollout_is_not_this_session() {
+        let home = crate::test_support::temp_test_path("codex-foreign-rollout");
+        let created_at = Utc::now();
+        let local = created_at.with_timezone(&Local);
+        let dir = home.join(format!(".codex/sessions/{}", local.format("%Y/%m/%d")));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = format!("rollout-{}-x.jsonl", local.format("%Y-%m-%dT%H-%M-%S"));
+        std::fs::write(dir.join(name), "bad\n").unwrap();
+        let workspace = Utf8Path::new("/w");
+        let found = read_codex(&home, workspace, &workspace.join("report.md"), created_at);
+        assert!(found.unwrap().is_none());
+        std::fs::remove_dir_all(home).unwrap();
+    }
 }

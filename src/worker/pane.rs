@@ -58,10 +58,11 @@ pub fn send(
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
     let armed_len = crate::worker::status_log_len(&dir)?;
+    let dispatched_at = Utc::now();
     tmux::send_line(&tmux::TmuxTarget::window(&target.target), &message)?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
-    let armed = watch::arm_checkin(&dir, cadence, armed_len, Utc::now())?;
+    let armed = watch::arm_checkin(&dir, cadence, armed_len, dispatched_at)?;
 
     println!("sent: {id}");
     match armed {
