@@ -21,7 +21,7 @@ pub(crate) use session::{
     windows,
 };
 
-pub(crate) use send::send_line;
+pub(crate) use send::{send_input, send_line};
 use target::{LIVE_WINDOW_FORMAT, WindowPresence, window_presence};
 pub(crate) use target::{SessionName, TargetState, TmuxTarget, WindowTarget, target_state};
 

@@ -82,3 +82,7 @@ TASK
 Workers share one working tree unless spawned with `--worktree <branch>`; two briefed onto the same files will overwrite each other with nothing to report the conflict. A separate tree is worth it for a second implementation that touches files the first worker owns. Worktrees persist until their workers are closed; close keeps trees with unpushed commits.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.
+
+## Re-tiering a live worker
+
+Propose `niles retier <id> <family:model:effort>` in one line with the reason and cost difference, then wait for the operator's yes. Re-tier within the same family when the conversation is worth keeping; otherwise spawn a fresh worker. Codex switching is deferred to #355. Model switches lose the prompt cache in all three supported CLIs, and Claude effort changes do too: the next turn re-reads the conversation as a cache write. Context-fit refusal is not wired yet; do not move a conversation into a smaller window without establishing that it fits.

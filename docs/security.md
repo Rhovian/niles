@@ -224,6 +224,11 @@ flags, credentials, and OS permissions. Niles adds no sandbox or process isolati
 the workspace tree and inherited environment, and `.niles` artifacts, reports, pane captures, and
 logs may contain secrets. Treat them as sensitive.
 
+Retier sends validated same-family model and effort commands to the recorded live worker window,
+requires an idle session and empty composer, and records the binding only after fresh
+value-specific CLI acknowledgements. Pane text is not authenticated: a malicious local process
+can forge acknowledgements. Partial or unconfirmed switches fail loudly without updating metadata.
+
 ## Non-goals
 
 This model does not promise protection from:
