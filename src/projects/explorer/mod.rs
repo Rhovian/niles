@@ -1,3 +1,4 @@
+mod scroll;
 mod tree;
 
 use std::{
@@ -15,7 +16,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    crossterm::{
+        event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode},
+        execute,
+    },
     layout::{Constraint, Layout},
     text::{Line, Text},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
@@ -63,6 +67,8 @@ pub fn run() -> Result<()> {
         pane: TmuxTarget::pane(&pane)?,
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
+        list_state: ListState::default(),
+        list_area: ratatui::layout::Rect::default(),
         collected: Instant::now(),
         theme: Theme::load()?,
         mode: Mode::Browse,
@@ -72,9 +78,13 @@ pub fn run() -> Result<()> {
     };
     explorer.refresh()?;
     let mut terminal = ratatui::init();
-    let result = explorer.run(&mut terminal);
+    let result = execute!(std::io::stdout(), EnableMouseCapture)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| explorer.run(&mut terminal));
+    let mouse_restored = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result?;
+    mouse_restored?;
     // Replacing the process keeps its pane, so the operator's layout survives an upgrade.
     Err(Command::new(&explorer.binary).arg("explorer").exec())
         .context("failed to restart the explorer")
@@ -114,6 +124,8 @@ struct Explorer {
     pane: TmuxTarget,
     cwd: Utf8PathBuf,
     tree: Tree,
+    list_state: ListState,
+    list_area: ratatui::layout::Rect,
     /// When the collect behind `tree` began; an older one finishing later would undo it.
     collected: Instant,
     theme: Theme,
@@ -131,11 +143,8 @@ impl Explorer {
         let collections = collector();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(tree::SPINNER_FRAME)?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                self.key(key.code)?;
+            if event::poll(tree::SPINNER_FRAME)? {
+                self.event(event::read()?)?;
             }
             match collections.try_recv() {
                 Ok((started, projects)) => {
@@ -336,7 +345,7 @@ impl Explorer {
         })
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         let prompt = match &self.mode {
             Mode::Browse => None,
             Mode::Directory(input) => Some(format!("directory [{}]: {input}", self.cwd)),
@@ -372,9 +381,11 @@ impl Explorer {
             .items()
             .into_iter()
             .map(|item| self.tree.label(item, now, &self.theme, list.width));
-        let mut state = ListState::default().with_selected(Some(self.tree.cursor()));
+        self.list_area = list;
+        // ratatui-widgets 0.3.2 list/state.rs: retain state so rendering preserves its offset.
+        self.list_state.select(Some(self.tree.cursor()));
         let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
-        frame.render_stateful_widget(list_widget, list, &mut state);
+        frame.render_stateful_widget(list_widget, list, &mut self.list_state);
     }
 }
 
