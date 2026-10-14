@@ -13,8 +13,9 @@ Machine-specific or private notes go in `AGENTS.local.md` (gitignored); read it 
 
 ## Checks
 
-Run the checks in [CI](.github/workflows/ci.yml) before reporting a change done, and
-say what they printed. Never mark done without that proof.
+[CI](.github/workflows/ci.yml) runs the checks on push; don't rerun them locally. Before
+reporting a change done, run only what CI doesn't cover, such as the focused tests for the
+code you changed, and say what printed.
 
 ## Standards
 

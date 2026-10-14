@@ -251,6 +251,27 @@ fn normalize_stderr(stderr: &[u8]) -> String {
         .join(" ")
 }
 
+pub(crate) fn pane_alive(id: &str) -> Result<Option<bool>> {
+    let target = TmuxTarget::pane(id)?;
+    let output = output(&[
+        "display-message",
+        "-p",
+        "-t",
+        target.as_str(),
+        "#{pane_dead}",
+    ])?;
+    let error = normalize_stderr(&output.stderr);
+    Ok(if output.status.success() {
+        Some(!target::is_dead_pane(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    } else if error.contains("can't find pane") || target::is_missing_session_error(&error) {
+        Some(false)
+    } else {
+        None
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

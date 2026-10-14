@@ -32,6 +32,7 @@ pub(crate) enum StyleKey {
 
 #[derive(Clone, Copy)]
 pub(crate) enum State {
+    Starting,
     Running,
     Waiting,
     Idle,
@@ -79,6 +80,7 @@ impl Theme {
 
     pub(crate) fn state(&self, state: State) -> (&'static str, Style) {
         let (glyph, key) = match state {
+            State::Starting => ("◌", StyleKey::Idle),
             State::Running => (RUNNING, StyleKey::Running),
             State::Waiting => (WAITING, StyleKey::Waiting),
             State::Idle => (IDLE, StyleKey::Idle),

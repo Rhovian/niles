@@ -283,7 +283,7 @@ impl Explorer {
                         tmux::open_session(&session, &entry.path)?;
                         tmux::configure_status(&session, &self.theme)?;
                     }
-                    State::Running | State::Waiting(_) => {}
+                    State::Running | State::Starting | State::Waiting(_) => {}
                 }
                 WindowTarget::new(session, LEAD_WINDOW)?
             }
@@ -427,7 +427,7 @@ fn collect() -> Result<Vec<Project>> {
         .into_iter()
         .map(|mut row| {
             let agents = match row.state {
-                State::Running | State::Waiting(_) => {
+                State::Running | State::Starting | State::Waiting(_) => {
                     windows::session_agents(&row.entry.name.session()?, Some(&row.entry.path), now)?
                 }
                 State::Missing | State::NotRunning => None,

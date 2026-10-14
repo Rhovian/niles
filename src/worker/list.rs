@@ -54,6 +54,7 @@ struct WorkerOutput {
     window: Option<TargetState>,
     wake: Option<WakeState>,
     last_status: Option<String>,
+    state: Option<crate::telemetry::SessionState>,
     checkin: Option<CheckinOutput>,
     error: Option<String>,
 }
@@ -70,6 +71,13 @@ impl WorkerOutput {
             deadline: checkin.deadline,
         });
 
+        let (state, error) = match meta {
+            None => (None, worker.read_error.clone()),
+            Some(_) => match super::worker_session(worker, Utc::now()) {
+                Ok(activity) => (Some(activity.state.displayed()), worker.read_error.clone()),
+                Err(err) => (None, Some(format!("failed to read activity: {err:#}"))),
+            },
+        };
         Ok(Self {
             id: worker.id.clone(),
             role: meta.map(|meta| meta.role),
@@ -80,8 +88,9 @@ impl WorkerOutput {
             window: meta.map(super::resolve::window_state),
             wake,
             last_status: meta.and(worker.last_status_line()),
+            state,
             checkin,
-            error: worker.read_error.clone(),
+            error,
         })
     }
 }

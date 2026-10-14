@@ -12,6 +12,7 @@ use crate::{
 };
 
 mod hold;
+mod refusal;
 mod taken;
 
 use super::{
@@ -45,9 +46,24 @@ struct RecordingSink {
     capture_failure: bool,
     screen: String,
     typed: bool,
+    activity: Option<SessionState>,
 }
 
 impl Sink for RecordingSink {
+    fn activity(
+        &mut self,
+        worker: &crate::worker::WorkerSnapshot,
+        now: DateTime<Utc>,
+    ) -> Result<crate::telemetry::ResolvedSession> {
+        match self.activity {
+            Some(state) => Ok(crate::telemetry::ResolvedSession {
+                state,
+                blocker: None,
+                usage: None,
+            }),
+            None => crate::worker::worker_session(worker, now),
+        }
+    }
     fn has_draft(&mut self) -> bool {
         self.typed
     }
@@ -276,7 +292,10 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
         .unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
 
-    let mut sink = RecordingSink::default();
+    let mut sink = RecordingSink {
+        activity: Some(SessionState::Starting),
+        ..RecordingSink::default()
+    };
     tick(&root, at(1300), &mut memory, &mut sink, &running());
 
     assert_eq!(sink.sent, vec!["niles: no report from impl — check it"]);
@@ -299,12 +318,10 @@ fn the_tick_disarms_a_check_in_fired_at_an_idle_worker_on_disk() {
     let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
     checkin.write(&dir).unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    memory.activity.insert(
-        "impl".to_owned(),
-        (checkin.deadline, Some(SessionState::Waiting)),
-    );
-
-    let mut sink = RecordingSink::default();
+    let mut sink = RecordingSink {
+        activity: Some(SessionState::Waiting),
+        ..RecordingSink::default()
+    };
     tick(&root, at(1300), &mut memory, &mut sink, &running());
 
     assert_eq!(
@@ -329,6 +346,7 @@ fn a_failed_check_in_nudge_leaves_the_check_in_armed_and_overdue() {
 
     let mut failing = RecordingSink {
         fail: true,
+        activity: Some(SessionState::Starting),
         ..RecordingSink::default()
     };
     tick(&root, at(1300), &mut memory, &mut failing, &running());

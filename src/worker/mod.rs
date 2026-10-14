@@ -27,7 +27,8 @@ pub use worktree::SpawnTree;
 pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub(crate) use resolve::resolve_worker as worker_dir;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
-pub(crate) use usage::{lead_usage, session_state, worker_usage};
+pub(crate) use usage::worker_session;
+pub(crate) use usage::{lead_session, session_state};
 
 pub(crate) struct StatusWorker {
     pub id: String,
@@ -35,13 +36,14 @@ pub(crate) struct StatusWorker {
     pub window: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub usage: Option<crate::telemetry::Usage>,
+    pub state: crate::telemetry::SessionState,
 }
 
 pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<StatusWorker>> {
     worker_snapshot(workspace)?
         .into_iter()
         .map(|worker| {
-            let usage = worker_usage(&worker)?;
+            let record = usage::worker_session(&worker, chrono::Utc::now())?;
             let meta = worker.meta.as_ref().with_context(|| {
                 format!(
                     "worker {} metadata is unreadable: {:?}",
@@ -53,7 +55,8 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
                 role: meta.role,
                 window: meta.window.clone(),
                 created_at: meta.created_at,
-                usage,
+                usage: record.usage,
+                state: record.state,
             })
         })
         .collect()

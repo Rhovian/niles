@@ -5,12 +5,18 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod activity;
 mod buckets;
 mod cache;
 mod claude;
 mod codex;
 mod hermes;
 mod pi;
+
+pub(crate) use activity::{
+    Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, initial_deadline,
+    resolve_session,
+};
 
 pub(crate) use buckets::{BUCKET, Buckets};
 pub(crate) use cache::closed_buckets;
@@ -36,7 +42,6 @@ pub(crate) struct Usage {
     pub cache_write_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
     pub last_turn_at: Option<DateTime<Utc>>,
-    pub state: Option<SessionState>,
     pub estimated_cost_usd: Option<f64>,
     /// `total_tokens`, spread over the buckets its turns were spent in.
     #[serde(skip)]
@@ -61,8 +66,19 @@ impl Usage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum SessionState {
+    Starting,
+    Unknown,
     Working,
     Waiting,
+}
+
+impl SessionState {
+    pub(crate) fn displayed(self) -> Self {
+        match self {
+            Self::Unknown => Self::Waiting,
+            Self::Starting | Self::Working | Self::Waiting => self,
+        }
+    }
 }
 
 impl SessionLink {
@@ -82,6 +98,15 @@ pub(crate) fn read(
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<Usage>> {
+    Ok(read_session(link, workspace, needle, created_at)?.and_then(|record| record.usage))
+}
+
+pub(crate) fn read_session(
+    link: &SessionLink,
+    workspace: &Utf8Path,
+    needle: &Utf8Path,
+    created_at: DateTime<Utc>,
+) -> Result<Option<SessionRecord>> {
     let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
@@ -91,9 +116,15 @@ pub(crate) fn read(
     }
 }
 
+fn read_transcript(path: &Utf8Path) -> Result<String> {
+    std::fs::read_to_string(path).with_context(|| format!("read {path}"))
+}
+
+/// No usage and no turn evidence: the shared resolver reports the session as Unknown, so a
+/// transcript Niles cannot parse reaches the lead instead of failing every reader.
 #[expect(
     clippy::disallowed_methods,
-    reason = "unparseable session data has no usage"
+    reason = "unparseable session data has no usage and no turn evidence"
 )]
 fn parse_lines<'a, T: Deserialize<'a>>(body: &'a str) -> Option<Vec<T>> {
     body.split_inclusive('\n')
@@ -136,7 +167,10 @@ pub(crate) mod fixtures {
     );
 
     pub(crate) fn claude() -> Usage {
-        claude::claude_usage(CLAUDE_MAIN, &[CLAUDE_SUBAGENT.to_owned()]).unwrap()
+        claude::claude_session(CLAUDE_MAIN, &[CLAUDE_SUBAGENT.to_owned()])
+            .unwrap()
+            .usage
+            .unwrap()
     }
 
     pub(crate) fn codex() -> Usage {
@@ -156,7 +190,7 @@ pub(crate) mod fixtures {
 mod tests {
     use super::*;
     use super::{
-        claude::claude_usage,
+        claude::claude_session,
         codex::{CodexLine, codex_matches, codex_usage},
     };
 
@@ -210,15 +244,22 @@ mod tests {
         assert_eq!(hermes.prompt_tokens, None);
     }
 
-    fn state(usage: Option<Usage>) -> Option<SessionState> {
-        usage.and_then(|usage| usage.state)
+    fn state(record: Option<SessionRecord>) -> Option<SessionState> {
+        record
+            .and_then(|record| record.turn)
+            .map(|turn| match turn {
+                Turn::InProgress => SessionState::Working,
+                Turn::Ended | Turn::Failed(_) => SessionState::Waiting,
+            })
     }
-
     #[test]
     fn claude_deduplicates_usage() {
         let main = "{\"type\":\"assistant\",\"timestamp\":\"2026-10-01T00:00:00Z\",\"message\":{\"id\":\"a\",\"model\":\"opus\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":5}}}\n";
         let sub = main.replace("\"id\":\"a\"", "\"id\":\"b\"");
-        let usage = claude_usage(&format!("{main}{main}"), &[sub]).unwrap();
+        let usage = claude_session(&format!("{main}{main}"), &[sub])
+            .unwrap()
+            .usage
+            .unwrap();
         assert_eq!(
             (
                 usage.input_tokens,
@@ -228,9 +269,11 @@ mod tests {
             ),
             (4, 6, 8, Some(10))
         );
-        assert!(claude_usage("bad\n", &[]).is_none());
+        assert!(claude_session("bad\n", &[]).is_none());
         assert_eq!(
-            claude_usage(&format!("{main}partial"), &[])
+            claude_session(&format!("{main}partial"), &[])
+                .unwrap()
+                .usage
                 .unwrap()
                 .input_tokens,
             2
@@ -274,23 +317,36 @@ mod tests {
     fn claude_main_lines_classify_both_states() {
         let assistant = r#"{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"id":"a","model":"opus","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
         let user = r#"{"type":"user","timestamp":"2026-10-01T00:01:00Z","message":{"role":"user","content":"next"}}"#;
-        let waiting = claude_usage(&format!("{assistant}\n"), &[]).unwrap();
-        assert_eq!(waiting.state, Some(SessionState::Waiting));
-        let working = claude_usage(&format!("{assistant}\n{user}\n"), &[]).unwrap();
-        assert_eq!(working.state, Some(SessionState::Working));
+        assert_eq!(
+            state(claude::claude_session(&format!("{assistant}\n"), &[])),
+            Some(SessionState::Waiting)
+        );
+        assert_eq!(
+            state(claude::claude_session(
+                &format!("{assistant}\n{user}\n"),
+                &[]
+            )),
+            Some(SessionState::Working)
+        );
         let interrupted = r#"{"type":"user","timestamp":"2026-10-01T00:02:00Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
         let error = assistant.replace("end_turn", "stop_sequence");
         let tool_result = interrupted.replace("\"type\":\"text\"", "\"type\":\"tool_result\"");
         assert_eq!(
-            state(claude_usage(&format!("{assistant}\n{interrupted}\n"), &[])),
+            state(claude::claude_session(
+                &format!("{assistant}\n{interrupted}\n"),
+                &[]
+            )),
             Some(SessionState::Waiting)
         );
         assert_eq!(
-            state(claude_usage(&format!("{error}\n"), &[])),
+            state(claude::claude_session(&format!("{error}\n"), &[])),
             Some(SessionState::Waiting)
         );
         assert_eq!(
-            state(claude_usage(&format!("{assistant}\n{tool_result}\n"), &[])),
+            state(claude::claude_session(
+                &format!("{assistant}\n{tool_result}\n"),
+                &[]
+            )),
             Some(SessionState::Working)
         );
 
@@ -303,14 +359,14 @@ mod tests {
         let event = notified("<event>tick</event>");
         let killed = notified("<status>killed</status>");
         assert_eq!(
-            state(claude_usage(
+            state(claude::claude_session(
                 &format!("{shell}\n{assistant}\n{event}\n"),
                 &[]
             )),
             Some(SessionState::Working)
         );
         assert_eq!(
-            state(claude_usage(
+            state(claude::claude_session(
                 &format!("{shell}\n{assistant}\n{killed}\n"),
                 &[]
             )),
@@ -324,7 +380,7 @@ mod tests {
         let next = assistant.replace("00:00:00", "00:01:00");
         let body = format!("{assistant}\n{next}\n");
         let waiting = pi::pi_usage(&body).unwrap();
-        assert_eq!(waiting.state, Some(SessionState::Waiting));
+        assert_eq!(state(pi::pi_session(&body)), Some(SessionState::Waiting));
         assert_eq!(
             (
                 waiting.input_tokens,
@@ -340,21 +396,30 @@ mod tests {
         );
         assert!(waiting.reasoning_tokens.is_none());
         assert!(waiting.estimated_cost_usd.is_none());
-        for role in ["user", "toolResult", "custom"] {
+        for role in ["user", "toolResult"] {
             let message = format!(
                 r#"{{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{{"role":"{role}"}}}}"#
             );
             let working = pi::pi_usage(&format!("{body}{message}\n")).unwrap();
-            assert_eq!(working.state, Some(SessionState::Working));
+            assert_eq!(
+                state(pi::pi_session(&format!("{body}{message}\n"))),
+                Some(SessionState::Working)
+            );
             assert_eq!(working.last_turn_at, waiting.last_turn_at);
             assert!(pi::pi_usage(&format!("{message}\n")).is_none());
         }
+        let custom =
+            r#"{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{"role":"custom"}}"#;
         assert_eq!(
-            state(pi::pi_usage(&body.replace("\"stop\"", "\"toolUse\""))),
+            state(pi::pi_session(&format!("{body}{custom}\n"))),
+            Some(SessionState::Waiting)
+        );
+        assert_eq!(
+            state(pi::pi_session(&body.replace("\"stop\"", "\"toolUse\""))),
             Some(SessionState::Working)
         );
         assert_eq!(
-            state(pi::pi_usage(&format!(
+            state(pi::pi_session(&format!(
                 "{body}{{\"type\":\"model_change\"}}\npartial"
             ))),
             Some(SessionState::Waiting)
@@ -368,8 +433,20 @@ mod tests {
         let started = r#"{"type":"event_msg","timestamp":"2026-10-01T00:01:00Z","payload":{"type":"task_started"}}"#;
         let complete = r#"{"type":"event_msg","timestamp":"2026-10-01T00:02:00Z","payload":{"type":"task_complete"}}"#;
         let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n")).unwrap();
-        assert_eq!(state(codex_usage(&lines)), Some(SessionState::Working));
+        assert_eq!(
+            state(Some(SessionRecord {
+                turn: codex::codex_activity(&lines),
+                usage: None
+            })),
+            Some(SessionState::Working)
+        );
         let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n{complete}\n")).unwrap();
-        assert_eq!(state(codex_usage(&lines)), Some(SessionState::Waiting));
+        assert_eq!(
+            state(Some(SessionRecord {
+                turn: codex::codex_activity(&lines),
+                usage: None
+            })),
+            Some(SessionState::Waiting)
+        );
     }
 }

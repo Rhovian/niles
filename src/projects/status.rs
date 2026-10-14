@@ -188,6 +188,7 @@ mod tests {
             id: "w".into(),
             role: "worker",
             agent: "codex".into(),
+            state: crate::telemetry::SessionState::Unknown,
             usage: tokens.map(|input_tokens| Usage {
                 input_tokens,
                 output_tokens: 0,
@@ -195,7 +196,6 @@ mod tests {
                 cache_write_tokens: None,
                 reasoning_tokens: None,
                 last_turn_at: None,
-                state: None,
                 estimated_cost_usd: None,
                 buckets: Default::default(),
                 prompt_tokens: None,

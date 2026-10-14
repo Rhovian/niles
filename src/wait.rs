@@ -297,7 +297,7 @@ fn idle_past_grace(
     state: Option<SessionState>,
     now: Instant,
 ) -> bool {
-    if state != Some(SessionState::Waiting) {
+    if !matches!(state, Some(SessionState::Waiting | SessionState::Unknown)) {
         *idle_since = None;
         return false;
     }
@@ -345,10 +345,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn idle_ends_the_wait_only_after_the_grace_and_any_other_state_restarts_it() {
+    fn idle_ends_the_wait_only_after_the_grace_and_active_states_restart_it() {
         let start = Instant::now();
         let mut idle_since = None;
-        let waiting = Some(SessionState::Waiting);
+        let waiting = Some(SessionState::Unknown);
 
         assert!(!idle_past_grace(&mut idle_since, waiting, start));
         assert!(!idle_past_grace(
@@ -363,7 +363,7 @@ mod tests {
         ));
         assert!(!idle_past_grace(
             &mut idle_since,
-            None,
+            Some(SessionState::Starting),
             start + IDLE_GRACE * 2
         ));
         assert!(!idle_past_grace(
@@ -376,6 +376,14 @@ mod tests {
             waiting,
             start + IDLE_GRACE * 4
         ));
+    }
+
+    #[test]
+    fn missing_metadata_does_not_start_idle_grace() {
+        let now = Instant::now();
+        let mut idle_since = Some(now);
+        assert!(!idle_past_grace(&mut idle_since, None, now + IDLE_GRACE));
+        assert!(idle_since.is_none());
     }
 
     #[test]

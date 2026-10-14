@@ -75,6 +75,7 @@ impl Tree {
                 let (glyph, style) = match project.row.state {
                     State::Running => (spinner(now, theme), theme.state(ThemeState::Running).1),
                     State::Waiting(_) => theme.state(ThemeState::Waiting),
+                    State::Starting => theme.state(ThemeState::Starting),
                     State::Missing | State::NotRunning => (" ", theme.style(StyleKey::Muted)),
                 };
                 let mut line = Line::from(vec![
@@ -157,6 +158,7 @@ impl Tree {
                     Member::Window(window) => {
                         let state = match window.segment.state {
                             Some(ThemeState::Running) => ThemeState::Running,
+                            Some(ThemeState::Starting) => ThemeState::Starting,
                             Some(ThemeState::Idle | ThemeState::Waiting) | None => ThemeState::Idle,
                         };
                         let (glyph, style) = theme.state(state);

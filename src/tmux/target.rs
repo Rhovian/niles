@@ -149,6 +149,14 @@ pub(crate) enum TargetState {
 }
 
 impl TargetState {
+    pub(crate) fn liveness(&self) -> Option<bool> {
+        match self {
+            Self::Live | Self::OrphanRecovered { .. } => Some(true),
+            Self::PaneExited | Self::WindowDead | Self::OrphanGone => Some(false),
+            Self::OrphanLegacyCandidate { .. } | Self::Unknown { .. } => None,
+        }
+    }
+
     /// Only a confirmed absence counts: a transient tmux failure, an ambiguous legacy candidate,
     /// and a window found alive under a new name are not gone.
     pub(crate) fn is_gone(&self) -> bool {
@@ -386,7 +394,7 @@ pub(super) fn window_presence(stdout: &[u8], window_name: &str) -> WindowPresenc
     WindowPresence::Absent
 }
 
-fn is_dead_pane(field: &str) -> bool {
+pub(super) fn is_dead_pane(field: &str) -> bool {
     field.trim() == "1"
 }
 

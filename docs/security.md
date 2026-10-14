@@ -142,8 +142,14 @@ indented continuation of one. An absent marker, hidden cursor, or failed query d
 continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
 as state only and never submits captured text.
 
-Agent-written session telemetry gates due worker check-ins. Agents can delay their own check-ins
-by writing to their own logs.
+Agent-written session records decide worker states and due check-ins; same-user processes can
+forge them. A transcript Niles cannot parse is no record: after the initial check-in interval the
+worker is Unknown and gets `blocked: session state unknown ...`; a read error or uncertain pane
+liveness nudges and re-arms instead. A structured terminal failure in a Codex, Claude or pi record
+becomes `blocked: provider refused (<label>): <first line>`, never from pane text: the message is
+stripped of controls and capped at 1,024 characters, the label at 256; nudges carry only the worker
+ID and status kind. Appends use `O_NOFOLLOW` and recheck the check-in under its lock and the log
+length; worker echo does not take that lock, so a racing report can interleave (accepted, #348).
 
 `niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
 are clamped and stripped of control characters before terminal rendering. The shared roles picker

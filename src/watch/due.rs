@@ -1,13 +1,10 @@
 use super::{Sink, checkin::Checkin, decide::WatchMemory, with_planned_checkin};
-use crate::{
-    telemetry::SessionState,
-    worker::{self, WorkerSnapshot},
-};
+use crate::worker::WorkerSnapshot;
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 
 pub(super) fn check_due(
-    snapshot: &[WorkerSnapshot],
+    snapshot: &mut [WorkerSnapshot],
     checkins: &mut BTreeMap<String, Checkin>,
     now: DateTime<Utc>,
     memory: &mut WatchMemory,
@@ -26,7 +23,31 @@ pub(super) fn check_due(
         }
         let state = match memory.activity.get(&worker.id) {
             Some((deadline, state)) if *deadline == checkin.deadline => *state,
-            _ => read_state(worker, sink),
+            _ => match sink.activity(worker, now) {
+                Ok(activity) => {
+                    if let Some(blocker) = &activity.blocker {
+                        match super::report::report(worker, checkin, blocker) {
+                            Ok(true) => continue,
+                            Ok(false) => {}
+                            Err(err) => {
+                                sink.note(&format!("failed to report {}: {err:#}", worker.id));
+                                checkins.remove(&worker.id);
+                                continue;
+                            }
+                        }
+                    }
+                    Some(activity.state)
+                }
+                // An I/O error is not evidence of a terminal turn: no `blocked:` line. It
+                // nudges and re-arms like a busy worker, so a lasting one still reaches the lead.
+                Err(err) => {
+                    sink.note(&format!(
+                        "failed to read activity for {}: {err:#}",
+                        worker.id
+                    ));
+                    None
+                }
+            },
         };
         memory
             .activity
@@ -51,15 +72,24 @@ pub(super) fn check_due(
     }
 }
 
-fn read_state(worker: &WorkerSnapshot, sink: &mut dyn Sink) -> Option<SessionState> {
-    match worker::worker_usage(worker) {
-        Ok(usage) => usage.and_then(|usage| usage.state),
-        Err(err) => {
-            sink.note(&format!(
-                "failed to read telemetry for {}: {err:#}",
+pub(super) fn read_checkins(
+    snapshot: &[WorkerSnapshot],
+    sink: &mut dyn Sink,
+) -> BTreeMap<String, Checkin> {
+    let mut checkins = BTreeMap::new();
+    for worker in snapshot {
+        match Checkin::read(&worker.worker_dir) {
+            Ok(Some(checkin)) => {
+                checkins.insert(worker.id.clone(), checkin);
+            }
+            Ok(None) => {}
+            // Unreadable arm state disarms nothing and nudges nothing: the next tick reads it
+            // again, and a checker that guessed at half a file would be worse than one that waits.
+            Err(err) => sink.note(&format!(
+                "ignoring the unreadable check-in for {}: {err:#}",
                 worker.id
-            ));
-            None
+            )),
         }
     }
+    checkins
 }

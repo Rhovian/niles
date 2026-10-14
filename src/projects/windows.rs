@@ -62,15 +62,22 @@ pub(super) fn session_agents(
         .into_iter()
         .map(|window| {
             let (role, state, tokens, age) = if project.is_some() && window.name == LEAD_WINDOW {
-                let usage = lead.as_ref().map(worker::lead_usage).transpose()?.flatten();
-                let (state, tokens) = usage_fields(usage.as_ref());
+                let record = lead
+                    .as_ref()
+                    .map(|meta| worker::lead_session(meta, now))
+                    .transpose()?;
+                let state = record
+                    .as_ref()
+                    .map_or(SessionState::Unknown, |record| record.state);
+                let usage = record.and_then(|record| record.usage);
+                let (state, tokens) = usage_fields(state, usage.as_ref());
                 let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
                 (Role::Lead, state, tokens, runtime)
             } else if let Some(worker) = workers
                 .iter()
                 .find(|worker| worker.window == recorded(&window.name))
             {
-                let (state, tokens) = usage_fields(worker.usage.as_ref());
+                let (state, tokens) = usage_fields(worker.state, worker.usage.as_ref());
                 (
                     Role::Worker(worker.id.clone(), worker.role),
                     state,
@@ -102,17 +109,13 @@ pub(super) fn session_agents(
     Ok(Some(SessionAgents { windows, lost }))
 }
 
-fn usage_fields(usage: Option<&Usage>) -> (Option<theme::State>, Option<u64>) {
-    match usage {
-        Some(usage) => (
-            usage.state.map(|state| match state {
-                SessionState::Working => theme::State::Running,
-                SessionState::Waiting => theme::State::Idle,
-            }),
-            usage.state.map(|_| usage.total_tokens()),
-        ),
-        None => (None, None),
-    }
+fn usage_fields(state: SessionState, usage: Option<&Usage>) -> (Option<theme::State>, Option<u64>) {
+    let state = match state {
+        SessionState::Working => theme::State::Running,
+        SessionState::Starting => theme::State::Starting,
+        SessionState::Waiting | SessionState::Unknown => theme::State::Idle,
+    };
+    (Some(state), usage.map(Usage::total_tokens))
 }
 
 pub(super) fn age(now: DateTime<Utc>, since: DateTime<Utc>) -> String {
