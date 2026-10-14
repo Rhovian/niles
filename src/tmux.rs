@@ -128,6 +128,13 @@ fn capture(target: &TmuxTarget, args: &[&str]) -> Result<String> {
     Ok(format_capture(&output.stdout))
 }
 
+pub(crate) fn pane_pid(target: &TmuxTarget) -> Result<u32> {
+    display(target.as_str(), "#{pane_pid}")?
+        .trim()
+        .parse()
+        .context("invalid tmux pane PID")
+}
+
 fn display(target: &str, format: &str) -> Result<String> {
     let output = output(&["display", "-p", "-t", target, format])?;
     if !output.status.success() {

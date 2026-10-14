@@ -1,4 +1,4 @@
-use super::{Buckets, Turn, Usage};
+use super::{Buckets, Turn, TurnState, Usage};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::DateTime;
@@ -8,6 +8,8 @@ use std::{env, fs};
 const SESSION: &str = "
     SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
         estimated_cost_usd, last_activity_at, ended_at IS NOT NULL AS ended,
+        (SELECT timestamp FROM messages WHERE session_id = s.id AND active = 1
+         AND role = 'user' ORDER BY id DESC LIMIT 1) AS turn_start,
         (SELECT role = 'assistant' AND tool_calls IS NULL FROM messages
          WHERE session_id = s.id AND active = 1 ORDER BY id DESC LIMIT 1) AS replied
     FROM sessions s
@@ -73,12 +75,16 @@ fn read_session(db: &Connection, source: &str) -> Result<Option<super::SessionRe
             usage.buckets.add(at, usage.total_tokens());
         }
         let turn = match (ended, replied) {
-            (true, _) | (false, Some(true)) => Some(Turn::Ended),
-            (false, Some(false)) => Some(Turn::InProgress),
+            (true, _) | (false, Some(true)) => Some(TurnState::Ended),
+            (false, Some(false)) => Some(TurnState::InProgress),
             (false, None) => None,
         };
+        let started_at: Option<f64> = row.get("turn_start")?;
+        let started_at = started_at.and_then(|seconds| {
+            DateTime::from_timestamp_micros((seconds * 1_000_000.0).round() as i64)
+        });
         Ok(super::SessionRecord {
-            turn,
+            turn: turn.map(|state| Turn { state, started_at }),
             usage: Some(usage),
         })
     })
@@ -107,14 +113,14 @@ pub(super) mod tests {
             cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
             estimated_cost_usd REAL, last_activity_at REAL, ended_at REAL);
             CREATE TABLE messages (id INTEGER, session_id TEXT, active INTEGER,
-            role TEXT, tool_calls TEXT);
+            role TEXT, tool_calls TEXT, timestamp REAL);
             INSERT INTO sessions VALUES
             ('old', 'niles:test', 1, NULL, 1, 2, 3, 4, 5, NULL, NULL, NULL),
             ('main', 'niles:test', 2, NULL, 11, 22, 33, 44, 55,
              0.03, 1790694525.47223, NULL),
             ('delegate', 'niles:test', 3, '{"_delegate_from":"main"}',
              91, 92, 93, 94, 95, NULL, NULL, NULL);
-            INSERT INTO messages VALUES (1, 'main', 1, 'assistant', NULL);"#,
+            INSERT INTO messages VALUES (1, 'main', 1, 'assistant', NULL, 1790694500);"#,
         )
         .unwrap();
         db
@@ -124,7 +130,22 @@ pub(super) mod tests {
     fn selects_latest_non_delegate_with_all_counters_and_epoch_time() {
         let db = fixture();
         assert!(read_session(&db, "missing").unwrap().is_none());
+        db.execute(
+            "INSERT INTO messages VALUES (0, 'main', 1, 'user', NULL, 1790694400)",
+            [],
+        )
+        .unwrap();
         let record = read_session(&db, "niles:test").unwrap().unwrap();
+        assert_eq!(
+            record
+                .turn
+                .as_ref()
+                .unwrap()
+                .started_at
+                .unwrap()
+                .timestamp(),
+            1790694400
+        );
         let usage = record.usage.unwrap();
         assert_eq!(
             (
@@ -147,20 +168,32 @@ pub(super) mod tests {
     fn waiting_working_and_ended_states() {
         let db = fixture();
         assert!(matches!(
-            read_session(&db, "niles:test").unwrap().unwrap().turn,
-            Some(Turn::Ended)
+            read_session(&db, "niles:test")
+                .unwrap()
+                .unwrap()
+                .turn
+                .map(|turn| turn.state),
+            Some(TurnState::Ended)
         ));
         db.execute("UPDATE messages SET tool_calls = '[{}]' WHERE id = 1", [])
             .unwrap();
         assert!(matches!(
-            read_session(&db, "niles:test").unwrap().unwrap().turn,
-            Some(Turn::InProgress)
+            read_session(&db, "niles:test")
+                .unwrap()
+                .unwrap()
+                .turn
+                .map(|turn| turn.state),
+            Some(TurnState::InProgress)
         ));
         db.execute("UPDATE sessions SET ended_at = 4 WHERE id = 'main'", [])
             .unwrap();
         assert!(matches!(
-            read_session(&db, "niles:test").unwrap().unwrap().turn,
-            Some(Turn::Ended)
+            read_session(&db, "niles:test")
+                .unwrap()
+                .unwrap()
+                .turn
+                .map(|turn| turn.state),
+            Some(TurnState::Ended)
         ));
     }
 

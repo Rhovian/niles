@@ -142,9 +142,14 @@ indented continuation of one. An absent marker, hidden cursor, or failed query d
 continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
 as state only and never submits captured text.
 
-Agent-written session records decide worker states and due check-ins; same-user processes can
-forge them. A transcript Niles cannot parse is no record: after the initial check-in interval the
-worker is Unknown and gets `blocked: session state unknown ...`; a read error or uncertain pane
+Agent-written session records supply turn state and start times; live process descendants of the
+tmux pane can keep an ended turn Working. The shared resolver uses `ps` PID/PPID/state/elapsed
+time, excluding zombies and the querying Niles/probe branch, without interpreting command names.
+Processes predating the turn are standing helpers; helpers restarted mid-turn count as work.
+Elapsed-time precision gets a one-second tolerance favoring work detection. Reparented processes
+outside the pane tree cannot be attributed, and snapshots race with exits. Same-user processes
+can forge session records and affect process-tree evidence; this is state detection, not isolation.
+A transcript Niles cannot parse is no record: after the initial check-in interval the worker is Unknown and gets `blocked: session state unknown ...`; a read error or uncertain pane
 liveness nudges and re-arms instead. A structured terminal failure in a Codex, Claude or pi record
 becomes `blocked: provider refused (<label>): <first line>`, never from pane text: the message is
 stripped of controls and capped at 1,024 characters, the label at 256; nudges carry only the worker

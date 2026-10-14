@@ -1,4 +1,4 @@
-use super::{Buckets, Turn, Usage, parse_lines, read_transcript};
+use super::{Buckets, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -208,26 +208,30 @@ struct CodexError {
 // https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/protocol/src/protocol.rs
 pub(super) fn codex_activity(lines: &[CodexLine]) -> Option<Turn> {
     let mut turn = None;
+    let mut started_at = None;
     for line in lines {
         let CodexLine::EventMsg { timestamp, payload } = line else {
             continue;
         };
         match payload.kind.as_str() {
-            "task_started" => turn = Some(Turn::InProgress),
+            "task_started" => {
+                started_at = Some(*timestamp);
+                turn = Some(TurnState::InProgress);
+            }
             "task_complete" => {
                 turn = Some(match &payload.error {
-                    Some(error) => Turn::Failed(super::SessionFailure {
+                    Some(error) => TurnState::Failed(super::SessionFailure {
                         at: *timestamp,
                         message: error.message.clone(),
                     }),
-                    None => Turn::Ended,
+                    None => TurnState::Ended,
                 })
             }
-            "turn_aborted" => turn = Some(Turn::Ended),
+            "turn_aborted" => turn = Some(TurnState::Ended),
             _ => {}
         }
     }
-    turn
+    turn.map(|state| Turn { state, started_at })
 }
 
 #[cfg(test)]
@@ -240,7 +244,7 @@ mod refusal_tests {
             "\n"
         );
         let lines = parse_lines::<CodexLine>(body).unwrap();
-        let Some(Turn::Failed(failure)) = codex_activity(&lines) else {
+        let Some(TurnState::Failed(failure)) = codex_activity(&lines).map(|turn| turn.state) else {
             panic!("terminal error must end the turn");
         };
         assert_eq!(failure.message, "Provider stopped");

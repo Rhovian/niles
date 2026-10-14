@@ -1,4 +1,4 @@
-use super::{Buckets, Turn, Usage, parse_lines};
+use super::{Buckets, Turn, TurnState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -36,14 +36,8 @@ enum ClaudeLine {
         api_error: bool,
     },
     User {
+        timestamp: Option<DateTime<Utc>>,
         message: ClaudeUserMessage,
-        #[serde(rename = "toolUseResult")]
-        tool_use_result: Option<serde_json::Value>,
-    },
-    /// Queued input, including the `<task-notification>` for each background task event.
-    #[serde(rename = "queue-operation")]
-    QueueOperation {
-        content: Option<serde_json::Value>,
     },
     System {
         subtype: Option<String>,
@@ -87,10 +81,10 @@ struct ClaudeDetails {
 }
 
 impl ClaudeMessage {
-    fn turn(&self, at: DateTime<Utc>, api_error: bool) -> Turn {
+    fn turn(&self, at: DateTime<Utc>, api_error: bool) -> TurnState {
         if api_error || self.stop_reason.as_deref() == Some("refusal") {
             let text = self.content.iter().find_map(|block| block.text.as_ref());
-            return Turn::Failed(super::SessionFailure {
+            return TurnState::Failed(super::SessionFailure {
                 at,
                 message: match text {
                     Some(text) => text.clone(),
@@ -99,8 +93,8 @@ impl ClaudeMessage {
             });
         }
         match self.stop_reason.as_deref() {
-            None | Some("tool_use") => Turn::InProgress,
-            Some(_) => Turn::Ended,
+            None | Some("tool_use") => TurnState::InProgress,
+            Some(_) => TurnState::Ended,
         }
     }
 }
@@ -113,7 +107,7 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
     let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
     let (mut reasoning, mut last_turn, mut turn, mut prompt) = (None, None, None, None);
     let mut buckets = Buckets::default();
-    let mut background_shells = HashSet::new();
+    let mut started_at = None;
     for (body, main_file) in
         std::iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
     {
@@ -131,50 +125,35 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                     }
                     (timestamp, message)
                 }
-                ClaudeLine::User {
-                    message,
-                    tool_use_result,
-                } => {
+                ClaudeLine::User { timestamp, message } => {
                     if main_file {
-                        if let Some(id) = tool_use_result
-                            .as_ref()
-                            .and_then(|result| result.get("backgroundTaskId"))
-                            .and_then(serde_json::Value::as_str)
+                        let interrupted = message.content.as_array().is_some_and(|blocks| {
+                            blocks.iter().any(|block| {
+                                block.get("type").and_then(serde_json::Value::as_str)
+                                    == Some("text")
+                                    && block
+                                        .get("text")
+                                        .and_then(serde_json::Value::as_str)
+                                        .is_some_and(|text| {
+                                            text.starts_with("[Request interrupted by user")
+                                        })
+                            })
+                        });
+                        if !interrupted
+                            && (message.content.is_string()
+                                || message.content.as_array().is_some_and(|blocks| {
+                                    blocks.iter().any(|block| {
+                                        matches!(block["type"].as_str(), Some("text" | "image"))
+                                    })
+                                }))
                         {
-                            background_shells.insert(id.to_owned());
+                            started_at = timestamp;
                         }
-                        if let Some(id) = tool_use_result.as_ref().and_then(stopped_task) {
-                            background_shells.remove(id);
-                        }
-                        turn = Some(
-                            if message.content.as_array().is_some_and(|blocks| {
-                                blocks.iter().any(|block| {
-                                    block.get("type").and_then(serde_json::Value::as_str)
-                                        == Some("text")
-                                        && block
-                                            .get("text")
-                                            .and_then(serde_json::Value::as_str)
-                                            .is_some_and(|text| {
-                                                text.starts_with("[Request interrupted by user")
-                                            })
-                                })
-                            }) {
-                                Turn::Ended
-                            } else {
-                                Turn::InProgress
-                            },
-                        );
-                    }
-                    continue;
-                }
-                ClaudeLine::QueueOperation { content } => {
-                    if main_file
-                        && let Some(id) = content
-                            .as_ref()
-                            .and_then(serde_json::Value::as_str)
-                            .and_then(ended_task)
-                    {
-                        background_shells.remove(id);
+                        turn = Some(if interrupted {
+                            TurnState::Ended
+                        } else {
+                            TurnState::InProgress
+                        });
                     }
                     continue;
                 }
@@ -185,7 +164,7 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                             Some("model_refusal_fallback" | "api_retry")
                         )
                     {
-                        turn = Some(Turn::InProgress);
+                        turn = Some(TurnState::InProgress);
                     }
                     continue;
                 }
@@ -207,9 +186,6 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                 Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
     }
-    if matches!(turn, Some(Turn::Ended)) && !background_shells.is_empty() {
-        turn = Some(Turn::InProgress);
-    }
     let usage = (!seen.is_empty()).then_some(Usage {
         input_tokens: input,
         output_tokens: output,
@@ -222,102 +198,8 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
         prompt_tokens: prompt,
         context_window: None,
     });
+    let turn = turn.map(|state| Turn { state, started_at });
     Some(super::SessionRecord { turn, usage })
-}
-
-/// The task a notification reports as ended. Monitor events notify without a `<status>` while
-/// the task keeps running.
-fn ended_task(notification: &str) -> Option<&str> {
-    if !notification.contains("<status>") {
-        return None;
-    }
-    let (_, rest) = notification.split_once("<task-id>")?;
-    Some(rest.split_once("</task-id>")?.0)
-}
-
-fn stopped_task(result: &serde_json::Value) -> Option<&str> {
-    let message = result.get("message")?.as_str()?;
-    if !message.starts_with("Successfully stopped task: ") {
-        return None;
-    }
-    result.get("task_id")?.as_str()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const END_TURN: &str = r#"{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
-
-    fn user_result(result: serde_json::Value) -> String {
-        serde_json::json!({
-            "type": "user",
-            "message": {"content": []},
-            "toolUseResult": result,
-        })
-        .to_string()
-    }
-
-    fn shell_and_stop() -> (String, String) {
-        let shell = user_result(serde_json::json!({"backgroundTaskId": "b1"}));
-        let stopped = user_result(serde_json::json!({
-            "message": "Successfully stopped task: b1 (sleep 60)",
-            "task_id": "b1",
-            "task_type": "local_bash",
-            "command": "sleep 60",
-        }));
-        (shell, stopped)
-    }
-
-    #[test]
-    fn task_stop_releases_background_shell_without_notification() {
-        let (shell, stopped) = shell_and_stop();
-        let transcript = format!("{shell}\n{stopped}\n{END_TURN}\n");
-        assert!(matches!(
-            claude_session(&transcript, &[]).unwrap().turn,
-            Some(Turn::Ended)
-        ));
-    }
-
-    #[test]
-    fn task_stop_preserves_other_running_shells_and_active_turns() {
-        let (shell, stopped) = shell_and_stop();
-        for result in [
-            serde_json::json!({"task_id": "b1", "message": "Task is still running"}),
-            serde_json::json!({"task_id": "b2", "message": "Successfully stopped task: b2"}),
-            serde_json::json!({"message": "Successfully stopped task: b1"}),
-        ] {
-            let result = user_result(result);
-            assert!(matches!(
-                claude_session(&format!("{shell}\n{result}\n{END_TURN}\n"), &[])
-                    .unwrap()
-                    .turn,
-                Some(Turn::InProgress)
-            ));
-        }
-        let other_shell = user_result(serde_json::json!({"backgroundTaskId": "b2"}));
-        assert!(matches!(
-            claude_session(
-                &format!("{shell}\n{other_shell}\n{stopped}\n{END_TURN}\n"),
-                &[]
-            )
-            .unwrap()
-            .turn,
-            Some(Turn::InProgress)
-        ));
-        assert!(matches!(
-            claude_session(&format!("{END_TURN}\n{shell}\n{stopped}\n"), &[])
-                .unwrap()
-                .turn,
-            Some(Turn::InProgress)
-        ));
-        assert!(matches!(
-            claude_session(&format!("{shell}\n{END_TURN}\n"), &[format!("{stopped}\n")])
-                .unwrap()
-                .turn,
-            Some(Turn::InProgress)
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -330,9 +212,45 @@ mod refusal_tests {
             "\n"
         );
         let record = claude_session(body, &[]).unwrap();
-        let Some(Turn::Failed(failure)) = record.turn else {
+        let Some(TurnState::Failed(failure)) = record.turn.map(|turn| turn.state) else {
             panic!("refusal must end the turn");
         };
         assert_eq!(failure.message, "Provider declined");
+    }
+}
+
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+
+    #[test]
+    fn halcyon_notification_before_tool_result_does_not_keep_a_turn_active() {
+        let start = r#"{"type":"user","timestamp":"2026-10-13T19:00:00Z","message":{"content":[{"type":"text","text":"build"}]}}"#;
+        let completed = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-13T19:00:33.090Z","content":"<task-notification><task-id>binqo6ddq</task-id><status>completed</status></task-notification>"}"#;
+        let removed = r#"{"type":"queue-operation","operation":"remove","timestamp":"2026-10-13T19:00:34.208Z","reason":"absorbed_mid_turn"}"#;
+        let result = r#"{"type":"user","timestamp":"2026-10-13T19:00:32.647Z","message":{"content":[{"type":"tool_result"}]},"toolUseResult":{"backgroundTaskId":"binqo6ddq"}}"#;
+        let ended = r#"{"type":"assistant","timestamp":"2026-10-13T19:00:35Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        for events in [
+            format!("{completed}\n{removed}\n{result}"),
+            result.to_owned(),
+        ] {
+            let record = claude_session(&format!("{start}\n{events}\n{ended}\n"), &[]).unwrap();
+            let turn = record.turn.unwrap();
+            assert!(matches!(turn.state, TurnState::Ended));
+            assert_eq!(
+                turn.started_at.unwrap().to_rfc3339(),
+                "2026-10-13T19:00:00+00:00"
+            );
+        }
+        let interrupted = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+        let turn = claude_session(&format!("{start}\n{interrupted}\n"), &[])
+            .unwrap()
+            .turn
+            .unwrap();
+        assert!(matches!(turn.state, TurnState::Ended));
+        assert_eq!(
+            turn.started_at.unwrap().to_rfc3339(),
+            "2026-10-13T19:00:00+00:00"
+        );
     }
 }

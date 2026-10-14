@@ -12,7 +12,13 @@ pub(crate) struct SessionFailure {
 }
 
 #[derive(Debug)]
-pub(crate) enum Turn {
+pub(crate) struct Turn {
+    pub(crate) state: TurnState,
+    pub(crate) started_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+pub(crate) enum TurnState {
     InProgress,
     Ended,
     Failed(SessionFailure),
@@ -54,7 +60,7 @@ pub(crate) fn resolve_session(
     created_at: DateTime<Utc>,
     starting_until: DateTime<Utc>,
     now: DateTime<Utc>,
-    liveness: impl FnOnce() -> Result<Option<bool>>,
+    process_activity: impl FnOnce(Option<DateTime<Utc>>) -> Result<Option<bool>>,
 ) -> Result<ResolvedSession> {
     let record = link
         .map(|link| super::read_session(link, workspace, needle, created_at))
@@ -64,17 +70,22 @@ pub(crate) fn resolve_session(
         Some(record) => (record.turn, record.usage),
         None => (None, None),
     };
-    let (state, blocker) = match turn {
-        Some(Turn::InProgress) => (
-            match liveness()? {
+    let started_at = turn.as_ref().and_then(|turn| turn.started_at);
+    let (state, blocker) = match turn.map(|turn| turn.state) {
+        Some(TurnState::Ended) if started_at.is_none() => (Waiting, None),
+        Some(state @ (TurnState::InProgress | TurnState::Ended)) => (
+            match process_activity(if matches!(state, TurnState::Ended) {
+                started_at
+            } else {
+                None
+            })? {
                 Some(true) => Working,
                 Some(false) => Waiting,
                 None => Unknown,
             },
             None,
         ),
-        Some(Turn::Ended) => (Waiting, None),
-        Some(Turn::Failed(failure)) => (Waiting, Some(Blocker::Refused(failure))),
+        Some(TurnState::Failed(failure)) => (Waiting, Some(Blocker::Refused(failure))),
         None if now < starting_until => (Starting, None),
         None => (Unknown, Some(Blocker::NoRecord)),
     };
@@ -98,11 +109,19 @@ mod tests {
         };
         let path = dir.join("session.jsonl");
         let resolve = |now, alive| {
-            let session =
-                resolve_session(Some(&link), &dir, &dir, at(1000), at(1300), at(now), || {
+            let session = resolve_session(
+                Some(&link),
+                &dir,
+                &dir,
+                at(1000),
+                at(1300),
+                at(now),
+                |since| {
+                    assert_eq!(since, None);
                     Ok(alive)
-                })
-                .unwrap();
+                },
+            )
+            .unwrap();
             (session.state, session.blocker.is_some())
         };
         assert_eq!(resolve(1299, Some(true)), (Starting, false));
@@ -112,6 +131,29 @@ mod tests {
         assert_eq!(resolve(100000, Some(true)), (Working, false));
         assert_eq!(resolve(100000, Some(false)), (Waiting, false));
         assert_eq!(resolve(100000, None), (Unknown, false));
+        std::fs::write(&path, concat!(r#"{"type":"message","timestamp":"1970-01-01T00:16:40Z","message":{"role":"user"}}"#, "\n",
+            r#"{"type":"message","timestamp":"1970-01-01T00:17:00Z","message":{"role":"assistant","stopReason":"stop"}}"#, "\n")).unwrap();
+        for (pending, expected) in [
+            (Some(true), Working),
+            (Some(false), Waiting),
+            (None, Unknown),
+        ] {
+            let session = resolve_session(
+                Some(&link),
+                &dir,
+                &dir,
+                at(1000),
+                at(1300),
+                at(2000),
+                |since| {
+                    assert_eq!(since, Some(at(1000)));
+                    Ok(pending)
+                },
+            )
+            .unwrap();
+            assert_eq!(session.state, expected);
+            assert!(session.blocker.is_none());
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
