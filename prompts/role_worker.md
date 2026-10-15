@@ -16,4 +16,4 @@ For each hand-written mechanism (batching, paging, retry, parsing, caching), cit
 
 For each deliberate departure the record marks from a repo rule, state its why at the site as a comment where the repo allows one, and in the PR body.
 
-Your `done:` states production and test lines added against the record's size target; without a record, report the counts and say there is no target.
+Your `done:` states production and test lines added against the record's size target; without a record, against the lead's size target in your brief.

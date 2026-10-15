@@ -44,7 +44,7 @@ pub(crate) fn print_manifest_roles<W: Write>(
 
 pub(crate) fn manifest_roles(manifest: &WorkspaceManifest, config: &ProjectConfig) -> [RoleRow; 6] {
     [
-        role_row("lead", &manifest.lead, config),
+        binding_row("lead", &manifest.lead, config),
         binding_row("worker", &manifest.worker, config),
         binding_row("reviewer", &manifest.reviewer, config),
         binding_row("security", &manifest.security, config),
@@ -130,8 +130,8 @@ mod tests {
 
     fn manifest(reviewer: &str) -> WorkspaceManifest {
         WorkspaceManifest {
-            lead: "codex:gpt-5.5:xhigh".to_owned(),
-            worker: "codex".to_owned().into(),
+            lead: "codex:gpt-5.5:xhigh".to_owned().into(),
+            worker: "codex:gpt-6.1-sol:medium".to_owned().into(),
             reviewer: reviewer.to_owned().into(),
             security: "claude:opus:max".to_owned().into(),
             ..WorkspaceManifest::default()
@@ -150,22 +150,21 @@ mod tests {
 
     #[test]
     fn renders_the_table_a_user_actually_sees() {
-        assert_eq!(
-            render(&manifest("claude:opus:max")),
-            "\
-lead      codex   gpt-5.5     xhigh
-worker    codex   -           -
-reviewer  claude  opus        max
-security  claude  opus        max
-design    claude  -           -
-research  codex   gpt-6-luna  medium
-"
-        );
+        let rendered = render(&manifest("claude:opus:max"));
+        let rows = rendered
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        assert_eq!(rows[0], ["lead", "codex", "gpt-5.5", "xhigh"]);
+        assert_eq!(rows[1], ["worker", "codex", "gpt-6.1-sol", "medium"]);
+        assert_eq!(rows[2], ["reviewer", "claude", "opus", "max"]);
+        assert_eq!(rows[4], ["design", "claude", "sonnet", "high"]);
+        assert_eq!(rows[5], ["research", "codex", "gpt-6.1-sol", "medium"]);
     }
 
     #[test]
     fn an_unpinned_model_or_effort_is_not_invented() {
-        // A bare `codex` must not be resolved into whatever it would launch as.
+        // The display names inexact input rather than inventing a launch choice.
         let rendered = render(&manifest("codex"));
 
         // Cells, not spacing: padding shifts whenever another binding gets wider.
@@ -178,6 +177,7 @@ research  codex   gpt-6-luna  medium
             ["reviewer", "codex", "-", "-"],
             "{rendered}"
         );
+        assert!(rendered.contains("must name an exact"));
     }
 
     #[test]
@@ -225,7 +225,7 @@ research  codex   gpt-6-luna  medium
 
     #[test]
     fn a_long_model_name_widens_every_row_together() {
-        let rendered = render(&manifest("hermes:deepseek/deepseek-v4.1-flash:medium"));
+        let rendered = render(&manifest("hermes:deepseek/deepseek-v4.1-flash:high"));
 
         assert!(
             rendered.contains("deepseek/deepseek-v4.1-flash"),

@@ -32,9 +32,11 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     );
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     let path = env.root.join(".niles/manifest.yaml");
-    let body = fs::read_to_string(&path)
-        .unwrap()
-        .replace("research: claude", "research: hermes");
+    let body = fs::read_to_string(&path).unwrap().replacen(
+        "claude:sonnet:high",
+        "hermes:z-ai/glm-5.3-flash:high",
+        1,
+    );
     fs::write(&path, body).unwrap();
     write_executable(
         &env.bin.join("claude"),
@@ -68,12 +70,12 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
 }
 
 #[test]
-fn doctor_reports_custom_missing_and_unavailable_versions() {
+fn doctor_reports_configured_missing_and_unavailable_versions() {
     let env = TestEnv::new("niles-doctor-custom");
-    write_workspace_manifest(&env.root, "custom", "codex", "claude", "claude");
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     fs::write(
         env.root.join("niles.yaml"),
-        "agents:\n  custom:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",
+        "agents:\n  claude:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",
     )
     .unwrap();
     write_executable(
@@ -91,7 +93,6 @@ fn doctor_reports_custom_missing_and_unavailable_versions() {
     )));
     assert!(stdout.contains("agent missing-cli: not found on PATH"));
     assert!(!stdout.contains("agent lead:"));
-    assert!(!stdout.contains("version failed; tested"));
 }
 
 #[test]

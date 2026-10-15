@@ -112,21 +112,17 @@ which may be none.
 The workspace manifest binds roles. This is the minimal valid `.niles/manifest.yaml`:
 
 ```yaml
-lead: codex
-worker: codex
-reviewer: claude
-security: claude
-design:
-  - models: [claude, codex]
-research: codex:gpt-6-luna:medium
+lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
+worker: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
+reviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}
+security: {standard: {primary: codex:gpt-6.1-sol:high, secondaries: []}}
+design: {standard: {primary: claude:sonnet:high, secondaries: []}}
+research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 ```
 
-For ready-made setups, see [examples/](examples/): [Claude lead](examples/claude-lead.yaml)
-and [Codex lead](examples/codex-lead.yaml). They swap Opus and GPT-6.1 Sol across lead,
-worker, design, and review roles, with cheaper Luna workers, Sonnet/Luna research, and
-Hermes/pi security options. All use medium effort and `when:` groups to describe suitable work.
-Copy one to `.niles/manifest.yaml` (create `.niles/` first), then run `niles doctor` to check
-the required CLIs. The `claude:opus` binding follows Claude Code's newest Opus alias.
+For ready-made setups with all shipped role tiers, see [examples/](examples/):
+[Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
+Copy one to `.niles/manifest.yaml`, then run `niles doctor` to check the required CLIs.
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
 
@@ -148,25 +144,39 @@ An empty `efforts: []` marks a model that takes no effort qualifier. The optiona
 `context_window`, in tokens, is what the telemetry panel measures a live session's context
 against; without one, the panel shows the session's tokens and no percentage.
 
-Bindings accept `family[:model[:effort]]`, such as `codex:gpt-6-astra:high` or `claude:opus:medium`. Built-in families are `codex`, `claude`, `hermes`, and `pi`. Scalar role bindings still work. When a manifest exists, an `--agent` the role does not list is rejected.
-
-Worker, reviewer, security, and design roles can list model groups with a `when` for the work they suit and allowed efforts. The first model in the first group is the default when `--agent` is omitted. For example:
+The shipped `src/agents/roster.yaml` registers each effort's tier, description, relative cost,
+relative speed, and context window. `~/.niles/roster.yaml` replaces the complete entry list for
+any model it names, or adds a model within a built-in family:
 
 ```yaml
-worker:
-  - when: Implementing a settled plan contained to one module or a well-tested seam.
-    models: [codex:gpt-6-sol, claude:opus, codex:gpt-5.6-terra, hermes:z-ai/glm-5.3-flash, hermes:deepseek/deepseek-v4.1-flash]
-    efforts: [medium, high]
-  - when: Every edit is specified, or the task is read-only.
-    models: [codex:gpt-6-luna, claude:sonnet, claude:haiku, hermes:tencent/hy3]
-    efforts: [low, medium]
-  - when: Mechanics stay risky with the design settled — crossing modules, concurrency, on-disk state, a contract like `wait`'s exit codes — or a failure's cause is unknown. Also the retry after a standard attempt failed.
-    models: [claude:opus, codex:gpt-6-astra, codex:gpt-6-sol, claude:fable]
-    efforts: [high, xhigh]
+codex:
+  gpt-6-sol:
+    - effort: high
+      tier: standard
+      description: Complex work with a balance of intelligence and cost
+      cost: 2
+      speed: null
+      context_window: 1050000
 ```
 
-The lead routes design and review to separate agents. `reviewer: lead` is no longer supported.
-Run `niles models` to list the effective models and effort levels for the current workspace.
+Tiers are `frontier`, `standard`, `economy`, and `mechanical`. Omit `effort` for a model that takes
+no effort flag. Cost ranks run from 1 (cheapest) to 4 (most expensive); speed ranks from 1
+(fastest) to 4 (slowest). Ranks are model-level proxies; `null` represents unverified metadata.
+`niles models` displays unverified ranks as `unknown` and lists only pairs allowed by at least
+one workspace role. Without a workspace manifest it lists all effective pairs. User overrides
+load before project `models:` overrides; new workspace pairs need user-registry metadata to be
+listed. Invalid registry overrides error.
+
+Each role, including lead, requires a `standard` tier and may list `frontier`, `economy`,
+or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
+`family:model:effort` entries. Models without effort support, such as `claude:haiku`, omit
+that suffix. Scalar bindings and `when:` groups are rejected; no migration is performed.
+
+`niles spawn --role <role>` uses its standard primary; `--tier <tier>` selects another listed
+tier's primary. An unlisted tier errors. `--agent family:model:effort` selects an exact listed
+primary or secondary and conflicts with `--tier`. The lead starts at its standard primary,
+looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
+and cost difference, waiting for the operator's yes. It proposes economical step-downs too.
 
 Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer

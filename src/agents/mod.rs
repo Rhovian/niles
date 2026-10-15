@@ -10,8 +10,8 @@ pub(crate) mod roster;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use families::session_link;
 pub use families::{BriefDelivery, known_agent_ids, profile_for};
+pub(crate) use families::{SwitchStep, session_link, switch_steps};
 pub use roster::ModelRoster;
 
 const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;

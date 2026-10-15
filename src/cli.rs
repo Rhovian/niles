@@ -162,6 +162,8 @@ pub enum CommandName {
         #[arg(long, action = ArgAction::SetTrue)]
         all: bool,
     },
+    /// Switch a live worker after operator approval (same family only).
+    Retier { id: String, agent: String },
     /// Print live spawned workers as JSON.
     Workers,
     /// Print usage for live lead and worker sessions as JSON.

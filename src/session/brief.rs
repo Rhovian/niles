@@ -14,7 +14,7 @@ use crate::{
 
 use super::{sessions_dir, startup::startup_context};
 
-const LEAD_BRIEF_TEMPLATE: &str = include_str!("../templates/lead_brief.md");
+const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
 
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
@@ -173,7 +173,16 @@ mod tests {
     }
 
     #[test]
-    fn lead_brief_does_not_name_model_tiers() {
+    fn lead_brief_routes_tiers_with_operator_approval_without_hardcoding_models() {
+        for rule in [
+            "Default to the standard primary",
+            "`niles models`",
+            "reason and cost difference",
+            "then wait for the operator's yes",
+            "Propose stepping down when economical and appropriate",
+        ] {
+            assert!(LEAD_BRIEF_TEMPLATE.contains(rule), "missing {rule:?}");
+        }
         for model in ["opus", "sonnet", "gpt-5", "claude:", "codex:gpt"] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(model),

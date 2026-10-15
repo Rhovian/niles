@@ -28,47 +28,192 @@ this shell's PATH. Verify `niles --version` before continuing.
 If `.niles/manifest.yaml` exists, keep it; edit only when the user requests it. Otherwise ask in
 one message which installed CLI should lead (the agent they talk to) and, when both Claude Code
 and Codex are present, whether to mix families for independent review. Use the mixed template
-when they choose to mix, setting `lead` to their choice; otherwise use their chosen CLI's template.
+when they choose to mix; if Codex should lead, swap each lead tier's primary with its Codex
+secondary. Otherwise use their chosen CLI's template.
 Create the file exclusively: `mkdir -p .niles && set -C && cat > .niles/manifest.yaml` with the
 chosen YAML as input. If the file appears before creation, stop and keep it.
 
 Claude Code and Codex (built-in default; change `lead` to the user's choice):
 
 ```yaml
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
+lead:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: [codex:gpt-6.1-sol:medium]
+  frontier:
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
+worker:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: [claude:sonnet:high]
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: [claude:opus:high]
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: [claude:sonnet:medium]
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: [claude:haiku]
 design:
-  - models: [claude, codex]
-research: codex:gpt-6-luna:medium
+  standard:
+    primary: claude:sonnet:high
+    secondaries: [codex:gpt-6.1-sol:medium]
+  frontier:
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
+reviewer:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: [codex:gpt-6.1-sol:medium]
+  frontier:
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: [codex:gpt-6-luna:medium]
+security:
+  standard:
+    primary: codex:gpt-6.1-sol:high
+    secondaries: []
+  economy:
+    primary: hermes:z-ai/glm-5.3-flash:high
+    secondaries: [pi:deepseek/deepseek-v4.1-flash:high]
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: []
+research:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: [claude:sonnet:high]
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: [claude:sonnet:medium]
 ```
 
 Claude Code only:
 
 ```yaml
-lead: claude
-worker: claude
-reviewer: claude
-security: claude
-design: claude
-research: claude
+lead:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  frontier:
+    primary: claude:opus:high
+    secondaries: []
+worker:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  frontier:
+    primary: claude:opus:high
+    secondaries: []
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: []
+  mechanical:
+    primary: claude:sonnet:low
+    secondaries: []
+design:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  frontier:
+    primary: claude:opus:high
+    secondaries: []
+reviewer:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  frontier:
+    primary: claude:opus:high
+    secondaries: []
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: []
+security:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: []
+  mechanical:
+    primary: claude:sonnet:low
+    secondaries: []
+research:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+  economy:
+    primary: claude:sonnet:medium
+    secondaries: []
 ```
 
 Codex only:
 
 ```yaml
-lead: codex
-worker: codex
-reviewer: codex
-security: codex
-design: codex
-research: codex
+lead:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: []
+worker:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: []
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: []
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: []
+design:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: []
+reviewer:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  frontier:
+    primary: codex:gpt-6-astra:high
+    secondaries: []
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: []
+security:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: []
+  mechanical:
+    primary: codex:gpt-6-luna:low
+    secondaries: []
+research:
+  standard:
+    primary: codex:gpt-6.1-sol:medium
+    secondaries: []
+  economy:
+    primary: codex:gpt-6-luna:medium
+    secondaries: []
 ```
 
 For Hermes, pi, or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
-Bindings are `family[:model[:effort]]`; all six role keys are required. Your only repository
+Each role lists tiers with one exact `family:model:effort` primary and ordered secondaries.
+All six roles and their standard tier are required; no-effort models omit the effort suffix. Your only repository
 write is `.niles/manifest.yaml`.
 
 ## 4. Check with niles doctor

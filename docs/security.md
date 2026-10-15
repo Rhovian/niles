@@ -23,6 +23,12 @@ CLI, its launch flags, and operating-system controls.
 
 The operator's `~/.niles/config.yaml` controls the theme and optional tmux bindings; those bindings run only the shell-quoted Niles executable.
 
+The operator's `~/.niles/roster.yaml` can replace model efforts, tiers and metadata before project
+model overrides are applied. Registry parsing rejects unknown fields/families, malformed or
+normalized duplicate models/efforts, invalid ranks/windows and control-bearing descriptions.
+`niles models` JSON-quotes descriptions and restricts displayed pairs to manifest allowances.
+This local file is operator-controlled data; Niles does not authenticate its research claims.
+
 ## Boundaries
 
 ### Maintainer CLI updates
@@ -52,13 +58,16 @@ an operator to launch Niles from the clone.
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`. An agent entry can replace its executable and argument list. The
 `.niles/manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
-design, and research), and the `when` text of its role groups can influence which listed agent the
-lead picks. See
+design, and research), and its per-role tiers and ordered secondaries can influence which
+listed agent the lead picks. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
-[`src/templates/lead_brief.md`](../src/templates/lead_brief.md).
+[`prompts/lead_brief.md`](../prompts/lead_brief.md).
 
-**Existing mitigations.** The manifest's listed agents bound what spawn will launch. Deserializing YAML does not itself execute shell commands. Unknown
+**Existing mitigations.** Spawn defaults to the role's standard primary and rejects unlisted
+tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
+secondary changes; the CLI does not enforce that conversational approval. Deserializing YAML
+does not itself execute shell commands. Unknown
 manifest fields are rejected, and built-in agent families reject unsupported model names. Worker
 launch scripts quote the selected binary and arguments, while foreground launches pass them as
 separate `Command` arguments; these measures prevent incidental shell parsing. See
@@ -144,8 +153,11 @@ as state only and never submits captured text.
 
 Agent-written session records supply turn state and start times; live process descendants of the
 tmux pane can keep an ended turn Working. The shared resolver uses `ps` PID/PPID/state/elapsed
-time, excluding zombies and the querying Niles/probe branch, without interpreting command names.
-Processes predating the turn are standing helpers; helpers restarted mid-turn count as work.
+time and executable names, excluding zombies and the querying Niles/probe branch. Only processes
+started during the turn that are shells (executable name ending in `sh`) or have a shell ancestor
+below the pane root count as work. Directly launched helpers remain standing even if started
+mid-turn. Helpers launched through shells can count as work; shell `exec` and reparenting can
+hide command ancestry. This is a naming convention, not authenticated shell identity.
 Elapsed-time precision gets a one-second tolerance favoring work detection. Reparented processes
 outside the pane tree cannot be attributed, and snapshots race with exits. Same-user processes
 can forge session records and affect process-tree evidence; this is state detection, not isolation.
@@ -214,6 +226,11 @@ default arguments for either launch path. Actual access therefore depends on the
 flags, credentials, and OS permissions. Niles adds no sandbox or process isolation. Agents share
 the workspace tree and inherited environment, and `.niles` artifacts, reports, pane captures, and
 logs may contain secrets. Treat them as sensitive.
+
+Retier sends validated same-family model and effort commands to the recorded live worker window,
+requires an idle session and empty composer, and records the binding only after fresh
+value-specific CLI acknowledgements. Pane text is not authenticated: a malicious local process
+can forge acknowledgements. Partial or unconfirmed switches fail loudly without updating metadata.
 
 ## Non-goals
 

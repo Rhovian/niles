@@ -21,7 +21,7 @@ pub(crate) use session::{
     windows,
 };
 
-pub(crate) use send::send_line;
+pub(crate) use send::{send_input, send_line};
 use target::{LIVE_WINDOW_FORMAT, WindowPresence, window_presence};
 pub(crate) use target::{SessionName, TargetState, TmuxTarget, WindowTarget, target_state};
 
@@ -268,10 +268,10 @@ pub(crate) fn pane_alive(id: &str) -> Result<Option<bool>> {
         "#{pane_dead}",
     ])?;
     let error = normalize_stderr(&output.stderr);
+    let dead = String::from_utf8_lossy(&output.stdout);
     Ok(if output.status.success() {
-        Some(!target::is_dead_pane(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        // tmux 3.8 exits 0 with an empty format for a missing pane instead of "can't find pane".
+        Some(!dead.trim().is_empty() && !target::is_dead_pane(&dead))
     } else if error.contains("can't find pane") || target::is_missing_session_error(&error) {
         Some(false)
     } else {

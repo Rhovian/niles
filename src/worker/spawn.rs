@@ -32,6 +32,9 @@ pub struct Assignment {
     /// Which brief the worker gets.
     #[arg(long, value_enum, default_value_t = WorkerRole::Worker)]
     pub role: WorkerRole,
+    /// Manifest tier whose primary to launch (standard by default).
+    #[arg(long, value_enum, default_value_t = agents::roster::Tier::Standard, conflicts_with = "agent")]
+    pub tier: agents::roster::Tier,
     /// Use the report of this completed design worker as the design record.
     #[arg(long, value_name = "ID", conflicts_with = "mechanical")]
     design: Option<String>,
@@ -50,6 +53,7 @@ pub fn spawn(
     tree: Option<SpawnTree>,
 ) -> Result<()> {
     let role = assignment.role;
+    let tier = assignment.tier;
     validate_id(&id)?;
     if let Some(label) = &task_label {
         validate_task_label(label)?;
@@ -57,7 +61,7 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
-    let agent = resolve_agent(&project, role, agent, &config)?;
+    let agent = resolve_agent(&project, role, tier, agent, &config)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
     let cadence = watch::checkin_cadence(&project, checkin.as_deref())?;
@@ -222,6 +226,7 @@ pub fn spawn(
 fn resolve_agent(
     project: &Utf8Path,
     role: WorkerRole,
+    tier: agents::roster::Tier,
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
@@ -232,13 +237,7 @@ fn resolve_agent(
     let Some(manifest) = manifest else {
         return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
-    let binding = match role {
-        WorkerRole::Worker => &manifest.worker,
-        WorkerRole::Reviewer => &manifest.reviewer,
-        WorkerRole::Design => &manifest.design,
-        WorkerRole::Security => &manifest.security,
-        WorkerRole::Research => &manifest.research,
-    };
+    let binding = role.binding(&manifest);
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
         if !binding.allows(&requested, &config.models)? {
@@ -249,7 +248,7 @@ fn resolve_agent(
         }
         return Ok(agent);
     }
-    binding.default_agent(&config.models)
+    Ok(binding.tier(tier)?.primary.clone())
 }
 
 #[cfg(test)]

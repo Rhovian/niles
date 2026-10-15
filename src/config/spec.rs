@@ -58,7 +58,7 @@ pub(crate) fn project_config_file(root: &Utf8Path) -> Result<Option<&'static str
 }
 
 pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
-    let models = ModelRoster::builtin().context("failed to parse embedded model roster")?;
+    let models = ModelRoster::load().context("failed to load model registry")?;
     let Some(file) = project_config_file(root)? else {
         return project_config(RawProjectConfig::default(), models);
     };

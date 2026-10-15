@@ -13,7 +13,17 @@ pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
 
 pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let path = manifest_path(root);
-    store::read_optional_yaml(&path)
+    let manifest: Option<WorkspaceManifest> = store::read_optional_yaml(&path)?;
+    if let Some(manifest) = &manifest {
+        let config = crate::config::spec::load_project_config_from(root)?;
+        for role in crate::agents::picker::Role::ALL {
+            for agent in role.binding(manifest).agents() {
+                super::types::exact_spec(agent, &config.models)
+                    .with_context(|| format!("invalid {} agent in {path}", role.name()))?;
+            }
+        }
+    }
+    Ok(manifest)
 }
 
 pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
@@ -26,12 +36,11 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::test_support::temp_test_path;
+    use crate::{agents::picker::Role, test_support::temp_test_path};
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
         let root = temp_test_path(label);
-        fs::create_dir_all(root.join(NILES_DIR))?;
+        fs::create_dir_all(root.join(".niles"))?;
         fs::write(manifest_path(&root), body)?;
         let result = load(&root);
         fs::remove_dir_all(root)?;
@@ -39,159 +48,73 @@ mod tests {
     }
 
     #[test]
-    fn setup_skill_templates_parse_and_resolve() {
+    fn shipped_templates_load_and_resolve_every_exact_pair() {
         let skill = include_str!("../../skills/niles-setup/SKILL.md");
         let templates = skill
             .split("```yaml\n")
             .skip(1)
-            .map(|block| {
-                store::parse_yaml::<WorkspaceManifest>(block.split_once("```").unwrap().0).unwrap()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(templates.len(), 3);
-        assert_eq!(templates[0], WorkspaceManifest::default());
-        let config = crate::config::spec::ProjectConfig {
-            agents: std::collections::BTreeMap::new(),
-            models: crate::agents::ModelRoster::builtin().unwrap(),
-        };
-        for manifest in templates {
-            let bindings = [
-                &manifest.worker,
-                &manifest.reviewer,
-                &manifest.security,
-                &manifest.design,
-                &manifest.research,
-            ];
-            for agent in std::iter::once(manifest.lead.as_str())
-                .chain(bindings.into_iter().flat_map(|binding| binding.agents()))
-            {
-                let spec = crate::agents::AgentSpec::parse(agent, &config.models).unwrap();
-                crate::agents::canonical_manifest_agent(&spec, &config).unwrap();
-            }
-        }
-    }
-
-    #[test]
-    fn example_manifests_load_and_resolve() {
-        let models = crate::agents::ModelRoster::builtin().unwrap();
-        for (name, body) in [
-            (
-                "claude-lead",
+            .map(|block| block.split_once("```").unwrap().0)
+            .chain([
                 include_str!("../../examples/claude-lead.yaml"),
-            ),
-            ("codex-lead", include_str!("../../examples/codex-lead.yaml")),
-        ] {
-            let manifest = load_body(name, body).unwrap().unwrap();
-            let lead = crate::agents::AgentSpec::parse(&manifest.lead, &models).unwrap();
-            crate::agents::validate_model(&lead, &models).unwrap();
-            assert_eq!(lead.effort(), Some("medium"));
-            for binding in [
-                &manifest.worker,
-                &manifest.reviewer,
-                &manifest.security,
-                &manifest.design,
-                &manifest.research,
-            ] {
-                let default = binding.default_agent(&models).unwrap();
-                let default = crate::agents::AgentSpec::parse(&default, &models).unwrap();
-                assert_eq!(default.effort(), Some("medium"));
-                for group in &binding.0 {
-                    assert!(!group.when.as_ref().unwrap().trim().is_empty());
-                    assert_eq!(group.efforts.as_ref().unwrap(), &["medium"]);
-                    for model in &group.models {
-                        let agent =
-                            crate::agents::AgentSpec::parse(&format!("{model}:medium"), &models)
-                                .unwrap();
-                        crate::agents::validate_model(&agent, &models).unwrap();
-                        assert!(binding.allows(&agent, &models).unwrap());
-                    }
-                }
-            }
+                include_str!("../../examples/codex-lead.yaml"),
+            ]);
+        let root = temp_test_path("manifest-templates");
+        for body in templates {
+            fs::create_dir_all(root.join(".niles")).unwrap();
+            fs::write(manifest_path(&root), body).unwrap();
+            let manifest = load(&root).unwrap().unwrap();
+            save(&root, &manifest).unwrap();
+            assert_eq!(load(&root).unwrap(), Some(manifest));
         }
-    }
-
-    #[test]
-    fn groups_load_and_scalar_saves_as_scalar() {
-        let body = "lead: claude\nworker:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:opus]\n    efforts: [medium, high]\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n";
-        let manifest = load_body("manifest-groups", body).unwrap().unwrap();
-        assert_eq!(
-            manifest.worker.agents().collect::<Vec<_>>(),
-            ["codex:gpt-6-sol", "claude:opus"]
-        );
-        let root = temp_test_path("manifest-scalar-roundtrip");
-        save(&root, &WorkspaceManifest::default()).unwrap();
-        let saved = fs::read_to_string(manifest_path(&root)).unwrap();
-        assert!(saved.contains("worker: codex"), "{saved}");
         fs::remove_dir_all(root).unwrap();
-        for (name, worker) in [
-            ("empty", "  - when: Standard\n    models: []"),
-            (
-                "unknown",
-                "  - when: Standard\n    models: [codex]\n    extra: no",
-            ),
-            (
-                "empty-efforts",
-                "  - when: Standard\n    models: [codex]\n    efforts: []",
-            ),
+    }
+
+    #[test]
+    fn default_roles_ship_only_their_configured_tiers() {
+        use crate::agents::roster::Tier;
+        let manifest = WorkspaceManifest::default();
+        for (role, frontier, economy, mechanical) in [
+            (Role::Lead, true, false, false),
+            (Role::Worker, true, true, true),
+            (Role::Design, true, false, false),
+            (Role::Reviewer, true, true, false),
+            (Role::Security, false, true, true),
+            (Role::Research, false, true, false),
         ] {
-            let body = format!(
-                "lead: claude\nworker:\n{worker}\nreviewer: claude\nsecurity: claude\ndesign:\n  - models: [claude, codex]\nresearch: codex\n"
-            );
-            assert!(load_body(name, &body).is_err());
+            let binding = role.binding(&manifest);
+            assert!(binding.tier(Tier::Standard).is_ok());
+            assert_eq!(binding.tier(Tier::Frontier).is_ok(), frontier);
+            assert_eq!(binding.tier(Tier::Economy).is_ok(), economy);
+            assert_eq!(binding.tier(Tier::Mechanical).is_ok(), mechanical);
         }
     }
 
-    /// The two check-in keys are read from the manifest as written, and a manifest that says
-    /// nothing about them carries no default of its own: the cadence resolver owns that decision.
     #[test]
-    fn manifest_check_in_keys_load_and_absent_ones_stay_absent() {
-        let root = temp_test_path("manifest-checkin");
+    fn invalid_schema_and_inexact_agents_error_with_path() {
+        let root = temp_test_path("manifest-invalid-tiers");
         fs::create_dir_all(root.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&root),
-            r#"
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
-design:
-  - models: [claude, codex]
-research: codex
-checkin: 15m
-recheck: backoff
-"#,
-        )
-        .unwrap();
-        let anonymous = temp_test_path("manifest-no-checkin");
-        fs::create_dir_all(anonymous.join(".niles")).unwrap();
-        fs::write(
-            manifest_path(&anonymous),
-            r#"
-lead: claude
-worker: codex
-reviewer: claude
-security: claude
-design:
-  - models: [claude, codex]
-research: codex
-"#,
-        )
-        .unwrap();
-
-        let manifest = load(&root).unwrap().unwrap();
-        let bare = load(&anonymous).unwrap().unwrap();
-
-        assert_eq!(manifest.checkin.as_deref(), Some("15m"));
-        assert_eq!(manifest.recheck.as_deref(), Some("backoff"));
-        assert_eq!(bare.checkin, None);
-        assert_eq!(bare.recheck, None);
-
+        let body = include_str!("../../examples/claude-lead.yaml");
+        for invalid in [
+            body.replacen("standard:", "unknown:", 1),
+            body.replacen("primary:", "when:", 1),
+            body.replacen("claude:sonnet:high", "claude:sonnet", 1),
+            body.replacen("claude:sonnet:high", "claude:sonnet:invalid", 1),
+            body.replacen("claude:sonnet:high", "claude", 1),
+            "lead: claude\nworker: codex\n".to_owned(),
+        ] {
+            fs::write(manifest_path(&root), invalid).unwrap();
+            let error = format!("{:#}", load(&root).unwrap_err());
+            assert!(error.contains("manifest.yaml"), "{error}");
+        }
+        let mut manifest = WorkspaceManifest::default();
+        manifest.worker.standard.secondaries =
+            vec!["claude:haiku".into(), "claude:sonnet:high".into()];
+        manifest.checkin = Some("15m".into());
+        manifest.recheck = Some("backoff".into());
+        save(&root, &manifest).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(manifest));
         fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(anonymous).unwrap();
     }
-
-    /// The manifest carries role bindings and nothing else, so a manifest written before the
-    /// lead rename is rejected by name rather than silently losing its fields.
     #[test]
     fn pre_lead_manifest_is_rejected_and_names_the_offending_field() {
         let err = format!(
@@ -222,99 +145,13 @@ flow:
             "{err}"
         );
     }
-
-    #[test]
-    fn saving_manifest_writes_role_bindings_and_nothing_else() {
-        let root = temp_test_path("manifest-save");
-        let manifest = WorkspaceManifest {
-            lead: "claude".to_owned(),
-            worker: "codebot".to_owned().into(),
-            reviewer: "reviewbot".to_owned().into(),
-            security: "auditbot".to_owned().into(),
-            ..WorkspaceManifest::default()
-        };
-
-        save(&root, &manifest).unwrap();
-        let body = fs::read_to_string(manifest_path(&root)).unwrap();
-
-        assert!(body.contains("lead: claude"), "{body}");
-        assert!(body.contains("worker: codebot"), "{body}");
-        assert!(body.contains("reviewer: reviewbot"), "{body}");
-        assert!(body.contains("security: auditbot"), "{body}");
-        for gone in [
-            "manager:",
-            "planner:",
-            "validation_command:",
-            "flow:",
-            // A manifest that says nothing about the check-in cadence is written back saying
-            // nothing: `checkin: null` would be a value the next reader has to interpret.
-            "checkin:",
-            "recheck:",
-            "worker_planning:",
-        ] {
-            assert!(!body.contains(gone), "{gone} should be gone:\n{body}");
-        }
-
-        // And one that does carry them keeps them, so a round trip through `save` is not a
-        // silent reset to the built-in cadence.
-        let configured = WorkspaceManifest {
-            checkin: Some("15m".to_owned()),
-            recheck: Some("backoff".to_owned()),
-            ..manifest
-        };
-        save(&root, &configured).unwrap();
-        assert_eq!(load(&root).unwrap(), Some(configured));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn obsolete_and_missing_bindings_fail_with_the_manifest_path() {
-        for (body, expected) in [
-            (
-                "lead: claude\nworker: codex\nreviewer: lead\nsecurity: claude\n",
-                "reviewer: lead is no longer supported; reviewer must be an agent binding",
-            ),
-            (
-                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
-                "missing field `design`",
-            ),
-            (
-                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: claude\n",
-                "missing field `research`",
-            ),
-            ("worker_planning: []\n", "unknown field `worker_planning`"),
-        ] {
-            let err = format!("{:#}", load_body("obsolete-bindings", body).unwrap_err());
-            assert!(
-                err.contains("manifest.yaml") && err.contains(expected),
-                "{err}"
-            );
-        }
-    }
-
-    #[test]
-    fn design_accepts_a_single_family() {
-        for design in [
-            "claude:opus:high",
-            "[{models: [claude:opus, claude:sonnet]}]",
-            "[{models: [claude, CLAUDE]}]",
-        ] {
-            let body = format!(
-                "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\ndesign: {design}\nresearch: codex\n"
-            );
-            let manifest = load_body("design-families", &body).unwrap().unwrap();
-            assert_eq!(
-                manifest.design.agents().count(),
-                if design.starts_with('[') { 2 } else { 1 }
-            );
-        }
-    }
-
     #[test]
     fn malformed_manifest_keeps_saphyr_line_and_column() {
-        let err =
-            load_body("manifest-malformed-location", "lead: claude\nworker: [\n").unwrap_err();
+        let err = load_body(
+            "manifest-malformed-location",
+            "lead: {standard: {primary: claude:sonnet:high, secondaries: []}}\nworker: [\n",
+        )
+        .unwrap_err();
         let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
 
         assert!(chain[0].contains("manifest.yaml"), "{chain:?}");
@@ -328,5 +165,65 @@ flow:
             chain.iter().all(|message| !message.contains("worker: [")),
             "{chain:?}"
         );
+    }
+    #[test]
+    fn saving_manifest_preserves_cadence_and_omits_absent_keys() {
+        let root = temp_test_path("manifest-save-cadence");
+        let manifest = WorkspaceManifest::default();
+        save(&root, &manifest).unwrap();
+        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(manifest.clone()));
+        for gone in [
+            "manager:",
+            "planner:",
+            "validation_command:",
+            "flow:",
+            "checkin:",
+            "recheck:",
+            "worker_planning:",
+            "when:",
+        ] {
+            assert!(!body.contains(gone), "{body}");
+        }
+        let configured = WorkspaceManifest {
+            checkin: Some("15m".into()),
+            recheck: Some("backoff".into()),
+            ..manifest
+        };
+        save(&root, &configured).unwrap();
+        assert_eq!(load(&root).unwrap(), Some(configured));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn required_role_and_tier_fields_fail_with_manifest_path() {
+        let body = include_str!("../../examples/claude-lead.yaml");
+        for (invalid, cause) in [
+            (
+                body.replacen("standard:", "economy:", 1),
+                "missing field `standard`",
+            ),
+            (
+                body.replacen("primary:", "when:", 1),
+                "unknown field `when`",
+            ),
+            (
+                body.replacen("    secondaries: [codex:gpt-6.1-sol:medium]\n", "", 1),
+                "missing field `secondaries`",
+            ),
+            (
+                body.split_once("research:").unwrap().0.to_owned(),
+                "missing field `research`",
+            ),
+        ] {
+            let error = format!(
+                "{:#}",
+                load_body("manifest-required-fields", &invalid).unwrap_err()
+            );
+            assert!(
+                error.contains("manifest.yaml") && error.contains(cause),
+                "{error}"
+            );
+        }
     }
 }

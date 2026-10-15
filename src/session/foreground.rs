@@ -22,7 +22,7 @@ pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
-    let agent = &manifest.lead;
+    let agent = manifest.lead.default_model();
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
     let ManagerSession { meta, brief, dir } = write_manager_session(workspace, &invocation.spec)?;
     if let Some(link) = &meta.session_link {

@@ -18,6 +18,7 @@ case "$1" in
   display-message)
     if [ "$5" = '#{pane_dead}' ]; then
       if [ "${TMUX_PANE_MISSING:-}" = 1 ]; then printf "can't find pane\n" >&2; exit 1; fi
+      if [ "${TMUX_PANE_EMPTY:-}" = 1 ]; then printf '\n'; exit 0; fi
       if [ "${TMUX_PANE_UNCERTAIN:-}" = 1 ]; then printf "server unreachable\n" >&2; exit 1; fi
       printf '%s\n' "${TMUX_PANE_DEAD:-0}"; exit 0
     fi
@@ -211,11 +212,30 @@ pub fn write_workspace_manifest(
     security: &str,
 ) {
     fs::create_dir_all(workspace.join(".niles")).unwrap();
-    fs::write(
-        workspace.join(".niles/manifest.yaml"),
-        format!("lead: {lead}\nworker: {worker}\nreviewer: {reviewer}\nsecurity: {security}\ndesign:\n  - models: [claude, codex]\nresearch: claude\n"),
-    )
-    .unwrap();
+    let exact = |agent: &str| {
+        match agent {
+            "claude" => "claude:sonnet:high",
+            "codex" => "codex:gpt-6.1-sol:medium",
+            _ => agent,
+        }
+        .to_owned()
+    };
+    let body = [
+        ("lead", lead),
+        ("worker", worker),
+        ("reviewer", reviewer),
+        ("security", security),
+        ("design", "claude"),
+        ("research", "claude"),
+    ]
+    .map(|(role, agent)| {
+        format!(
+            "{role}:\n  standard: {{primary: {}, secondaries: []}}\n",
+            exact(agent)
+        )
+    })
+    .join("");
+    fs::write(workspace.join(".niles/manifest.yaml"), body).unwrap();
 }
 
 pub fn write_worker(

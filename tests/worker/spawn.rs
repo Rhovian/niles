@@ -1,17 +1,17 @@
 use super::support::*;
 
 #[test]
-fn manifest_groups_bound_spawn_before_worker_state() {
+fn manifest_tiers_bound_spawn_before_worker_state() {
     let env = TestEnv::new("niles-worker-groups");
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     let path = env.root.join(".niles/manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replace(
-        "research: claude",
-        "research:\n  - when: Standard\n    models: [codex:gpt-6-sol, claude:haiku]\n    efforts: [medium, high]",
+        "research:\n  standard: {primary: claude:sonnet:high, secondaries: []}",
+        "research:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}",
     );
     fs::write(&path, body).unwrap();
     let default = env.run(&["spawn", "--role", "research", "default", "Task"]);
-    assert_command_success("group default", &default);
+    assert_command_success("tier default", &default);
     let meta = fs::read_to_string(env.root.join(".niles/worker/default/meta.json")).unwrap();
     assert!(meta.contains("codex:gpt-6-sol:medium"), "{meta}");
     let listed = env.run(&[
@@ -23,7 +23,7 @@ fn manifest_groups_bound_spawn_before_worker_state() {
         "claude:haiku",
         "Task",
     ]);
-    assert_command_success("group listed", &listed);
+    assert_command_success("tier secondary", &listed);
     for (id, agent) in [
         ("unlisted", "codex:gpt-6-luna:medium"),
         ("effort", "codex:gpt-6-sol:low"),

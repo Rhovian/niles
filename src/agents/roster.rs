@@ -1,6 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::{NonZeroU32, NonZeroU64},
+};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use super::families;
@@ -17,7 +20,42 @@ pub struct ModelRoster {
 struct Model {
     efforts: Vec<String>,
     context_window: Option<u64>,
+    #[serde(skip)]
+    entries: Vec<RegistryEntry>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Tier {
+    Frontier,
+    Standard,
+    Economy,
+    Mechanical,
+}
+
+impl Tier {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Frontier => "frontier",
+            Self::Standard => "standard",
+            Self::Economy => "economy",
+            Self::Mechanical => "mechanical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryEntry {
+    pub effort: Option<String>,
+    pub tier: Tier,
+    pub description: String,
+    pub cost: Option<NonZeroU32>,
+    pub speed: Option<NonZeroU32>,
+    pub context_window: NonZeroU64,
+}
+
+type RawRegistry = BTreeMap<String, BTreeMap<String, Vec<RegistryEntry>>>;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(transparent)]
@@ -28,17 +66,89 @@ impl ModelRoster {
         parse(BUILTIN_ROSTER)
     }
 
-    pub(crate) fn with_overrides(mut self, overrides: RawRoster) -> Result<Self> {
-        let mut overrides = Self::from_raw(overrides)?;
+    pub(crate) fn load() -> Result<Self> {
+        let path = crate::config::user::path()?.with_file_name("roster.yaml");
+        Self::builtin()?.with_user_overrides(&path)
+    }
 
-        for (family, models) in &mut self.families {
-            let Some(additions) = overrides.families.remove(family) else {
-                continue;
-            };
-            models.extend(additions);
+    fn with_user_overrides(self, path: &camino::Utf8Path) -> Result<Self> {
+        match crate::store::read_optional_yaml::<RawRegistry>(path)? {
+            Some(raw) => Ok(self.merge(
+                Self::from_registry(raw)
+                    .with_context(|| format!("invalid model registry {path}"))?,
+            )),
+            None => Ok(self),
         }
-        debug_assert!(overrides.families.is_empty());
-        Ok(self)
+    }
+
+    pub(crate) fn with_overrides(self, overrides: RawRoster) -> Result<Self> {
+        let mut overrides = Self::from_raw(overrides)?;
+        for (family, models) in &mut overrides.families {
+            for (name, model) in models {
+                if let Some(existing) = self
+                    .families
+                    .get(family)
+                    .and_then(|models| models.get(name))
+                {
+                    model.entries = existing.entries.clone();
+                }
+            }
+        }
+        Ok(self.merge(overrides))
+    }
+
+    fn merge(mut self, overrides: Self) -> Self {
+        for (family, models) in overrides.families {
+            self.families.entry(family).or_default().extend(models);
+        }
+        self
+    }
+
+    // serde-saphyr 1.3.0's typed deserialization handles YAML and duplicate keys,
+    // not Niles's model/effort normalization: https://docs.rs/serde-saphyr/1.3.0/serde_saphyr/.
+    fn from_registry(raw: RawRegistry) -> Result<Self> {
+        let mut roster = RawRoster::default();
+        for (family, models) in raw {
+            let mut parsed = BTreeMap::new();
+            for (name, mut entries) in models {
+                if entries.is_empty()
+                    || (entries.len() > 1 && entries.iter().any(|entry| entry.effort.is_none()))
+                {
+                    bail!("{family}:{name} needs efforts or a single entry without an effort");
+                }
+                for entry in &mut entries {
+                    if entry.description.trim().is_empty()
+                        || entry.description.chars().any(char::is_control)
+                    {
+                        bail!(
+                            "{family}:{name} description must be one non-empty line without controls"
+                        );
+                    }
+                    entry.effort = entry.effort.as_deref().map(normalize_effort);
+                }
+                let efforts = entries
+                    .iter()
+                    .filter_map(|entry| entry.effort.clone())
+                    .collect();
+                let context_window = entries.iter().map(|entry| entry.context_window.get()).min();
+                parsed.insert(
+                    name,
+                    Model {
+                        efforts,
+                        context_window,
+                        entries,
+                    },
+                );
+            }
+            roster.0.insert(family, parsed);
+        }
+        Self::from_raw(roster)
+    }
+
+    pub fn entry(&self, family: &str, model: &str, effort: Option<&str>) -> Result<&RegistryEntry> {
+        self.families.get(family).and_then(|models| models.get(model))
+            .and_then(|model| model.entries.iter().find(|entry| entry.effort.as_deref() == effort))
+            .with_context(|| format!("no registry metadata for {family}:{model} effort {effort:?}; register it in ~/.niles/roster.yaml"))
     }
 
     fn from_raw(raw: RawRoster) -> Result<Self> {
@@ -82,6 +192,41 @@ impl ModelRoster {
         self.families.get(family)?.get(model)?.context_window
     }
 
+    pub(crate) fn registry_rows(
+        &self,
+        mut allows: impl FnMut(&str, &str, Option<&str>) -> Result<bool>,
+    ) -> Result<Vec<[String; 8]>> {
+        let mut rows = Vec::new();
+        for family in families::known_agent_ids() {
+            for name in self.model_names(family) {
+                let efforts = self
+                    .supported_efforts(family, name)
+                    .context("model has no effort ladder")?;
+                let pairs = if efforts.is_empty() {
+                    vec![None]
+                } else {
+                    efforts.iter().map(|effort| Some(effort.as_str())).collect()
+                };
+                for effort in pairs {
+                    if allows(family, name, effort)? {
+                        let entry = self.entry(family, name, effort)?;
+                        rows.push([
+                            family.to_owned(),
+                            name.to_owned(),
+                            effort.iter().copied().collect(),
+                            entry.tier.as_str().to_owned(),
+                            serde_json::to_string(&entry.description)?,
+                            relative_rank(entry.cost),
+                            relative_rank(entry.speed),
+                            entry.context_window.to_string(),
+                        ]);
+                    }
+                }
+            }
+        }
+        Ok(rows)
+    }
+
     pub(crate) fn rows(&self) -> Vec<[String; 3]> {
         let mut rows = Vec::new();
         for family in families::known_agent_ids() {
@@ -95,9 +240,16 @@ impl ModelRoster {
     }
 }
 
+fn relative_rank(rank: Option<NonZeroU32>) -> String {
+    match rank {
+        Some(rank) => rank.to_string(),
+        None => "unknown".to_owned(),
+    }
+}
+
 pub(crate) fn parse(body: &str) -> Result<ModelRoster> {
     let raw = crate::store::parse_yaml(body)?;
-    ModelRoster::from_raw(raw)
+    ModelRoster::from_registry(raw)
 }
 
 pub(crate) fn normalize_model(family: &str, model: &str) -> Result<String> {
@@ -143,12 +295,97 @@ fn normalize_efforts(family: &str, model: &str, efforts: Vec<String>) -> Result<
 }
 
 #[cfg(test)]
+pub(crate) const FIXTURE_REGISTRY: &str = r#"
+codex:
+  fixture:
+    - &entry {effort: med, tier: standard, description: 'bounded, "work"', cost: 2, speed: 3, context_window: 1000}
+    - {<<: *entry, effort: high, tier: frontier, context_window: 2000}
+  spare:
+    - {<<: *entry, effort: low, tier: economy, cost: null, speed: null}
+claude:
+  haiku:
+    - {<<: *entry, effort: null, tier: mechanical}
+"#;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn registry_fixture_parses_exact_pair_metadata() {
+        let roster = parse(FIXTURE_REGISTRY).unwrap();
+        assert_eq!(roster.context_window("codex", "fixture"), Some(1000));
+        let high = roster.entry("codex", "fixture", Some("high")).unwrap();
+        assert_eq!(high.context_window.get(), 2000);
+        assert!(roster.entry("codex", "fixture", Some("low")).is_err());
+        let rows = roster.registry_rows(|_, _, _| Ok(true)).unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows[0].join(","),
+            r#"codex,fixture,medium,standard,"bounded, \"work\"",2,3,1000"#
+        );
+        assert_eq!(rows[2][5..7], ["unknown", "unknown"]);
+        assert_eq!(rows[3][2], "");
+    }
+
+    #[test]
+    fn registry_fixture_rejects_invalid_entries_and_normalized_duplicates() {
+        for (from, to, cause) in [
+            ("tier: standard", "tier: unknown", "unknown variant"),
+            ("cost: 2", "cost: 0", "nonzero"),
+            ("speed: 3", "speed: 0", "nonzero"),
+            ("context_window: 1000", "context_window: 0", "nonzero"),
+            ("cost: 2", "extra: true, cost: 2", "unknown field"),
+            ("effort: med", "effort: 'bad effort'", "invalid effort"),
+            ("effort: med", "effort: high", "duplicate effort"),
+            ("effort: med", "effort: null", "without an effort"),
+            ("'bounded, \"work\"'", "''", "non-empty line"),
+            ("'bounded, \"work\"'", r#""bad\nline""#, "without controls"),
+            ("codex:", "unknown:", "unknown model family"),
+            ("  spare:", "  FIXTURE:", "after normalization"),
+            ("  spare:", "  'bad model':", "invalid codex model"),
+        ] {
+            let body = FIXTURE_REGISTRY.replace(from, to);
+            let error = parse(&body).unwrap_err().to_string();
+            assert!(error.contains(cause), "{from} => {to}: {error}");
+        }
+        assert!(parse("codex: {fixture: []}").is_err());
+    }
+
+    #[test]
+    fn registry_fixture_user_file_replaces_models_and_errors_with_path() {
+        let path = crate::test_support::temp_test_path("registry-override");
+        let roster = parse(FIXTURE_REGISTRY).unwrap();
+        assert_eq!(roster.clone().with_user_overrides(&path).unwrap(), roster);
+        std::fs::write(&path, "pi: {added: [{tier: economy, description: added, cost: 1, speed: 4, context_window: 3000}]}\ncodex: {fixture: [{effort: low, tier: mechanical, description: changed, cost: 4, speed: 1, context_window: 3000}]}").unwrap();
+        let changed = roster.clone().with_user_overrides(&path).unwrap();
+        assert!(changed.entry("codex", "fixture", Some("medium")).is_err());
+        let rows = changed.registry_rows(|_, _, _| Ok(true)).unwrap();
+        assert_eq!(
+            rows[0].join(","),
+            "codex,fixture,low,mechanical,\"changed\",4,1,3000"
+        );
+        assert!(changed.entry("codex", "spare", Some("low")).is_ok());
+        assert!(changed.entry("pi", "added", None).is_ok());
+        for body in ["codex: {fixture: [{tier: invalid}]}", "unknown: {}"] {
+            std::fs::write(&path, body).unwrap();
+            let result = roster.clone().with_user_overrides(&path);
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(error.contains(path.as_str()), "{error}");
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn embedded_roster_parses_and_matches_profiles() {
         let roster = ModelRoster::builtin().unwrap();
+        assert_eq!(roster.registry_rows(|_, _, _| Ok(true)).unwrap().len(), 75);
+        assert!(
+            roster
+                .supported_efforts("claude", "haiku")
+                .unwrap()
+                .is_empty()
+        );
         let roster_families = roster
             .families
             .keys()

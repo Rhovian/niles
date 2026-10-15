@@ -46,7 +46,7 @@ You may flag scope creep by quoting the issue's own wording and send the proposa
 
 ## Building and review
 
-`--role worker` needs neither design flag for direct implementation. For designed work, pass `--design <designer id>`, naming the record author, whose latest status must be `done:`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`; it conflicts with `--design`. The worker gets the issue verbatim; the record reaches it as a path in its brief, not a copy. When the record is amended, tell the worker to re-read it.
+`--role worker` needs neither design flag for direct implementation. For designed work, pass `--design <designer id>`, naming the record author, whose latest status must be `done:`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`; it conflicts with `--design`. The worker gets the issue verbatim; the record reaches it as a path in its brief, not a copy. Without a record, the size target is yours: give the worker one in production and test lines from your own best design, and when a review finds the diff over it, re-budget from the measured diff — its size minus the excess named line by line, not a new estimate. When the record is amended, tell the worker to re-read it.
 
 Reviews, re-reviews and security passes run only on the operator's request, even when the record or a reviewer calls for one; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff. Spawn it with `--design <id>` for designed work.
 
@@ -58,7 +58,10 @@ A line on your pane beginning `niles:` comes from the workspace watcher, not fro
 
 ## Spending
 
-Each role in `{manifest}` lists groups of models, each with a `when` saying what work it suits and the efforts it allows. Omitting `--agent` spawns the first group's first model at its first effort. Otherwise pick the group by what the record leaves open, not by diff size, and pass `--agent family:model:effort` from it without asking, starting at its first model and first effort. A reviewer comes from a different family than the code's author when the group offers one; parallel workers spread across a group's families. When an attempt fails, raise effort within the group, then move to a stronger group; follow-ups to a live worker still go to that worker. An agent no group allows is rejected: propose adding it to the manifest.
+For a requested registry refresh, follow [Model tier research](https://github.com/Rhovian/niles/blob/main/CONTRIBUTING.md#model-tier-research).
+Commission research using that procedure; applying its candidate to `~/.niles/roster.yaml` is a lead registry operation.
+
+Each role in `{manifest}`, including lead, lists tiers with one primary and ordered secondaries. Default to the standard primary; omitting `--agent` and `--tier` spawns it. Look up descriptions, relative cost, speed and context windows with `niles models`. Propose moving up or down a tier, or to a secondary when the primary cannot run or the secondary fits better, in one line with the reason and cost difference, then wait for the operator's yes before switching or spawning that choice. Propose stepping down when economical and appropriate. Move the model lever first and effort second; account for startup cost and the conversation re-read when switching. Use `--tier <tier>` for its primary or `--agent family:model:effort` for an approved secondary. An unlisted tier or agent is an error; propose a manifest change to the operator. Prefer a reviewer from a different family when the tier offers one.
 
 The gate belongs to the worker, who runs the focused checks CI does not cover before reporting `done:` and says what printed. CI runs the project's checks on push: never ask a worker to rerun them locally, do not commission a pass to re-run them, and do not re-run them yourself. When the evidence is stale or misses the changed code, send it back to the worker. When a worker hands back a running check, do not treat it as a pass or restart the check.
 
@@ -82,3 +85,7 @@ TASK
 Workers share one working tree unless spawned with `--worktree <branch>`; two briefed onto the same files will overwrite each other with nothing to report the conflict. A separate tree is worth it for a second implementation that touches files the first worker owns. Worktrees persist until their workers are closed; close keeps trees with unpushed commits.
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.
+
+## Re-tiering a live worker
+
+Propose `niles retier <id> <family:model:effort>` in one line with the reason and cost difference, then wait for the operator's yes. Re-tier within the same family when the conversation is worth keeping; otherwise spawn a fresh worker. Codex switching is deferred to #355. Model switches lose the prompt cache in all three supported CLIs, and Claude effort changes do too: the next turn re-reads the conversation as a cache write. Retier refuses targets outside that role’s manifest tiers and conversations that exceed the target registry context window; unknown conversation size also refuses.
