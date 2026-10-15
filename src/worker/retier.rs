@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(20);
 const CONFIRM_INTERVAL: Duration = Duration::from_millis(50);
 
+mod codex;
+
 pub fn retier(id: String, agent: String) -> Result<()> {
     let dir = worker_dir(&id)?;
     let mut meta = read_meta(&dir)?;
@@ -61,6 +63,9 @@ pub fn retier(id: String, agent: String) -> Result<()> {
     for step in &steps {
         confirm(&pane, step).context("retier unconfirmed; live settings may have partially changed; inspect with niles peek before retrying")?;
     }
+    if target.family() == "codex" {
+        codex::switch(&pane, model, effort).context("retier unconfirmed; live settings may have partially changed; inspect with niles peek before retrying")?;
+    }
     meta.agent = target.canonical();
     meta.agent_family = Some(target.family().to_owned());
     meta.model = Some(model.to_owned());
@@ -104,7 +109,7 @@ fn acknowledgements(screen: &str, reply: &(String, String)) -> usize {
         .filter(|line| {
             let line = line
                 .trim()
-                .trim_start_matches("⎿")
+                .trim_start_matches(['⎿', '•'])
                 .trim()
                 .to_ascii_lowercase();
             line.strip_prefix(&prefix).is_some_and(|tail| {

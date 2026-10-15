@@ -26,7 +26,11 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
             "claude:opus:low",
             "not allowed for role",
         ),
-        ("codex:gpt-5.5:high", "codex:gpt-5.5:low", "issues/355"),
+        (
+            "codex:gpt-6.1-sol:high",
+            "codex:gpt-6-astra:high",
+            "worker window not live",
+        ),
         (
             "claude:opus:high",
             "claude:opus",

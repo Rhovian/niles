@@ -257,8 +257,8 @@ pub(crate) fn switch_steps(family: &str, model: &str, effort: &str) -> Result<Ve
                 format!("Thinking level: {effort}"),
             ),
         ],
-        "codex" => bail!("Codex retier is deferred: https://github.com/Rhovian/niles/issues/355"),
-        _ => bail!("retier supports only Claude, Hermes and pi"),
+        "codex" => vec![inline("/model".into(), "Select Model".into())],
+        _ => bail!("retier supports only Claude, Codex, Hermes and pi"),
     })
 }
 

@@ -231,6 +231,9 @@ Retier sends validated same-family model and effort commands to the recorded liv
 requires an idle session and empty composer, and records the binding only after fresh
 value-specific CLI acknowledgements. Pane text is not authenticated: a malicious local process
 can forge acknowledgements. Partial or unconfirmed switches fail loudly without updating metadata.
+Codex retier navigates recognized model and reasoning picker rows, including advanced reasoning,
+and uses the session-only action. It requires a fresh acknowledgement naming both model and effort
+before recording the binding; missing choices or unfamiliar picker layouts fail without recording.
 
 ## Non-goals
 
