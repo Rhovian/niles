@@ -38,6 +38,8 @@ enum ClaudeLine {
     User {
         timestamp: Option<DateTime<Utc>>,
         message: ClaudeUserMessage,
+        #[serde(default, rename = "isCompactSummary")]
+        compact_summary: bool,
     },
     System {
         subtype: Option<String>,
@@ -125,8 +127,12 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                     }
                     (timestamp, message)
                 }
-                ClaudeLine::User { timestamp, message } => {
-                    if main_file {
+                ClaudeLine::User {
+                    timestamp,
+                    message,
+                    compact_summary,
+                } => {
+                    if main_file && !compact_summary {
                         let interrupted = message.content.as_array().is_some_and(|blocks| {
                             blocks.iter().any(|block| {
                                 block.get("type").and_then(serde_json::Value::as_str)
@@ -222,6 +228,23 @@ mod refusal_tests {
 #[cfg(test)]
 mod background_tests {
     use super::*;
+
+    #[test]
+    fn compact_summary_preserves_ended_turn_and_prompt_timestamp() {
+        let start = r#"{"type":"user","timestamp":"2026-10-13T19:00:00Z","message":{"content":"build"}}"#;
+        let ended = r#"{"type":"assistant","timestamp":"2026-10-13T19:00:35Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        let boundary = r#"{"type":"system","subtype":"compact_boundary"}"#;
+        let summary = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","isCompactSummary":true,"message":{"content":"This session is being continued from a previous conversation…"}}"#;
+        let turn = claude_session(&format!("{start}\n{ended}\n{boundary}\n{summary}\n"), &[])
+            .unwrap()
+            .turn
+            .unwrap();
+        assert!(matches!(turn.state, TurnState::Ended));
+        assert_eq!(
+            turn.started_at.unwrap().to_rfc3339(),
+            "2026-10-13T19:00:00+00:00"
+        );
+    }
 
     #[test]
     fn halcyon_notification_before_tool_result_does_not_keep_a_turn_active() {
