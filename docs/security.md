@@ -123,6 +123,13 @@ hold `status.waiting`'s and so silence the watcher's report nudges for it.
 Other `.niles` state is not universally locked. Niles does not defend its state from a process that
 already has the operator's filesystem permissions.
 
+Name-only project and window status jobs emit tmux conditionals so selection is evaluated on
+redraw. Only validated project names and numeric window indexes enter expressions; worker and
+plain-window labels stay outside them with `#` escaped, and style commas are escaped inside
+conditional branches. Each project's window-list command uses a shell-quoted literal session
+name, giving it a separate tmux job cache. These bars read membership and role metadata; the home
+header and explorer still resolve telemetry.
+
 Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
 colors and styling modifiers are rendered into tmux formats.
 

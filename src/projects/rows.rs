@@ -5,7 +5,7 @@ use super::registry::Entry;
 use crate::{
     session,
     telemetry::{SessionState, Usage},
-    tmux, worker,
+    worker,
 };
 
 pub(super) struct Row {
@@ -24,12 +24,9 @@ pub(super) enum State {
 pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     for entry in entries {
-        let session = entry.name.session()?;
         let state = if !entry.path.is_dir() {
             State::Missing
-        } else if tmux::project_session(&session)?.as_deref() != Some(entry.path.as_str())
-            || !tmux::lead_running(&session)?
-        {
+        } else if !entry.has_live_session()? {
             State::NotRunning
         } else {
             let lead = session::latest_lead(&entry.path)?;
