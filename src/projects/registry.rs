@@ -35,6 +35,16 @@ pub(super) struct Entry {
     pub path: Utf8PathBuf,
 }
 
+impl Entry {
+    pub(super) fn has_live_session(&self) -> Result<bool> {
+        let session = self.name.session()?;
+        Ok(
+            crate::tmux::project_session(&session)?.as_deref() == Some(self.path.as_str())
+                && crate::tmux::lead_running(&session)?,
+        )
+    }
+}
+
 pub(super) fn directory() -> Result<Utf8PathBuf> {
     Ok(Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?).join(".niles/projects"))
 }

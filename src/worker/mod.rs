@@ -63,3 +63,14 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
         })
         .collect()
 }
+
+/// Live worker directory identities and their recorded windows, without activity or logs.
+pub(crate) fn window_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<(String, String)>> {
+    let mut labels = Vec::new();
+    for entry in crate::store::worker_locations(workspace)? {
+        if let Some(meta) = meta::read_meta_if_exists(&entry.worker_dir)? {
+            labels.push((entry.id, meta.window));
+        }
+    }
+    Ok(labels)
+}

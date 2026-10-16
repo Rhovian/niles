@@ -23,10 +23,9 @@ pub(super) enum Role {
 /// One tmux window of a session and the agent it holds. The status bar and the explorer both read
 /// windows through this, so they can't disagree about what a window is.
 pub(super) struct AgentWindow {
-    pub index: u32,
     pub name: String,
     pub role: Role,
-    /// Labelled by role alone and never highlighted; each reader adds its own context.
+    /// Labelled by role alone; each reader adds its own context.
     pub segment: Segment,
 }
 
@@ -87,13 +86,12 @@ pub(super) fn session_agents(
             } else {
                 (Role::Plain, None, None, None)
             };
-            let label = match &role {
-                Role::Lead => "lead".to_owned(),
-                Role::Worker(id, _) => id.clone(),
-                Role::Plain => window.name.clone(),
+            let worker_id = match &role {
+                Role::Worker(id, _) => Some(id.as_str()),
+                Role::Lead | Role::Plain => None,
             };
+            let label = window_label(&window.name, project.is_some(), worker_id);
             Ok(AgentWindow {
-                index: window.index,
                 name: window.name,
                 role,
                 segment: Segment {
@@ -101,12 +99,46 @@ pub(super) fn session_agents(
                     state,
                     tokens,
                     age,
-                    highlighted: false,
                 },
             })
         })
         .collect::<Result<_>>()?;
     Ok(Some(SessionAgents { windows, lost }))
+}
+
+pub(super) fn labels(
+    session: &SessionName,
+    project: Option<&Utf8Path>,
+) -> Result<Vec<(u32, String)>> {
+    let Some(windows) = tmux::windows(session)? else {
+        return Ok(Vec::new());
+    };
+    let workers = match project {
+        Some(path) => worker::window_labels(path)?,
+        None => Vec::new(),
+    };
+    Ok(windows
+        .into_iter()
+        .map(|window| {
+            let recorded = format!("{session}:{}", window.name);
+            let worker = workers.iter().find(|(_, target)| *target == recorded);
+            let label = window_label(
+                &window.name,
+                project.is_some(),
+                worker.map(|(id, _)| id.as_str()),
+            );
+            (window.index, label)
+        })
+        .collect())
+}
+
+fn window_label(name: &str, project: bool, worker: Option<&str>) -> String {
+    match (project && name == LEAD_WINDOW, worker) {
+        (true, _) => "lead",
+        (false, Some(id)) => id,
+        (false, None) => name,
+    }
+    .to_owned()
 }
 
 fn usage_fields(state: SessionState, usage: Option<&Usage>) -> (Option<theme::State>, Option<u64>) {

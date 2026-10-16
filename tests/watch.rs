@@ -207,7 +207,7 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     // The flag came after the worker id here too, so the message that was typed is the message.
     let log = fixture.env.tmux_log();
     assert!(
-        log.contains("send-keys -t =niles-test-session:=niles-impl -l again"),
+        log.contains("send-keys -t =niles-test-session:=niles-impl -l \x1b[200~again"),
         "the flag must not reach the worker as message text:\n{log}"
     );
 
@@ -315,7 +315,7 @@ fn a_chatty_tmux_never_reaches_the_lead_streams() {
     // because nothing ran.
     let log = fixture.env.tmux_log();
     assert!(
-        log.contains("send-keys -t =niles-test-session:=niles-impl -l continue"),
+        log.contains("send-keys -t =niles-test-session:=niles-impl -l \x1b[200~continue"),
         "{log}"
     );
 }

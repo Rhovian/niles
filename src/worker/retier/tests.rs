@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn retier_history_precedes_switch_and_records_success() {
+    let dir = crate::test_support::temp_test_path("retier-history");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("retier.log");
+    record_retier(&dir, "worker", "old", "new\nagent", || {
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+        Ok(())
+    })
+    .unwrap();
+    let entries: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["outcome"], "attempt");
+    assert_eq!(entries[1]["outcome"], "succeeded");
+    assert_eq!(entries[0]["attempt"], entries[1]["attempt"]);
+    for entry in entries {
+        assert_eq!(entry["worker"], "worker");
+        assert_eq!(entry["from"], "old");
+        assert_eq!(entry["to"], "new\nagent");
+        chrono::DateTime::parse_from_rfc3339(entry["time"].as_str().unwrap()).unwrap();
+    }
+    std::fs::remove_file(&log).unwrap();
+    std::fs::create_dir(&log).unwrap();
+    assert!(record_retier(&dir, "worker", "old", "new", || panic!("unlogged switch")).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn retier_acknowledgements_require_applied_values_and_session_scope() {
     let steps = agents::switch_steps("claude", "opus", "low").unwrap();
     let reply = &steps[2].acknowledgement;

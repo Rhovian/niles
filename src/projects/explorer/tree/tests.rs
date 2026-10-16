@@ -27,16 +27,14 @@ fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
     Project { row, agents }
 }
 
-fn window(index: u32, name: &str, role: Role, label: &str) -> AgentWindow {
+fn window(name: &str, role: Role, label: &str) -> AgentWindow {
     let segment = Segment {
         label: label.into(),
         state: Some(ThemeState::Running),
         tokens: None,
         age: None,
-        highlighted: false,
     };
     AgentWindow {
-        index,
         name: name.into(),
         role,
         segment,
@@ -46,9 +44,8 @@ fn window(index: u32, name: &str, role: Role, label: &str) -> AgentWindow {
 fn projects() -> Vec<Project> {
     let agents = SessionAgents {
         windows: vec![
-            window(0, "niles", Role::Lead, "lead"),
+            window("niles", Role::Lead, "lead"),
             window(
-                1,
                 "parse",
                 Role::Worker("parse".into(), WorkerRole::Worker),
                 "parse",
@@ -122,7 +119,7 @@ fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
 fn cycling_projects_wraps_over_running_project_rows() {
     let mut tree = tree();
     let lead = SessionAgents {
-        windows: vec![window(0, "niles", Role::Lead, "lead")],
+        windows: vec![window("niles", Role::Lead, "lead")],
         lost: Vec::new(),
     };
     let mut projects = projects();
@@ -251,7 +248,7 @@ fn panels_keep_selection_and_cycle_only_to_windows() {
 #[test]
 fn waiting_project_shows_warning_and_spinner() {
     let agents = SessionAgents {
-        windows: vec![window(0, "niles", Role::Lead, "lead")],
+        windows: vec![window("niles", Role::Lead, "lead")],
         lost: Vec::new(),
     };
     let waiting_none = project("wait", State::Waiting(None), Some(agents));
@@ -280,7 +277,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
     let reviewer = Role::Worker("review-parse".into(), WorkerRole::Reviewer);
     agents
         .windows
-        .push(window(2, "review-parse", reviewer, "review-parse"));
+        .push(window("review-parse", reviewer, "review-parse"));
     agents.lost.push(("gone".into(), WorkerRole::Reviewer));
     agents.windows[0].segment.age = Some("3m".into());
     let web = SessionAgents {
