@@ -1,9 +1,10 @@
 use super::{
-    meta::{read_meta, write_meta},
+    meta::{WorkerMeta, read_meta, write_meta},
     worker_dir,
 };
 use crate::{agents, config, tmux, util, workspace_manifest};
 use anyhow::{Context, Result, bail, ensure};
+use camino::Utf8Path;
 use std::time::{Duration, Instant};
 
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(20);
@@ -14,9 +15,46 @@ mod codex;
 pub fn retier(id: String, agent: String) -> Result<()> {
     let dir = worker_dir(&id)?;
     let mut meta = read_meta(&dir)?;
+    let from = meta.agent.clone();
+    record_retier(&dir, &id, &from, &agent, || {
+        apply_retier(&id, &agent, &dir, &mut meta)
+    })?;
+    println!("retiered: {id} {}", meta.agent);
+    Ok(())
+}
+
+fn record_retier(
+    dir: &Utf8Path,
+    id: &str,
+    from: &str,
+    to: &str,
+    apply: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let log = dir.join("retier.log");
+    let mut entry = serde_json::json!({
+        "attempt": uuid::Uuid::new_v4().to_string(), "worker": id, "from": from, "to": to,
+        "time": chrono::Utc::now(), "outcome": "attempt",
+    });
+    util::append_line(&log, &entry.to_string())?;
+    let result = apply();
+    entry["time"] = serde_json::json!(chrono::Utc::now());
+    entry["outcome"] = serde_json::json!(if result.is_ok() {
+        "succeeded"
+    } else {
+        "failed"
+    });
+    if let Err(error) = &result {
+        entry["error"] = serde_json::json!(format!("{error:#}"));
+    }
+    util::append_line(&log, &entry.to_string())
+        .with_context(|| format!("retier result {result:?}; could not record outcome"))?;
+    result
+}
+
+fn apply_retier(id: &str, agent: &str, dir: &Utf8Path, meta: &mut WorkerMeta) -> Result<()> {
     let models = config::spec::load_project_config_from(&meta.project)?.models;
     let current = agents::AgentSpec::parse(&meta.agent, &models)?;
-    let target = agents::AgentSpec::parse(&agent, &models)?;
+    let target = agents::AgentSpec::parse(agent, &models)?;
     ensure!(current.family() == target.family(), "cannot change family");
     agents::validate_model(&target, &models)?;
     let model = target.model().context("expected family:model:effort")?;
@@ -70,8 +108,7 @@ pub fn retier(id: String, agent: String) -> Result<()> {
     meta.agent_family = Some(target.family().to_owned());
     meta.model = Some(model.to_owned());
     meta.effort = Some(effort.to_owned());
-    write_meta(&dir, &meta)?;
-    println!("retiered: {id} {}", meta.agent);
+    write_meta(dir, meta)?;
     Ok(())
 }
 

@@ -53,6 +53,14 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
         let output = env.run(&["retier", "worker", target]);
         assert_failure_contains("retier", &output, error);
         assert_eq!(fs::read(&path).unwrap(), before);
+        let history = fs::read_to_string(dir.join("retier.log")).unwrap();
+        let entry: serde_json::Value =
+            serde_json::from_str(history.lines().last().unwrap()).unwrap();
+        assert_eq!(entry["worker"], "worker");
+        assert_eq!(entry["from"], current);
+        assert_eq!(entry["to"], target);
+        assert_eq!(entry["outcome"], "failed");
+        assert!(entry["error"].as_str().unwrap().contains(error));
     }
     assert!(!env.tmux_log().contains("send-keys"));
 }
