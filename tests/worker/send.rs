@@ -101,7 +101,8 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         "set-option -w -t {target} @niles-worker-id auth-fix"
     )));
     assert!(log.contains(&format!("capture-pane -p -t {target} -S -7")));
-    assert!(log.contains(&format!("send-keys -t {target} -l continue please")));
+    assert!(log.contains(" -- continue please"));
+    assert!(log.contains(&format!("paste-buffer -t {target} -b niles-send-")));
     assert!(log.contains(&format!("send-keys -t {target} C-m")));
 }
 
@@ -168,9 +169,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     );
     for message in ["  stdin first\nstdin second\n", "--wait"] {
         assert!(
-            log.contains(&format!(
-                "send-keys -t =niles-test-session:=niles-worker -l {message}"
-            )),
+            log.contains(&format!(" -- {message}")),
             "message {message:?} was not delivered verbatim:\n{log}"
         );
     }
