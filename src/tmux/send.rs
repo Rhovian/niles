@@ -58,31 +58,12 @@ impl Pane for TmuxTarget {
         if line.contains('\x1b') {
             bail!("message contains an escape character; cannot deliver it as a bracketed paste");
         }
-        let enabled = super::query(&[
-            "display-message",
-            "-p",
-            "-t",
-            self.as_str(),
-            "#{bracket_paste_flag}",
-        ])?;
-        if enabled.trim() != "1" {
-            bail!("{self} has not enabled bracketed paste; message was not sent");
-        }
-        let buffer = format!("niles-send-{}", uuid::Uuid::new_v4());
-        super::run(&["set-buffer", "-b", &buffer, "--", line])?;
-        // tmux 3.6a cmd-paste-buffer.c owns framing and LF preservation (-p, -r):
-        // https://github.com/tmux/tmux/blob/3.6a/cmd-paste-buffer.c
-        // send-keys -l has no paste framing, so a TUI can lose earlier input bursts.
-        super::run(&[
-            "paste-buffer",
-            "-t",
-            self.as_str(),
-            "-b",
-            &buffer,
-            "-d",
-            "-p",
-            "-r",
-        ])
+        // tmux 3.4 cmd-paste-buffer.c adds framing with -p only when the pane requests it;
+        // format.c exposes no bracket_paste_flag, so that state cannot be checked there.
+        // Frame explicitly to avoid an unframed fallback on every supported tmux version.
+        // https://github.com/tmux/tmux/blob/3.4/cmd-paste-buffer.c
+        let paste = format!("\x1b[200~{line}\x1b[201~");
+        super::run(&["send-keys", "-t", self.as_str(), "-l", &paste])
     }
 
     fn send_submit_key(&self, keys: &[&str]) -> Result<()> {

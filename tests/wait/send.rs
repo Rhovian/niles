@@ -87,8 +87,9 @@ fn send_exits_copy_mode_and_delivers_the_message_once() {
 fn receiving_worker(lab: &Lab, status: &[u8]) -> PathBuf {
     let ready = lab.workspace.join("ready");
     // Literal newlines belong to the paste; only the submit key completes the message.
+    // Leave paste mode unadvertised: framing must not depend on newer tmux format fields.
     let command = format!(
-        "stty -icanon -icrnl; printf '\\033[?2004h'; touch {}; perl -e '$/ = \"\\r\"; print scalar <STDIN>' > {}; \
+        "stty -icanon -icrnl; touch {}; perl -e '$/ = \"\\r\"; print scalar <STDIN>' > {}; \
          printf 'complete\\n'; exec sleep 600",
         ready.display(),
         lab.workspace.join("delivered").display()
@@ -104,10 +105,8 @@ fn receiving_worker(lab: &Lab, status: &[u8]) -> PathBuf {
 #[test]
 fn send_fails_when_the_submit_key_leaves_the_pane_unchanged() {
     let lab = Lab::start("niles-send-swallowed");
-    lab.server.new_window_running(
-        "niles-auth-fix",
-        Some("printf '\\033[?2004h'; cat > /dev/null"),
-    );
+    lab.server
+        .new_window_running("niles-auth-fix", Some("cat > /dev/null"));
     lab.worker("auth-fix", None, b"");
 
     let send = lab
@@ -180,25 +179,6 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
             .run(&["kill-window", "-t", "niles:niles-auth-fix"]);
         fs::remove_file(lab.workspace.join("ready")).unwrap();
     }
-}
-
-#[test]
-fn send_refuses_a_pane_without_bracketed_paste() {
-    let lab = Lab::start("niles-send-no-paste");
-    lab.server
-        .new_window_running("niles-auth-fix", Some("cat > /dev/null"));
-    lab.worker("auth-fix", None, b"");
-    let sent = lab
-        .niles(&["send", "auth-fix", "follow-up"])
-        .output()
-        .unwrap();
-    assert!(!sent.status.success());
-    assert!(!stdout_of(&sent).contains("sent:"));
-    assert!(
-        stderr_of(&sent).contains("bracketed paste"),
-        "{}",
-        stderr_of(&sent)
-    );
 }
 
 #[test]

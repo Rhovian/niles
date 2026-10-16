@@ -16,7 +16,6 @@ const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message)
-    if [ "$5" = '#{bracket_paste_flag}' ]; then printf '1\n'; exit 0; fi
     if [ "$5" = '#{pane_dead}' ]; then
       if [ "${TMUX_PANE_MISSING:-}" = 1 ]; then printf "can't find pane\n" >&2; exit 1; fi
       if [ "${TMUX_PANE_EMPTY:-}" = 1 ]; then printf '\n'; exit 0; fi
@@ -60,17 +59,16 @@ case "$1" in
     fi
     exit 0
     ;;
-  set-buffer) printf '%s' "$5" > "$TMUX_LOG.buffer-$3"; exit 0 ;;
-  paste-buffer)
-    if [ -n "${TMUX_PANE_FILE:-}" ]; then
-      { printf 'composer: '; cat "$TMUX_LOG.buffer-$5"; printf '\n'; } >> "$TMUX_PANE_FILE"
-    fi
-    rm "$TMUX_LOG.buffer-$5"
-    exit 0 ;;
   send-keys)
-    if [ -n "${TMUX_PANE_FILE:-}" ]; then printf 'submitted\n' >> "$TMUX_PANE_FILE"; fi
-    exit 0 ;;
-
+    if [ -n "${TMUX_PANE_FILE:-}" ]; then
+      if [ "$4" = "-l" ]; then
+        printf 'composer: %s\n' "$5" >> "$TMUX_PANE_FILE"
+      else
+        printf 'submitted\n' >> "$TMUX_PANE_FILE"
+      fi
+    fi
+    exit 0
+    ;;
   *) exit 0 ;;
 esac
 "#;
