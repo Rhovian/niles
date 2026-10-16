@@ -147,8 +147,11 @@ terminal-control risks and semantic prompt-injection risks.
 true and limits the escaped rendered line to 4,096 bytes plus the `... (truncated)` suffix. Worker
 IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
 worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
-tmux uses literal-key mode. During a new worker's first 30 seconds, while its status log is still
-empty, the watcher recognizes specific Claude and Codex workspace-trust prompts displaying the
+tmux uses a uniquely named buffer and bracketed paste, preserving linefeeds. Niles refuses text
+containing ESC or a pane that has not enabled bracketed paste, so message bytes cannot end the
+paste early or fall back to unframed keystrokes. The buffer is deleted after pasting; a failed
+paste can leave its named buffer in the tmux server. During a new worker's first 30 seconds, while
+its status log is still empty, the watcher recognizes specific Claude and Codex workspace-trust prompts displaying the
 exact workspace, appends a `blocked:` status, and never accepts the prompt or sends keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
@@ -188,7 +191,7 @@ strings, `niles report` prints a report body, and `niles peek` prints tmux captu
 universal sanitizer. See [`src/worker/list.rs`](../src/worker/list.rs),
 [`src/worker/report.rs`](../src/worker/report.rs), and
 [`src/worker/pane.rs`](../src/worker/pane.rs). Escaping terminal control characters, excluding
-status content from nudges, and using tmux literal-key mode do not establish semantic authorization:
+status content from nudges, and using tmux bracketed paste do not establish semantic authorization:
 ordinary text can still instruct or mislead an agent or operator. Startup trust-prompt detection is
 bounded and recognizes only known exact-workspace Claude and Codex prompt shapes; it is not general
 prompt or injection detection.

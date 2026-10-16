@@ -16,7 +16,9 @@ use std::{fs, path::PathBuf, process::Output};
 const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
-  display-message) printf 'niles-test-session\n'; exit 0 ;;
+  display-message)
+    if [ "$5" = '#{bracket_paste_flag}' ]; then printf '1\n'; else printf 'niles-test-session\n'; fi
+    exit 0 ;;
   list-windows)
     if [ "$2" = "-a" ]; then
       exit 0
@@ -26,20 +28,21 @@ case "$1" in
     fi
     exit 0
     ;;
+  set-buffer) printf '%s' "$5" > "$TMUX_LOG.buffer-$3"; exit 0 ;;
+  paste-buffer)
+    printf 'tmux chatter on a call nobody reads\n'
+    { printf 'composer: '; cat "$TMUX_LOG.buffer-$5"; printf '\n'; } >> "$TMUX_PANE_FILE"
+    rm "$TMUX_LOG.buffer-$5"
+    # A worker that reports while the message is still being typed, which is the window between
+    # reading the check-in baseline and arming it.
+    if [ -n "${TMUX_WORKER_STATUS:-}" ]; then
+      printf 'done: reported while the send was in flight\n' >> "$TMUX_WORKER_STATUS"
+    fi
+    exit 0 ;;
   send-keys)
     printf 'tmux chatter on a call nobody reads\n'
-    if [ "$4" = "-l" ]; then
-      printf 'composer: %s\n' "$5" >> "$TMUX_PANE_FILE"
-      # A worker that reports while the message is still being typed, which is the window between
-      # reading the check-in baseline and arming it.
-      if [ -n "${TMUX_WORKER_STATUS:-}" ]; then
-        printf 'done: reported while the send was in flight\n' >> "$TMUX_WORKER_STATUS"
-      fi
-    else
-      printf 'submitted\n' >> "$TMUX_PANE_FILE"
-    fi
-    exit 0
-    ;;
+    printf 'submitted\n' >> "$TMUX_PANE_FILE"
+    exit 0 ;;
   capture-pane)
     if [ -f "$TMUX_PANE_FILE" ]; then cat "$TMUX_PANE_FILE"; fi
     exit 0
@@ -207,7 +210,7 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     // The flag came after the worker id here too, so the message that was typed is the message.
     let log = fixture.env.tmux_log();
     assert!(
-        log.contains("send-keys -t =niles-test-session:=niles-impl -l again"),
+        log.contains(" -- again"),
         "the flag must not reach the worker as message text:\n{log}"
     );
 
@@ -314,10 +317,7 @@ fn a_chatty_tmux_never_reaches_the_lead_streams() {
     // The message really was typed into the worker's pane, so the chatter test is not passing
     // because nothing ran.
     let log = fixture.env.tmux_log();
-    assert!(
-        log.contains("send-keys -t =niles-test-session:=niles-impl -l continue"),
-        "{log}"
-    );
+    assert!(log.contains(" -- continue"), "{log}");
 }
 
 /// An unreadable `--checkin` is refused before anything is dispatched, rather than silently
