@@ -72,7 +72,7 @@ fn apply_retier(id: &str, agent: &str, dir: &Utf8Path, meta: &mut WorkerMeta) ->
         .context_window
         .get();
     ensure!(
-        matches!(super::resolve::window_state(&meta), tmux::TargetState::Live),
+        matches!(super::resolve::window_state(meta), tmux::TargetState::Live),
         "worker window not live"
     );
     let worker = super::worker_snapshot(&util::current_dir_utf8()?)?
