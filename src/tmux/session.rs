@@ -75,8 +75,14 @@ pub(crate) fn windows(session: &SessionName) -> Result<Option<Vec<Window>>> {
 }
 
 pub(crate) fn configure_status(session: &SessionName, theme: &Theme) -> Result<()> {
-    let projects = status_command("projects #{session_name}")?;
-    let sessions = status_command("sessions #{session_name} #{window_index}")?;
+    let projects = status_command("projects")?;
+    // A literal project argument gives each project's window list its own job cache.
+    // tmux 3.8 keys jobs by unexpanded command: format.c:394-457.
+    // https://github.com/tmux/tmux/blob/3.8/format.c#L394
+    let sessions = status_command(&format!(
+        "sessions {}",
+        shell_quote(session.as_str()).replace('#', "##")
+    ))?;
     let bar_style = theme.style(StyleKey::Bar).tmux_option();
     set_options(
         session,
