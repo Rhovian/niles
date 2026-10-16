@@ -147,12 +147,12 @@ terminal-control risks and semantic prompt-injection risks.
 true and limits the escaped rendered line to 4,096 bytes plus the `... (truncated)` suffix. Worker
 IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
 worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
-tmux uses a uniquely named buffer and bracketed paste, preserving linefeeds. Niles refuses text
-containing ESC or a pane that has not enabled bracketed paste, so message bytes cannot end the
-paste early or fall back to unframed keystrokes. The buffer is deleted after pasting; a failed
-paste can leave its named buffer in the tmux server. During a new worker's first 30 seconds, while
-its status log is still empty, the watcher recognizes specific Claude and Codex workspace-trust prompts displaying the
-exact workspace, appends a `blocked:` status, and never accepts the prompt or sends keys. See
+tmux uses literal-key mode with explicit bracketed-paste delimiters. Niles refuses text containing
+ESC so message bytes cannot end the paste early. Framing does not depend on the pane advertising
+paste mode or newer tmux format fields. During a new worker's first 30 seconds, while its status
+log is still empty, the watcher recognizes specific Claude and Codex workspace-trust prompts
+displaying the exact workspace, appends a `blocked:` status, and never accepts the prompt or sends
+keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
 Before sending a lead nudge, the watcher captures the visible lead pane and queries its cursor.
@@ -195,8 +195,9 @@ status content from nudges, and using tmux bracketed paste do not establish sema
 ordinary text can still instruct or mislead an agent or operator. Startup trust-prompt detection is
 bounded and recognizes only known exact-workspace Claude and Codex prompt shapes; it is not general
 prompt or injection detection.
-Composer recognition depends on the CLIs' current screen layout and styling. A keystroke between
-capture and submit can still merge with a nudge.
+Message delivery assumes the receiving composer understands bracketed paste; tmux mode
+advertisement is not checked. Composer recognition depends on the CLIs' current screen layout and
+styling. A keystroke between capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
 
