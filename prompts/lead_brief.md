@@ -88,4 +88,6 @@ Delegation goes through niles. Host-native subagents cannot be watched, steered,
 
 ## Re-tiering a live worker
 
+When a live worker hands back and its next message needs a different tier than it runs on, such as a mechanical fix after heavy work or a problem its tier is failing at, propose a retier before you send it.
+
 Propose `niles retier <id> <family:model:effort>` in one line with the reason and cost difference, then wait for the operator's yes. Re-tier within the same family when the conversation is worth keeping; otherwise spawn a fresh worker. Codex switching is deferred to #355. Model switches lose the prompt cache in all three supported CLIs, and Claude effort changes do too: the next turn re-reads the conversation as a cache write. Retier refuses targets outside that role’s manifest tiers and conversations that exceed the target registry context window; unknown conversation size also refuses.
