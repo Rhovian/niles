@@ -17,11 +17,13 @@ pub struct Cli {
 pub enum StatusLine {
     Home,
     Projects {
-        session_name: String,
+        /// Accepted for compatibility; tmux evaluates selection at redraw time.
+        session_name: Option<String>,
     },
     Sessions {
         session_name: String,
-        window_index: u32,
+        /// Accepted for compatibility; tmux evaluates selection at redraw time.
+        window_index: Option<u32>,
     },
 }
 

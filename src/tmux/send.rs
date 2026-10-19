@@ -55,7 +55,15 @@ impl Pane for TmuxTarget {
     }
 
     fn paste_literal(&self, line: &str) -> Result<()> {
-        super::run(&["send-keys", "-t", self.as_str(), "-l", line])
+        if line.contains('\x1b') {
+            bail!("message contains an escape character; cannot deliver it as a bracketed paste");
+        }
+        // tmux 3.4 cmd-paste-buffer.c adds framing with -p only when the pane requests it;
+        // format.c exposes no bracket_paste_flag, so that state cannot be checked there.
+        // Frame explicitly to avoid an unframed fallback on every supported tmux version.
+        // https://github.com/tmux/tmux/blob/3.4/cmd-paste-buffer.c
+        let paste = format!("\x1b[200~{line}\x1b[201~");
+        super::run(&["send-keys", "-t", self.as_str(), "-l", &paste])
     }
 
     fn send_submit_key(&self, keys: &[&str]) -> Result<()> {
@@ -63,9 +71,9 @@ impl Pane for TmuxTarget {
     }
 }
 
-/// Sends a message to a pane and confirms it left the composer.
+/// Pastes a message to a pane and watches for a submit acknowledgement.
 ///
-/// The text and the submit key are two separate tmux calls, and a TUI still ingesting a few KB of
+/// The paste and the submit key are separate tmux calls, and a TUI still ingesting a few KB of
 /// pasted text swallows a `C-m` that arrives mid-reflow: the message then sits unsent in the
 /// composer while niles reports success, which is the one direction this must never fail in. So
 /// the pane is watched rather than timed. The paste is given until it renders and goes quiet

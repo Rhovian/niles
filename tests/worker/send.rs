@@ -101,7 +101,9 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         "set-option -w -t {target} @niles-worker-id auth-fix"
     )));
     assert!(log.contains(&format!("capture-pane -p -t {target} -S -7")));
-    assert!(log.contains(&format!("send-keys -t {target} -l continue please")));
+    assert!(log.contains(&format!(
+        "send-keys -t {target} -l \x1b[200~continue please"
+    )));
     assert!(log.contains(&format!("send-keys -t {target} C-m")));
 }
 
@@ -131,7 +133,9 @@ fn send_accepts_stdin_and_literal_flag_text() {
     let stdin = child.wait_with_output().unwrap();
     assert_command_success("send stdin", &stdin);
     let delivered = fs::read_to_string(&pane_file).unwrap();
-    assert!(delivered.starts_with("composer:   stdin first\nstdin second\n\n\n## Reporting"));
+    assert!(
+        delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\n\n## Reporting")
+    );
     assert!(delivered.ends_with("\nsubmitted\n"));
 
     let literal = env
@@ -169,7 +173,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     for message in ["  stdin first\nstdin second\n", "--wait"] {
         assert!(
             log.contains(&format!(
-                "send-keys -t =niles-test-session:=niles-worker -l {message}"
+                "send-keys -t =niles-test-session:=niles-worker -l \x1b[200~{message}"
             )),
             "message {message:?} was not delivered verbatim:\n{log}"
         );

@@ -123,6 +123,13 @@ hold `status.waiting`'s and so silence the watcher's report nudges for it.
 Other `.niles` state is not universally locked. Niles does not defend its state from a process that
 already has the operator's filesystem permissions.
 
+Name-only project and window status jobs emit tmux conditionals so selection is evaluated on
+redraw. Only validated project names and numeric window indexes enter expressions; worker and
+plain-window labels stay outside them with `#` escaped, and style commas are escaped inside
+conditional branches. Each project's window-list command uses a shell-quoted literal session
+name, giving it a separate tmux job cache. These bars read membership and role metadata; the home
+header and explorer still resolve telemetry.
+
 Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
 colors and styling modifiers are rendered into tmux formats.
 
@@ -140,9 +147,12 @@ terminal-control risks and semantic prompt-injection risks.
 true and limits the escaped rendered line to 4,096 bytes plus the `... (truncated)` suffix. Worker
 IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
 worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
-tmux uses literal-key mode. During a new worker's first 30 seconds, while its status log is still
-empty, the watcher recognizes specific Claude and Codex workspace-trust prompts displaying the
-exact workspace, appends a `blocked:` status, and never accepts the prompt or sends keys. See
+tmux uses literal-key mode with explicit bracketed-paste delimiters. Niles refuses text containing
+ESC so message bytes cannot end the paste early. Framing does not depend on the pane advertising
+paste mode or newer tmux format fields. During a new worker's first 30 seconds, while its status
+log is still empty, the watcher recognizes specific Claude and Codex workspace-trust prompts
+displaying the exact workspace, appends a `blocked:` status, and never accepts the prompt or sends
+keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
 Before sending a lead nudge, the watcher captures the visible lead pane and queries its cursor.
@@ -181,12 +191,13 @@ strings, `niles report` prints a report body, and `niles peek` prints tmux captu
 universal sanitizer. See [`src/worker/list.rs`](../src/worker/list.rs),
 [`src/worker/report.rs`](../src/worker/report.rs), and
 [`src/worker/pane.rs`](../src/worker/pane.rs). Escaping terminal control characters, excluding
-status content from nudges, and using tmux literal-key mode do not establish semantic authorization:
+status content from nudges, and using tmux bracketed paste do not establish semantic authorization:
 ordinary text can still instruct or mislead an agent or operator. Startup trust-prompt detection is
 bounded and recognizes only known exact-workspace Claude and Codex prompt shapes; it is not general
 prompt or injection detection.
-Composer recognition depends on the CLIs' current screen layout and styling. A keystroke between
-capture and submit can still merge with a nudge.
+Message delivery assumes the receiving composer understands bracketed paste; tmux mode
+advertisement is not checked. Composer recognition depends on the CLIs' current screen layout and
+styling. A keystroke between capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
 
@@ -231,6 +242,9 @@ Retier sends validated same-family model and effort commands to the recorded liv
 requires an idle session and empty composer, and records the binding only after fresh
 value-specific CLI acknowledgements. Pane text is not authenticated: a malicious local process
 can forge acknowledgements. Partial or unconfirmed switches fail loudly without updating metadata.
+Codex retier navigates recognized model and reasoning picker rows, including advanced reasoning,
+and uses the session-only action. It requires a fresh acknowledgement naming both model and effort
+before recording the binding; missing choices or unfamiliar picker layouts fail without recording.
 
 ## Non-goals
 

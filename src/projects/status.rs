@@ -1,11 +1,6 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 
-use super::{
-    panels, registry,
-    rows::{self, Row, State},
-    windows,
-};
+use super::{panels, registry, rows, windows};
 use crate::{
     cli::StatusLine,
     telemetry::Usage,
@@ -20,30 +15,22 @@ pub(crate) struct Segment {
     pub state: Option<theme::State>,
     pub tokens: Option<u64>,
     pub age: Option<String>,
-    pub highlighted: bool,
 }
 
 pub(crate) fn run(line: StatusLine) -> Result<String> {
     let theme = Theme::load()?;
-    let now = Utc::now();
-    let segments = match line {
+    match line {
         StatusLine::Home => {
             let entries = registry::entries()?;
             let mut sessions = Vec::new();
             for entry in &entries {
                 sessions.extend(panels::open_sessions(entry)?);
             }
-            return Ok(home(entries.len(), &sessions, &theme));
+            Ok(home(entries.len(), &sessions, &theme))
         }
-        StatusLine::Projects { session_name } => {
-            from_rows(&rows::collect(registry::entries()?)?, &session_name)
-        }
-        StatusLine::Sessions {
-            session_name,
-            window_index,
-        } => session_segments(&session_name, window_index, now)?,
-    };
-    Ok(render(&segments, &theme))
+        StatusLine::Projects { .. } => project_line(&theme),
+        StatusLine::Sessions { session_name, .. } => session_line(&session_name, &theme),
+    }
 }
 
 /// The home session's header: projects, agents, lost agents, and their total tokens.
@@ -82,57 +69,44 @@ fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
         .map(|entry| entry.path))
 }
 
-fn from_rows(rows: &[Row], session_name: &str) -> Vec<Segment> {
-    rows.iter()
-        .filter_map(|row| {
-            if matches!(row.state, State::Missing | State::NotRunning) {
-                return None;
-            }
-            Some(Segment {
-                highlighted: row.entry.name.as_str() == session_name,
-                label: row.entry.name.as_str().to_owned(),
-                state: None,
-                tokens: None,
-                age: None,
-            })
-        })
-        .collect()
+fn project_line(theme: &Theme) -> Result<String> {
+    let mut labels = Vec::new();
+    for entry in registry::entries()? {
+        if entry.path.is_dir() && entry.has_live_session()? {
+            let name = entry.name.as_str();
+            labels.push(selected_label(
+                name,
+                &format!("#{{==:#{{session_name}},{name}}}"),
+                theme,
+            ));
+        }
+    }
+    Ok(labels.join(" │ "))
 }
 
-fn session_segments(name: &str, active_index: u32, now: DateTime<Utc>) -> Result<Vec<Segment>> {
-    let session_name = tmux::SessionName::new(name)?;
-    let project = project(session_name.as_str())?;
-    Ok(
-        windows::session_agents(&session_name, project.as_deref(), now)?
-            .into_iter()
-            .flat_map(|agents| agents.windows)
-            .map(|window| Segment {
-                label: format!("{}:{}", window.index, window.segment.label),
-                highlighted: window.index == active_index,
-                ..window.segment
-            })
-            .collect(),
-    )
-}
-
-pub(crate) fn render(segments: &[Segment], theme: &Theme) -> String {
-    segments
-        .iter()
-        .map(|segment| {
-            let base = if segment.highlighted {
-                theme.style(StyleKey::Pill).tmux()
-            } else {
-                String::new()
-            };
-            let text = segment.label.replace('#', "##");
-            if segment.highlighted {
-                format!("{base}{text}#[default]")
-            } else {
-                text
-            }
+fn session_line(name: &str, theme: &Theme) -> Result<String> {
+    let session = tmux::SessionName::new(name)?;
+    let project = project(session.as_str())?;
+    Ok(windows::labels(&session, project.as_deref())?
+        .into_iter()
+        .map(|(index, label)| {
+            selected_label(
+                &format!("{index}:{label}"),
+                &format!("#{{==:#{{window_index}},{index}}}"),
+                theme,
+            )
         })
         .collect::<Vec<_>>()
-        .join(" │ ")
+        .join(" │ "))
+}
+
+// tmux 3.8 format.c:457 expands cached job output on every redraw; selection must
+// remain a format, not a value captured by the asynchronous job.
+// https://github.com/tmux/tmux/blob/3.8/format.c#L457
+fn selected_label(label: &str, condition: &str, theme: &Theme) -> String {
+    let pill = theme.style(StyleKey::Pill).tmux().replace(',', "#,");
+    let text = label.replace('#', "##");
+    format!("#{{?{condition},{pill},}}{text}#[default]")
 }
 
 #[cfg(test)]
@@ -140,40 +114,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_segments_render_lead_worker_plain_and_active() {
+    fn selection_is_a_format_and_labels_are_literal() {
         let theme = Theme::parse(None).unwrap();
-        let pill = theme.style(StyleKey::Pill).tmux();
-        let segment = |label: &str, state, tokens, age: Option<&str>, highlighted| Segment {
-            label: label.into(),
-            state,
-            tokens,
-            age: age.map(str::to_owned),
-            highlighted,
-        };
+        let pill = theme.style(StyleKey::Pill).tmux().replace(',', "#,");
         assert_eq!(
-            render(
-                &[
-                    segment(
-                        "0:lead",
-                        Some(theme::State::Waiting),
-                        Some(12_000),
-                        None,
-                        false
-                    ),
-                    segment(
-                        "1:w#parse",
-                        Some(theme::State::Running),
-                        Some(840_000),
-                        Some("6m"),
-                        true
-                    ),
-                    segment("2:shell", None, None, None, false),
-                ],
-                &theme
-            ),
-            format!("0:lead │ {pill}1:w##parse#[default] │ 2:shell")
+            selected_label("1:w#{pane_id},#[fg=red]", "#{==:#{window_index},1}", &theme),
+            format!(
+                "#{{?#{{==:#{{window_index}},1}},{pill},}}1:w##{{pane_id}},##[fg=red]#[default]"
+            )
         );
     }
+
     #[test]
     fn home_counts_live_and_lost_and_abbreviates_tokens() {
         let theme = Theme::parse(None).unwrap();
@@ -221,40 +172,5 @@ mod tests {
                 "{accent}NILES#[default]  {heading}4#[default] projects  {running}2#[default] agents  {heading}3.0M#[default] tok"
             )
         );
-    }
-
-    #[test]
-    fn projects_render_live_names_and_escape_names() {
-        let theme = Theme::parse(None).unwrap();
-        let pill = theme.style(StyleKey::Pill).tmux();
-        let now = Utc::now();
-        let row = |name, state| Row {
-            entry: registry::Entry {
-                name: registry::ProjectName::parse(name).unwrap(),
-                path: "/tmp".into(),
-            },
-            state,
-        };
-        let rows = [
-            row("api", State::Running),
-            row(
-                "wait",
-                State::Waiting(Some(now - chrono::Duration::minutes(12))),
-            ),
-            row("unknown", State::Waiting(None)),
-            row("gone", State::NotRunning),
-        ];
-        assert_eq!(
-            render(&from_rows(&rows, "api"), &theme),
-            format!("{pill}api#[default] │ wait │ unknown")
-        );
-        let escaped = Segment {
-            label: "a#b".into(),
-            state: Some(theme::State::Running),
-            tokens: None,
-            age: None,
-            highlighted: false,
-        };
-        assert_eq!(render(&[escaped], &theme), "a##b");
     }
 }

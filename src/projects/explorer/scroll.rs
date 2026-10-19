@@ -34,19 +34,7 @@ mod tests {
 
     #[test]
     fn wheel_is_bounded_and_preserves_viewport_when_reversing() {
-        let mut explorer = Explorer {
-            pane: TmuxTarget::pane("%1").unwrap(),
-            cwd: "/tmp".into(),
-            tree: Tree::default(),
-            list_state: ListState::default(),
-            list_area: ratatui::layout::Rect::new(0, 0, 40, 4),
-            collected: Instant::now(),
-            theme: Theme::parse(None).unwrap(),
-            mode: Mode::Browse,
-            footer: None,
-            binary: "/tmp/niles".into(),
-            installed: SystemTime::UNIX_EPOCH,
-        };
+        let mut explorer = super::super::tests::explorer();
         let mut terminal = ratatui::Terminal::new(TestBackend::new(40, 6)).unwrap();
         let mut wheel = MouseEvent {
             kind: MouseEventKind::ScrollDown,

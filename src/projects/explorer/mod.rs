@@ -1,3 +1,4 @@
+mod collection;
 mod scroll;
 mod tree;
 
@@ -6,8 +7,7 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc::{self, Receiver, TryRecvError},
-    thread,
+    sync::mpsc::TryRecvError,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -25,13 +25,16 @@ use ratatui::{
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
 };
 
-use self::tree::{Item, Member, Project, Tree};
+use self::{
+    collection::collector,
+    tree::{Item, Member, Tree},
+};
 use super::{
     panels::{self, Panel},
     register,
-    registry::{self, ProjectName},
-    rows::{self, State},
-    windows::{self, LEAD_WINDOW, Role},
+    registry::ProjectName,
+    rows::State,
+    windows::{LEAD_WINDOW, Role},
 };
 use crate::{
     theme::{StyleKey, Theme},
@@ -73,10 +76,11 @@ pub fn run() -> Result<()> {
         theme: Theme::load()?,
         mode: Mode::Browse,
         footer: None,
+        collection_error: None,
         installed: modified(&binary)?,
         binary,
     };
-    explorer.refresh()?;
+    explorer.refresh();
     let mut terminal = ratatui::init();
     let result = execute!(std::io::stdout(), EnableMouseCapture)
         .map_err(anyhow::Error::from)
@@ -126,12 +130,13 @@ struct Explorer {
     tree: Tree,
     list_state: ListState,
     list_area: ratatui::layout::Rect,
-    /// When the collect behind `tree` began; an older one finishing later would undo it.
+    /// When the latest refresh began; older results must not undo its data or error.
     collected: Instant,
     theme: Theme,
     mode: Mode,
     /// The outcome of the last action; the key help shows while there is none.
     footer: Option<String>,
+    collection_error: Option<String>,
     binary: PathBuf,
     /// When `binary` was written; a later write is an upgrade this process doesn't run yet.
     installed: SystemTime,
@@ -153,23 +158,12 @@ impl Explorer {
                     {
                         return Ok(());
                     }
-                    let projects = projects?;
-                    if started > self.collected {
-                        self.tree.replace(projects);
-                        self.collected = started;
-                    }
+                    self.accept_collection(started, projects);
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => bail!("the explorer's collector stopped"),
             }
         }
-    }
-
-    /// Collects in place, for an action whose next step reads the result.
-    fn refresh(&mut self) -> Result<()> {
-        self.collected = Instant::now();
-        self.tree.replace(collect()?);
-        Ok(())
     }
 
     /// Every key clears the footer; a key that does something reports its outcome there.
@@ -215,7 +209,7 @@ impl Explorer {
                 }
                 self.footer = shown(close(closing, &self.pane));
                 self.mode = Mode::Browse;
-                self.refresh()?;
+                self.refresh();
                 if project
                     && matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
                     && let Some(error) = shown(self.open())
@@ -251,7 +245,7 @@ impl Explorer {
                     Ok(()) => {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
-                        self.refresh()?;
+                        self.refresh();
                         if let Some(error) = shown(panels::open(Panel::Help).map(|_| None)) {
                             self.footer = Some(error);
                         }
@@ -355,12 +349,15 @@ impl Explorer {
                 Some(format!("close {} and its workers? y/n", name.as_str()))
             }
         };
-        let text = match (&self.footer, prompt) {
+        let mut text = match (&self.footer, prompt) {
             (Some(message), Some(prompt)) => Text::raw(format!("{message}\n{prompt}")),
             (Some(message), None) => Text::raw(message.as_str()),
             (None, Some(prompt)) => Text::raw(prompt),
             (None, None) => Text::from(key_hints(&self.theme)),
         };
+        if let Some(error) = &self.collection_error {
+            text.lines.insert(0, Line::raw(error.as_str()));
+        }
         let rule = Block::new()
             .borders(Borders::TOP)
             .border_style(self.theme.style(StyleKey::Guide));
@@ -416,41 +413,6 @@ fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
     }
 }
 
-/// Collects every `REFRESH` on its own thread, so a slow collect never stalls drawing. Each result
-/// carries when its collect began.
-fn collector() -> Receiver<(Instant, Result<Vec<Project>>)> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        loop {
-            thread::sleep(REFRESH);
-            let started = Instant::now();
-            if sender.send((started, collect())).is_err() {
-                break;
-            }
-        }
-    });
-    receiver
-}
-
-fn collect() -> Result<Vec<Project>> {
-    let now = Utc::now();
-    rows::collect(registry::entries()?)?
-        .into_iter()
-        .map(|mut row| {
-            let agents = match row.state {
-                State::Running | State::Starting | State::Waiting(_) => {
-                    windows::session_agents(&row.entry.name.session()?, Some(&row.entry.path), now)?
-                }
-                State::Missing | State::NotRunning => None,
-            };
-            if agents.is_none() && !matches!(row.state, State::Missing) {
-                row.state = State::NotRunning;
-            }
-            Ok(Project { row, agents })
-        })
-        .collect()
-}
-
 /// Runs a worker command as its own process in the worker's project, so the explorer writes
 /// nothing the CLI wouldn't.
 fn niles(args: &[&str], project: &Utf8Path) -> Result<String> {
@@ -476,14 +438,4 @@ fn niles(args: &[&str], project: &Utf8Path) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn footer_keys_are_muted() {
-        let theme = Theme::parse(None).unwrap();
-        let line = key_hints(&theme);
-        assert_eq!(line.to_string(), "↵ open · r register · c close");
-        assert_eq!(line.style, theme.style(StyleKey::Muted));
-    }
-}
+mod tests;
