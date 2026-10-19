@@ -67,7 +67,7 @@ The gate belongs to the worker, who runs the focused checks CI does not cover be
 
 Read a handback's reds before anything else. Each ends in one outcome: failing for the right reason; sent back to the live worker, even when green is already built on it; or shown pre-existing on base, or flaky, and reported to the operator. Ignored is not an outcome.
 
-Record each routing decision when you make it, so a later session can audit it: append one line to `{dir}/decisions.log` as `<UTC timestamp> <worker id or -> <decision>: <reason>`, e.g. `printf '%s impl security commissioned: operator asked\n' "$(date -u +%FT%TZ)" >> {dir}/decisions.log`. Log security commissioned or not and on whose word, and each red and its outcome.
+Record each routing decision when you make it, so a later session can audit it: run `niles log <worker-id|-> '<decision>: <reason>'`, e.g. `niles log impl 'security commissioned: operator asked'`. Niles adds the UTC timestamp and appends to this lead session's decisions log. Log security commissioned or not and on whose word, and each red and its outcome.
 
 Keep your context lean. Status lines are the signal; read reports selectively, quote only what you need, and never paste large command output back into your own context.
 

@@ -3,16 +3,16 @@ use std::fs;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{store, store::paths::NILES_DIR};
+use crate::store;
 
 use super::WorkspaceManifest;
 
-pub fn manifest_path(root: &Utf8Path) -> Utf8PathBuf {
-    root.join(NILES_DIR).join("manifest.yaml")
+pub fn manifest_path(root: &Utf8Path) -> Result<Utf8PathBuf> {
+    Ok(store::paths::project_dir(root)?.join("manifest.yaml"))
 }
 
 pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
-    let path = manifest_path(root);
+    let path = manifest_path(root)?;
     let manifest: Option<WorkspaceManifest> = store::read_optional_yaml(&path)?;
     if let Some(manifest) = &manifest {
         let config = crate::config::spec::load_project_config_from(root)?;
@@ -27,8 +27,8 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
 }
 
 pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
-    let path = manifest_path(root);
-    let parent = root.join(NILES_DIR);
+    let path = manifest_path(root)?;
+    let parent = store::paths::project_dir(root)?;
     fs::create_dir_all(&parent).with_context(|| format!("failed to create {parent}"))?;
     store::write_yaml(&path, manifest)
 }
@@ -40,10 +40,10 @@ mod tests {
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
         let root = temp_test_path(label);
-        fs::create_dir_all(root.join(".niles"))?;
-        fs::write(manifest_path(&root), body)?;
+        fs::create_dir_all(crate::store::paths::project_dir(&root)?)?;
+        fs::write(manifest_path(&root).unwrap(), body)?;
         let result = load(&root);
-        fs::remove_dir_all(root)?;
+        crate::test_support::remove_workspace(&root)?;
         result
     }
 
@@ -60,13 +60,13 @@ mod tests {
             ]);
         let root = temp_test_path("manifest-templates");
         for body in templates {
-            fs::create_dir_all(root.join(".niles")).unwrap();
-            fs::write(manifest_path(&root), body).unwrap();
+            fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
+            fs::write(manifest_path(&root).unwrap(), body).unwrap();
             let manifest = load(&root).unwrap().unwrap();
             save(&root, &manifest).unwrap();
             assert_eq!(load(&root).unwrap(), Some(manifest));
         }
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::remove_workspace(&root).unwrap();
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn invalid_schema_and_inexact_agents_error_with_path() {
         let root = temp_test_path("manifest-invalid-tiers");
-        fs::create_dir_all(root.join(".niles")).unwrap();
+        fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
         let body = include_str!("../../examples/claude-lead.yaml");
         for invalid in [
             body.replacen("standard:", "unknown:", 1),
@@ -102,7 +102,7 @@ mod tests {
             body.replacen("claude:sonnet:high", "claude", 1),
             "lead: claude\nworker: codex\n".to_owned(),
         ] {
-            fs::write(manifest_path(&root), invalid).unwrap();
+            fs::write(manifest_path(&root).unwrap(), invalid).unwrap();
             let error = format!("{:#}", load(&root).unwrap_err());
             assert!(error.contains("manifest.yaml"), "{error}");
         }
@@ -113,7 +113,7 @@ mod tests {
         manifest.recheck = Some("backoff".into());
         save(&root, &manifest).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest));
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::remove_workspace(&root).unwrap();
     }
     #[test]
     fn pre_lead_manifest_is_rejected_and_names_the_offending_field() {
@@ -171,7 +171,7 @@ flow:
         let root = temp_test_path("manifest-save-cadence");
         let manifest = WorkspaceManifest::default();
         save(&root, &manifest).unwrap();
-        let body = fs::read_to_string(manifest_path(&root)).unwrap();
+        let body = fs::read_to_string(manifest_path(&root).unwrap()).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest.clone()));
         for gone in [
             "manager:",
@@ -192,7 +192,7 @@ flow:
         };
         save(&root, &configured).unwrap();
         assert_eq!(load(&root).unwrap(), Some(configured));
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::remove_workspace(&root).unwrap();
     }
 
     #[test]

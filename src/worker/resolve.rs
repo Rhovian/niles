@@ -40,10 +40,7 @@ pub(crate) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
 
 pub(super) fn resolve_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
     validate_id(id)?;
-    Ok(store::worker_location(
-        &crate::util::current_dir_utf8()?,
-        id,
-    ))
+    store::worker_location(&crate::util::current_dir_utf8()?, id)
 }
 
 pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {

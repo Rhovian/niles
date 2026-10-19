@@ -8,7 +8,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     meta["session_link"] = serde_json::json!({"family":"claude","session_id":"worker-session"});
     fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    let lead = env.root.join(".niles/sessions/lead-one");
+    let lead = state_dir(&env.root).join("sessions/lead-one");
     fs::create_dir_all(&lead).unwrap();
     fs::write(
         lead.join("session.json"),

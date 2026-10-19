@@ -23,7 +23,7 @@ pub(crate) fn latest_worker_archive(
 
 /// Every archived worker directory, with the time it was archived.
 pub(crate) fn worker_archives(workspace: &Utf8Path) -> Result<Vec<(DateTime<Utc>, Utf8PathBuf)>> {
-    dated_directories(&archive_dir(workspace), |name| {
+    dated_directories(&archive_dir(workspace)?, |name| {
         parse_timestamp_id(name.rsplit_once('-')?.1)
     })
 }

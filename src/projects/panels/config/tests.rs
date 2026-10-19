@@ -79,9 +79,10 @@ const MANIFEST: &str = include_str!("../../../../examples/claude-lead.yaml");
 
 fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
     let root = temp_test_path(label);
-    fs::create_dir_all(root.join(".niles")).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
     if let Some(manifest) = manifest {
-        fs::write(workspace_manifest::manifest_path(&root), manifest).unwrap();
+        fs::write(workspace_manifest::manifest_path(&root).unwrap(), manifest).unwrap();
     }
     if let Some(file) = file {
         fs::write(root.join(".niles.yaml"), file).unwrap();
@@ -107,7 +108,7 @@ fn project_rows_show_tiers_and_standard_primary_is_editable() {
             role: Role::Lead
         })
     );
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -118,7 +119,7 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
         &items,
         &[
             "[manifest]",
-            "✗ .niles/manifest.yaml",
+            "✗ global manifest.yaml",
             "[agents]",
             "- | - | builtin | ",
             "[models]",
@@ -128,7 +129,7 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
     for index in [1, 3, 5] {
         assert_eq!(items[index].edit(), None);
     }
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 
     let root = project(
         "config-invalid",
@@ -146,7 +147,7 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
         rows[rows.len() - 1].contains("`lead` is reserved"),
         "{rows:?}"
     );
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -180,7 +181,7 @@ fn saving_a_role_and_checkin_keeps_the_other_fields() {
             ..before
         }
     );
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]

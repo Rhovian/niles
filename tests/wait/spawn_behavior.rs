@@ -18,8 +18,8 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
 
     // Poll for `meta.json`, which spawn writes last — after the window exists and is tagged. The
     // brief lands earlier, so waiting on it says nothing about whether the window is up yet.
-    wait_for_file(&lab.workspace.join(".niles/worker/w1/meta.json"));
-    let brief = fs::read_to_string(lab.workspace.join(".niles/worker/w1/brief.md")).unwrap();
+    wait_for_file(&state_dir(&lab.workspace).join("worker/w1/meta.json"));
+    let brief = fs::read_to_string(state_dir(&lab.workspace).join("worker/w1/brief.md")).unwrap();
     assert!(brief.contains("fix the login bug"), "{brief}");
     assert!(
         !brief.contains("--wait"),
@@ -31,7 +31,7 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
     );
 
     append_status(
-        &lab.workspace.join(".niles/worker/w1/status.log"),
+        &state_dir(&lab.workspace).join("worker/w1/status.log"),
         b"done: first report\n",
     );
 

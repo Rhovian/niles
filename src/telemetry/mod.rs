@@ -84,6 +84,15 @@ impl SessionState {
 }
 
 impl SessionLink {
+    pub(crate) fn relocate(&mut self, workspace: &Utf8Path) -> Result<()> {
+        if let Self::Pi { session_dir } = self
+            && let Ok(relative) = session_dir.strip_prefix(workspace.join(".niles"))
+        {
+            *session_dir = crate::store::paths::project_path(workspace)?.join(relative);
+        }
+        Ok(())
+    }
+
     pub(crate) fn args(&self) -> Vec<String> {
         match self {
             Self::Claude { session_id } => vec!["--session-id".into(), session_id.clone()],

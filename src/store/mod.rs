@@ -1,4 +1,6 @@
 mod archive;
+mod migrate;
+pub(crate) use migrate::move_dir;
 pub(crate) mod paths;
 mod serde;
 mod worker;

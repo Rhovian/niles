@@ -22,7 +22,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
         .output()
         .unwrap();
     assert_command_success("spawn scoped worker", &spawn);
-    let worker_dir = workspace_b.join(".niles/worker/shared");
+    let worker_dir = state_dir(&workspace_b).join("worker/shared");
     fs::write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
     let status = worker_dir.join("status.log");
 
@@ -84,7 +84,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert!(!status_body.contains("closed: shared"));
     // A command run from another workspace must not have touched this worker's wake state.
     assert!(!worker_dir.join("status.cursor").exists());
-    assert!(!workspace_b.join(".niles/worker/archive").exists());
+    assert!(!state_dir(&workspace_b).join("worker/archive").exists());
     assert!(worker_dir.exists());
 }
 
@@ -105,7 +105,7 @@ fn archived_reports_are_workspace_local() {
         .output()
         .unwrap();
     assert_command_success("spawn scoped worker", &spawn);
-    let worker_dir = workspace_b.join(".niles/worker/closed");
+    let worker_dir = state_dir(&workspace_b).join("worker/closed");
     fs::write(worker_dir.join("report.md"), "closed worker report\n").unwrap();
 
     let close = env

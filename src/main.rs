@@ -99,6 +99,10 @@ fn run() -> Result<ExitCode> {
             all,
         }) => worker::worker_close(id, task_label, all)?,
         Some(CommandName::Retier { id, agent }) => worker::retier(id, agent)?,
+        Some(CommandName::State) => {
+            println!("{}", store::paths::project_dir(&util::current_dir_utf8()?)?)
+        }
+        Some(CommandName::Log { id, decision }) => session::log::run(&id, &decision.join(" "))?,
         Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Usage) => worker::usage()?,
         Some(CommandName::Models) => models::models()?,

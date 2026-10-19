@@ -216,7 +216,7 @@ pub(crate) fn start(
 /// before anything is dispatched, and armed after. A workspace without a manifest has no
 /// defaults to apply, which is not an error — `niles spawn --agent` works without one.
 pub(crate) fn checkin_cadence(project: &Utf8Path, flag: Option<&str>) -> Result<Cadence> {
-    let path = workspace_manifest::manifest_path(project);
+    let path = workspace_manifest::manifest_path(project)?;
     let manifest = workspace_manifest::load(project)
         .with_context(|| format!("cannot resolve the check-in from {path}"))?;
     cadence::resolve_cadence(flag, manifest.as_ref(), &path)

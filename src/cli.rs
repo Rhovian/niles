@@ -166,6 +166,16 @@ pub enum CommandName {
     },
     /// Switch a live worker after operator approval (same family only).
     Retier { id: String, agent: String },
+    /// Print the global state directory for this project, migrating legacy state if present.
+    State,
+    /// Append a decision to the current lead session log.
+    Log {
+        /// Worker id, or `-` for a session-wide decision.
+        id: String,
+        /// Decision and reason.
+        #[arg(required = true, num_args = 1..)]
+        decision: Vec<String>,
+    },
     /// Print live spawned workers as JSON.
     Workers,
     /// Print usage for live lead and worker sessions as JSON.

@@ -4,11 +4,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
-use crate::{
-    store, tmux,
-    tmux::WindowTarget,
-    util::{remove_dir_all_if_exists, timestamp_id},
-};
+use crate::{store, tmux, tmux::WindowTarget, util::timestamp_id};
 
 const FINAL_PANE_CAPTURE_LINES: usize = 2000;
 const FINAL_PANE_FILE: &str = "final-pane.txt";
@@ -42,41 +38,10 @@ pub(super) fn archive_worker_dir(
     if !worker_dir.exists() {
         return Ok(worker_dir.to_path_buf());
     }
-    let archive_root = store::archive_dir(workspace);
+    let archive_root = store::archive_dir(workspace)?;
     fs::create_dir_all(&archive_root)
         .with_context(|| format!("failed to create {archive_root}"))?;
     let archive_dir = archive_root.join(format!("{id}-{}", timestamp_id(&archived_at)));
-    move_dir(worker_dir, &archive_dir)?;
+    store::move_dir(worker_dir, &archive_dir)?;
     Ok(archive_dir)
-}
-
-fn move_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
-    match fs::rename(source, destination) {
-        Ok(()) => Ok(()),
-        Err(err) if err.raw_os_error() == Some(libc::EXDEV) => {
-            copy_dir_all(source, destination)?;
-            remove_dir_all_if_exists(source)
-        }
-        Err(err) => Err(err).with_context(|| format!("failed to move {source} to {destination}")),
-    }
-}
-
-fn copy_dir_all(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
-    fs::create_dir_all(destination).with_context(|| format!("failed to create {destination}"))?;
-    for entry in fs::read_dir(source).with_context(|| format!("failed to read {source}"))? {
-        let entry = entry.with_context(|| format!("failed to read entry in {source}"))?;
-        let path = Utf8PathBuf::from_path_buf(entry.path())
-            .map_err(|path| anyhow::anyhow!("path is not UTF-8: {}", path.display()))?;
-        let target = destination.join(entry.file_name().to_string_lossy().as_ref());
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {path}"))?;
-        if file_type.is_dir() {
-            copy_dir_all(&path, &target)?;
-        } else {
-            fs::copy(&path, &target)
-                .with_context(|| format!("failed to copy {path} to {target}"))?;
-        }
-    }
-    Ok(())
 }

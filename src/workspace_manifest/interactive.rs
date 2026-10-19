@@ -47,7 +47,7 @@ fn ensure(
         let Some(manifest) = existing else {
             bail!(
                 "workspace manifest {} does not exist; run `niles` from an interactive terminal",
-                manifest_path(root)
+                manifest_path(root)?
             );
         };
         print_manifest_roles(output, &manifest, &config)?;
@@ -81,7 +81,7 @@ fn save_changes(
             save(root, draft)?;
             return Ok(draft.clone());
         }
-        (None, Some(_)) => bail!("{} is gone", manifest_path(root)),
+        (None, Some(_)) => bail!("{} is gone", manifest_path(root)?),
     };
     let defaults = WorkspaceManifest::default();
     let before = match before {

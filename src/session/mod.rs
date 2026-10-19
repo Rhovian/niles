@@ -1,5 +1,6 @@
 mod brief;
 mod foreground;
+pub(crate) mod log;
 mod startup;
 #[cfg(test)]
 mod test_support;
@@ -16,7 +17,7 @@ use crate::{
     workspace_manifest,
 };
 
-pub(crate) use brief::{SessionMeta, latest_lead, live_lead};
+pub(crate) use brief::{SessionMeta, latest_lead, live_lead, read_session_meta};
 use foreground::launch_foreground_agent;
 
 /// Turns the current project's lead pane into the manager agent.
@@ -27,7 +28,7 @@ pub fn run() -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
-    let worker_dir = store::workers_dir(&workspace);
+    let worker_dir = store::workers_dir(&workspace)?;
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
     let Some(manifest) = workspace_manifest::ensure_interactive(&workspace)? else {
         return Ok(());
@@ -35,11 +36,11 @@ pub fn run() -> Result<()> {
     launch_foreground_agent(&workspace, &manifest)
 }
 
-pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Utf8PathBuf {
-    workspace.join(store::paths::NILES_DIR).join("sessions")
+pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
+    Ok(store::paths::project_dir(workspace)?.join("sessions"))
 }
 
 /// Every lead session directory, oldest first, with the time it was created.
 pub(crate) fn session_dirs(workspace: &Utf8Path) -> Result<Vec<(DateTime<Utc>, Utf8PathBuf)>> {
-    dated_directories(&sessions_dir(workspace), parse_timestamp_id)
+    dated_directories(&sessions_dir(workspace)?, parse_timestamp_id)
 }

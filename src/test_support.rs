@@ -36,3 +36,9 @@ pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::
     std::fs::remove_dir_all(root)?;
     result
 }
+
+/// Remove both the workspace fixture and its global orchestration state.
+pub(crate) fn remove_workspace(workspace: &camino::Utf8Path) -> anyhow::Result<()> {
+    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_dir(workspace)?)?;
+    crate::util::remove_dir_all_if_exists(workspace)
+}

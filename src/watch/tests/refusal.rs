@@ -44,7 +44,7 @@ fn terminal_failure_becomes_a_report_disarms_and_nudges_once() {
     tick(&project, at(1600), &mut memory, &mut sink, &running());
     assert_eq!(sink.sent.len(), 1);
     assert!(sink.captures.is_empty());
-    fs::remove_dir_all(project).unwrap();
+    crate::test_support::remove_workspace(&project).unwrap();
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn normal_idle_and_stale_failure_never_fabricate_a_report() {
             sink.sent,
             ["niles: impl stopped without a report — check it"]
         );
-        fs::remove_dir_all(project).unwrap();
+        crate::test_support::remove_workspace(&project).unwrap();
     }
 }
 
@@ -83,5 +83,5 @@ fn unreadable_activity_nudges_and_rearms_without_a_blocked_line() {
             .iter()
             .any(|note| note.contains("failed to read activity"))
     );
-    fs::remove_dir_all(project).unwrap();
+    crate::test_support::remove_workspace(&project).unwrap();
 }

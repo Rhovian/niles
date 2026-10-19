@@ -1,0 +1,247 @@
+mod common;
+
+use std::{fs, os::unix::fs::symlink, path::PathBuf};
+
+use common::*;
+
+fn state(env: &TestEnv) -> PathBuf {
+    let output = env.run(&["state"]);
+    assert_command_success("state", &output);
+    PathBuf::from(stdout_of(&output).trim())
+}
+
+fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
+    let dir = state_dir(&env.root).join("sessions").join(id);
+    fs::create_dir_all(&dir).unwrap();
+    let meta = serde_json::json!({
+        "id": id, "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
+        "workspace": env.root, "brief": dir.join("lead.md"), "lead_pane": pane,
+    });
+    fs::write(dir.join("session.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    dir.join("decisions.log")
+}
+
+#[test]
+fn new_state_and_manifest_stay_outside_the_repository() {
+    let env = TestEnv::new("niles-global-new");
+    let dir = state(&env);
+    assert_eq!(dir, state_dir(&env.root));
+    assert!(!dir.exists(), "path discovery need not create state");
+    assert!(!env.root.join(".niles").exists());
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
+    let output = env.run(&["spawn", "research", "--role", "research", "investigate"]);
+    assert_command_success("spawn", &output);
+    assert!(dir.join("manifest.yaml").is_file());
+    assert!(dir.join("worker/research/brief.md").is_file());
+    assert!(stdout_of(&output).contains(dir.to_str().unwrap()));
+    assert!(!env.root.join(".niles").exists());
+}
+
+#[test]
+fn migration_moves_the_entire_directory_and_is_idempotent() {
+    let env = TestEnv::new("niles-global-move");
+    let legacy = env.root.join(".niles");
+    fs::create_dir_all(legacy.join("worker/old")).unwrap();
+    fs::write(legacy.join("worker/old/report.md"), b"report\0bytes").unwrap();
+    fs::write(
+        legacy.join("manifest.yaml"),
+        include_str!("../examples/claude-lead.yaml"),
+    )
+    .unwrap();
+    let output = env.run(&["doctor"]);
+    assert_command_success("migrated manifest", &output);
+    let dir = state(&env);
+    assert!(!legacy.exists());
+    assert_eq!(
+        fs::read(dir.join("worker/old/report.md")).unwrap(),
+        b"report\0bytes"
+    );
+    assert!(dir.join("manifest.yaml").is_file());
+    assert_eq!(state(&env), dir);
+}
+
+#[test]
+fn migration_refuses_conflicting_state_without_losing_either_copy() {
+    let env = TestEnv::new("niles-global-conflict");
+    let legacy = env.root.join(".niles");
+    let global = state(&env);
+    for dir in [&legacy, &global] {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("manifest.yaml"), dir.to_str().unwrap()).unwrap();
+    }
+    assert_failure_contains(
+        "conflict",
+        &env.run(&["workers"]),
+        "reconcile the directories",
+    );
+    for dir in [&legacy, &global] {
+        assert_eq!(
+            fs::read_to_string(dir.join("manifest.yaml")).unwrap(),
+            dir.to_str().unwrap()
+        );
+    }
+}
+
+#[test]
+fn migration_rejects_a_repository_supplied_state_symlink() {
+    let env = TestEnv::new("niles-global-symlink");
+    let global = state(&env);
+    let target = env.root.join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("secret"), "untouched").unwrap();
+    symlink(&target, env.root.join(".niles")).unwrap();
+    assert_failure_contains("symlink", &env.run(&["state"]), "not a file or symlink");
+    assert_eq!(
+        fs::read_to_string(target.join("secret")).unwrap(),
+        "untouched"
+    );
+    assert!(!global.exists());
+}
+
+#[test]
+fn mangling_distinguishes_separators_hyphens_and_percent_escapes() {
+    let env = TestEnv::new("niles-global-keys");
+    let mut paths = Vec::new();
+    for name in ["a/b", "a-b", "a%2Db", "space ü"] {
+        let workspace = env.root.join(name);
+        fs::create_dir_all(&workspace).unwrap();
+        let output = env.niles(&workspace, &["state"]).output().unwrap();
+        assert_command_success("state", &output);
+        let path = PathBuf::from(stdout_of(&output).trim());
+        assert_eq!(path.parent().unwrap(), env.home.join(".niles/state"));
+        assert!(!paths.contains(&path));
+        paths.push(path);
+    }
+}
+
+#[test]
+fn log_appends_timestamped_decisions_to_the_current_lead() {
+    let env = TestEnv::new("niles-global-log");
+    let old = lead(&env, "a", "%8");
+    let log = lead(&env, "z", "%9");
+    fs::write(&log, "earlier decision").unwrap();
+    for (id, decision) in [
+        ("impl", "security commissioned: operator asked"),
+        ("-", "red: fixed"),
+    ] {
+        let output = env
+            .niles(&env.root, &["log", id, decision])
+            .env("TMUX_PANE", "%9")
+            .output()
+            .unwrap();
+        assert_command_success("log", &output);
+        assert!(output.stdout.is_empty());
+    }
+    let body = fs::read_to_string(log).unwrap();
+    let mut lines = body.lines();
+    assert_eq!(lines.next().unwrap(), "earlier decision");
+    for expected in ["impl security commissioned: operator asked", "- red: fixed"] {
+        let (timestamp, decision) = lines.next().unwrap().split_once(' ').unwrap();
+        chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
+        assert_eq!(decision, expected);
+    }
+    assert!(lines.next().is_none());
+    assert!(!old.exists());
+    assert!(!env.root.join(".niles").exists());
+}
+
+#[test]
+fn log_rejects_missing_or_foreign_sessions_and_invalid_lines() {
+    let env = TestEnv::new("niles-global-log-invalid");
+    assert_failure_contains(
+        "missing lead",
+        &env.run(&["log", "-", "decision"]),
+        "current lead session",
+    );
+    let log = lead(&env, "lead", "%9");
+    let foreign = env
+        .niles(&env.root, &["log", "-", "decision"])
+        .env("TMUX_PANE", "%8")
+        .output()
+        .unwrap();
+    assert_failure_contains("foreign lead", &foreign, "current lead session");
+    for args in [
+        ["log", "../escape", "decision"],
+        ["log", "-", "two\nlines"],
+        ["log", "-", "  "],
+    ] {
+        let output = env
+            .niles(&env.root, &args)
+            .env("TMUX_PANE", "%9")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}");
+    }
+    assert!(!log.exists());
+    let target = env.root.join("target");
+    fs::write(&target, "untouched").unwrap();
+    symlink(&target, &log).unwrap();
+    let output = env
+        .niles(&env.root, &["log", "-", "decision"])
+        .env("TMUX_PANE", "%9")
+        .output()
+        .unwrap();
+    assert_failure_contains("log symlink", &output, "failed to append");
+    assert_eq!(fs::read_to_string(target).unwrap(), "untouched");
+}
+
+#[test]
+fn long_paths_have_bounded_stable_and_distinct_keys() {
+    let env = TestEnv::new("niles-global-long-path");
+    let mut previous = None;
+    for suffix in ["one", "two"] {
+        let workspace = env.root.join("ü".repeat(100)).join(suffix);
+        fs::create_dir_all(&workspace).unwrap();
+        let output = env.niles(&workspace, &["state"]).output().unwrap();
+        assert_command_success("long state", &output);
+        let path = PathBuf::from(stdout_of(&output).trim());
+        assert!(path.file_name().unwrap().len() <= 200);
+        fs::create_dir_all(&path).unwrap();
+        let again = env.niles(&workspace, &["state"]).output().unwrap();
+        assert_eq!(stdout_of(&again), stdout_of(&output));
+        assert_ne!(previous.as_ref(), Some(&path));
+        previous = Some(path);
+    }
+}
+
+#[test]
+fn log_rejects_a_session_id_that_escapes_its_directory() {
+    let env = TestEnv::new("niles-global-log-escape");
+    let log = lead(&env, "lead", "%9");
+    let path = log.parent().unwrap().join("session.json");
+    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    meta["id"] = serde_json::json!(env.root);
+    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    let output = env
+        .niles(&env.root, &["log", "-", "decision"])
+        .env("TMUX_PANE", "%9")
+        .output()
+        .unwrap();
+    assert_failure_contains(
+        "escaping id",
+        &output,
+        "session id does not match directory",
+    );
+    assert!(!env.root.join("decisions.log").exists());
+}
+
+#[test]
+fn migrated_pi_transcripts_remain_readable() {
+    let env = TestEnv::new("niles-global-pi");
+    let worker = write_worker(&env.root, "pi", "niles-test-session:pi", None, b"");
+    let legacy = env.root.join(".niles");
+    let transcript = legacy.join("worker/pi/pi-sessions");
+    let path = worker.join("meta.json");
+    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    meta["session_link"] = serde_json::json!({ "family": "pi", "session_dir": transcript });
+    meta["brief"] = serde_json::json!(legacy.join("worker/pi/brief.md"));
+    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    fs::rename(state_dir(&env.root), &legacy).unwrap();
+    fs::create_dir_all(&transcript).unwrap();
+    fs::write(transcript.join("session.jsonl"), concat!(r#"{"type":"message","timestamp":"2026-10-01T16:00:00Z","message":{"role":"assistant","stopReason":"stop","usage":{"input":20,"output":30,"cacheRead":40,"cacheWrite":50}}}"#, "\n")).unwrap();
+    let output = env.run(&["usage"]);
+    assert_command_success("migrated usage", &output);
+    let usage: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(usage["sessions"][0]["usage"]["input_tokens"], 20);
+    assert!(!legacy.exists());
+}

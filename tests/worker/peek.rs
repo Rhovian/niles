@@ -40,7 +40,7 @@ fn peek_defaults_to_a_glance_and_zero_lines_captures_full_history() {
 fn peek_quiet_disarms_only_after_a_successful_capture() {
     let env = TestEnv::new("niles-worker-peek-quiet");
     write_worker(&env.root, "worker", "niles:niles-worker", None, b"");
-    let checkin = env.root.join(".niles/worker/worker/checkin");
+    let checkin = state_dir(&env.root).join("worker/worker/checkin");
     let arm = "deadline=2026-01-01T00:00:00Z\ndelay=300\nrecheck=backoff\narmed_len=0\n";
     fs::write(&checkin, arm).unwrap();
 
