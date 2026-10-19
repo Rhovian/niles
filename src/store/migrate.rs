@@ -72,10 +72,11 @@ fn copy_then_remove(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
         .context("move destination has no name")?;
     let staging = destination.with_file_name(format!(".{name}.moving-{}", uuid::Uuid::new_v4()));
     // std::fs::copy copies one file, not a directory (Rust 1.89 std/fs.rs).
-    // Preserve failed staging for diagnosis; a fresh name makes the next attempt independent.
-    copy_dir(source, &staging).with_context(|| format!(
-        "incomplete move from {source}; staging preserved at {staging}; retry uses fresh staging"
-    ))?;
+    if let Err(error) = copy_dir(source, &staging) {
+        // The source is intact. Cleanup must not replace the original copy failure.
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error).with_context(|| format!("failed to copy {source} to {staging}"));
+    }
     fs::rename(&staging, destination)?;
     fs::remove_dir_all(source).with_context(|| format!("failed to remove {source}"))
 }
@@ -155,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_cross_filesystem_copy_can_be_retried_without_removing_staging() {
+    fn failed_copies_remove_staging_and_preserve_the_source_and_original_error() {
         let root = temp_test_path("migration-retry");
         let source = root.join("source");
         let target = root.join("target");
@@ -166,30 +167,31 @@ mod tests {
         unsafe {
             assert_eq!(libc::mkfifo(fifo_c.as_ptr(), 0o600), 0);
         }
-        let error = force_exdev(&source, &target).unwrap_err();
-        assert!(format!("{error:#}").contains("cannot migrate special file"));
-        assert!(!target.exists());
-        assert_eq!(
-            fs::read_to_string(source.join("report")).unwrap(),
-            "retained"
-        );
-        let abandoned: Vec<_> = read_dir_utf8_paths(&root)
-            .unwrap()
-            .into_iter()
-            .filter(|path| path.file_name().unwrap().starts_with(".target.moving"))
-            .collect();
-        assert_eq!(abandoned.len(), 1);
-        assert!(error.to_string().contains(abandoned[0].as_str()));
+        for _ in 0..3 {
+            for migrate in [force_exdev, legacy] {
+                let error = migrate(&source, &target).unwrap_err();
+                assert!(
+                    format!("{error:#}").contains(&format!("cannot migrate special file {fifo}"))
+                );
+                assert!(!target.exists());
+                assert!(
+                    read_dir_utf8_paths(&root)
+                        .unwrap()
+                        .iter()
+                        .all(|path| !path.file_name().unwrap().starts_with(".target.moving-"))
+                );
+                assert_eq!(
+                    fs::read_to_string(source.join("report")).unwrap(),
+                    "retained"
+                );
+            }
+        }
         fs::remove_file(fifo).unwrap();
         force_exdev(&source, &target).unwrap();
         assert!(!source.exists());
         assert_eq!(
             fs::read_to_string(target.join("report")).unwrap(),
             "retained"
-        );
-        assert!(
-            abandoned[0].is_dir(),
-            "failed staging remains available for diagnosis"
         );
         fs::remove_dir_all(root).unwrap();
     }

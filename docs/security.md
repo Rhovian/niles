@@ -107,8 +107,8 @@ briefs, launch scripts, reports, status logs, and cursors in the global tree. Se
 **Existing mitigations.** Migration holds a per-project advisory lock under `~/.niles/state/`.
 Legacy migration always copies to staging while preserving symlinks without following them.
 It publishes the completed copy before removing the source. A failed copy
-leaves the source intact and reports the staging directory for diagnosis; retries use a fresh
-staging directory, so that partial copy cannot block recovery. Stop agents before upgrading:
+leaves the source intact and attempts to remove partial staging without replacing the original
+copy error if cleanup also fails. Retries use a fresh staging directory. Stop agents before upgrading:
 migration cannot update paths already held by running agents or their shell scripts, or
 synchronize writes made during the copy.
 `niles log` appends timestamped decisions via

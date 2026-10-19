@@ -206,6 +206,9 @@ any additional terms or conditions.
 while it runs. It returns immediately with all pending reports, one escaped
 `<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
 the batch, then wait again; reports accumulate while you act, with no batching timer.
+Status logs must be appended to (`>>`). An unsupported in-place truncate and rewrite that
+regrows to the cached scan offset or beyond between polls can skip the rewritten prefix;
+normal appends and respawns use the supported delivery path.
 A newer wait supersedes the old one. An unreported worker whose window or agent exits
 produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
 Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.

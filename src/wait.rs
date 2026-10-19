@@ -62,6 +62,8 @@ impl Target {
     }
     /// Reads only the bytes appended since the last scan and returns the first actionable line
     /// with the offset just past it. A trailing partial line is left for the next poll.
+    /// Logs are append-only: an in-place rewrite that regrows to or beyond the cached offset
+    /// between polls cannot be distinguished from an append and its rewritten prefix is skipped.
     fn next_actionable(&mut self, persisted: u64) -> Result<Option<(WakeKind, String, u64)>> {
         let mut file = match fs::OpenOptions::new()
             .read(true)
@@ -86,7 +88,7 @@ impl Target {
         }
         self.identity = Some(identity);
         let len = metadata.len();
-        // Truncation also invalidates the remembered offset in the same inode.
+        // Observed truncation also invalidates the remembered offset in the same inode.
         if len < self.scanned {
             self.scanned = 0;
             self.unreported = false;
