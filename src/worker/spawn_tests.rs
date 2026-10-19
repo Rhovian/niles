@@ -77,7 +77,7 @@ fn spawn_resolves_role_tier_primary_and_exact_secondary() {
         ])
         .is_err()
     );
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]

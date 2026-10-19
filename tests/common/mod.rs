@@ -12,6 +12,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const TEST_ENV_MARKER: &str = ".niles-test-env";
+
 const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
@@ -91,6 +93,7 @@ impl TestEnv {
         let bin = root.join("bin");
         let tmux_log = root.join("tmux.log");
         fs::create_dir_all(&home).unwrap();
+        fs::write(root.join(TEST_ENV_MARKER), "").unwrap();
         fs::create_dir_all(&bin).unwrap();
         write_executable(&bin.join("tmux"), tmux);
         for agent in ["claude", "codex"] {
@@ -289,8 +292,10 @@ pub fn state_dir(workspace: &Path) -> PathBuf {
     let home = workspace
         .ancestors()
         .find_map(|ancestor| {
-            let home = ancestor.join("home");
-            (home.is_dir() && ancestor.join("bin/tmux").is_file()).then_some(home)
+            ancestor
+                .join(TEST_ENV_MARKER)
+                .is_file()
+                .then(|| ancestor.join("home"))
         })
         .unwrap_or_else(|| niles_home(workspace));
     state_dir_at(&home, workspace)

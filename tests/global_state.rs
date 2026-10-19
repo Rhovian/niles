@@ -239,3 +239,23 @@ fn workspace_wait_locks_stay_in_global_project_state() {
     assert!(workers.join("wait.running").is_file());
     assert!(!env.root.join(".niles").exists());
 }
+
+#[test]
+fn fixture_state_paths_ignore_unregistered_ancestors_and_share_registered_homes() {
+    let ancestor = temp_workspace("niles-fixture-ancestor");
+    fs::create_dir_all(ancestor.join("home")).unwrap();
+    fs::create_dir_all(ancestor.join("bin")).unwrap();
+    fs::write(ancestor.join("bin/tmux"), "unrelated tmux").unwrap();
+    let workspace = ancestor.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    assert_eq!(
+        state_dir(&workspace),
+        state_dir_at(&niles_home(&workspace), &workspace)
+    );
+    fs::remove_dir_all(ancestor).unwrap();
+
+    let env = TestEnv::new("niles-fixture-nested");
+    let nested = env.root.join("workspace");
+    fs::create_dir_all(&nested).unwrap();
+    assert_eq!(state_dir(&nested), state_dir_at(&env.home, &nested));
+}
