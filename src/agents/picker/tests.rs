@@ -117,6 +117,30 @@ fn research_is_edited_in_its_own_binding() {
 }
 
 #[test]
+fn unchanged_draft_hides_and_ignores_save() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    assert!(!render(&form).contains("s save"));
+    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
+    assert!(matches!(form.screen, Screen::Roles));
+}
+
+#[test]
+fn restoring_original_draft_hides_and_ignores_save() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    form.draft.lead.standard.primary = "claude:sonnet:medium".into();
+    assert!(render(&form).contains("s save"));
+    form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(form.screen, Screen::Review));
+    form.key(KeyCode::Esc, &config).unwrap();
+    form.draft = form.original.clone();
+    assert!(!render(&form).contains("s save"));
+    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
+    assert!(matches!(form.screen, Screen::Roles));
+}
+
+#[test]
 fn edited_role_is_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
@@ -126,7 +150,9 @@ fn edited_role_is_reviewed_and_saved() {
     form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     assert_eq!(form.draft.lead.standard.primary, "claude:sonnet:medium");
+    assert!(render(&form).contains("s save"));
     form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(form.screen, Screen::Review));
     assert!(matches!(
         form.key(KeyCode::Enter, &config).unwrap(),
         Some(Choice::Save(_))
@@ -175,6 +201,7 @@ fn replacement_explains_why_and_requires_save_or_quit() {
     );
     assert!(!text.contains('\u{1b}'), "{text}");
     assert!(!text.contains("continue"), "{text}");
+    assert!(text.contains("s save"), "{text}");
     assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(

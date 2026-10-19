@@ -34,6 +34,10 @@ impl Form {
         })
     }
 
+    pub fn can_save(&self) -> bool {
+        self.replacement_reason.is_some() || self.draft != self.original
+    }
+
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "each screen ignores unbound terminal keys"
@@ -64,7 +68,7 @@ impl Form {
             Screen::Roles => match key {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
                 KeyCode::Down => self.selected = (self.selected + 1).min(Role::ALL.len() - 1),
-                KeyCode::Char('s') => self.screen = Screen::Review,
+                KeyCode::Char('s') if self.can_save() => self.screen = Screen::Review,
                 KeyCode::Enter => {
                     let role = Role::ALL[self.selected];
                     self.screen = Screen::Editing {
