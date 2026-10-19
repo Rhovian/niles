@@ -133,7 +133,7 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
         }
         Ok(None) => items.extend([
             Item::Section(MANIFEST.to_owned()),
-            Item::Broken(".niles/manifest.yaml".to_owned()),
+            Item::Broken("global manifest.yaml".to_owned()),
         ]),
         Err(error) => items.extend([Item::Section(MANIFEST.to_owned()), broken(&error)]),
     }

@@ -31,6 +31,7 @@ pub(crate) use resolve::resolve_worker as worker_dir;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
 pub(crate) use usage::worker_session;
 pub(crate) use usage::{lead_session, session_state};
+pub(crate) use validation::validate_task_label;
 
 pub(crate) struct StatusWorker {
     pub id: String,

@@ -122,7 +122,7 @@ impl Fixture {
     /// cadence a test is about, and nothing else changed.
     fn write_manifest(&self, keys: &str) {
         write_workspace_manifest(&self.env.root, "claude", "claude", "claude", "claude");
-        let path = self.env.root.join(".niles/manifest.yaml");
+        let path = state_dir(&self.env.root).join("manifest.yaml");
         let body = fs::read_to_string(&path).unwrap();
         fs::write(path, format!("{body}{keys}")).unwrap();
     }
@@ -132,7 +132,7 @@ impl Fixture {
     }
 
     fn worker_file(&self, id: &str, name: &str) -> PathBuf {
-        self.env.root.join(".niles/worker").join(id).join(name)
+        state_dir(&self.env.root).join("worker").join(id).join(name)
     }
 }
 
@@ -192,7 +192,8 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
     );
     // The flag was written after the worker id, where clap hands it over as task text: it must not
     // reach the worker's brief.
-    let brief = fs::read_to_string(fixture.env.root.join(".niles/worker/impl/brief.md")).unwrap();
+    let brief =
+        fs::read_to_string(state_dir(&fixture.env.root).join("worker/impl/brief.md")).unwrap();
     assert!(brief.contains("Fix auth"), "{brief}");
     assert!(!brief.contains("--checkin"), "{brief}");
 
@@ -382,11 +383,11 @@ fn a_malformed_manifest_checkin_key_fails_the_dispatch() {
         let stderr = String::from_utf8_lossy(&spawn.stderr);
         assert!(stderr.contains(key), "{stderr}");
         assert!(
-            stderr.contains(".niles/manifest.yaml"),
+            stderr.contains("manifest.yaml"),
             "the error must name the file: {stderr}"
         );
         assert!(
-            !fixture.env.root.join(".niles/worker/impl").exists(),
+            !state_dir(&fixture.env.root).join("worker/impl").exists(),
             "nothing was dispatched, so nothing was written"
         );
         // Nothing reached tmux either: a spawn that never got as far as launching a window leaves
@@ -408,5 +409,5 @@ fn a_bare_manifest_checkin_names_the_manifest_and_lists_the_units() {
         stderr.contains("`15` needs a unit: ms, s, m or h"),
         "{stderr}"
     );
-    assert!(stderr.contains(".niles/manifest.yaml"), "{stderr}");
+    assert!(stderr.contains("manifest.yaml"), "{stderr}");
 }

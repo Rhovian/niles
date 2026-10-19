@@ -1,4 +1,4 @@
-//! Check-in arm state: `.niles/worker/<id>/checkin`.
+//! Check-in arm state: `worker/<id>/checkin` in global project state.
 //!
 //! `armed_len` keeps an old report from satisfying a fresh assignment. Every write and removal
 //! happens under [`Checkin::lock`]; a plain read takes no lock, because writes rename a whole file

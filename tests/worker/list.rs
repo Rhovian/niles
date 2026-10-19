@@ -31,7 +31,7 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
         .unwrap();
 
     assert_command_success("workers", &output);
-    let metadata_path = env.root.join(".niles/worker/z-unreadable/meta.json");
+    let metadata_path = state_dir(&env.root).join("worker/z-unreadable/meta.json");
     let error = format!(
         "failed to parse {}: missing field `role` at line 4 column 1",
         metadata_path.display()

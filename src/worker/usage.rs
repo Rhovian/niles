@@ -150,11 +150,12 @@ pub(crate) fn closed_workers(
             continue;
         };
         let context = || format!("failed to parse {path}");
-        let link: SessionLink = match body.get("session_link") {
+        let mut link: SessionLink = match body.get("session_link") {
             None | Some(serde_json::Value::Null) => continue,
             Some(link) => serde_json::from_value(link.clone()).with_context(context)?,
         };
         let meta: WorkerMeta = serde_json::from_value(body).with_context(context)?;
+        link.relocate(workspace)?;
         // Legacy Codex sessions match the live report path named in their brief.
         let buckets = telemetry::closed_buckets(&dir, || {
             let worker_dir = meta.brief.parent().context("worker brief has no parent")?;
@@ -196,9 +197,7 @@ pub(crate) fn superseded_leads(
         if *closed_at < since {
             continue;
         }
-        let Some(meta) =
-            store::read_optional_json::<session::SessionMeta>(&dir.join("session.json"))?
-        else {
+        let Some(meta) = session::read_session_meta(workspace, dir)? else {
             continue;
         };
         let buckets = match &meta.session_link {
@@ -231,7 +230,7 @@ pub(crate) fn worker_session(
     telemetry::resolve_session(
         meta.session_link.as_ref(),
         meta.agent_dir(),
-        &report_path(&worker.worker_dir),
+        &report_path(meta.brief.parent().context("worker brief has no parent")?),
         meta.created_at,
         starting_until,
         now,

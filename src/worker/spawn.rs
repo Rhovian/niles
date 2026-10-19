@@ -78,7 +78,7 @@ pub fn spawn(
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let agent_spec = &invocation.spec;
-    let dir = store::workers_dir(&project).join(&id);
+    let dir = store::workers_dir(&project)?.join(&id);
     let session_link = agents::session_link(agent_spec.family(), &id, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
@@ -230,7 +230,7 @@ fn resolve_agent(
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
-    let path = workspace_manifest::manifest_path(project);
+    let path = workspace_manifest::manifest_path(project)?;
     let role_name = role.as_str();
     let manifest = workspace_manifest::load(project)
         .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?;
@@ -407,7 +407,7 @@ impl Assignment {
                 let lead = session::latest_lead(project)?
                     .context("--mechanical requires a lead session")?;
                 Ok(DesignBasis::Mechanical {
-                    log: session::sessions_dir(project)
+                    log: session::sessions_dir(project)?
                         .join(lead.id)
                         .join("decisions.log"),
                     reason: reason.to_owned(),

@@ -25,7 +25,7 @@ fn models_prints_the_effective_workspace_roster() {
         "models: {codex: {gpt-5.5: {efforts: [high]}}}",
     )
     .unwrap();
-    fs::create_dir_all(workspace.join(".niles")).unwrap();
+    fs::create_dir_all(state_dir_at(&home, &workspace)).unwrap();
     let body = [
         ("lead", "claude:haiku"),
         ("worker", "codex:gpt-5.5:high"),
@@ -36,7 +36,7 @@ fn models_prints_the_effective_workspace_roster() {
     ]
     .map(|(role, agent)| format!("{role}: {{standard: {{primary: {agent}, secondaries: []}}}}\n"))
     .join("");
-    fs::write(workspace.join(".niles/manifest.yaml"), body).unwrap();
+    fs::write(state_dir_at(&home, &workspace).join("manifest.yaml"), body).unwrap();
 
     let output = Command::new(niles)
         .arg("models")

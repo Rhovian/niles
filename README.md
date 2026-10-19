@@ -40,7 +40,7 @@ Agents: if you are setting Niles up for someone, load the `niles-setup` skill an
 Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
 
 - [Install Niles](skills/niles-setup/SKILL.md#2-install).
-- [Write `.niles/manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
+- [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
 - [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
 
 Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
@@ -78,13 +78,13 @@ Choose and save your agent roles when prompted, then type to the lead in the rig
 
 3. Check with `niles doctor` in another terminal in the repository after saving the roles.
 It reports tmux and each bound agent CLI with its tested version; it does not check logins.
-Without `.niles/manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
+Without the global project `manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
 
 See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
-- `.niles/` in each workspace: the role manifest, worker briefs, status logs, and reports.
+- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. `niles state` prints this path; legacy workspace `.niles/` directories move here on first access. Stop running agents before upgrading.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
 - `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
@@ -109,7 +109,7 @@ which may be none.
 
 ## Configuration
 
-The workspace manifest binds roles. This is the minimal valid `.niles/manifest.yaml`:
+The workspace manifest binds roles. This is the minimal valid global project `manifest.yaml`:
 
 ```yaml
 lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
@@ -122,7 +122,7 @@ research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 
 For ready-made setups with all shipped role tiers, see [examples/](examples/):
 [Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
-Copy one to `.niles/manifest.yaml`, then run `niles doctor` to check the required CLIs.
+Copy one to `"$(niles state)/manifest.yaml"` (create its parent directory first), then run `niles doctor` to check the required CLIs.
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
 

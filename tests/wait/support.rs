@@ -14,7 +14,7 @@ pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child
         .arg("wait")
         .args(args)
         .current_dir(workspace)
-        .env("NILES_HOME", niles_home(workspace))
+        .env("HOME", niles_home(workspace))
         .env_remove("TMUX")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -27,7 +27,7 @@ pub(crate) fn run_wait(workspace: &Path, args: &[&str]) -> Output {
         .arg("wait")
         .args(args)
         .current_dir(workspace)
-        .env("NILES_HOME", niles_home(workspace))
+        .env("HOME", niles_home(workspace))
         .env_remove("TMUX")
         .output()
         .unwrap()
@@ -38,7 +38,7 @@ pub(crate) fn settle() {
 }
 
 pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
-    let worker_dir = workspace.join(".niles/worker").join(id);
+    let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
     fs::write(worker_dir.join("status.log"), status).unwrap();
     worker_dir
@@ -189,7 +189,7 @@ impl Lab {
             .args(args)
             .current_dir(&self.workspace)
             .env("PATH", path_with_bin(&self.bin))
-            .env("NILES_HOME", niles_home(&self.workspace))
+            .env("HOME", niles_home(&self.workspace))
             .env("TMUX", self.server.tmux_env());
         command
     }

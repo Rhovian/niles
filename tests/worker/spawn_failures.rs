@@ -25,16 +25,16 @@ fn missing_agent_binary_leaves_no_worker_state() {
         &output,
         "agent binary absent-agent-cli not found on PATH",
     );
-    assert!(!env.root.join(".niles/worker/missing-cli").exists());
+    assert!(!state_dir(&env.root).join("worker/missing-cli").exists());
 }
 
 #[test]
 fn leftover_worker_json_file_is_inert() {
     let workspace = temp_workspace("niles-worker-json-inert");
     let home = niles_home(&workspace);
-    fs::create_dir_all(workspace.join(".niles/worker")).unwrap();
+    fs::create_dir_all(state_dir(&workspace).join("worker")).unwrap();
     fs::write(
-        workspace.join(".niles/worker/auth-fix.json"),
+        state_dir(&workspace).join("worker/auth-fix.json"),
         r#"{"id":"auth-fix"}"#,
     )
     .unwrap();
@@ -88,7 +88,7 @@ esac
     assert_failure_contains("failed spawn", &failed, "failed to launch worker auth-fix");
     let stderr = String::from_utf8_lossy(&failed.stderr);
     assert!(stderr.contains("create window failed: index 1 in use"));
-    assert!(!env.root.join(".niles/worker/auth-fix").exists());
+    assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
 
     let peek = niles_bare(&env.root, &env.home)
         .args(["peek", "auth-fix"])
@@ -106,8 +106,12 @@ esac
         .output()
         .unwrap();
     assert_command_success("respawn", &respawn);
-    assert!(env.root.join(".niles/worker/auth-fix").is_dir());
-    assert!(env.root.join(".niles/worker/auth-fix/meta.json").is_file());
+    assert!(state_dir(&env.root).join("worker/auth-fix").is_dir());
+    assert!(
+        state_dir(&env.root)
+            .join("worker/auth-fix/meta.json")
+            .is_file()
+    );
 
     let log = env.tmux_log();
     assert!(log.contains("new-window -d -t =niles-test-session:"));
@@ -138,7 +142,7 @@ esac
         )
         .env(
             "META_PATH",
-            env.root.join(".niles/worker/auth-fix/meta.json"),
+            state_dir(&env.root).join("worker/auth-fix/meta.json"),
         )
         .output()
         .unwrap();
@@ -149,7 +153,7 @@ esac
     );
     let stderr = String::from_utf8_lossy(&failed.stderr);
     assert!(stderr.contains("cleaned up launched worker"));
-    assert!(!env.root.join(".niles/worker/auth-fix").exists());
+    assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
 
     let log = env.tmux_log();
     assert!(log.contains("new-window -d -t =niles-test-session:"));

@@ -110,7 +110,7 @@ impl TestEnv {
             .args(args)
             .current_dir(cwd)
             .env("PATH", path_with_bin(&self.bin))
-            .env("NILES_HOME", &self.home)
+            .env("HOME", &self.home)
             .env("TMUX_LOG", &self.tmux_log)
             .env("TMUX", "/tmp/niles-test-tmux,0,0");
         command
@@ -137,7 +137,7 @@ pub fn niles_bare(cwd: &Path, home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_niles"));
     command
         .current_dir(cwd)
-        .env("NILES_HOME", home)
+        .env("HOME", home)
         .env_remove("TMUX");
     command
 }
@@ -194,7 +194,7 @@ pub fn temp_workspace(prefix: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(&workspace).unwrap();
-    workspace
+    fs::canonicalize(workspace).unwrap()
 }
 
 pub fn write_executable(path: &Path, body: &str) {
@@ -211,7 +211,7 @@ pub fn write_workspace_manifest(
     reviewer: &str,
     security: &str,
 ) {
-    fs::create_dir_all(workspace.join(".niles")).unwrap();
+    fs::create_dir_all(state_dir(workspace)).unwrap();
     let exact = |agent: &str| {
         match agent {
             "claude" => "claude:sonnet:high",
@@ -235,7 +235,7 @@ pub fn write_workspace_manifest(
         )
     })
     .join("");
-    fs::write(workspace.join(".niles/manifest.yaml"), body).unwrap();
+    fs::write(state_dir(workspace).join("manifest.yaml"), body).unwrap();
 }
 
 pub fn write_worker(
@@ -245,7 +245,7 @@ pub fn write_worker(
     task_label: Option<&str>,
     status: &[u8],
 ) -> PathBuf {
-    let worker_dir = workspace.join(".niles/worker").join(id);
+    let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
     let brief = worker_dir.join("brief.md");
     let launch = worker_dir.join("launch.sh");
@@ -282,4 +282,22 @@ pub fn write_worker(
 pub fn append_status(path: &Path, bytes: &[u8]) {
     let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
     file.write_all(bytes).unwrap();
+}
+
+// Match the explicit HOME used by subprocesses, including secondary workspaces in a TestEnv.
+pub fn state_dir(workspace: &Path) -> PathBuf {
+    let home = workspace
+        .ancestors()
+        .find_map(|ancestor| {
+            let home = ancestor.join("home");
+            (home.is_dir() && ancestor.join("bin/tmux").is_file()).then_some(home)
+        })
+        .unwrap_or_else(|| niles_home(workspace));
+    state_dir_at(&home, workspace)
+}
+
+pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
+    let output = niles_bare(workspace, home).arg("state").output().unwrap();
+    assert_command_success("resolve state directory", &output);
+    PathBuf::from(stdout_of(&output).trim_end_matches('\n'))
 }

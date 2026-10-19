@@ -31,7 +31,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         "#!/bin/sh\nprintf 'tmux 3.5\\nsecond line\\n'\n",
     );
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    let path = env.root.join(".niles/manifest.yaml");
+    let path = state_dir(&env.root).join("manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replacen(
         "claude:sonnet:high",
         "hermes:z-ai/glm-5.3-flash:high",

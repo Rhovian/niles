@@ -1,6 +1,6 @@
 ---
 name: niles-setup
-description: Install Niles, write .niles/manifest.yaml for this repository with the user, check it with niles doctor, and tell the user how to start it. Use when the user asks to set up, install, or configure Niles.
+description: Install Niles, write the global project manifest for this repository with the user, check it with niles doctor, and tell the user how to start it. Use when the user asks to set up, install, or configure Niles.
 ---
 
 # Set up Niles
@@ -25,12 +25,12 @@ this shell's PATH. Verify `niles --version` before continuing.
 
 ## 3. Write the manifest
 
-If `.niles/manifest.yaml` exists, keep it; edit only when the user requests it. Otherwise ask in
+Run `state=$(niles state)` from the project directory to resolve its global state path and migrate any legacy `.niles/` directory. If `"$state/manifest.yaml"` exists, keep it; edit only when the user requests it. Otherwise ask in
 one message which installed CLI should lead (the agent they talk to) and, when both Claude Code
 and Codex are present, whether to mix families for independent review. Use the mixed template
 when they choose to mix; if Codex should lead, swap each lead tier's primary with its Codex
 secondary. Otherwise use their chosen CLI's template.
-Create the file exclusively: `mkdir -p .niles && set -C && cat > .niles/manifest.yaml` with the
+Create the file exclusively: `mkdir -p "$state" && set -C && cat > "$state/manifest.yaml"` with the
 chosen YAML as input. If the file appears before creation, stop and keep it.
 
 Claude Code and Codex (built-in default; change `lead` to the user's choice):
@@ -214,7 +214,7 @@ For Hermes, pi, or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
 Each role lists tiers with one exact `family:model:effort` primary and ordered secondaries.
 All six roles and their standard tier are required; no-effort models omit the effort suffix. Your only repository
-write is `.niles/manifest.yaml`.
+write is `"$state/manifest.yaml"`.
 
 ## 4. Check with niles doctor
 

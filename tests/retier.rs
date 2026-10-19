@@ -13,7 +13,7 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
         "primary: claude:sonnet:high",
         1,
     );
-    fs::write(env.root.join(".niles/manifest.yaml"), manifest).unwrap();
+    fs::write(state_dir(&env.root).join("manifest.yaml"), manifest).unwrap();
     let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     for (current, target, error) in [
         (
