@@ -109,15 +109,9 @@ fn poll_workers(
     targets.retain(|id, _| live.contains(id.as_str()));
     let mut delivered = false;
     for worker in &workers {
-        let target = targets.entry(worker.id.clone()).or_insert_with(|| Target {
-            id: worker.id.clone(),
-            status: crate::wake::status_log_path(&worker.worker_dir),
-            dir: worker.worker_dir.clone(),
-            scanned: 0,
-            identity: None,
-            unreported: false,
-            liveness: super::liveness::Liveness::default(),
-        });
+        let target = targets
+            .entry(worker.id.clone())
+            .or_insert_with(|| Target::new(worker.id.clone(), worker.worker_dir.clone()));
         let path = cursor_path(&target.dir);
         let mut cursor = match open_lock_file(&path) {
             Ok(cursor) => cursor,
@@ -136,7 +130,8 @@ fn poll_workers(
             && (target.unreported || persisted == 0)
             && target.liveness.due(Instant::now())
         {
-            let health = worker::wait_health(&target.dir, chrono::Utc::now())?;
+            let health = worker::wait_health(&target.dir, chrono::Utc::now())
+                .with_context(|| format!("failed to probe worker {}", target.id))?;
             if let Some(detail) = target.liveness.observe(health, Instant::now()) {
                 // Activity probing may have taken time; an actual worker report wins.
                 report = target.next_report(persisted)?;

@@ -131,3 +131,21 @@ fn watch_log_batches_feed_one_telemetry_report_per_worker_and_read_old_lines() {
     );
     crate::test_support::remove_workspace(&root).unwrap();
 }
+
+#[test]
+fn gone_reports_nudge_once_and_answer_the_armed_checkin() {
+    let root = workspace("gone-report");
+    write_worker(&root, "worker", WINDOW);
+    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
+    let dir = worker_dir(&root, "worker");
+    checkin.write(&dir).unwrap();
+    append_log(&root, "worker", "gone: window exited\n");
+    let mut sink = RecordingSink::default();
+    tick(&root, at(1_300), &mut memory, &mut sink, &running());
+    assert_eq!(sink.sent, ["niles: worker reported (gone) — check workers"]);
+    assert_eq!(Checkin::read(&dir).unwrap(), None);
+    tick(&root, at(1_301), &mut memory, &mut sink, &running());
+    assert_eq!(sink.attempts.len(), 1);
+    crate::test_support::remove_workspace(&root).unwrap();
+}

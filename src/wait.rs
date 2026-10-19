@@ -49,8 +49,12 @@ struct Target {
 impl Target {
     fn resolve(id: String) -> Result<Self> {
         let dir = worker::worker_dir(&id)?;
+        Ok(Self::new(id, dir))
+    }
+
+    fn new(id: String, dir: Utf8PathBuf) -> Self {
         let status = wake::status_log_path(&dir);
-        Ok(Self {
+        Self {
             id,
             dir,
             status,
@@ -58,7 +62,7 @@ impl Target {
             identity: None,
             unreported: false,
             liveness: liveness::Liveness::default(),
-        })
+        }
     }
     /// Reads only the bytes appended since the last scan and returns the first actionable line
     /// with the offset just past it. A trailing partial line is left for the next poll.

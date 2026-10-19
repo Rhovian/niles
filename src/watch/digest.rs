@@ -53,10 +53,6 @@ pub(super) fn text(items: &[Item]) -> String {
 }
 
 /// Accept both old single-report lines and current mixed batches in watch.log.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "non-report phrases are intentionally ignored"
-)]
 pub(super) fn parse_reports(text: &str) -> impl Iterator<Item = (&str, WakeKind)> {
     text.strip_prefix("niles: ")
         .and_then(|text| text.strip_suffix(" — check workers"))

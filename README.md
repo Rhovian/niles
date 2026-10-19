@@ -84,7 +84,7 @@ See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
-- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. On first access, legacy workspace `.niles/` contents are copied here completely before the source is removed. Stop running agents before upgrading; copying does not synchronize live writers.
+- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback. On first access, legacy workspace `.niles/` contents are copied here completely before the source is removed. Stop running agents before upgrading; copying does not synchronize live writers.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
 - `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
@@ -209,6 +209,9 @@ the batch, then wait again; reports accumulate while you act, with no batching t
 Status logs must be appended to (`>>`). An unsupported in-place truncate and rewrite that
 regrows to the cached scan offset or beyond between polls can skip the rewritten prefix;
 normal appends and respawns use the supported delivery path.
+Unreadable or corrupt worker state, probe errors, and failures to append a generated wake stop
+the workspace wait with an error on stderr. Repair the reported state and run wait again;
+workers whose lines were not printed keep their cursors.
 A newer wait supersedes the old one. An unreported worker whose window or agent exits
 produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
 Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.

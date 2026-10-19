@@ -139,3 +139,21 @@ fn an_idle_unreported_worker_is_recorded_once_after_the_grace() {
     assert!(output.is_empty());
     remove_workspace(&workspace).unwrap();
 }
+
+#[test]
+fn corrupt_worker_metadata_stops_the_wait_without_consuming_reports() {
+    let (workspace, dir) = fixture("wait-corrupt-meta", "done: pending\n");
+    let broken = dir.parent().unwrap().join("broken");
+    fs::create_dir_all(&broken).unwrap();
+    fs::write(broken.join("meta.json"), "{").unwrap();
+    let mut targets = BTreeMap::new();
+    let mut output = Vec::new();
+    let error = poll_workers(&workspace, &mut targets, &mut output).unwrap_err();
+    assert!(format!("{error:#}").contains(broken.join("meta.json").as_str()));
+    assert!(output.is_empty());
+    assert!(!dir.join("status.cursor").exists());
+    fs::remove_dir_all(broken).unwrap();
+    assert!(poll_workers(&workspace, &mut targets, &mut output).unwrap());
+    assert_eq!(output, b"worker done: pending\n");
+    remove_workspace(&workspace).unwrap();
+}
