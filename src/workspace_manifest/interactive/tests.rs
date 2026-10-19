@@ -52,11 +52,17 @@ fn continue_quit_and_unchanged_save_write_nothing() {
 }
 
 #[test]
-fn continuing_first_run_errors_without_a_file() {
-    let root = temp_test_path("picker-first-continue");
-    let error = ensure(&root, true, &mut Vec::new(), |_, _, _, _| Ok(Choice::Keep)).unwrap_err();
-    assert_eq!(error.to_string(), "no workspace manifest written");
-    assert!(!manifest_path(&root).unwrap().exists());
+fn first_run_offers_saving_unchanged_defaults_and_writes_them() {
+    let root = temp_test_path("picker-first-save");
+    let result = ensure(&root, true, &mut Vec::new(), |_, draft, _, reason| {
+        assert!(reason.is_some(), "missing manifest must require saving");
+        assert_eq!(draft, WorkspaceManifest::default());
+        Ok(Choice::Save(Box::new(draft)))
+    })
+    .unwrap();
+    assert_eq!(result, Some(WorkspaceManifest::default()));
+    assert_eq!(load(&root).unwrap(), result);
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]

@@ -57,7 +57,12 @@ fn ensure(
         Some(manifest) => manifest.clone(),
         None => WorkspaceManifest::default(),
     };
-    match pick(root, defaults, &config, replacement_reason.as_deref())? {
+    let save_reason = replacement_reason.as_deref().or_else(|| {
+        existing.is_none().then_some(
+            "No workspace manifest exists yet. Save the shown roles to continue; q quits.",
+        )
+    });
+    match pick(root, defaults, &config, save_reason)? {
         Choice::Save(draft) if replacement_reason.is_some() => {
             save(root, &draft)?;
             Ok(Some(*draft))
