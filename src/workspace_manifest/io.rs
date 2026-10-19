@@ -140,7 +140,7 @@ flow:
         assert!(err.contains("unknown field `manager`"), "{err}");
         assert!(
             err.contains(
-                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, research, checkin, recheck"
+                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, research, checkin, recheck, worktree"
             ),
             "{err}"
         );
@@ -180,6 +180,7 @@ flow:
             "flow:",
             "checkin:",
             "recheck:",
+            "worktree:",
             "worker_planning:",
             "when:",
         ] {
@@ -188,6 +189,9 @@ flow:
         let configured = WorkspaceManifest {
             checkin: Some("15m".into()),
             recheck: Some("backoff".into()),
+            worktree: Some(
+                crate::store::parse_yaml("env: {CACHE: /tmp/cache}\nsetup: echo ready").unwrap(),
+            ),
             ..manifest
         };
         save(&root, &configured).unwrap();

@@ -180,6 +180,29 @@ primary or secondary and conflicts with `--tier`. The lead starts at its standar
 looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
 and cost difference, waiting for the operator's yes. It proposes economical step-downs too.
 
+A manifest can configure managed worktrees without tying Niles to a build tool:
+
+```yaml
+worktree:
+  env:
+    CARGO_TARGET_DIR: /absolute/path/to/main/target
+  setup: 'test -d "$CARGO_TARGET_DIR"'
+```
+
+`env` overrides the inherited worker environment for `spawn --worktree`, including when joining
+an existing tree. Values are literal strings: use absolute paths, since `$HOME`, `~`, and shell
+substitutions are not expanded. Sharing the main checkout's Cargo target directory reuses its
+warm dependency cache; concurrent Cargo builds serialize on Cargo's lock. Niles sets no
+language-specific defaults.
+
+Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same configured
+environment, before launching the worker. Use it for project preparation such as `uv sync` or
+`pnpm install`. It runs only on creation, never on reuse. Output goes to the invoking terminal;
+a nonzero exit fails the spawn and removes the new tree (including setup-created files), so a
+retry runs setup again. The branch remains; omit `--base` when retrying. Neither setting applies
+to plain spawns or `--tree`.
+Only put trusted commands in this operator-owned manifest: setup runs with your permissions.
+
 Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
 followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a

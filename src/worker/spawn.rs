@@ -77,9 +77,8 @@ pub fn spawn(
     if find_on_path(&invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
-    let agent_spec = &invocation.spec;
     let dir = store::workers_dir(&project)?.join(&id);
-    let session_link = agents::session_link(agent_spec.family(), &id, &dir);
+    let session_link = agents::session_link(invocation.spec.family(), &id, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }
@@ -101,12 +100,24 @@ pub fn spawn(
             }
             Some(canonical)
         }
-        Some(SpawnTree::Worktree { branch, base }) => Some(worktree::create_or_join(
-            &project,
-            &branch,
-            base.as_deref(),
-        )?),
+        Some(SpawnTree::Worktree { branch, base }) => {
+            let manifest = workspace_manifest::load(&project)?;
+            let config = manifest
+                .as_ref()
+                .and_then(|manifest| manifest.worktree.as_ref());
+            let path = worktree::create_or_join(&project, &branch, base.as_deref(), config)?;
+            if let Some(config) = config {
+                invocation.env.extend(
+                    config
+                        .env
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
+            }
+            Some(path)
+        }
     };
+    let agent_spec = &invocation.spec;
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
     basis.record_mechanical(&id)?;

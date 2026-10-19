@@ -3,7 +3,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::store;
+use crate::{store, workspace_manifest::WorktreeConfig};
 
 use super::meta::read_meta_if_exists;
 
@@ -56,6 +56,7 @@ pub(super) fn create_or_join(
     workspace: &Utf8Path,
     branch: &str,
     base: Option<&str>,
+    config: Option<&WorktreeConfig>,
 ) -> Result<Utf8PathBuf> {
     git(workspace, &["check-ref-format", "--branch", branch])?;
     let path = root(workspace)?.join(branch);
@@ -76,9 +77,31 @@ pub(super) fn create_or_join(
                 args.extend([path.as_str(), branch]);
             }
             git(workspace, &args)?;
+            if let Some(config) = config
+                && let Some(command) = &config.setup
+                && let Err(error) = setup(&path, command, config)
+            {
+                // A failed creation must not become a reusable tree whose setup never finished.
+                git(workspace, &["worktree", "remove", "--force", path.as_str()])
+                    .with_context(|| format!("{error:#}; also failed to remove new tree {path}"))?;
+                return Err(error);
+            }
             Ok(path)
         }
     }
+}
+
+fn setup(path: &Utf8Path, command: &str, config: &WorktreeConfig) -> Result<()> {
+    let status = Command::new("sh")
+        .args(["-c", command])
+        .current_dir(path)
+        .envs(&config.env)
+        .status()
+        .with_context(|| format!("run worktree setup in {path}"))?;
+    if !status.success() {
+        bail!("worktree setup in {path} failed: {status}");
+    }
+    Ok(())
 }
 
 pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path) -> Result<Option<String>> {

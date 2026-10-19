@@ -80,8 +80,8 @@ separate `Command` arguments; these measures prevent incidental shell parsing. S
 **Known gaps.** Niles has no repository-trust gate of its own. Once the operator launches it, Niles
 may intentionally execute the configured binary with the configured arguments, so quoting is not
 a trust mechanism for a deliberately selected executable. Role bindings select what is launched,
-and planning text is instruction input to the lead. Niles does not currently execute
-repository-defined hooks; configuration parsing should not be interpreted as a hook facility.
+and planning text is instruction input to the lead. The manifest can also configure a
+`worktree.setup` shell command and `worktree.env`; see the execution boundary below.
 `niles doctor` also executes repository-chosen agent binaries with `--version`; the `niles-setup`
 skill has the agent show a project `agents:` block to the user and get approval before running it.
 
@@ -247,6 +247,20 @@ With `--worktree`, Niles uses git to create a worktree under `~/.niles/trees` an
 remove it on close. The branch name is checked by git before it becomes a path. Close removes only
 registered worktrees under that workspace's managed tree root after checking live workers, status,
 and remote reachability; it never deletes branches.
+
+The operator-owned global project manifest may supply `worktree.env` and `worktree.setup`.
+For `spawn --worktree`, Niles applies literal environment overrides to the worker and executes
+setup via `sh -c` in a newly created tree before launch, with those overrides and Niles's inherited
+environment. Setup is arbitrary code with the operator's permissions, credentials, and network
+access; it is not sandboxed and runs before any agent CLI trust prompt. Commands may themselves
+execute repository content (for example package install scripts). Review setup and environment
+entries before spawning, including in migrated legacy manifests: migration does not confer trust.
+Niles validates environment names as shell identifiers and rejects NUL-bearing values; worker
+exports quote values to prevent incidental shell evaluation. Setup text is deliberately shell
+code. Setup never runs when joining an existing tree or using `--tree`. Failure aborts spawn;
+Niles forcibly removes the newly created tree and setup-created files so a retry cannot skip
+failed setup. Effects outside the tree cannot be rolled back. Cleanup failure is reported and
+requires operator recovery before reusing the retained tree.
 
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.
