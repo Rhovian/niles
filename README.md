@@ -211,7 +211,8 @@ regrows to the cached scan offset or beyond between polls can skip the rewritten
 normal appends and respawns use the supported delivery path.
 Unreadable or corrupt worker state, probe errors, and failures to append a generated wake stop
 the workspace wait with an error on stderr. Repair the reported state and run wait again;
-workers whose lines were not printed keep their cursors.
+workers whose lines were not printed keep their cursors. Any lines already printed on stdout
+stand as delivered even if a later worker causes a nonzero exit; process those lines before retrying.
 A newer wait supersedes the old one. An unreported worker whose window or agent exits
 produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
 Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.

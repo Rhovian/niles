@@ -1,4 +1,4 @@
-use std::{env, fs, os::unix::fs::symlink};
+use std::{fs, os::unix::fs::symlink};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -46,7 +46,7 @@ impl Entry {
 }
 
 pub(super) fn directory() -> Result<Utf8PathBuf> {
-    Ok(Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?).join(".niles/projects"))
+    Ok(crate::util::home_dir()?.join(".niles/projects"))
 }
 
 pub(super) fn entries() -> Result<Vec<Entry>> {

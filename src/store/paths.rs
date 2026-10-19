@@ -1,6 +1,4 @@
-use std::env;
-
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 
 pub(crate) const WORKERS_DIR: &str = "worker";
@@ -18,7 +16,7 @@ pub(crate) fn project_path(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     }
     // Operator-chosen Claude-style key: slash/hyphen collisions are accepted.
     let key = workspace.as_str().replace('/', "-");
-    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    let home = crate::util::home_dir()?;
     if !home.is_absolute() {
         bail!("HOME must be absolute: {home}");
     }

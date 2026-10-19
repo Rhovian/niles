@@ -157,3 +157,40 @@ fn corrupt_worker_metadata_stops_the_wait_without_consuming_reports() {
     assert_eq!(output, b"worker done: pending\n");
     remove_workspace(&workspace).unwrap();
 }
+
+#[test]
+fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
+    let (workspace, dir) = fixture("wait-partial-probe-error", "done: ready\n");
+    let broken = dir.parent().unwrap().join("z-broken");
+    let sessions = broken.join("sessions");
+    fs::create_dir_all(sessions.join("unreadable.jsonl")).unwrap();
+    let mut meta: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+    meta["id"] = "z-broken".into();
+    meta["brief"] = broken.join("brief.md").as_str().into();
+    meta["launch"] = broken.join("launch.sh").as_str().into();
+    meta["session_link"] = serde_json::json!({ "family": "pi", "session_dir": sessions });
+    fs::write(broken.join("meta.json"), meta.to_string()).unwrap();
+    fs::write(broken.join("status.log"), "working: busy\n").unwrap();
+    let mut targets = BTreeMap::new();
+    let mut output = Vec::new();
+    let error = poll_workers(&workspace, &mut targets, &mut output).unwrap_err();
+    assert_eq!(output, b"worker done: ready\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("status.cursor")).unwrap(),
+        "12\n"
+    );
+    assert_eq!(
+        fs::read_to_string(broken.join("status.cursor")).unwrap(),
+        ""
+    );
+    assert_eq!(error.to_string(), "failed to probe worker z-broken");
+    assert!(format!("{error:#}").contains(sessions.join("unreadable.jsonl").as_str()));
+
+    fs::write(broken.join("status.log"), "done: repaired\n").unwrap();
+    targets.clear();
+    output.clear();
+    assert!(poll_workers(&workspace, &mut targets, &mut output).unwrap());
+    assert_eq!(output, b"z-broken done: repaired\n");
+    remove_workspace(&workspace).unwrap();
+}

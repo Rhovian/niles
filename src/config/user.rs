@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::fs;
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -86,7 +86,7 @@ impl UserConfig {
 }
 
 pub(crate) fn path() -> Result<Utf8PathBuf> {
-    Ok(Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?).join(".niles/config.yaml"))
+    Ok(crate::util::home_dir()?.join(".niles/config.yaml"))
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::{env, process::Command};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -35,7 +35,7 @@ fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     let workspace = workspace
         .strip_prefix("/")
         .context("workspace path is not absolute")?;
-    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    let home = crate::util::home_dir()?;
     Ok(home.join(".niles/trees").join(workspace))
 }
 
