@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, TryLockError},
     io::{self, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -7,10 +8,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use super::{Target, WaitExit, cursor::*, exit::Outcome, render};
-use crate::{store, util, wake::WakeKind, worker};
+use crate::{store, util, worker};
 
 const TAKEOVER_POLL: Duration = Duration::from_millis(100);
 
@@ -69,6 +70,9 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
     let workspace = util::current_dir_utf8()?;
     let deadline = Instant::now() + timeout;
     let mut next_poll = Instant::now();
+    // Rust 1.89 File::open/seek (std/fs.rs) do not retain offsets across reopened files.
+    // Remember progress here without persisting past unprinted reports.
+    let mut targets = BTreeMap::new();
     loop {
         // Keep takeover serialized with printing, including the cursor writes that follow it.
         let gate = open_lock_file(&registration.path)?;
@@ -77,42 +81,7 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
             return Ok(WaitExit::from_outcome(Outcome::Superseded));
         }
         if Instant::now() >= next_poll {
-            let mut delivered = false;
-            let stdout = io::stdout();
-            let mut output = stdout.lock();
-            for worker in worker::live_worker_locations(&workspace)? {
-                let mut target = Target {
-                    id: worker.id,
-                    status: crate::wake::status_log_path(&worker.worker_dir),
-                    dir: worker.worker_dir,
-                    scanned: 0,
-                };
-                let path = cursor_path(&target.dir);
-                let mut cursor = match open_lock_file(&path) {
-                    Ok(cursor) => cursor,
-                    Err(_) if !target.dir.exists() => continue,
-                    Err(error) => return Err(error),
-                };
-                // A busy sender owns its old lines. Never hold up takeover on its cursor.
-                match cursor.try_lock() {
-                    Ok(()) => {}
-                    Err(TryLockError::WouldBlock) => continue,
-                    Err(TryLockError::Error(error)) => return Err(error.into()),
-                }
-                target.scanned = read_cursor(&mut cursor, &path)?;
-                if let Some((kind, line, end)) = target.next_actionable()? {
-                    if kind == WakeKind::Closed {
-                        continue;
-                    }
-                    let line = render(&format!("{} {line}", target.id));
-                    writeln!(output, "{line}").context("failed to print workspace wake")?;
-                    output.flush().context("failed to flush workspace wake")?;
-                    // A killed or broken-output wait cannot consume an unprinted line.
-                    write_cursor(&mut cursor, &path, end)?;
-                    delivered = true;
-                }
-            }
-            if delivered {
+            if poll_workers(&workspace, &mut targets, &mut io::stdout().lock())? {
                 return Ok(WaitExit::from_outcome(Outcome::Wake));
             }
             next_poll = Instant::now() + interval;
@@ -129,3 +98,50 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
         );
     }
 }
+
+fn poll_workers(
+    workspace: &Utf8Path,
+    targets: &mut BTreeMap<String, Target>,
+    output: &mut impl Write,
+) -> Result<bool> {
+    let workers = worker::live_worker_locations(workspace)?;
+    let live: BTreeSet<_> = workers.iter().map(|worker| worker.id.as_str()).collect();
+    targets.retain(|id, _| live.contains(id.as_str()));
+    let mut delivered = false;
+    for worker in &workers {
+        let target = targets.entry(worker.id.clone()).or_insert_with(|| Target {
+            id: worker.id.clone(),
+            status: crate::wake::status_log_path(&worker.worker_dir),
+            dir: worker.worker_dir.clone(),
+            scanned: 0,
+            identity: None,
+        });
+        let path = cursor_path(&target.dir);
+        let mut cursor = match open_lock_file(&path) {
+            Ok(cursor) => cursor,
+            Err(_) if !target.dir.exists() => continue,
+            Err(error) => return Err(error),
+        };
+        // A busy sender owns its old lines. Never hold up takeover on its cursor.
+        match cursor.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => continue,
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
+        let persisted = read_cursor(&mut cursor, &path)?;
+        if let Some((line, end)) = target.next_report(persisted)? {
+            let line = render(&format!("{} {line}", target.id));
+            writeln!(output, "{line}").context("failed to print workspace wake")?;
+            output.flush().context("failed to flush workspace wake")?;
+            // A killed or broken-output wait cannot consume an unprinted line.
+            write_cursor(&mut cursor, &path, end)?;
+            target.scanned = end;
+            delivered = true;
+        }
+    }
+    Ok(delivered)
+}
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;

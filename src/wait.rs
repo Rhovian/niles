@@ -12,7 +12,7 @@ use camino::Utf8PathBuf;
 use std::{
     fs,
     io::{ErrorKind, Read, Seek, SeekFrom},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     time::Duration,
 };
 pub(crate) mod cursor;
@@ -41,6 +41,7 @@ struct Target {
     dir: Utf8PathBuf,
     status: Utf8PathBuf,
     scanned: u64,
+    identity: Option<(u64, u64)>,
 }
 impl Target {
     fn resolve(id: String) -> Result<Self> {
@@ -51,11 +52,12 @@ impl Target {
             dir,
             status,
             scanned: 0,
+            identity: None,
         })
     }
     /// Reads only the bytes appended since the last scan and returns the first actionable line
     /// with the offset just past it. A trailing partial line is left for the next poll.
-    fn next_actionable(&mut self) -> Result<Option<(WakeKind, String, u64)>> {
+    fn next_actionable(&mut self, persisted: u64) -> Result<Option<(WakeKind, String, u64)>> {
         let mut file = match fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -68,11 +70,17 @@ impl Target {
             }
         };
 
-        let len = file
+        let metadata = file
             .metadata()
-            .with_context(|| format!("failed to inspect {}", self.status))?
-            .len();
-        // A truncated or replaced log means the offset no longer describes this file.
+            .with_context(|| format!("failed to inspect {}", self.status))?;
+        let identity = (metadata.dev(), metadata.ino());
+        // A replacement invalidates the cache, not a cursor that send already advanced.
+        if self.identity.is_some_and(|previous| previous != identity) {
+            self.scanned = persisted;
+        }
+        self.identity = Some(identity);
+        let len = metadata.len();
+        // Truncation also invalidates the remembered offset in the same inode.
         if len < self.scanned {
             self.scanned = 0;
         }
@@ -99,6 +107,17 @@ impl Target {
         Ok(None)
     }
 
+    fn next_report(&mut self, persisted: u64) -> Result<Option<(String, u64)>> {
+        self.scanned = self.scanned.max(persisted);
+        while let Some((kind, line, end)) = self.next_actionable(persisted)? {
+            if kind != WakeKind::Closed {
+                return Ok(Some((line, end)));
+            }
+            self.scanned = end;
+        }
+        Ok(None)
+    }
+
     /// Consumes every actionable line currently in the log and persists the end position.
     fn skip_to_end(&mut self) -> Result<Vec<String>> {
         let path = cursor_path(&self.dir);
@@ -106,10 +125,11 @@ impl Target {
         cursor
             .lock()
             .with_context(|| format!("failed to lock {path}"))?;
-        self.scanned = self.scanned.max(read_cursor(&mut cursor, &path)?);
+        let persisted = read_cursor(&mut cursor, &path)?;
+        self.scanned = self.scanned.max(persisted);
 
         let mut skipped = Vec::new();
-        while let Some((_, line, end)) = self.next_actionable()? {
+        while let Some((_, line, end)) = self.next_actionable(persisted)? {
             skipped.push(line);
             self.scanned = end;
         }

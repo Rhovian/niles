@@ -132,6 +132,9 @@ impl WorkerSnapshot {
 /// worker rather than a leftover.
 pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
     let mut workers = Vec::new();
+    // Probe once before any cursor is read: a wait that finishes during the snapshot is either
+    // still reported as running or has already advanced the delivered workers' cursors.
+    let wait_running = wait_running(workspace)?;
     for entry in store::worker_locations(workspace)? {
         let (meta, read_error) = match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) => (Some(meta), None),
@@ -139,10 +142,6 @@ pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot
             Err(err) => (None, Some(format!("{err:#}"))),
         };
         let log = status_log(&entry.worker_dir)?;
-        // Probed before the cursor is read: a wait that finishes in between has advanced the
-        // cursor before it stopped running, so a line read above is either being delivered or
-        // shows as delivered.
-        let wait_running = wait_running(workspace)?;
         let cursor = read_wake_cursor(&entry.worker_dir)?;
         let mut snapshot = WorkerSnapshot::new(entry.id, entry.worker_dir, log);
         snapshot.meta = meta;

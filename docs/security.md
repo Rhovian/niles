@@ -106,7 +106,8 @@ briefs, launch scripts, reports, status logs, and cursors in the global tree. Se
 **Existing mitigations.** Migration holds a per-project advisory lock under `~/.niles/state/`.
 Same-filesystem moves use rename; cross-filesystem moves copy to a staging directory, preserving
 symlinks without following them, publish the completed copy, then remove the source. A failed copy
-leaves the source intact and the staging directory for diagnosis. Stop agents before upgrading:
+leaves the source intact and reports the staging directory for diagnosis; retries use a fresh
+staging directory, so that partial copy cannot block recovery. Stop agents before upgrading:
 migration cannot update paths already held by running agents or their shell scripts.
 `niles state` prints the resolved state directory. `niles log` appends timestamped decisions via
 Niles, so the lead needs no extra filesystem sandbox grant. It requires the latest lead session's
