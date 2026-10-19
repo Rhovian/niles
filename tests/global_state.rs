@@ -4,12 +4,6 @@ use std::{fs, os::unix::fs::symlink, path::PathBuf};
 
 use common::*;
 
-fn state(env: &TestEnv) -> PathBuf {
-    let output = env.run(&["state"]);
-    assert_command_success("state", &output);
-    PathBuf::from(stdout_of(&output).trim())
-}
-
 fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
     let dir = state_dir(&env.root).join("sessions").join(id);
     fs::create_dir_all(&dir).unwrap();
@@ -24,9 +18,8 @@ fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
 #[test]
 fn new_state_and_manifest_stay_outside_the_repository() {
     let env = TestEnv::new("niles-global-new");
-    let dir = state(&env);
+    let dir = state_dir(&env.root);
     assert_eq!(dir, state_dir(&env.root));
-    assert!(!dir.exists(), "path discovery need not create state");
     assert!(!env.root.join(".niles").exists());
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     let output = env.run(&["spawn", "research", "--role", "research", "investigate"]);
@@ -50,21 +43,21 @@ fn migration_moves_the_entire_directory_and_is_idempotent() {
     .unwrap();
     let output = env.run(&["doctor"]);
     assert_command_success("migrated manifest", &output);
-    let dir = state(&env);
+    let dir = state_dir(&env.root);
     assert!(!legacy.exists());
     assert_eq!(
         fs::read(dir.join("worker/old/report.md")).unwrap(),
         b"report\0bytes"
     );
     assert!(dir.join("manifest.yaml").is_file());
-    assert_eq!(state(&env), dir);
+    assert_eq!(state_dir(&env.root), dir);
 }
 
 #[test]
 fn migration_refuses_conflicting_state_without_losing_either_copy() {
     let env = TestEnv::new("niles-global-conflict");
     let legacy = env.root.join(".niles");
-    let global = state(&env);
+    let global = state_dir(&env.root);
     for dir in [&legacy, &global] {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("manifest.yaml"), dir.to_str().unwrap()).unwrap();
@@ -85,12 +78,12 @@ fn migration_refuses_conflicting_state_without_losing_either_copy() {
 #[test]
 fn migration_rejects_a_repository_supplied_state_symlink() {
     let env = TestEnv::new("niles-global-symlink");
-    let global = state(&env);
+    let global = state_dir(&env.root);
     let target = env.root.join("target");
     fs::create_dir(&target).unwrap();
     fs::write(target.join("secret"), "untouched").unwrap();
     symlink(&target, env.root.join(".niles")).unwrap();
-    assert_failure_contains("symlink", &env.run(&["state"]), "not a file or symlink");
+    assert_failure_contains("symlink", &env.run(&["workers"]), "not a file or symlink");
     assert_eq!(
         fs::read_to_string(target.join("secret")).unwrap(),
         "untouched"
@@ -99,19 +92,25 @@ fn migration_rejects_a_repository_supplied_state_symlink() {
 }
 
 #[test]
-fn mangling_distinguishes_separators_hyphens_and_percent_escapes() {
+fn project_keys_use_plain_slash_replacement_and_accept_collisions() {
     let env = TestEnv::new("niles-global-keys");
-    let mut paths = Vec::new();
-    for name in ["a/b", "a-b", "a%2Db", "space ü"] {
-        let workspace = env.root.join(name);
-        fs::create_dir_all(&workspace).unwrap();
-        let output = env.niles(&workspace, &["state"]).output().unwrap();
-        assert_command_success("state", &output);
-        let path = PathBuf::from(stdout_of(&output).trim());
-        assert_eq!(path.parent().unwrap(), env.home.join(".niles/state"));
-        assert!(!paths.contains(&path));
-        paths.push(path);
+    let a = env.root.join("a/b");
+    let b = env.root.join("a-b");
+    for workspace in [&a, &b] {
+        fs::create_dir_all(workspace).unwrap();
+        let output = env
+            .niles(workspace, &["wait", "--timeout", "0"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
+        let expected = env
+            .home
+            .join(".niles/state")
+            .join(workspace.to_str().unwrap().replace('/', "-"));
+        assert!(expected.join("worker/wait.lock").is_file());
     }
+    assert_eq!(state_dir(&a), state_dir(&b));
+    assert_eq!(env.run(&["state"]).status.code(), Some(2));
 }
 
 #[test]
@@ -186,25 +185,6 @@ fn log_rejects_missing_or_foreign_sessions_and_invalid_lines() {
 }
 
 #[test]
-fn long_paths_have_bounded_stable_and_distinct_keys() {
-    let env = TestEnv::new("niles-global-long-path");
-    let mut previous = None;
-    for suffix in ["one", "two"] {
-        let workspace = env.root.join("ü".repeat(100)).join(suffix);
-        fs::create_dir_all(&workspace).unwrap();
-        let output = env.niles(&workspace, &["state"]).output().unwrap();
-        assert_command_success("long state", &output);
-        let path = PathBuf::from(stdout_of(&output).trim());
-        assert!(path.file_name().unwrap().len() <= 200);
-        fs::create_dir_all(&path).unwrap();
-        let again = env.niles(&workspace, &["state"]).output().unwrap();
-        assert_eq!(stdout_of(&again), stdout_of(&output));
-        assert_ne!(previous.as_ref(), Some(&path));
-        previous = Some(path);
-    }
-}
-
-#[test]
 fn log_rejects_a_session_id_that_escapes_its_directory() {
     let env = TestEnv::new("niles-global-log-escape");
     let log = lead(&env, "lead", "%9");
@@ -252,7 +232,7 @@ fn workspace_wait_locks_stay_in_global_project_state() {
     let output = env.run(&["wait", "--timeout", "0"]);
     assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
     assert!(stdout_of(&output).is_empty());
-    let workers = state(&env).join("worker");
+    let workers = state_dir(&env.root).join("worker");
     assert!(workers.join("wait.lock").is_file());
     assert!(workers.join("wait.running").is_file());
     assert!(!env.root.join(".niles").exists());

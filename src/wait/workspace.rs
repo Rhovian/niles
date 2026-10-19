@@ -115,6 +115,8 @@ fn poll_workers(
             dir: worker.worker_dir.clone(),
             scanned: 0,
             identity: None,
+            unreported: false,
+            liveness: super::liveness::Liveness::default(),
         });
         let path = cursor_path(&target.dir);
         let mut cursor = match open_lock_file(&path) {
@@ -129,7 +131,25 @@ fn poll_workers(
             Err(TryLockError::Error(error)) => return Err(error.into()),
         }
         let persisted = read_cursor(&mut cursor, &path)?;
-        if let Some((line, end)) = target.next_report(persisted)? {
+        let mut report = target.next_report(persisted)?;
+        if report.is_none()
+            && (target.unreported || persisted == 0)
+            && target.liveness.due(Instant::now())
+        {
+            let health = worker::wait_health(&target.dir, chrono::Utc::now())?;
+            if let Some(detail) = target.liveness.observe(health, Instant::now()) {
+                // Activity probing may have taken time; an actual worker report wins.
+                report = target.next_report(persisted)?;
+                if report.is_none() {
+                    util::append_line(
+                        &target.status,
+                        &crate::wake::line(crate::wake::WakeKind::Gone, detail),
+                    )?;
+                    report = target.next_report(persisted)?;
+                }
+            }
+        }
+        if let Some((line, end)) = report {
             let line = render(&format!("{} {line}", target.id));
             writeln!(output, "{line}").context("failed to print workspace wake")?;
             output.flush().context("failed to flush workspace wake")?;

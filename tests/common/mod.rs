@@ -297,7 +297,6 @@ pub fn state_dir(workspace: &Path) -> PathBuf {
 }
 
 pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
-    let output = niles_bare(workspace, home).arg("state").output().unwrap();
-    assert_command_success("resolve state directory", &output);
-    PathBuf::from(stdout_of(&output).trim_end_matches('\n'))
+    home.join(".niles/state")
+        .join(workspace.to_str().unwrap().replace('/', "-"))
 }

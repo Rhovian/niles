@@ -84,7 +84,7 @@ See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
-- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. `niles state` prints this path; legacy workspace `.niles/` directories move here on first access. Stop running agents before upgrading.
+- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. On first access, legacy workspace `.niles/` contents are copied here completely before the source is removed. Stop running agents before upgrading; copying does not synchronize live writers.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
 - `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
@@ -122,7 +122,9 @@ research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 
 For ready-made setups with all shipped role tiers, see [examples/](examples/):
 [Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
-Copy one to `"$(niles state)/manifest.yaml"` (create its parent directory first), then run `niles doctor` to check the required CLIs.
+From the project root, run `niles workers` to migrate any legacy state, then copy a template to
+`"$HOME/.niles/state/$(pwd -P | tr '/' '-')/manifest.yaml"` (create its parent directory first).
+Run `niles doctor` to check the required CLIs.
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
 
@@ -204,7 +206,10 @@ any additional terms or conditions.
 while it runs. It returns immediately with all pending reports, one escaped
 `<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
 the batch, then wait again; reports accumulate while you act, with no batching timer.
-A newer wait supersedes the old one. Exit codes: 0 reports, 11 superseded, 22 timeout.
+A newer wait supersedes the old one. An unreported worker whose window or agent exits
+produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
+Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.
+A kill after printing but before advancing the cursor may replay that printed line. Exit codes: 0 wakes (reports or `gone:`), 11 superseded, 22 timeout.
 `spawn --wait` and `send --wait` start this same workspace wait after dispatch.
 The watcher also combines pending reports and overdue check-ins in one `niles:` line;
 while a wait runs, it leaves report delivery to that wait.

@@ -2,6 +2,8 @@ use std::{borrow::Cow, fmt};
 
 use camino::{Utf8Path, Utf8PathBuf};
 
+pub(crate) const FOLLOWUP_STARTED: &str = "working: follow-up dispatch started";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WakeKind {
     Done,
@@ -9,16 +11,18 @@ pub(crate) enum WakeKind {
     Blocked,
     NeedsDecision,
     Closed,
+    Gone,
     Working,
 }
 
 impl WakeKind {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Done,
         Self::Failed,
         Self::Blocked,
         Self::NeedsDecision,
         Self::Closed,
+        Self::Gone,
         Self::Working,
     ];
 
@@ -29,6 +33,7 @@ impl WakeKind {
             Self::Blocked => "blocked",
             Self::NeedsDecision => "needs-decision",
             Self::Closed => "closed",
+            Self::Gone => "gone",
             Self::Working => "working",
         }
     }

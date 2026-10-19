@@ -25,12 +25,18 @@ this shell's PATH. Verify `niles --version` before continuing.
 
 ## 3. Write the manifest
 
-Run `state=$(niles state)` from the project directory to resolve its global state path and migrate any legacy `.niles/` directory. If `"$state/manifest.yaml"` exists, keep it; edit only when the user requests it. Otherwise ask in
+Run `niles workers` from the project directory to migrate any legacy `.niles/` directory;
+stop and triage an error before writing a manifest. Migration copies to staging, publishes the
+complete copy, then removes the legacy source; stop running agents before upgrading because
+copying cannot synchronize live writers. Set
+`niles_project_dir="$HOME/.niles/state/$(pwd -P | tr '/' '-')"`.
+This plain Claude-style key replaces slashes with hyphens and accepts separator/hyphen collisions.
+If `"$niles_project_dir/manifest.yaml"` exists, keep it; edit only when the user requests it. Otherwise ask in
 one message which installed CLI should lead (the agent they talk to) and, when both Claude Code
 and Codex are present, whether to mix families for independent review. Use the mixed template
 when they choose to mix; if Codex should lead, swap each lead tier's primary with its Codex
 secondary. Otherwise use their chosen CLI's template.
-Create the file exclusively: `mkdir -p "$state" && set -C && cat > "$state/manifest.yaml"` with the
+Create the file exclusively: `mkdir -p "$niles_project_dir" && set -C && cat > "$niles_project_dir/manifest.yaml"` with the
 chosen YAML as input. If the file appears before creation, stop and keep it.
 
 Claude Code and Codex (built-in default; change `lead` to the user's choice):
@@ -213,8 +219,7 @@ research:
 For Hermes, pi, or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
 Each role lists tiers with one exact `family:model:effort` primary and ordered secondaries.
-All six roles and their standard tier are required; no-effort models omit the effort suffix. Your only repository
-write is `"$state/manifest.yaml"`.
+All six roles and their standard tier are required; no-effort models omit the effort suffix. The only file you write is `"$niles_project_dir/manifest.yaml"`.
 
 ## 4. Check with niles doctor
 

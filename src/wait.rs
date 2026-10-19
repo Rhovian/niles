@@ -17,6 +17,7 @@ use std::{
 };
 pub(crate) mod cursor;
 mod exit;
+mod liveness;
 mod workspace;
 use cursor::{cursor_path, open_lock_file, read_cursor, write_cursor};
 pub(crate) use exit::WaitExit;
@@ -42,6 +43,8 @@ struct Target {
     status: Utf8PathBuf,
     scanned: u64,
     identity: Option<(u64, u64)>,
+    unreported: bool,
+    liveness: liveness::Liveness,
 }
 impl Target {
     fn resolve(id: String) -> Result<Self> {
@@ -53,6 +56,8 @@ impl Target {
             status,
             scanned: 0,
             identity: None,
+            unreported: false,
+            liveness: liveness::Liveness::default(),
         })
     }
     /// Reads only the bytes appended since the last scan and returns the first actionable line
@@ -77,12 +82,14 @@ impl Target {
         // A replacement invalidates the cache, not a cursor that send already advanced.
         if self.identity.is_some_and(|previous| previous != identity) {
             self.scanned = persisted;
+            self.unreported = false;
         }
         self.identity = Some(identity);
         let len = metadata.len();
         // Truncation also invalidates the remembered offset in the same inode.
         if len < self.scanned {
             self.scanned = 0;
+            self.unreported = false;
         }
         if len == self.scanned {
             return Ok(None);
@@ -98,8 +105,22 @@ impl Target {
         let mut complete = 0;
         for (end, line) in wake::complete_lines(&appended) {
             complete = end;
-            if let Some(kind) = WakeKind::actionable(&line) {
-                return Ok(Some((kind, render(&line), self.scanned + end as u64)));
+            if line == wake::FOLLOWUP_STARTED {
+                self.liveness.reset();
+            }
+            if let Some(kind) = WakeKind::parse_line(&line) {
+                match kind {
+                    WakeKind::Working => self.unreported = true,
+                    WakeKind::Closed => {}
+                    WakeKind::Done
+                    | WakeKind::Failed
+                    | WakeKind::Blocked
+                    | WakeKind::NeedsDecision
+                    | WakeKind::Gone => self.unreported = false,
+                }
+                if kind != WakeKind::Working {
+                    return Ok(Some((kind, render(&line), self.scanned + end as u64)));
+                }
             }
         }
 

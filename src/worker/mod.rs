@@ -88,3 +88,32 @@ pub(crate) fn live_worker_locations(
     }
     Ok(live)
 }
+
+#[derive(Clone, Copy)]
+pub(crate) enum WaitHealth {
+    Gone,
+    Idle,
+    Running,
+    Unknown,
+}
+
+pub(crate) fn wait_health(
+    dir: &camino::Utf8Path,
+    now: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<Option<WaitHealth>> {
+    let Some(meta) = meta::read_meta_if_exists(dir)? else {
+        return Ok(None);
+    };
+    if resolve::window_state(&meta).is_gone() {
+        return Ok(Some(WaitHealth::Gone));
+    }
+    let mut snapshot = WorkerSnapshot::new(meta.id.clone(), dir.to_path_buf(), None);
+    snapshot.meta = Some(meta);
+    Ok(Some(match worker_session(&snapshot, now)?.state {
+        crate::telemetry::SessionState::Waiting => WaitHealth::Idle,
+        crate::telemetry::SessionState::Starting | crate::telemetry::SessionState::Working => {
+            WaitHealth::Running
+        }
+        crate::telemetry::SessionState::Unknown => WaitHealth::Unknown,
+    }))
+}

@@ -34,7 +34,8 @@ pub(crate) fn run_wait(workspace: &Path, args: &[&str]) -> Output {
 }
 
 pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
-    write_worker(workspace, id, "niles:test", None, status)
+    // Log-only fixtures have no confirmed tmux route; liveness stays unknown.
+    write_worker(workspace, id, "unresolved", None, status)
 }
 
 pub(crate) fn cursor(worker_dir: &Path) -> String {

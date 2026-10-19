@@ -159,7 +159,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     assert_eq!(
         fs::read_to_string(dir.join("status.log")).unwrap(),
         format!(
-            "done: <short result>; report: {}/report.md\n",
+            "working: follow-up dispatch started\nworking: follow-up dispatch started\ndone: <short result>; report: {}/report.md\n",
             dir.display()
         )
     );

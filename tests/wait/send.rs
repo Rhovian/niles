@@ -229,3 +229,23 @@ fn send_wait_takes_over_the_workspace_and_collects_other_workers_reports() {
     assert_eq!(output.status.code(), Some(11));
     assert!(stdout_of(&output).is_empty());
 }
+
+#[test]
+fn a_silent_followup_with_checkins_off_still_produces_one_gone_wake() {
+    let lab = Lab::start("niles-send-gone-off");
+    let dir = receiving_worker(&lab, b"done: old\n");
+    let output = lab
+        .niles(&["send", "auth-fix", "follow up", "--checkin", "off"])
+        .output()
+        .unwrap();
+    assert_command_success("send without checkin", &output);
+    assert!(!dir.join("checkin").exists());
+    lab.server
+        .run(&["kill-window", "-t", "niles:niles-auth-fix"]);
+    let output = lab.niles(&["wait", "--timeout", "0"]).output().unwrap();
+    assert_command_success("silent followup gone", &output);
+    assert!(stdout_of(&output).starts_with("auth-fix gone:"));
+    let output = lab.niles(&["wait", "--timeout", "0"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(22));
+    assert!(stdout_of(&output).is_empty());
+}

@@ -11,7 +11,7 @@ fn fixture(label: &str, log: &str) -> (Utf8PathBuf, Utf8PathBuf) {
         serde_json::json!({
             "id": "worker", "role": "worker", "agent": "codex",
             "created_at": "2026-01-02T03:04:05Z", "project": workspace,
-            "window": "test:worker", "brief": dir.join("brief.md"), "launch": dir.join("launch.sh"),
+            "window": "unresolved", "brief": dir.join("brief.md"), "launch": dir.join("launch.sh"),
         })
         .to_string(),
     )
@@ -103,5 +103,39 @@ fn replacing_a_log_keeps_the_senders_persisted_cursor_authoritative() {
     fs::write(dir.join("status.cursor"), format!("{}\n", sent.len())).unwrap();
     assert!(poll_workers(&workspace, &mut targets, &mut output).unwrap());
     assert_eq!(output, b"worker blocked: next\n");
+    remove_workspace(&workspace).unwrap();
+}
+
+#[test]
+fn an_idle_unreported_worker_is_recorded_once_after_the_grace() {
+    let (workspace, dir) = fixture("wait-idle-gone", "working: busy\n");
+    let sessions = dir.join("sessions");
+    fs::create_dir(&sessions).unwrap();
+    fs::write(sessions.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-10-01T16:00:00Z\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\"}}\n").unwrap();
+    let path = dir.join("meta.json");
+    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    meta["session_link"] = serde_json::json!({ "family": "pi", "session_dir": sessions });
+    fs::write(path, meta.to_string()).unwrap();
+    let mut targets = BTreeMap::new();
+    let mut output = Vec::new();
+    assert!(!poll_workers(&workspace, &mut targets, &mut output).unwrap());
+    let mut past = super::super::liveness::Liveness::default();
+    assert!(
+        past.observe(
+            Some(worker::WaitHealth::Idle),
+            Instant::now() - Duration::from_secs(31)
+        )
+        .is_none()
+    );
+    targets.get_mut("worker").unwrap().liveness = past;
+    assert!(poll_workers(&workspace, &mut targets, &mut output).unwrap());
+    assert_eq!(
+        output,
+        b"worker gone: worker idle for 30s without reporting\n"
+    );
+    targets.clear();
+    output.clear();
+    assert!(!poll_workers(&workspace, &mut targets, &mut output).unwrap());
+    assert!(output.is_empty());
     remove_workspace(&workspace).unwrap();
 }

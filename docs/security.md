@@ -92,24 +92,26 @@ the operator launches Niles. Tampering after launch by another process with the 
 is outside the isolation guarantees described here.
 
 **Attacker-controlled input.** New project state is outside the clone, so tracked repository
-paths cannot prepopulate it. On first state access, Niles moves an existing `<workspace>/.niles/`
-to the global state directory, including its manifest and artifacts. Migrated content remains
+paths cannot prepopulate it. On first state access, Niles copies an existing `<workspace>/.niles/`
+to staging in the global state directory, publishes the complete copy, then removes the source,
+including its manifest and artifacts. Migrated content remains
 untrusted repository input: migration does not authenticate it. A top-level legacy symlink or
 file is rejected, and an existing destination causes an error rather than merging or overwriting
-state. The path key escapes percent signs and hyphens before replacing slashes with hyphens,
-so separator and literal-hyphen paths do not collide. Keys over 200 bytes use a readable
-prefix plus a deterministic UUID v5 of the full absolute path to fit filesystem name limits. The registry remains `~/.niles/projects/`.
+state. The key uses plain slash-to-hyphen replacement: `/Users/j/code/my-app` becomes
+`-Users-j-code-my-app`. Separator/hyphen collisions are accepted and can share project state.
+There is no escaping or hash fallback; filesystem component length limits apply. The registry remains `~/.niles/projects/`.
 Niles subsequently creates and reads manifests, session artifacts, worker directories, metadata,
 briefs, launch scripts, reports, status logs, and cursors in the global tree. See
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
 **Existing mitigations.** Migration holds a per-project advisory lock under `~/.niles/state/`.
-Same-filesystem moves use rename; cross-filesystem moves copy to a staging directory, preserving
-symlinks without following them, publish the completed copy, then remove the source. A failed copy
+Legacy migration always copies to staging while preserving symlinks without following them.
+It publishes the completed copy before removing the source. A failed copy
 leaves the source intact and reports the staging directory for diagnosis; retries use a fresh
 staging directory, so that partial copy cannot block recovery. Stop agents before upgrading:
-migration cannot update paths already held by running agents or their shell scripts.
-`niles state` prints the resolved state directory. `niles log` appends timestamped decisions via
+migration cannot update paths already held by running agents or their shell scripts, or
+synchronize writes made during the copy.
+`niles log` appends timestamped decisions via
 Niles, so the lead needs no extra filesystem sandbox grant. It requires the latest lead session's
 recorded pane to match `TMUX_PANE`, validates the worker label and rejects control-bearing decision
 text; this is session routing, not authentication against same-user processes.
@@ -121,11 +123,19 @@ and the opens of `status.cursor`, `wait.lock`, `wait.running`, and `checkin.lock
 `O_NOFOLLOW`. Wait state lives under `~/.niles/state/<mangled-absolute-workspace-path>/worker/`:
 `wait.lock`, `wait.running`, and temporary `wait.running.<uuid>` files are siblings of the
 worker directories. No wait state is written inside the repository. A workspace wait reads
-every live worker's log and cursor from that project's global state tree.
+every live worker's log, cursor, and metadata from that project's global state tree. Liveness
+checks use the same local session-record and tmux/process-activity resolver as workers/watch;
+session links may point into agent stores or worktrees. Liveness probes print a fixed gone reason.
 An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan, flushed
 output, and cursor advance, serializing delivery against `send`'s cursor skip. Each line is
 flushed before its cursor moves: a killed wait cannot consume an unprinted line. A kill after
-printing but before advancing can replay that printed line. The short-lived exclusive lock on
+printing but before advancing can replay that printed line; the operator accepts this boundary.
+Wait also records generated `gone:` lines for an unreported worker with a confirmed exited
+window/agent or 30 seconds of confirmed idle state. It checks for a real report again after
+probing activity and uses the same cursor lock, escaped output and print-before-advance path.
+A concurrent worker append can race the final synthetic-status append, as with watcher reports;
+its report remains in the log. Send appends a non-actionable dispatch marker so a silent follow-up
+can be detected even with check-ins disabled. The short-lived exclusive lock on
 `wait.lock` serializes registration with delivery: a newer registration supersedes the
 old wait, which checks that its held presence inode is still current before any delivery. The kernel releases locks on death;
 no old registration can prevent takeover. A shared `flock` on workspace `wait.running` lets the

@@ -54,7 +54,7 @@ An item from reviewer or security without a `code`, `design` or `policy` tag goe
 
 ## Nudges
 
-Run one workspace wait for all live workers, act on the whole batch, then wait again. Follow up with send without `--wait` while a wait runs; a newer wait supersedes it.
+Run one workspace wait for all live workers, act on the whole batch, then wait again. Follow up with send without `--wait` while a wait runs; a newer wait supersedes it. A `gone:` wake means the worker exited or stayed idle without reporting; inspect it before deciding how to recover.
 
 A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. It may name several workers. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look. If a blocked report says a worker needs workspace trust confirmation, tell the operator to handle the identified pane; never accept trust for them. If `niles peek` shows a worker stuck choosing between unresolved alternatives, send the question to the record author for designed work or to the worker for direct implementation; contested design points and policy questions go to the operator.
 

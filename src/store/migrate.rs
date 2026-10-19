@@ -41,7 +41,7 @@ pub(super) fn legacy(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
             return Err(error).with_context(|| format!("failed to inspect {destination}"));
         }
     }
-    move_dir(source, destination)
+    copy_then_remove(source, destination)
 }
 
 pub(crate) fn move_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
@@ -58,23 +58,26 @@ fn move_dir_with_rename(
     match rename(source, destination) {
         Ok(()) => Ok(()),
         Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
-            let name = destination
-                .file_name()
-                .context("move destination has no name")?;
-            let staging =
-                destination.with_file_name(format!(".{name}.moving-{}", uuid::Uuid::new_v4()));
-            // std::fs::copy copies one file, not a directory (Rust 1.89 std/fs.rs).
-            // Preserve failed staging for diagnosis; a fresh name makes the next attempt independent.
-            copy_dir(source, &staging).with_context(|| format!(
-                "incomplete move from {source}; staging preserved at {staging}; retry uses fresh staging"
-            ))?;
-            fs::rename(&staging, destination)?;
-            fs::remove_dir_all(source).with_context(|| format!("failed to remove {source}"))
+            copy_then_remove(source, destination)
         }
         Err(error) => {
             Err(error).with_context(|| format!("failed to move {source} to {destination}"))
         }
     }
+}
+
+fn copy_then_remove(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
+    let name = destination
+        .file_name()
+        .context("move destination has no name")?;
+    let staging = destination.with_file_name(format!(".{name}.moving-{}", uuid::Uuid::new_v4()));
+    // std::fs::copy copies one file, not a directory (Rust 1.89 std/fs.rs).
+    // Preserve failed staging for diagnosis; a fresh name makes the next attempt independent.
+    copy_dir(source, &staging).with_context(|| format!(
+        "incomplete move from {source}; staging preserved at {staging}; retry uses fresh staging"
+    ))?;
+    fs::rename(&staging, destination)?;
+    fs::remove_dir_all(source).with_context(|| format!("failed to remove {source}"))
 }
 
 fn copy_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
@@ -187,6 +190,27 @@ mod tests {
         assert!(
             abandoned[0].is_dir(),
             "failed staging remains available for diagnosis"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn legacy_migration_copies_before_removal_even_on_the_same_filesystem() {
+        use std::os::unix::fs::MetadataExt;
+        let root = temp_test_path("migration-copy-first");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("report"), "complete").unwrap();
+        let original = fs::File::open(source.join("report")).unwrap();
+        legacy(&source, &target).unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read_to_string(target.join("report")).unwrap(),
+            "complete"
+        );
+        assert_ne!(
+            original.metadata().unwrap().ino(),
+            fs::metadata(target.join("report")).unwrap().ino()
         );
         fs::remove_dir_all(root).unwrap();
     }

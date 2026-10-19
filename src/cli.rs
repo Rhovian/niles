@@ -166,8 +166,6 @@ pub enum CommandName {
     },
     /// Switch a live worker after operator approval (same family only).
     Retier { id: String, agent: String },
-    /// Print the global state directory for this project, migrating legacy state if present.
-    State,
     /// Append a decision to the current lead session log.
     Log {
         /// Worker id, or `-` for a session-wide decision.
@@ -227,8 +225,10 @@ pub enum CommandName {
     /// Each escaped line is at most 4096 bytes. Run one wait, act on the batch, then wait again.
     /// A newer wait supersedes the running wait without consuming its reports.
     ///
-    /// Exits 0 on reports, 11 when superseded, 22 on timeout. Stdout contains only wake lines;
-    /// diagnostics go to stderr. Closed and idle workers do not end a workspace wait.
+    /// A worker that has not reported produces `gone:` when its window/agent exits or it stays
+    /// confirmed idle for 30s. Reported workers stay quiet. Gone wakes share the report cursor.
+    /// Exits 0 on wakes (reports or gone), 11 when superseded, 22 on timeout. Stdout contains only
+    /// wake lines; diagnostics go to stderr. A kill after printing can replay that printed line.
     #[command(verbatim_doc_comment)]
     Wait {
         /// Poll interval: a duration such as 500ms, 90s, 5m or 1h. Must be greater than zero.
