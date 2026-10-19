@@ -8,13 +8,13 @@ pub(crate) use std::{
     time::{Duration, Instant},
 };
 
-/// Starts a wait and returns the child. Callers use [`settle`] when the wait must already be polling.
+/// Starts a workspace wait and returns the child.
 pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_niles"))
         .arg("wait")
         .args(args)
         .current_dir(workspace)
-        .env("NILES_HOME", niles_home(workspace))
+        .env("HOME", niles_home(workspace))
         .env_remove("TMUX")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -27,21 +27,15 @@ pub(crate) fn run_wait(workspace: &Path, args: &[&str]) -> Output {
         .arg("wait")
         .args(args)
         .current_dir(workspace)
-        .env("NILES_HOME", niles_home(workspace))
+        .env("HOME", niles_home(workspace))
         .env_remove("TMUX")
         .output()
         .unwrap()
 }
 
-pub(crate) fn settle() {
-    thread::sleep(Duration::from_millis(300));
-}
-
 pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
-    let worker_dir = workspace.join(".niles/worker").join(id);
-    fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), status).unwrap();
-    worker_dir
+    // Log-only fixtures have no confirmed tmux route; liveness stays unknown.
+    write_worker(workspace, id, "unresolved", None, status)
 }
 
 pub(crate) fn cursor(worker_dir: &Path) -> String {
@@ -189,7 +183,7 @@ impl Lab {
             .args(args)
             .current_dir(&self.workspace)
             .env("PATH", path_with_bin(&self.bin))
-            .env("NILES_HOME", niles_home(&self.workspace))
+            .env("HOME", niles_home(&self.workspace))
             .env("TMUX", self.server.tmux_env());
         command
     }
@@ -239,21 +233,4 @@ pub(crate) fn wait_for_file(path: &Path) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("{} never appeared", path.display());
-}
-
-pub(crate) fn remove_dir_all_eventually(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        match fs::remove_dir_all(path) {
-            Ok(()) => return,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
-            Err(_err) if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(20));
-                if !path.exists() {
-                    return;
-                }
-            }
-            Err(err) => panic!("failed to remove {}: {err}", path.display()),
-        }
-    }
 }

@@ -36,3 +36,36 @@ pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::
     std::fs::remove_dir_all(root)?;
     result
 }
+
+/// Remove both the workspace fixture and its global orchestration state.
+pub(crate) fn remove_workspace(workspace: &camino::Utf8Path) -> anyhow::Result<()> {
+    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_path(workspace)?)?;
+    crate::util::remove_dir_all_if_exists(workspace)
+}
+
+/// OnceLock isolates all unit-test home consumers without racing process environment changes.
+pub(crate) fn home_dir() -> &'static camino::Utf8Path {
+    static HOME_DIR: std::sync::OnceLock<Utf8PathBuf> = std::sync::OnceLock::new();
+    HOME_DIR.get_or_init(|| {
+        let home = temp_test_path("unit-home");
+        std::fs::create_dir_all(&home).unwrap();
+        home
+    })
+}
+
+#[test]
+fn orchestration_state_uses_the_private_unit_test_home() {
+    let workspace = temp_test_path("isolated-state");
+    let home = home_dir();
+    assert!(home.is_absolute());
+    let state = crate::store::paths::project_path(&workspace).unwrap();
+    assert_eq!(
+        state,
+        home.join(".niles/state")
+            .join(workspace.as_str().replace('/', "-"))
+    );
+    std::fs::create_dir_all(&state).unwrap();
+    assert_eq!(crate::util::home_dir().unwrap(), home);
+    remove_workspace(&workspace).unwrap();
+    assert!(!state.exists());
+}

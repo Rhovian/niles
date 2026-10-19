@@ -4,7 +4,7 @@ use std::{io::Write, process::Stdio};
 #[test]
 fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     let env = TestEnv::new("niles-worker-design-record");
-    let session = env.root.join(".niles/sessions/lead");
+    let session = state_dir(&env.root).join("sessions/lead");
     fs::create_dir_all(&session).unwrap();
     let meta = serde_json::json!({
         "id": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
@@ -33,7 +33,7 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
         &env.run(&mechanical),
         "failed to append",
     );
-    assert!(!env.root.join(".niles/worker/mechanical").exists());
+    assert!(!state_dir(&env.root).join("worker/mechanical").exists());
     fs::remove_dir(&log).unwrap();
     fs::write(&log, "earlier decision").unwrap();
     let spawned = env.run(&mechanical);
@@ -43,7 +43,7 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     let (timestamp, decision) = line.split_once(' ').unwrap();
     chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
     assert_eq!(decision, "mechanical mechanical: rename\n");
-    let workers = env.root.join(".niles/worker");
+    let workers = state_dir(&env.root).join("worker");
     let body = fs::read_to_string(workers.join("mechanical/brief.md")).unwrap();
     assert!(body.contains("You own the gate"));
     let (header, _) = body.split_once("\n\n## Task").unwrap();
@@ -94,8 +94,13 @@ fn role_selects_which_fragment_the_brief_carries() {
             .unwrap();
         assert_command_success(&format!("spawn --role {role}"), &spawn);
 
-        let brief =
-            fs::read_to_string(env.root.join(".niles/worker").join(role).join("brief.md")).unwrap();
+        let brief = fs::read_to_string(
+            state_dir(&env.root)
+                .join("worker")
+                .join(role)
+                .join("brief.md"),
+        )
+        .unwrap();
         assert!(brief.contains(&format!("You are the {role}")), "{brief}");
         assert!(brief.contains("## Reporting"), "{brief}");
         assert!(brief.contains("done: <short result>; report:"), "{brief}");
@@ -103,7 +108,7 @@ fn role_selects_which_fragment_the_brief_carries() {
             let (header, _) = brief.split_once("\n\n## Task").unwrap();
             assert!(!header.contains("design_record:"));
             assert!(brief.contains("Without a design record, implement the issue directly"));
-            assert!(!env.root.join(".niles/sessions").exists());
+            assert!(!state_dir(&env.root).join("sessions").exists());
         }
         briefs.push(brief);
     }
@@ -146,7 +151,8 @@ fn stdin_task_is_composed_with_the_role_and_reporting_contract() {
     let spawn = child.wait_with_output().unwrap();
     assert_command_success("spawn stdin task", &spawn);
 
-    let brief = fs::read_to_string(env.root.join(".niles/worker/review-file/brief.md")).unwrap();
+    let brief =
+        fs::read_to_string(state_dir(&env.root).join("worker/review-file/brief.md")).unwrap();
     assert!(brief.contains("## Reporting"), "{brief}");
     assert!(brief.contains("You are the reviewer"), "{brief}");
     let (_, task_and_reporting) = brief.split_once("## Task\n\n").unwrap();
@@ -166,7 +172,7 @@ fn spawn_accepts_literal_flag_text() {
     ]);
     assert_command_success("spawn literal --wait", &literal);
     let literal_brief =
-        fs::read_to_string(env.root.join(".niles/worker/literal/brief.md")).unwrap();
+        fs::read_to_string(state_dir(&env.root).join("worker/literal/brief.md")).unwrap();
     assert!(literal_brief.contains("\n--wait\n"), "{literal_brief}");
-    assert!(stdout_of(&literal).contains("wait: niles wait literal"));
+    assert!(stdout_of(&literal).contains("wait: niles wait"));
 }

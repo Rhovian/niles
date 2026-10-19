@@ -7,8 +7,8 @@ const MANIFEST: &str = include_str!("../../../examples/claude-lead.yaml");
 
 fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
     let root = temp_test_path(label);
-    fs::create_dir_all(root.join(".niles")).unwrap();
-    fs::write(manifest_path(&root), body).unwrap();
+    fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
+    fs::write(manifest_path(&root).unwrap(), body).unwrap();
     root
 }
 
@@ -29,13 +29,13 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
     assert_eq!(after.checkin, before.checkin);
     assert_eq!(after.recheck, before.recheck);
     assert_eq!(after, saved);
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn continue_quit_and_unchanged_save_write_nothing() {
     let root = root("picker-no-write", MANIFEST);
-    let path = manifest_path(&root);
+    let path = manifest_path(&root).unwrap();
     let before = fs::metadata(&path).unwrap().modified().unwrap();
     let manifest = load(&root).unwrap();
     for (choice, launched) in [
@@ -48,15 +48,21 @@ fn continue_quit_and_unchanged_save_write_nothing() {
         assert_eq!(fs::read_to_string(&path).unwrap(), MANIFEST);
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
-fn continuing_first_run_errors_without_a_file() {
-    let root = temp_test_path("picker-first-continue");
-    let error = ensure(&root, true, &mut Vec::new(), |_, _, _, _| Ok(Choice::Keep)).unwrap_err();
-    assert_eq!(error.to_string(), "no workspace manifest written");
-    assert!(!manifest_path(&root).exists());
+fn first_run_offers_saving_unchanged_defaults_and_writes_them() {
+    let root = temp_test_path("picker-first-save");
+    let result = ensure(&root, true, &mut Vec::new(), |_, draft, _, reason| {
+        assert!(reason.is_some(), "missing manifest must require saving");
+        assert_eq!(draft, WorkspaceManifest::default());
+        Ok(Choice::Save(Box::new(draft)))
+    })
+    .unwrap();
+    assert_eq!(result, Some(WorkspaceManifest::default()));
+    assert_eq!(load(&root).unwrap(), result);
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -73,8 +79,11 @@ fn no_terminal_uses_existing_manifest_and_prints_roles() {
             .unwrap()
             .contains("lead      claude")
     );
-    assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), MANIFEST);
-    fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
+        MANIFEST
+    );
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -95,7 +104,7 @@ fn no_terminal_missing_or_malformed_manifest_errors() {
     })
     .unwrap_err();
     assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -120,7 +129,7 @@ fn changes_are_applied_to_latest_manifest() {
             ..latest
         }
     );
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -142,7 +151,7 @@ fn invalid_manifests_reopen_with_defaults_and_save_a_complete_replacement() {
         .unwrap();
         assert_eq!(saved, WorkspaceManifest::default());
         assert_eq!(load(&root).unwrap(), Some(saved));
-        fs::remove_dir_all(root).unwrap();
+        crate::test_support::remove_workspace(&root).unwrap();
     }
 }
 
@@ -156,20 +165,23 @@ fn quitting_replacement_preserves_the_invalid_manifest() {
     })
     .unwrap();
     assert_eq!(result, None);
-    assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), body);
-    fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
+        body
+    );
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn manifest_read_failures_do_not_open_replacement() {
     let root = temp_test_path("picker-read-failure");
-    fs::create_dir_all(manifest_path(&root)).unwrap();
+    fs::create_dir_all(manifest_path(&root).unwrap()).unwrap();
     let error = ensure(&root, true, &mut Vec::new(), |_, _, _, _| {
         panic!("opened picker for a read failure")
     })
     .unwrap_err();
     assert!(error.to_string().contains("failed to read"), "{error:#}");
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -181,19 +193,22 @@ fn noninteractive_stale_manifest_fails_without_writing() {
     })
     .unwrap_err();
     assert!(format!("{error:#}").contains("manifest.yaml"));
-    assert_eq!(fs::read_to_string(manifest_path(&root)).unwrap(), body);
-    fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
+        body
+    );
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn replacement_write_failure_stops_launch() {
     let root = root("picker-replace-write-failure", "lead: [\n");
     let error = ensure(&root, true, &mut Vec::new(), |_, draft, _, _| {
-        fs::remove_file(manifest_path(&root)).unwrap();
-        fs::create_dir(manifest_path(&root)).unwrap();
+        fs::remove_file(manifest_path(&root).unwrap()).unwrap();
+        fs::create_dir(manifest_path(&root).unwrap()).unwrap();
         Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap_err();
     assert!(error.to_string().contains("failed to write"), "{error:#}");
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }

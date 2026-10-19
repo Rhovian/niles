@@ -36,22 +36,11 @@ pub fn peek(id: String, lines: usize, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-/// What a send resolved to: the worker it reached, and whether the caller asked to block.
-pub struct SendOutcome {
-    pub id: String,
-    pub wait_requested: bool,
-}
-
 /// Sends a message to a worker pane.
 ///
 /// The wake cursor is advanced first, so the wait that follows this send cannot be satisfied by a
 /// status line the worker wrote before the message arrived.
-pub fn send(
-    wait: bool,
-    checkin: Option<String>,
-    id: String,
-    message: String,
-) -> Result<SendOutcome> {
+pub fn send(wait: bool, checkin: Option<String>, id: String, message: String) -> Result<()> {
     let target = worker_target(id)?;
     // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
     // fails a dispatch that has not happened yet rather than one already typed into the pane.
@@ -83,6 +72,11 @@ pub fn send(
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
     let armed_len = crate::worker::status_log_len(&dir)?;
     let dispatched_at = Utc::now();
+    // An unreported follow-up stays visible to wait even when check-ins are disabled.
+    crate::util::append_line(
+        &crate::wake::status_log_path(&dir),
+        crate::wake::FOLLOWUP_STARTED,
+    )?;
     tmux::send_line(&tmux::TmuxTarget::window(&target.target), &message)?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
@@ -96,13 +90,10 @@ pub fn send(
     if !wait {
         // wait first, as spawn prints it: the send has armed a wake, and collecting it is the
         // next move. `--wait` is already doing that, so it needs no pointer to itself.
-        println!("wait: niles wait {id}");
+        println!("wait: niles wait");
         println!("peek: niles peek {id}");
     }
-    Ok(SendOutcome {
-        id,
-        wait_requested: wait,
-    })
+    Ok(())
 }
 
 fn worker_target(id: String) -> Result<WorkerPane> {

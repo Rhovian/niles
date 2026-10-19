@@ -11,6 +11,7 @@ use crate::{
     worker::worker_snapshot,
 };
 
+mod batch;
 mod hold;
 mod refusal;
 mod taken;
@@ -96,7 +97,7 @@ pub(super) fn workspace(label: &str) -> Utf8PathBuf {
 }
 
 pub(super) fn worker_dir(workspace: &Utf8PathBuf, id: &str) -> Utf8PathBuf {
-    workspace.join(".niles/worker").join(id)
+    crate::store::workers_dir(workspace).unwrap().join(id)
 }
 
 fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
@@ -199,10 +200,10 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
 
     sink = RecordingSink::default();
     tick(&root, at(1_001), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent.len(), 2);
+    assert_eq!(sink.sent.len(), 1);
     assert_eq!(
         sink.sent[0],
-        "niles: armed reported (blocked) — check workers"
+        "niles: armed reported (blocked), plain reported (blocked) — check workers"
     );
     assert!(sink.captures.is_empty());
 
@@ -215,7 +216,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
 
     sink = RecordingSink::default();
     tick(&root, at(1_090), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent, ["niles: no report from armed — check it"]);
+    assert_eq!(sink.sent, ["niles: no report from armed — check workers"]);
     assert!(Checkin::read(&armed_dir).unwrap().is_some());
 
     append_log(&root, "armed", DONE);
@@ -224,7 +225,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
     assert_eq!(sink.sent, ["niles: armed reported (done) — check workers"]);
     assert_eq!(Checkin::read(&armed_dir).unwrap(), None);
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -254,7 +255,7 @@ fn a_failed_nudge_is_retried_on_the_next_tick() {
     tick(&root, at(1002), &mut memory, &mut quiet_tick, &running());
     assert!(quiet_tick.attempts.is_empty(), "{quiet_tick:?}");
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -278,7 +279,7 @@ fn the_tick_deletes_the_arm_state_when_the_worker_answers() {
         vec!["niles: impl reported (done) — check workers"]
     );
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -298,7 +299,10 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     };
     tick(&root, at(1300), &mut memory, &mut sink, &running());
 
-    assert_eq!(sink.sent, vec!["niles: no report from impl — check it"]);
+    assert_eq!(
+        sink.sent,
+        vec!["niles: no report from impl — check workers"]
+    );
     let rearmed = Checkin::read(&dir).unwrap().unwrap();
     assert_eq!(rearmed.deadline, at(1_900));
     assert_eq!(rearmed.delay, 600);
@@ -307,7 +311,7 @@ fn the_tick_rearms_a_fired_check_in_on_disk() {
     tick(&root, at(1301), &mut memory, &mut next, &running());
     assert!(next.attempts.is_empty(), "{next:?}");
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -326,11 +330,11 @@ fn the_tick_disarms_a_check_in_fired_at_an_idle_worker_on_disk() {
 
     assert_eq!(
         sink.sent,
-        vec!["niles: impl stopped without a report — check it"]
+        vec!["niles: impl stopped without a report — check workers"]
     );
     assert_eq!(Checkin::read(&dir).unwrap(), None, "{sink:?}");
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -353,7 +357,7 @@ fn a_failed_check_in_nudge_leaves_the_check_in_armed_and_overdue() {
 
     assert_eq!(Checkin::read(&dir).unwrap().unwrap().deadline, at(1_300));
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -394,7 +398,7 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     );
     assert_eq!(Checkin::read(&dir).unwrap(), None);
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -416,7 +420,7 @@ fn a_session_with_no_lead_pane_starts_no_watcher() {
     assert!(log.contains("recorded no lead pane"), "{log}");
     assert!(!log.contains("watcher started"), "{log}");
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
     fs::remove_dir_all(&session).unwrap();
 }
 
@@ -435,7 +439,7 @@ fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
         "{log}"
     );
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
     fs::remove_dir_all(&session).unwrap();
 }
 
@@ -458,7 +462,7 @@ fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
         vec!["niles: impl reported (done) — check workers"]
     );
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -498,7 +502,7 @@ fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
         "{sink:?}"
     );
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -523,5 +527,5 @@ fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
 
     assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
 
-    fs::remove_dir_all(&root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }

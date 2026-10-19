@@ -18,7 +18,7 @@ pub(super) struct Form {
     pub draft: WorkspaceManifest,
     pub screen: Screen,
     pub selected: usize,
-    pub replacement_reason: Option<String>,
+    pub save_reason: Option<String>,
     families: Vec<Family>,
 }
 
@@ -29,9 +29,13 @@ impl Form {
             draft: manifest,
             screen: Screen::Roles,
             selected: 0,
-            replacement_reason: None,
+            save_reason: None,
             families: columns::families(config)?,
         })
+    }
+
+    pub fn can_save(&self) -> bool {
+        self.save_reason.is_some() || self.draft != self.original
     }
 
     #[expect(
@@ -41,7 +45,7 @@ impl Form {
     /// The operator's choice, or `None` while the form stays open.
     pub fn key(&mut self, key: KeyCode, config: &ProjectConfig) -> Result<Option<Choice>> {
         match key {
-            KeyCode::Char('c') if self.replacement_reason.is_none() => {
+            KeyCode::Char('c') if !self.can_save() => {
                 return Ok(Some(Choice::Keep));
             }
             KeyCode::Char('q') => return Ok(Some(Choice::Quit)),
@@ -64,7 +68,7 @@ impl Form {
             Screen::Roles => match key {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
                 KeyCode::Down => self.selected = (self.selected + 1).min(Role::ALL.len() - 1),
-                KeyCode::Char('s') => self.screen = Screen::Review,
+                KeyCode::Char('s') if self.can_save() => self.screen = Screen::Review,
                 KeyCode::Enter => {
                     let role = Role::ALL[self.selected];
                     self.screen = Screen::Editing {

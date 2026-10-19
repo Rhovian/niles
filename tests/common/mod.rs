@@ -12,6 +12,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const TEST_ENV_MARKER: &str = ".niles-test-env";
+
 const STUB_TMUX: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
@@ -91,6 +93,7 @@ impl TestEnv {
         let bin = root.join("bin");
         let tmux_log = root.join("tmux.log");
         fs::create_dir_all(&home).unwrap();
+        fs::write(root.join(TEST_ENV_MARKER), "").unwrap();
         fs::create_dir_all(&bin).unwrap();
         write_executable(&bin.join("tmux"), tmux);
         for agent in ["claude", "codex"] {
@@ -110,7 +113,7 @@ impl TestEnv {
             .args(args)
             .current_dir(cwd)
             .env("PATH", path_with_bin(&self.bin))
-            .env("NILES_HOME", &self.home)
+            .env("HOME", &self.home)
             .env("TMUX_LOG", &self.tmux_log)
             .env("TMUX", "/tmp/niles-test-tmux,0,0");
         command
@@ -137,7 +140,7 @@ pub fn niles_bare(cwd: &Path, home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_niles"));
     command
         .current_dir(cwd)
-        .env("NILES_HOME", home)
+        .env("HOME", home)
         .env_remove("TMUX");
     command
 }
@@ -194,7 +197,7 @@ pub fn temp_workspace(prefix: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(&workspace).unwrap();
-    workspace
+    fs::canonicalize(workspace).unwrap()
 }
 
 pub fn write_executable(path: &Path, body: &str) {
@@ -211,7 +214,7 @@ pub fn write_workspace_manifest(
     reviewer: &str,
     security: &str,
 ) {
-    fs::create_dir_all(workspace.join(".niles")).unwrap();
+    fs::create_dir_all(state_dir(workspace)).unwrap();
     let exact = |agent: &str| {
         match agent {
             "claude" => "claude:sonnet:high",
@@ -235,7 +238,7 @@ pub fn write_workspace_manifest(
         )
     })
     .join("");
-    fs::write(workspace.join(".niles/manifest.yaml"), body).unwrap();
+    fs::write(state_dir(workspace).join("manifest.yaml"), body).unwrap();
 }
 
 pub fn write_worker(
@@ -245,7 +248,7 @@ pub fn write_worker(
     task_label: Option<&str>,
     status: &[u8],
 ) -> PathBuf {
-    let worker_dir = workspace.join(".niles/worker").join(id);
+    let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
     let brief = worker_dir.join("brief.md");
     let launch = worker_dir.join("launch.sh");
@@ -282,4 +285,23 @@ pub fn write_worker(
 pub fn append_status(path: &Path, bytes: &[u8]) {
     let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
     file.write_all(bytes).unwrap();
+}
+
+// Match the explicit HOME used by subprocesses, including secondary workspaces in a TestEnv.
+pub fn state_dir(workspace: &Path) -> PathBuf {
+    let home = workspace
+        .ancestors()
+        .find_map(|ancestor| {
+            ancestor
+                .join(TEST_ENV_MARKER)
+                .is_file()
+                .then(|| ancestor.join("home"))
+        })
+        .unwrap_or_else(|| niles_home(workspace));
+    state_dir_at(&home, workspace)
+}
+
+pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
+    home.join(".niles/state")
+        .join(workspace.to_str().unwrap().replace('/', "-"))
 }

@@ -288,6 +288,6 @@ fn save_manifest(root: &Utf8Path, set: impl FnOnce(&mut WorkspaceManifest)) -> R
 }
 
 fn load_manifest(root: &Utf8Path) -> Result<WorkspaceManifest> {
-    workspace_manifest::load(root)?
-        .with_context(|| format!("{} is gone", workspace_manifest::manifest_path(root)))
+    let path = workspace_manifest::manifest_path(root)?;
+    workspace_manifest::load(root)?.with_context(|| format!("{path} is gone"))
 }

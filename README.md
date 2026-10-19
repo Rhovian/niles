@@ -40,7 +40,7 @@ Agents: if you are setting Niles up for someone, load the `niles-setup` skill an
 Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
 
 - [Install Niles](skills/niles-setup/SKILL.md#2-install).
-- [Write `.niles/manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
+- [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
 - [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
 
 Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
@@ -78,13 +78,13 @@ Choose and save your agent roles when prompted, then type to the lead in the rig
 
 3. Check with `niles doctor` in another terminal in the repository after saving the roles.
 It reports tmux and each bound agent CLI with its tested version; it does not check logins.
-Without `.niles/manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
+Without the global project `manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
 
 See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
-- `.niles/` in each workspace: the role manifest, worker briefs, status logs, and reports.
+- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback. On first access, legacy workspace `.niles/` contents are copied here completely before the source is removed. Stop running agents before upgrading; copying does not synchronize live writers.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
 - `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
@@ -109,7 +109,7 @@ which may be none.
 
 ## Configuration
 
-The workspace manifest binds roles. This is the minimal valid `.niles/manifest.yaml`:
+The workspace manifest binds roles. This is the minimal valid global project `manifest.yaml`:
 
 ```yaml
 lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
@@ -122,7 +122,9 @@ research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 
 For ready-made setups with all shipped role tiers, see [examples/](examples/):
 [Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
-Copy one to `.niles/manifest.yaml`, then run `niles doctor` to check the required CLIs.
+From the project root, run `niles workers` to migrate any legacy state, then copy a template to
+`"$HOME/.niles/state/$(pwd -P | tr '/' '-')/manifest.yaml"` (create its parent directory first).
+Run `niles doctor` to check the required CLIs.
 
 The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
 
@@ -178,6 +180,41 @@ primary or secondary and conflicts with `--tier`. The lead starts at its standar
 looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
 and cost difference, waiting for the operator's yes. It proposes economical step-downs too.
 
+A manifest can configure managed worktrees without tying Niles to a build tool:
+
+```yaml
+worktree:
+  env:
+    CARGO_TARGET_DIR: /absolute/path/to/main/target
+  setup: 'test -d "$CARGO_TARGET_DIR"'
+```
+
+`env` overrides the inherited worker environment for `spawn --worktree`, including when joining
+an existing tree. Values are literal strings: use absolute paths, since `$HOME`, `~`, and shell
+substitutions are not expanded. Sharing the main checkout's Cargo target directory reuses its
+warm dependency cache; concurrent Cargo builds serialize on Cargo's lock. Niles sets no
+language-specific defaults.
+
+Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same
+configured environment, before launching the worker. Use it for project preparation such as
+`uv sync` or `pnpm install`. It runs only on creation, never on reuse. Stdin is `/dev/null` (EOF),
+so setup must be non-interactive; both output streams go to Niles's stderr, keeping spawn stdout
+reserved for its result. A nonzero exit fails the spawn and removes the new tree (including
+setup-created files), so a retry runs setup again. The branch remains; omit `--base` when
+retrying. Neither setting applies to plain spawns or `--tree`.
+
+Concurrent creation/join of the same branch fails while creation or setup holds its lock. Niles
+records pending creation before adding the tree, so failed Git creation, interrupted setup, or
+failed cleanup block subsequent joins, even if setup later finishes in an orphan process. Setup
+is never rerun on that existing tree. To recover, stop any remaining setup process, inspect/save
+needed files, remove the incomplete worktree with Git, then remove the `.pending` file named in
+the error (`~/.niles/state/<workspace-key>/worktrees/<branch>/.pending`). Recreate without
+`--base` if the branch already exists. Keep the sibling `.lock` file; removing a live lock can
+break exclusion. Trees created before this tracking existed are treated as existing trees and
+skip setup.
+
+Only put trusted commands in this operator-owned manifest: setup runs with your permissions.
+
 Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
 to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
 followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
@@ -199,3 +236,22 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
 any additional terms or conditions.
+
+`niles wait` covers every live worker in the current workspace, including workers spawned
+while it runs. It returns immediately with all pending reports, one escaped
+`<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
+the batch, then wait again; reports accumulate while you act, with no batching timer.
+Status logs must be appended to (`>>`). An unsupported in-place truncate and rewrite that
+regrows to the cached scan offset or beyond between polls can skip the rewritten prefix;
+normal appends and respawns use the supported delivery path.
+Unreadable or corrupt worker state, probe errors, and failures to append a generated wake stop
+the workspace wait with an error on stderr. Repair the reported state and run wait again;
+workers whose lines were not printed keep their cursors. Any lines already printed on stdout
+stand as delivered even if a later worker causes a nonzero exit; process those lines before retrying.
+A newer wait supersedes the old one. An unreported worker whose window or agent exits
+produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
+Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.
+A kill after printing but before advancing the cursor may replay that printed line. Exit codes: 0 wakes (reports or `gone:`), 11 superseded, 22 timeout.
+`spawn --wait` and `send --wait` start this same workspace wait after dispatch.
+The watcher also combines pending reports and overdue check-ins in one `niles:` line;
+while a wait runs, it leaves report delivery to that wait.

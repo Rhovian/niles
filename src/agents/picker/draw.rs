@@ -21,7 +21,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         Screen::Roles | Screen::Review => "NILES / ROLES".to_owned(),
     };
     let (mut body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
-    if let Some(reason) = &form.replacement_reason {
+    if let Some(reason) = &form.save_reason {
         let [notice, rest] =
             Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(body);
         frame.render_widget(
@@ -36,7 +36,11 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit standard primary · s save"
+            if form.can_save() {
+                "↑↓ role · ↵ edit standard primary · s save"
+            } else {
+                "↑↓ role · ↵ edit standard primary"
+            }
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
@@ -50,7 +54,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     };
     let muted = theme.style(StyleKey::Muted);
     let mut hints = Line::styled(hints, muted);
-    if form.replacement_reason.is_none() {
+    if !form.can_save() {
         hints.spans.extend([
             Span::styled(" · ", muted),
             Span::styled("c", theme.style(StyleKey::Running)),

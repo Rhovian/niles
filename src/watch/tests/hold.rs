@@ -25,7 +25,7 @@ fn composer_hold_reaches_ceiling_and_restarts_after_clear() {
     append_log(&root, "impl", DONE);
     tick(&root, at(1_350), &mut memory, &mut sink, &running());
     assert_eq!(sink.sent.len(), 2);
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -43,5 +43,5 @@ fn working_worker_moves_checkin_without_a_nudge() {
     tick(&root, at(1_300), &mut memory, &mut sink, &running());
     assert!(sink.sent.is_empty());
     assert_eq!(Checkin::read(&dir).unwrap().unwrap().deadline, at(1_600));
-    fs::remove_dir_all(root).unwrap();
+    crate::test_support::remove_workspace(&root).unwrap();
 }

@@ -117,6 +117,35 @@ fn research_is_edited_in_its_own_binding() {
 }
 
 #[test]
+fn unchanged_draft_hides_and_ignores_save() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    assert!(!render(&form).contains("s save"));
+    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
+    assert!(matches!(form.screen, Screen::Roles));
+    assert!(render(&form).contains("c continue"));
+    assert!(matches!(
+        form.key(KeyCode::Char('c'), &config).unwrap(),
+        Some(Choice::Keep)
+    ));
+}
+
+#[test]
+fn restoring_original_draft_hides_and_ignores_save() {
+    let config = config();
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    form.draft.lead.standard.primary = "claude:sonnet:medium".into();
+    assert!(render(&form).contains("s save"));
+    form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(form.screen, Screen::Review));
+    form.key(KeyCode::Esc, &config).unwrap();
+    form.draft = form.original.clone();
+    assert!(!render(&form).contains("s save"));
+    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
+    assert!(matches!(form.screen, Screen::Roles));
+}
+
+#[test]
 fn edited_role_is_reviewed_and_saved() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
@@ -126,7 +155,9 @@ fn edited_role_is_reviewed_and_saved() {
     form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     assert_eq!(form.draft.lead.standard.primary, "claude:sonnet:medium");
+    assert!(render(&form).contains("s save"));
     form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(form.screen, Screen::Review));
     assert!(matches!(
         form.key(KeyCode::Enter, &config).unwrap(),
         Some(Choice::Save(_))
@@ -166,8 +197,7 @@ fn render(form: &Form) -> String {
 fn replacement_explains_why_and_requires_save_or_quit() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.replacement_reason =
-        Some("Cannot parse manifest: missing field `design`\u{1b}".to_owned());
+    form.save_reason = Some("Cannot parse manifest: missing field `design`\u{1b}".to_owned());
     let text = render(&form);
     assert!(
         text.contains("Cannot parse manifest: missing field `design`"),
@@ -175,6 +205,7 @@ fn replacement_explains_why_and_requires_save_or_quit() {
     );
     assert!(!text.contains('\u{1b}'), "{text}");
     assert!(!text.contains("continue"), "{text}");
+    assert!(text.contains("s save"), "{text}");
     assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(
@@ -185,4 +216,31 @@ fn replacement_explains_why_and_requires_save_or_quit() {
         form.key(KeyCode::Char('q'), &config).unwrap(),
         Some(Choice::Quit)
     ));
+}
+
+#[test]
+fn pending_first_save_or_edits_cannot_continue_without_saving() {
+    let config = config();
+    for fresh in [false, true] {
+        let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+        if fresh {
+            form.save_reason = Some("No manifest exists yet; save to continue.".into());
+        } else {
+            form.draft.lead.standard.primary = "claude:opus:medium".into();
+        }
+        let draft = form.draft.clone();
+        assert!(render(&form).contains("s save"));
+        assert!(!render(&form).contains("c continue"));
+        assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
+        assert!(matches!(form.screen, Screen::Roles));
+        form.key(KeyCode::Char('s'), &config).unwrap();
+        assert!(matches!(form.screen, Screen::Review));
+        assert!(!render(&form).contains("c continue"));
+        assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
+        assert_eq!(form.draft, draft);
+        let Some(Choice::Save(saved)) = form.key(KeyCode::Enter, &config).unwrap() else {
+            panic!("review must save the shown draft");
+        };
+        assert_eq!(*saved, draft);
+    }
 }

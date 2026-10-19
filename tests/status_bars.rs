@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{TestEnv, assert_command_success, stdout_of, write_worker};
+use common::{TestEnv, assert_command_success, state_dir, stdout_of, write_worker};
 use std::{fs, process::Command};
 
 #[test]
@@ -136,7 +136,7 @@ esac
         std::os::unix::fs::symlink(&env.root, registry.join(name)).unwrap();
     }
     std::os::unix::fs::symlink(env.root.join("missing"), registry.join("missing")).unwrap();
-    let worker = env.root.join(".niles/worker/broken");
+    let worker = state_dir(&env.root).join("worker/broken");
     fs::create_dir_all(&worker).unwrap();
     fs::write(worker.join("meta.json"), "invalid metadata").unwrap();
     let output = env

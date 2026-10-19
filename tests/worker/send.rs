@@ -28,7 +28,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(spawn_stdout.contains("close_task: niles close --task auth"));
     assert!(spawn_stdout.contains("workers: niles workers"));
 
-    let meta = fs::read_to_string(env.root.join(".niles/worker/auth-fix/meta.json")).unwrap();
+    let meta = fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/meta.json")).unwrap();
     assert!(meta.contains("\"agent\": \"claude\""));
     assert!(meta.contains("\"task_label\": \"auth\""));
     assert!(meta.contains("\"created_at\":"));
@@ -36,18 +36,19 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let target = "=niles-test-session:=niles-auth-fix";
     let project = env.root.display();
 
-    let brief = fs::read_to_string(env.root.join(".niles/worker/auth-fix/brief.md")).unwrap();
+    let brief = fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/brief.md")).unwrap();
     assert!(brief.contains("task_label: auth"));
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains("report_file:"));
-    assert!(brief.contains(".niles/worker/auth-fix/report.md"));
+    assert!(brief.contains("worker/auth-fix/report.md"));
     assert!(brief.contains("done: <short result>; report:"));
     assert!(brief.contains("You are the research"));
     assert!(brief.contains("Do not run the gate"));
     assert!(!brief.contains("You are the reviewer"));
     assert!(!brief.contains("name the attacker"));
 
-    let launch = fs::read_to_string(env.root.join(".niles/worker/auth-fix/launch.sh")).unwrap();
+    let launch =
+        fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/launch.sh")).unwrap();
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
     assert!(launch.contains("CLAUDE_CODE_DISABLE_AGENT_VIEW=1"));
     // The agent runs as a child, not via exec, so the script survives to report its exit.
@@ -74,10 +75,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(send_stdout.contains("sent: auth-fix"));
     // `wait` first, as spawn prints it: the send just armed a wake, and collecting it is the
     // next move.
-    assert!(
-        send_stdout.contains("wait: niles wait auth-fix"),
-        "{send_stdout}"
-    );
+    assert!(send_stdout.contains("wait: niles wait"), "{send_stdout}");
     assert!(
         send_stdout.contains("peek: niles peek auth-fix"),
         "{send_stdout}"
@@ -144,10 +142,10 @@ fn send_accepts_stdin_and_literal_flag_text() {
         .output()
         .unwrap();
     assert_command_success("send literal --wait", &literal);
-    assert!(stdout_of(&literal).contains("wait: niles wait worker"));
+    assert!(stdout_of(&literal).contains("wait: niles wait"));
 
     let log = env.tmux_log();
-    let dir = env.root.join(".niles/worker/worker");
+    let dir = state_dir(&env.root).join("worker/worker");
     let quoted_dir = dir.display().to_string().replace('\'', "'\\''");
     let command = format!(
         "printf '%s\\n' 'done: <short result>; report: {quoted_dir}/report.md' >> '{quoted_dir}/status.log'"
@@ -161,7 +159,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     assert_eq!(
         fs::read_to_string(dir.join("status.log")).unwrap(),
         format!(
-            "done: <short result>; report: {}/report.md\n",
+            "working: follow-up dispatch started\nworking: follow-up dispatch started\ndone: <short result>; report: {}/report.md\n",
             dir.display()
         )
     );

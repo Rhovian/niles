@@ -52,7 +52,7 @@ fn report_errors_helpfully_when_report_file_is_absent() {
     );
     assert!(String::from_utf8_lossy(&report.stdout).is_empty());
     let stderr = String::from_utf8_lossy(&report.stderr);
-    assert!(stderr.contains(".niles/worker/auth-fix/report.md"));
+    assert!(stderr.contains("worker/auth-fix/report.md"));
     assert!(stderr.contains("final pane snapshot is available"));
 }
 
@@ -74,7 +74,7 @@ fn report_falls_back_to_most_recent_local_archive() {
             .unwrap();
         assert_command_success("spawn archived report worker", &spawn);
 
-        let worker_dir = workspace.join(".niles/worker/reviewer");
+        let worker_dir = state_dir(&workspace).join("worker/reviewer");
         fs::write(worker_dir.join("report.md"), report_body).unwrap();
 
         let close = env
@@ -93,14 +93,14 @@ fn report_falls_back_to_most_recent_local_archive() {
     assert_eq!(String::from_utf8_lossy(&report.stdout), "second report\n");
     let stderr = String::from_utf8_lossy(&report.stderr);
     assert!(stderr.contains("serving archived report from"));
-    assert!(stderr.contains(".niles/worker/archive/reviewer-"));
+    assert!(stderr.contains("worker/archive/reviewer-"));
 }
 
 #[test]
 fn report_skips_prefix_sibling_worker_archive() {
     let workspace = temp_workspace("niles-worker-prefix-archive");
     let home = niles_home(&workspace);
-    let archive_root = workspace.join(".niles/worker/archive");
+    let archive_root = state_dir(&workspace).join("worker/archive");
     let worker_archive = archive_root.join("a-20260705T120000000000Z");
     let sibling_archive = archive_root.join("a-fs-20260705T130000000000Z");
     fs::create_dir_all(&worker_archive).unwrap();

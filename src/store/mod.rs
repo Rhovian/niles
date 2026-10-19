@@ -1,4 +1,6 @@
 mod archive;
+mod migrate;
+pub(crate) use migrate::move_dir;
 pub(crate) mod paths;
 mod serde;
 mod worker;
@@ -9,4 +11,4 @@ pub(crate) use serde::{
 
 pub(crate) use archive::{latest_worker_archive, worker_archives};
 pub(crate) use paths::{ARCHIVE_DIR, archive_dir, workers_dir};
-pub(crate) use worker::{worker_location, worker_locations};
+pub(crate) use worker::{WorkerListEntry, worker_location, worker_locations};

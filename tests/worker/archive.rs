@@ -15,7 +15,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
         .unwrap();
     assert_command_success("first spawn", &first);
 
-    let worker_dir = env.root.join(".niles/worker/reviewer");
+    let worker_dir = state_dir(&env.root).join("worker/reviewer");
     fs::write(worker_dir.join("report.md"), "first report\n").unwrap();
     fs::write(worker_dir.join("status.log"), "done: first\n").unwrap();
 
@@ -80,7 +80,7 @@ fn worker_close_on_archived_worker_errors_and_mentions_archive() {
         .unwrap();
     assert_failure_contains("second close", &second, "no live worker 'auth-fix'");
     let stderr = String::from_utf8_lossy(&second.stderr);
-    assert!(stderr.contains(".niles/worker/archive/auth-fix-"));
+    assert!(stderr.contains("worker/archive/auth-fix-"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn worker_close_does_not_write_or_advertise_empty_final_pane() {
 #[test]
 fn worker_close_malformed_metadata_names_path_and_cause() {
     let workspace = temp_workspace("niles-worker-old-meta");
-    let worker_dir = workspace.join(".niles/worker/auth-fix");
+    let worker_dir = state_dir(&workspace).join("worker/auth-fix");
     fs::create_dir_all(&worker_dir).unwrap();
     fs::write(
         worker_dir.join("meta.json"),

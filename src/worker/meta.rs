@@ -58,7 +58,13 @@ pub(super) fn read_meta(worker_dir: &Utf8Path) -> Result<WorkerMeta> {
 
 pub(super) fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    store::read_optional_json(&path)
+    let mut meta: Option<WorkerMeta> = store::read_optional_json(&path)?;
+    if let Some(meta) = &mut meta
+        && let Some(link) = &mut meta.session_link
+    {
+        link.relocate(&meta.project)?;
+    }
+    Ok(meta)
 }
 
 pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {

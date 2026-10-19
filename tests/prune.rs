@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{TestEnv, assert_command_success, stdout_of};
+use common::{TestEnv, assert_command_success, state_dir, stdout_of};
 use std::{fs, os::unix::fs::symlink};
 
 #[test]
@@ -20,8 +20,8 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
     ] {
         symlink(target, registry.join(name)).unwrap();
     }
-    let archive = env.root.join(".niles/worker/archive");
-    let sessions = other.join(".niles/sessions");
+    let archive = state_dir(&env.root).join("worker/archive");
+    let sessions = state_dir(&other).join("sessions");
     let removed = [
         registry.join("a-missing"),
         archive.join("auth-fix-20000101T000000000000000Z"),
@@ -34,7 +34,7 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
         )),
         archive.join("unparseable"),
         sessions.join("20000102T000000000000000Z"),
-        env.root.join(".niles/worker/live"),
+        state_dir(&env.root).join("worker/live"),
     ];
     for dir in removed[1..].iter().chain(&kept) {
         fs::create_dir_all(dir).unwrap();
@@ -44,7 +44,7 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
         archive.join("file-20000101T000000000000000Z"),
         sessions.join("20000103T000000000000000Z"),
         sessions.join("latest"),
-        env.root.join(".niles/manifest.yaml"),
+        state_dir(&env.root).join("manifest.yaml"),
     ];
     for file in &files {
         fs::write(file, "keep").unwrap();

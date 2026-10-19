@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -51,11 +51,11 @@ pub(super) fn write_manager_session(
 ) -> Result<ManagerSession> {
     let now = Utc::now();
     let id = timestamp_id(&now);
-    let dir = sessions_dir(workspace).join(&id);
+    let dir = sessions_dir(workspace)?.join(&id);
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_lead_brief(agent, workspace, &dir, &startup_context);
+    let body = render_lead_brief(agent, workspace, &dir, &startup_context)?;
     fs::write(&path, &body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
@@ -78,7 +78,7 @@ pub(super) fn write_manager_session(
 }
 
 pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
-    let meta_path = session_meta_path(workspace, &meta.id);
+    let meta_path = session_meta_path(workspace, &meta.id)?;
     crate::store::write_json(&meta_path, meta)
 }
 
@@ -87,9 +87,9 @@ fn render_lead_brief(
     workspace: &Utf8Path,
     dir: &Utf8Path,
     startup_context: &str,
-) -> String {
-    let manifest_path = workspace_manifest::manifest_path(workspace);
-    render_template(
+) -> Result<String> {
+    let manifest_path = workspace_manifest::manifest_path(workspace)?;
+    Ok(render_template(
         LEAD_BRIEF_TEMPLATE,
         &[
             ("{workspace}", workspace.as_str()),
@@ -98,11 +98,11 @@ fn render_lead_brief(
             ("{manifest}", manifest_path.as_str()),
             ("{startup_context}", startup_context),
         ],
-    )
+    ))
 }
 
-fn session_meta_path(workspace: &Utf8Path, id: &str) -> Utf8PathBuf {
-    sessions_dir(workspace).join(id).join("session.json")
+fn session_meta_path(workspace: &Utf8Path, id: &str) -> Result<Utf8PathBuf> {
+    Ok(sessions_dir(workspace)?.join(id).join("session.json"))
 }
 
 pub(crate) fn live_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
@@ -113,17 +113,35 @@ pub(crate) fn live_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
 }
 
 pub(crate) fn latest_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
-    for dir in read_dir_utf8_paths(&sessions_dir(workspace))?
+    for dir in read_dir_utf8_paths(&sessions_dir(workspace)?)?
         .into_iter()
         .rev()
     {
         if dir.is_dir()
-            && let Some(meta) = crate::store::read_optional_json(&dir.join("session.json"))?
+            && let Some(meta) = read_session_meta(workspace, &dir)?
         {
             return Ok(Some(meta));
         }
     }
     Ok(None)
+}
+
+pub(crate) fn read_session_meta(
+    workspace: &Utf8Path,
+    dir: &Utf8Path,
+) -> Result<Option<SessionMeta>> {
+    let mut meta: Option<SessionMeta> =
+        crate::store::read_optional_json(&dir.join("session.json"))?;
+    if let Some(meta) = &mut meta {
+        ensure!(
+            Some(meta.id.as_str()) == dir.file_name(),
+            "session id does not match directory {dir}"
+        );
+        if let Some(link) = &mut meta.session_link {
+            link.relocate(workspace)?;
+        }
+    }
+    Ok(meta)
 }
 
 /// `$TMUX_PANE` as tmux set it for the pane this process is running in: a `%N` pane id, which is a
@@ -193,7 +211,12 @@ mod tests {
 
     #[test]
     fn lead_brief_does_not_duplicate_fetched_commands() {
-        for command in ["niles peek <id>", "niles close <id>", "niles wait <id>"] {
+        for command in [
+            "niles peek <id>",
+            "niles close <id>",
+            "niles wait <id>",
+            "niles wait --all",
+        ] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(command),
                 "{command} is available from spawn output and --help"
@@ -217,7 +240,7 @@ mod tests {
             lead_pane: Some("%7".to_owned()),
             session_link: None,
         };
-        let file = session_meta_path(&workspace, &meta.id);
+        let file = session_meta_path(&workspace, &meta.id).unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         write_session_meta(&workspace, &meta).unwrap();
 
@@ -230,7 +253,7 @@ mod tests {
         let body = fs::read_to_string(&file).unwrap();
         assert!(!body.contains("lead_pane"), "{body}");
 
-        fs::remove_dir_all(workspace).unwrap();
+        crate::test_support::remove_workspace(&workspace).unwrap();
     }
 
     #[test]
@@ -240,11 +263,11 @@ mod tests {
         let models = agents::ModelRoster::builtin().unwrap();
         let agent = agents::AgentSpec::parse("codex:gpt-5.5:xhigh", &models).unwrap();
 
-        let body = render_lead_brief(&agent, &workspace, &dir, "worker: none");
+        let body = render_lead_brief(&agent, &workspace, &dir, "worker: none").unwrap();
 
         assert!(body.contains(&format!(
             "manifest: {}",
-            workspace_manifest::manifest_path(&workspace)
+            workspace_manifest::manifest_path(&workspace).unwrap()
         )));
         assert!(body.contains("lead_agent: codex:gpt-5.5:xhigh"));
         assert!(body.contains("worker: none"));

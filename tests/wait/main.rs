@@ -8,3 +8,4 @@ mod status_lines;
 mod support;
 mod target_selection;
 mod window_liveness;
+mod workspace;

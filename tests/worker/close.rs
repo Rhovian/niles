@@ -134,9 +134,9 @@ fn worker_close_by_task_closes_matching_workers_only() {
     assert!(stdout.contains("auth-two,closed,"));
     assert!(!stdout.contains("docs-one,closed,"));
 
-    assert!(!env.root.join(".niles/worker/auth-one").exists());
-    assert!(!env.root.join(".niles/worker/auth-two").exists());
-    assert!(env.root.join(".niles/worker/docs-one").exists());
+    assert!(!state_dir(&env.root).join("worker/auth-one").exists());
+    assert!(!state_dir(&env.root).join("worker/auth-two").exists());
+    assert!(state_dir(&env.root).join("worker/docs-one").exists());
 
     assert_archived_with_closed_sentinel(&env.root, "auth-one");
     assert_archived_with_closed_sentinel(&env.root, "auth-two");
@@ -176,9 +176,13 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
     assert!(stdout.contains("alpha,closed,"));
     assert!(!stdout.contains("bravo"));
 
-    assert!(!workspace_a.join(".niles/worker/alpha").exists());
-    assert!(workspace_b.join(".niles/worker/bravo").exists());
-    assert!(workspace_b.join(".niles/worker/bravo/meta.json").exists());
+    assert!(!state_dir(&workspace_a).join("worker/alpha").exists());
+    assert!(state_dir(&workspace_b).join("worker/bravo").exists());
+    assert!(
+        state_dir(&workspace_b)
+            .join("worker/bravo/meta.json")
+            .exists()
+    );
 
     let close_foreign_task = env
         .niles(&workspace_a, &["close", "--task", "task-b"])
@@ -189,7 +193,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         &close_foreign_task,
         "no live workers with task label task-b",
     );
-    assert!(workspace_b.join(".niles/worker/bravo").exists());
+    assert!(state_dir(&workspace_b).join("worker/bravo").exists());
 }
 
 #[test]
@@ -265,8 +269,8 @@ fn worker_close_selection_reports_partial_failures_without_aborting_rest() {
         assert!(stdout.contains("good-worker,closed,"));
         let stderr = String::from_utf8_lossy(&close.stderr);
         assert!(stderr.contains("worker bad-meta close failed"));
-        assert!(env.root.join(".niles/worker/bad-meta").exists());
-        assert!(!env.root.join(".niles/worker/good-worker").exists());
+        assert!(state_dir(&env.root).join("worker/bad-meta").exists());
+        assert!(!state_dir(&env.root).join("worker/good-worker").exists());
         assert!(latest_archive_dir(&env.root, "good-worker").exists());
     }
 }

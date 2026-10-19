@@ -4,7 +4,7 @@ use super::support::*;
 fn manifest_tiers_bound_spawn_before_worker_state() {
     let env = TestEnv::new("niles-worker-groups");
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    let path = env.root.join(".niles/manifest.yaml");
+    let path = state_dir(&env.root).join("manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replace(
         "research:\n  standard: {primary: claude:sonnet:high, secondaries: []}",
         "research:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}",
@@ -12,7 +12,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
     fs::write(&path, body).unwrap();
     let default = env.run(&["spawn", "--role", "research", "default", "Task"]);
     assert_command_success("tier default", &default);
-    let meta = fs::read_to_string(env.root.join(".niles/worker/default/meta.json")).unwrap();
+    let meta = fs::read_to_string(state_dir(&env.root).join("worker/default/meta.json")).unwrap();
     assert!(meta.contains("codex:gpt-6-sol:medium"), "{meta}");
     let listed = env.run(&[
         "spawn",
@@ -31,7 +31,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
     ] {
         let result = env.run(&["spawn", "--role", "research", id, "--agent", agent, "Task"]);
         assert_failure_contains(id, &result, "allowed agents");
-        assert!(!env.root.join(".niles/worker").join(id).exists());
+        assert!(!state_dir(&env.root).join("worker").join(id).exists());
     }
 }
 
@@ -68,7 +68,7 @@ fn spawn_rejects_missing_tree_without_worker_state() {
         "Fix",
     ]);
     assert_failure_contains("missing tree", &spawn, "failed to resolve tree");
-    assert!(!env.root.join(".niles/worker/other").exists());
+    assert!(!state_dir(&env.root).join("worker/other").exists());
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let stderr = String::from_utf8_lossy(&spawn.stderr);
     assert!(stderr.contains("bare `niles`"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
-    assert!(!env.root.join(".niles/worker/auth-fix").exists());
+    assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
     assert!(!env.tmux_log.exists());
 }
 
@@ -126,7 +126,8 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     assert!(codex_stdout.contains("model: gpt-5.7"));
     assert!(codex_stdout.contains("effort: xhigh"));
 
-    let codex_meta = fs::read_to_string(env.root.join(".niles/worker/codex-hi/meta.json")).unwrap();
+    let codex_meta =
+        fs::read_to_string(state_dir(&env.root).join("worker/codex-hi/meta.json")).unwrap();
     let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
     assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
     assert!(codex_meta.contains(r#""role": "research""#));
@@ -136,7 +137,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     assert!(codex_meta.contains(r#""effort": "xhigh""#));
 
     let codex_launch =
-        fs::read_to_string(env.root.join(".niles/worker/codex-hi/launch.sh")).unwrap();
+        fs::read_to_string(state_dir(&env.root).join("worker/codex-hi/launch.sh")).unwrap();
     assert!(codex_launch.contains("'--dangerously-bypass-approvals-and-sandbox'"));
     assert!(codex_launch.contains("'--model' 'gpt-5.7'"));
     assert!(codex_launch.contains("'--config' 'model_reasoning_effort=\"xhigh\"'"));
@@ -193,6 +194,6 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
             .output()
             .unwrap();
         assert_failure_contains("invalid spawn", &output, needle);
-        assert!(!workspace.join(".niles/worker").join(dir).exists());
+        assert!(!state_dir(&workspace).join("worker").join(dir).exists());
     }
 }

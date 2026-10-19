@@ -33,6 +33,8 @@ pub struct WorkspaceManifest {
     /// `backoff`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recheck: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<super::WorktreeConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
@@ -84,6 +82,15 @@ impl SessionState {
 }
 
 impl SessionLink {
+    pub(crate) fn relocate(&mut self, workspace: &Utf8Path) -> Result<()> {
+        if let Self::Pi { session_dir } = self
+            && let Ok(relative) = session_dir.strip_prefix(workspace.join(".niles"))
+        {
+            *session_dir = crate::store::paths::project_path(workspace)?.join(relative);
+        }
+        Ok(())
+    }
+
     pub(crate) fn args(&self) -> Vec<String> {
         match self {
             Self::Claude { session_id } => vec!["--session-id".into(), session_id.clone()],
@@ -109,7 +116,7 @@ pub(crate) fn read_session(
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<SessionRecord>> {
-    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    let home = crate::util::home_dir()?;
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
         SessionLink::Hermes { source } => read_hermes(&home, source),

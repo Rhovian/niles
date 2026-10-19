@@ -61,10 +61,24 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
-    let agent = resolve_agent(&project, role, tier, agent, &config)?;
+    let manifest_path = workspace_manifest::manifest_path(&project)?;
+    let manifest = workspace_manifest::load(&project).with_context(|| {
+        format!(
+            "cannot resolve agent for role '{}' from {manifest_path}",
+            role.as_str()
+        )
+    })?;
+    let agent = resolve_agent(
+        &manifest_path,
+        manifest.as_ref(),
+        role,
+        tier,
+        agent,
+        &config,
+    )?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
-    let cadence = watch::checkin_cadence(&project, checkin.as_deref())?;
+    let cadence = watch::resolve_cadence(checkin.as_deref(), manifest.as_ref(), &manifest_path)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
@@ -77,9 +91,8 @@ pub fn spawn(
     if find_on_path(&invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
-    let agent_spec = &invocation.spec;
-    let dir = store::workers_dir(&project).join(&id);
-    let session_link = agents::session_link(agent_spec.family(), &id, &dir);
+    let dir = store::workers_dir(&project)?.join(&id);
+    let session_link = agents::session_link(invocation.spec.family(), &id, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }
@@ -101,12 +114,23 @@ pub fn spawn(
             }
             Some(canonical)
         }
-        Some(SpawnTree::Worktree { branch, base }) => Some(worktree::create_or_join(
-            &project,
-            &branch,
-            base.as_deref(),
-        )?),
+        Some(SpawnTree::Worktree { branch, base }) => {
+            let config = manifest
+                .as_ref()
+                .and_then(|manifest| manifest.worktree.as_ref());
+            let path = worktree::create_or_join(&project, &branch, base.as_deref(), config)?;
+            if let Some(config) = config {
+                invocation.env.extend(
+                    config
+                        .env
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
+            }
+            Some(path)
+        }
     };
+    let agent_spec = &invocation.spec;
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
     basis.record_mechanical(&id)?;
@@ -203,7 +227,7 @@ pub fn spawn(
         println!("task: {label}");
     }
     println!("brief: {}", meta.brief);
-    println!("wait: niles wait {id}");
+    println!("wait: niles wait");
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");
@@ -224,20 +248,18 @@ pub fn spawn(
 }
 
 fn resolve_agent(
-    project: &Utf8Path,
+    path: &Utf8Path,
+    manifest: Option<&workspace_manifest::WorkspaceManifest>,
     role: WorkerRole,
     tier: agents::roster::Tier,
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
-    let path = workspace_manifest::manifest_path(project);
     let role_name = role.as_str();
-    let manifest = workspace_manifest::load(project)
-        .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?;
     let Some(manifest) = manifest else {
         return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
-    let binding = role.binding(&manifest);
+    let binding = role.binding(manifest);
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
         if !binding.allows(&requested, &config.models)? {
@@ -407,7 +429,7 @@ impl Assignment {
                 let lead = session::latest_lead(project)?
                     .context("--mechanical requires a lead session")?;
                 Ok(DesignBasis::Mechanical {
-                    log: session::sessions_dir(project)
+                    log: session::sessions_dir(project)?
                         .join(lead.id)
                         .join("decisions.log"),
                     reason: reason.to_owned(),

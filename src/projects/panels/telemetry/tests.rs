@@ -80,7 +80,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         name: ProjectName::parse("demo").unwrap(),
         path: root.join("demo"),
     };
-    let niles = entry.path.join(".niles");
+    let niles = crate::store::paths::project_dir(&entry.path).unwrap();
     let archive = |id: &str, closed: &str, link: Option<serde_json::Value>| {
         let dir = niles.join(format!(
             "worker/archive/{id}-{}",
@@ -189,6 +189,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         (None, Some(262_144))
     );
     assert!(!latest.join("usage.json").exists());
+    crate::test_support::remove_workspace(&entry.path).unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 

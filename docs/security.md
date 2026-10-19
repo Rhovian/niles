@@ -16,7 +16,8 @@ outside the boundary Niles can provide.
 
 Niles keeps only operator-added projects as symlinks in `~/.niles/projects/`. Opening a
 registered project creates its named tmux session and starts the lead in that path; workers run
-in the same session. Niles writes orchestration state beneath the workspace's `.niles` directory.
+in the same session. Niles writes orchestration state, including role manifests, beneath
+`~/.niles/state/<mangled-absolute-workspace-path>/`, outside the repository tree.
 It never accepts an agent CLI workspace-trust prompt. Niles does not create an isolation boundary
 between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
 CLI, its launch flags, and operating-system controls.
@@ -57,9 +58,10 @@ an operator to launch Niles from the clone.
 
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`. An agent entry can replace its executable and argument list. The
-`.niles/manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
+global per-project `manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
 design, and research), and its per-role tiers and ordered secondaries can influence which
-listed agent the lead picks. See
+listed agent the lead picks. New manifests live in operator state; legacy manifests migrated
+from a clone can still carry repository-authored bindings. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`prompts/lead_brief.md`](../prompts/lead_brief.md).
@@ -78,32 +80,70 @@ separate `Command` arguments; these measures prevent incidental shell parsing. S
 **Known gaps.** Niles has no repository-trust gate of its own. Once the operator launches it, Niles
 may intentionally execute the configured binary with the configured arguments, so quoting is not
 a trust mechanism for a deliberately selected executable. Role bindings select what is launched,
-and planning text is instruction input to the lead. Niles does not currently execute
-repository-defined hooks; configuration parsing should not be interpreted as a hook facility.
+and planning text is instruction input to the lead. The manifest can also configure a
+`worktree.setup` shell command and `worktree.env`; see the execution boundary below.
 `niles doctor` also executes repository-chosen agent binaries with `--version`; the `niles-setup`
 skill has the agent show a project `agents:` block to the user and get approval before running it.
 
-### Local `.niles` state, symlinks, and locks
+### Global project state, migration, symlinks, and locks
 
 **Attacker.** A malicious repository author who supplies tracked `.niles` paths or symlinks before
 the operator launches Niles. Tampering after launch by another process with the operator's account
 is outside the isolation guarantees described here.
 
-**Attacker-controlled input.** Repository content may shape paths already present under `.niles`.
+**Attacker-controlled input.** New project state is outside the clone, so tracked repository
+paths cannot prepopulate it. On first state access, Niles copies an existing `<workspace>/.niles/`
+to staging in the global state directory, publishes the complete copy, then removes the source,
+including its manifest and artifacts. Migrated content remains
+untrusted repository input: migration does not authenticate it. A top-level legacy symlink or
+file is rejected, and an existing destination causes an error rather than merging or overwriting
+state. The key uses plain slash-to-hyphen replacement: `/Users/j/code/my-app` becomes
+`-Users-j-code-my-app`. Separator/hyphen collisions are accepted and can share project state.
+There is no escaping or hash fallback; filesystem component length limits apply. The registry remains `~/.niles/projects/`.
 Niles subsequently creates and reads manifests, session artifacts, worker directories, metadata,
-briefs, launch scripts, reports, status logs, and cursors in that tree. See
+briefs, launch scripts, reports, status logs, and cursors in the global tree. See
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
-**Existing mitigations.** Worker IDs and task labels accept only ASCII letters, digits, hyphens, and
+**Existing mitigations.** Migration holds a per-project advisory lock under `~/.niles/state/`.
+Legacy migration always copies to staging while preserving symlinks without following them.
+It publishes the completed copy before removing the source. A failed copy
+leaves the source intact and attempts to remove partial staging without replacing the original
+copy error if cleanup also fails. Retries use a fresh staging directory. Stop agents before upgrading:
+migration cannot update paths already held by running agents or their shell scripts, or
+synchronize writes made during the copy.
+`niles log` appends timestamped decisions via
+Niles, so the lead needs no extra filesystem sandbox grant. It requires the latest lead session's
+recorded pane to match `TMUX_PANE`, validates the worker label and rejects control-bearing decision
+text; this is session routing, not authentication against same-user processes.
+
+Worker IDs and task labels accept only ASCII letters, digits, hyphens, and
 underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's own
 file appends (through `append_line` or the trust watcher's held descriptor), spawn's log creation,
-and the opens of `status.cursor`, `status.waiter`, `status.waiting` and `checkin.lock` use
-`O_NOFOLLOW`. An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan,
-and cursor advance, serializing a wait against `send`'s cursor skip. A wait holds an exclusive
-`flock` on `status.waiter` for its whole life, so a second wait on the same worker is refused, and a
-shared `flock` on `status.waiting`, which the watcher probes to leave the lines that wait will
-deliver unreported. Every write or removal of a worker's check-in holds an exclusive `flock` on
-`checkin.lock`, so the watcher's re-read and the action that follows cannot interleave with a `send`
+and the opens of `status.cursor`, `wait.lock`, `wait.running`, and `checkin.lock` use
+`O_NOFOLLOW`. Wait state lives under `~/.niles/state/<mangled-absolute-workspace-path>/worker/`:
+`wait.lock`, `wait.running`, and temporary `wait.running.<uuid>` files are siblings of the
+worker directories. No wait state is written inside the repository. A workspace wait reads
+every live worker's log, cursor, and metadata from that project's global state tree. Liveness
+checks use the same local session-record and tmux/process-activity resolver as workers/watch;
+session links may point into agent stores or worktrees. Liveness probes print a fixed gone reason.
+An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan, flushed
+output, and cursor advance, serializing delivery against `send`'s cursor skip. Each line is
+flushed before its cursor moves: a killed wait cannot consume an unprinted line. A kill after
+printing but before advancing can replay that printed line; the operator accepts this boundary.
+Wait also records generated `gone:` lines for an unreported worker with a confirmed exited
+window/agent or 30 seconds of confirmed idle state. It checks for a real report again after
+probing activity and uses the same cursor lock, escaped output and print-before-advance path.
+A concurrent worker append can race the final synthetic-status append, as with watcher reports;
+its report remains in the log. Send appends a non-actionable dispatch marker so a silent follow-up
+can be detected even with check-ins disabled. The short-lived exclusive lock on
+`wait.lock` serializes registration with delivery: a newer registration supersedes the
+old wait, which checks that its held presence inode is still current before any delivery. The kernel releases locks on death;
+no old registration can prevent takeover. A shared `flock` on workspace `wait.running` lets the
+watcher suppress report nudges while a wait runs. Registration publishes a newly locked
+presence inode by renaming a unique `wait.running.<uuid>` file over `wait.running`; old waits
+retain only the unlinked inode, so a suspended stale wait cannot suppress later report nudges.
+Temporary presence files use `create_new` and `O_NOFOLLOW`. Every write or removal of a
+worker's check-in holds an exclusive `flock` on `checkin.lock`, so the watcher's re-read and the action that follows cannot interleave with a `send`
 arming a fresh one. See [`src/worker/validation.rs`](../src/worker/validation.rs) and
 [`src/wait.rs`](../src/wait.rs).
 
@@ -118,9 +158,9 @@ other filesystem operations are not protected globally against symlink traversal
 The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
 `O_NOFOLLOW`.
 The advisory locks authenticate neither writers nor status content, and any process with the
-operator's permissions can hold `status.waiter`'s lock and so refuse every wait on that worker, or
-hold `status.waiting`'s and so silence the watcher's report nudges for it.
-Other `.niles` state is not universally locked. Niles does not defend its state from a process that
+operator's permissions can hold `wait.lock`'s lock and so block workspace waits, or
+hold `wait.running`'s and so silence the watcher's report nudges in the workspace.
+Other global project state is not universally locked. Niles does not defend its state from a process that
 already has the operator's filesystem permissions.
 
 Name-only project and window status jobs emit tmux conditionals so selection is evaluated on
@@ -144,8 +184,8 @@ captured tmux panes, or be included in the repository text an agent reads. This 
 terminal-control risks and semantic prompt-injection risks.
 
 **Existing mitigations.** `niles wait` escapes characters for which Rust's `char::is_control` is
-true and limits the escaped rendered line to 4,096 bytes plus the `... (truncated)` suffix. Worker
-IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
+true and limits each escaped rendered line, including its worker id and truncation suffix,
+to 4,096 bytes. Worker IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
 worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
 tmux uses literal-key mode with explicit bracketed-paste delimiters. Niles refuses text containing
 ESC so message bytes cannot end the paste early. Framing does not depend on the pane advertising
@@ -208,6 +248,33 @@ remove it on close. The branch name is checked by git before it becomes a path. 
 registered worktrees under that workspace's managed tree root after checking live workers, status,
 and remote reachability; it never deletes branches.
 
+The operator-owned global project manifest may supply `worktree.env` and `worktree.setup`. For
+`spawn --worktree`, Niles applies literal environment overrides to the worker and executes setup
+via `sh -c` in a newly created tree before launch, with those overrides and Niles's inherited
+environment. Setup receives EOF on stdin; stdout and stderr both go to Niles's stderr so setup
+cannot consume caller input or mix output into spawn results. Setup is arbitrary code with the
+operator's permissions, credentials, and network access; it is not sandboxed and runs before any
+agent CLI trust prompt. Commands may themselves execute repository content (for example package
+install scripts). Review setup and environment entries before spawning, including in migrated
+legacy manifests: migration does not confer trust. Niles validates environment names as shell
+identifiers and rejects NUL-bearing values; worker exports quote values to prevent incidental
+shell evaluation. Setup text is deliberately shell code. Setup never runs when joining an
+existing tree or using `--tree`. Failure aborts spawn; Niles forcibly removes the newly created
+tree and setup-created files so a retry cannot skip failed setup. Effects outside the tree
+cannot be rolled back.
+
+Creation and setup hold a per-branch advisory file lock in global project state;
+concurrent joins fail rather than entering a tree under preparation. A `.pending` marker
+is created before `git worktree add` and removed only after successful setup or successful
+failed-setup cleanup. The lock is released on process death, but the marker persists: failed Git
+creation, interrupted creation/setup, and cleanup failure block reuse, including when
+configuration changes or an orphan setup later exits. Recovery requires stopping remaining setup
+processes, inspecting/saving needed files, removing the incomplete Git worktree, and clearing
+the marker named in the error before recreating it. Setup is never rerun on an existing tree.
+Existing trees from before this tracking have no marker and are accepted as-is. Locks and
+markers are local state, not authentication or protection against another process with the
+operator's permissions.
+
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.
 
@@ -225,7 +292,7 @@ values. These are launch-integrity measures, not containment. See
 Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage. It uses
 read-only access to those stores and links sessions through launch identifiers or a Codex brief.
 For Hermes, it opens the local `state.db` read-only to read session usage and state.
-For pi, Niles chooses transcript directories under its own `.niles` worker and lead session
+For pi, Niles chooses transcript directories under its global project worker and lead session
 state directories using `--session-dir`, and reads the newest JSONL transcript there.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
@@ -235,7 +302,7 @@ Hermes with `--yolo`. Niles launches pi with `PI_OFFLINE=1`, which disables its 
 check and install telemetry only. Foreground defaults differ, and project configuration can replace
 default arguments for either launch path. Actual access therefore depends on the agent CLI, launch
 flags, credentials, and OS permissions. Niles adds no sandbox or process isolation. Agents share
-the workspace tree and inherited environment, and `.niles` artifacts, reports, pane captures, and
+the workspace tree and inherited environment, and global state artifacts, reports, pane captures, and
 logs may contain secrets. Treat them as sensitive.
 
 Retier sends validated same-family model and effort commands to the recorded live worker window,

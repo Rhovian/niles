@@ -9,6 +9,15 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 
+/// All home-scoped paths share one boundary, including the isolated unit-test home.
+pub(crate) fn home_dir() -> Result<Utf8PathBuf> {
+    #[cfg(test)]
+    let home = crate::test_support::home_dir().to_owned();
+    #[cfg(not(test))]
+    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    Ok(home)
+}
+
 pub fn timestamp_id(now: &DateTime<Utc>) -> String {
     format!(
         "{}{:09}Z",

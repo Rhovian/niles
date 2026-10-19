@@ -44,7 +44,7 @@ fn terminal_failure_becomes_a_report_disarms_and_nudges_once() {
     tick(&project, at(1600), &mut memory, &mut sink, &running());
     assert_eq!(sink.sent.len(), 1);
     assert!(sink.captures.is_empty());
-    fs::remove_dir_all(project).unwrap();
+    crate::test_support::remove_workspace(&project).unwrap();
 }
 
 #[test]
@@ -60,9 +60,9 @@ fn normal_idle_and_stale_failure_never_fabricate_a_report() {
         assert_eq!(status(&project, "impl"), "");
         assert_eq!(
             sink.sent,
-            ["niles: impl stopped without a report — check it"]
+            ["niles: impl stopped without a report — check workers"]
         );
-        fs::remove_dir_all(project).unwrap();
+        crate::test_support::remove_workspace(&project).unwrap();
     }
 }
 
@@ -76,12 +76,12 @@ fn unreadable_activity_nudges_and_rearms_without_a_blocked_line() {
     let mut sink = RecordingSink::default();
     tick(&project, at(1300), &mut memory, &mut sink, &running());
     assert_eq!(status(&project, "impl"), "");
-    assert_eq!(sink.sent, ["niles: no report from impl — check it"]);
+    assert_eq!(sink.sent, ["niles: no report from impl — check workers"]);
     assert!(Checkin::read(&dir).unwrap().unwrap().deadline > at(1300));
     assert!(
         sink.notes
             .iter()
             .any(|note| note.contains("failed to read activity"))
     );
-    fs::remove_dir_all(project).unwrap();
+    crate::test_support::remove_workspace(&project).unwrap();
 }

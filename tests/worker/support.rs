@@ -5,7 +5,7 @@ pub(crate) use std::{
 };
 
 pub(crate) fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBuf {
-    let worker_dir = workspace.join(".niles/worker").join(id);
+    let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
     fs::write(worker_dir.join("status.log"), "working: bad metadata\n").unwrap();
     fs::write(
@@ -23,7 +23,7 @@ pub(crate) fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBu
 }
 
 pub(crate) fn latest_archive_dir(workspace: &Path, id: &str) -> PathBuf {
-    let archive_root = workspace.join(".niles/worker/archive");
+    let archive_root = state_dir(workspace).join("worker/archive");
     let prefix = format!("{id}-");
     let mut archives = fs::read_dir(&archive_root)
         .unwrap()
@@ -41,7 +41,7 @@ pub(crate) fn latest_archive_dir(workspace: &Path, id: &str) -> PathBuf {
 }
 
 pub(crate) fn assert_archived_with_closed_sentinel(workspace: &Path, id: &str) {
-    assert!(!workspace.join(".niles/worker").join(id).exists());
+    assert!(!state_dir(workspace).join("worker").join(id).exists());
     let archive_dir = latest_archive_dir(workspace, id);
     assert!(archive_dir.join("meta.json").is_file());
     assert!(
