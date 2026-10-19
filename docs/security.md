@@ -248,19 +248,32 @@ remove it on close. The branch name is checked by git before it becomes a path. 
 registered worktrees under that workspace's managed tree root after checking live workers, status,
 and remote reachability; it never deletes branches.
 
-The operator-owned global project manifest may supply `worktree.env` and `worktree.setup`.
-For `spawn --worktree`, Niles applies literal environment overrides to the worker and executes
-setup via `sh -c` in a newly created tree before launch, with those overrides and Niles's inherited
-environment. Setup is arbitrary code with the operator's permissions, credentials, and network
-access; it is not sandboxed and runs before any agent CLI trust prompt. Commands may themselves
-execute repository content (for example package install scripts). Review setup and environment
-entries before spawning, including in migrated legacy manifests: migration does not confer trust.
-Niles validates environment names as shell identifiers and rejects NUL-bearing values; worker
-exports quote values to prevent incidental shell evaluation. Setup text is deliberately shell
-code. Setup never runs when joining an existing tree or using `--tree`. Failure aborts spawn;
-Niles forcibly removes the newly created tree and setup-created files so a retry cannot skip
-failed setup. Effects outside the tree cannot be rolled back. Cleanup failure is reported and
-requires operator recovery before reusing the retained tree.
+The operator-owned global project manifest may supply `worktree.env` and `worktree.setup`. For
+`spawn --worktree`, Niles applies literal environment overrides to the worker and executes setup
+via `sh -c` in a newly created tree before launch, with those overrides and Niles's inherited
+environment. Setup receives EOF on stdin; stdout and stderr both go to Niles's stderr so setup
+cannot consume caller input or mix output into spawn results. Setup is arbitrary code with the
+operator's permissions, credentials, and network access; it is not sandboxed and runs before any
+agent CLI trust prompt. Commands may themselves execute repository content (for example package
+install scripts). Review setup and environment entries before spawning, including in migrated
+legacy manifests: migration does not confer trust. Niles validates environment names as shell
+identifiers and rejects NUL-bearing values; worker exports quote values to prevent incidental
+shell evaluation. Setup text is deliberately shell code. Setup never runs when joining an
+existing tree or using `--tree`. Failure aborts spawn; Niles forcibly removes the newly created
+tree and setup-created files so a retry cannot skip failed setup. Effects outside the tree
+cannot be rolled back.
+
+Creation and setup hold a per-branch advisory file lock in global project state;
+concurrent joins fail rather than entering a tree under preparation. A `.pending` marker
+is created before `git worktree add` and removed only after successful setup or successful
+failed-setup cleanup. The lock is released on process death, but the marker persists: failed Git
+creation, interrupted creation/setup, and cleanup failure block reuse, including when
+configuration changes or an orphan setup later exits. Recovery requires stopping remaining setup
+processes, inspecting/saving needed files, removing the incomplete Git worktree, and clearing
+the marker named in the error before recreating it. Setup is never rerun on an existing tree.
+Existing trees from before this tracking have no marker and are accepted as-is. Locks and
+markers are local state, not authentication or protection against another process with the
+operator's permissions.
 
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.

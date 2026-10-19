@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    fs,
+    os::unix::fs::OpenOptionsExt,
+    process::{Command, Stdio},
+};
 
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -59,6 +63,26 @@ pub(super) fn create_or_join(
     config: Option<&WorktreeConfig>,
 ) -> Result<Utf8PathBuf> {
     git(workspace, &["check-ref-format", "--branch", branch])?;
+    let state = store::paths::project_dir(workspace)?
+        .join("worktrees")
+        .join(branch);
+    fs::create_dir_all(&state).with_context(|| format!("create worktree state {state}"))?;
+    // Git forbids branch components starting with '.', so these files cannot collide with branches.
+    let lock_path = state.join(".lock");
+    let lock = crate::wait::cursor::open_lock_file(&lock_path)?;
+    lock.try_lock()
+        .with_context(|| format!("worktree {branch} creation is busy; cannot lock {lock_path}"))?;
+    let pending = state.join(".pending");
+    // Rust 1.89 File::try_lock provides exclusion, but releases on death, not completion:
+    // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html#method.try_lock
+    if pending
+        .try_exists()
+        .with_context(|| format!("inspect {pending}"))?
+    {
+        bail!(
+            "worktree {branch} creation/setup is incomplete; stop any setup process, remove the incomplete worktree, then remove {pending} before recreating it"
+        );
+    }
     let path = root(workspace)?.join(branch);
     let wanted = format!("refs/heads/{branch}");
     match registered_branch(workspace, &path)? {
@@ -76,6 +100,12 @@ pub(super) fn create_or_join(
             } else {
                 args.extend([path.as_str(), branch]);
             }
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&pending)
+                .with_context(|| format!("record unfinished worktree creation in {pending}"))?;
             git(workspace, &args)?;
             if let Some(config) = config
                 && let Some(command) = &config.setup
@@ -84,8 +114,12 @@ pub(super) fn create_or_join(
                 // A failed creation must not become a reusable tree whose setup never finished.
                 git(workspace, &["worktree", "remove", "--force", path.as_str()])
                     .with_context(|| format!("{error:#}; also failed to remove new tree {path}"))?;
+                fs::remove_file(&pending)
+                    .with_context(|| format!("{error:#}; failed to clear {pending}"))?;
                 return Err(error);
             }
+            fs::remove_file(&pending)
+                .with_context(|| format!("complete worktree creation: remove {pending}"))?;
             Ok(path)
         }
     }
@@ -96,6 +130,8 @@ fn setup(path: &Utf8Path, command: &str, config: &WorktreeConfig) -> Result<()> 
         .args(["-c", command])
         .current_dir(path)
         .envs(&config.env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(std::io::stderr()))
         .status()
         .with_context(|| format!("run worktree setup in {path}"))?;
     if !status.success() {

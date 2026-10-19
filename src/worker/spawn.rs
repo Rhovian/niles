@@ -61,10 +61,24 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
-    let agent = resolve_agent(&project, role, tier, agent, &config)?;
+    let manifest_path = workspace_manifest::manifest_path(&project)?;
+    let manifest = workspace_manifest::load(&project).with_context(|| {
+        format!(
+            "cannot resolve agent for role '{}' from {manifest_path}",
+            role.as_str()
+        )
+    })?;
+    let agent = resolve_agent(
+        &manifest_path,
+        manifest.as_ref(),
+        role,
+        tier,
+        agent,
+        &config,
+    )?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
-    let cadence = watch::checkin_cadence(&project, checkin.as_deref())?;
+    let cadence = watch::resolve_cadence(checkin.as_deref(), manifest.as_ref(), &manifest_path)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
@@ -101,7 +115,6 @@ pub fn spawn(
             Some(canonical)
         }
         Some(SpawnTree::Worktree { branch, base }) => {
-            let manifest = workspace_manifest::load(&project)?;
             let config = manifest
                 .as_ref()
                 .and_then(|manifest| manifest.worktree.as_ref());
@@ -235,20 +248,18 @@ pub fn spawn(
 }
 
 fn resolve_agent(
-    project: &Utf8Path,
+    path: &Utf8Path,
+    manifest: Option<&workspace_manifest::WorkspaceManifest>,
     role: WorkerRole,
     tier: agents::roster::Tier,
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
-    let path = workspace_manifest::manifest_path(project)?;
     let role_name = role.as_str();
-    let manifest = workspace_manifest::load(project)
-        .with_context(|| format!("cannot resolve agent for role '{role_name}' from {path}"))?;
     let Some(manifest) = manifest else {
         return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
     };
-    let binding = role.binding(&manifest);
+    let binding = role.binding(manifest);
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
         if !binding.allows(&requested, &config.models)? {

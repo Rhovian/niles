@@ -41,6 +41,7 @@ use crate::{
 };
 
 mod cadence;
+pub(crate) use cadence::resolve_cadence;
 mod checkin;
 pub(crate) mod composer;
 mod decide;

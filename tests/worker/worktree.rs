@@ -1,5 +1,5 @@
 use super::support::*;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
@@ -63,9 +63,9 @@ impl Repo {
         }
     }
 
-    fn run(&self, args: &[&str]) -> std::process::Output {
-        self.env
-            .niles(&self.workspace, args)
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = self.env.niles(&self.workspace, args);
+        command
             .env("HOME", &self.env.home)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -75,9 +75,12 @@ impl Repo {
             .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .env("GIT_CONFIG_COUNT", "1")
             .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
-            .env("GIT_CONFIG_VALUE_0", "false")
-            .output()
-            .unwrap()
+            .env("GIT_CONFIG_VALUE_0", "false");
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        self.command(args).output().unwrap()
     }
 
     fn configure(&self, worktree: &str) {
@@ -88,6 +91,7 @@ impl Repo {
     }
 
     fn spawn(&self, id: &str, base: bool) {
+        // configure() writes exact manifest bindings; the same agent spelling also works without one.
         let mut args = vec![
             "spawn",
             "--role",
@@ -229,7 +233,7 @@ fn failing_worktree_setup_aborts_spawn_and_removes_new_tree() {
     assert!(
         stderr.contains("setup-failed")
             && stderr.contains("worktree setup")
-            && stderr.contains('7'),
+            && stderr.contains("exit status: 7"),
         "{stderr}"
     );
     assert!(!repo.tree.exists());
@@ -259,4 +263,113 @@ fn worktree_configuration_does_not_apply_to_plain_or_explicit_tree_spawns() {
         .unwrap();
         assert!(!launch.contains("HOOK_ONLY"));
     }
+}
+
+#[test]
+fn worktree_setup_uses_eof_stdin_and_keeps_spawn_stdout_clean() {
+    let repo = Repo::new("niles-hook-io");
+    repo.configure(
+        "  setup: 'if read value; then exit 99; fi; echo setup-out; echo setup-err >&2'",
+    );
+    let input = repo.env.root.join("input");
+    fs::write(&input, "unexpected input\n").unwrap();
+    let output = repo
+        .command(&[
+            "spawn",
+            "worker",
+            "--worktree",
+            "fix/x",
+            "--base",
+            "origin/main",
+            "Fix",
+        ])
+        .stdin(fs::File::open(input).unwrap())
+        .output()
+        .unwrap();
+    assert_command_success("setup stdin/output", &output);
+    assert!(stdout_of(&output).contains("spawned: worker"));
+    assert!(!stdout_of(&output).contains("setup-out"));
+    let stderr = stderr_of(&output);
+    assert!(
+        stderr.contains("setup-out") && stderr.contains("setup-err"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn worktree_setup_cleanup_failure_retains_error_and_blocks_reuse() {
+    let repo = Repo::new("niles-hook-cleanup");
+    repo.configure("  setup: 'git worktree lock \"$PWD\"; exit 7'");
+    let output = repo.run(&[
+        "spawn",
+        "failed",
+        "--worktree",
+        "fix/x",
+        "--base",
+        "origin/main",
+        "Fix",
+    ]);
+    assert!(!output.status.success());
+    let stderr = stderr_of(&output);
+    assert!(
+        stderr.contains("exit status: 7")
+            && stderr.contains("also failed to remove new tree")
+            && stderr.contains("locked"),
+        "{stderr}"
+    );
+    assert!(repo.tree.exists());
+    let retry = repo.run(&["spawn", "retry", "--worktree", "fix/x", "Fix"]);
+    assert!(!retry.status.success());
+    assert!(stderr_of(&retry).contains("creation/setup is incomplete"));
+    assert!(!repo.env.tmux_log().contains("new-window"));
+}
+
+#[test]
+fn worktree_setup_blocks_concurrent_join_and_reuse_after_interruption() {
+    let repo = Repo::new("niles-hook-interrupted");
+    let ready = repo.env.root.join("ready");
+    let release = repo.env.root.join("release");
+    let finished = repo.env.root.join("finished");
+    assert!(
+        Command::new("mkfifo")
+            .args([&ready, &release, &finished])
+            .status()
+            .unwrap()
+            .success()
+    );
+    repo.configure(&format!(
+        "  setup: |\n    echo ready > '{}'\n    read value < '{}'\n    echo finished > '{}'",
+        ready.display(),
+        release.display(),
+        finished.display()
+    ));
+    let mut creator = repo
+        .command(&[
+            "spawn",
+            "creator",
+            "--worktree",
+            "fix/x",
+            "--base",
+            "origin/main",
+            "Fix",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // FIFOs synchronize with the real setup process without timing-dependent polling.
+    assert_eq!(fs::read_to_string(&ready).unwrap(), "ready\n");
+    let join = repo.run(&["spawn", "joiner", "--worktree", "fix/x", "Fix"]);
+    assert!(!join.status.success());
+    assert!(stderr_of(&join).contains("creation is busy"));
+    assert!(!repo.env.tmux_log().contains("new-window"));
+    creator.kill().unwrap();
+    fs::write(&release, "continue\n").unwrap();
+    assert_eq!(fs::read_to_string(&finished).unwrap(), "finished\n");
+    assert!(!creator.wait_with_output().unwrap().status.success());
+    let retry = repo.run(&["spawn", "retry", "--worktree", "fix/x", "Fix"]);
+    assert!(!retry.status.success());
+    assert!(stderr_of(&retry).contains("creation/setup is incomplete"));
+    assert!(repo.tree.exists());
+    assert!(!repo.env.tmux_log().contains("new-window"));
 }

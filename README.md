@@ -195,12 +195,24 @@ substitutions are not expanded. Sharing the main checkout's Cargo target directo
 warm dependency cache; concurrent Cargo builds serialize on Cargo's lock. Niles sets no
 language-specific defaults.
 
-Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same configured
-environment, before launching the worker. Use it for project preparation such as `uv sync` or
-`pnpm install`. It runs only on creation, never on reuse. Output goes to the invoking terminal;
-a nonzero exit fails the spawn and removes the new tree (including setup-created files), so a
-retry runs setup again. The branch remains; omit `--base` when retrying. Neither setting applies
-to plain spawns or `--tree`.
+Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same
+configured environment, before launching the worker. Use it for project preparation such as
+`uv sync` or `pnpm install`. It runs only on creation, never on reuse. Stdin is `/dev/null` (EOF),
+so setup must be non-interactive; both output streams go to Niles's stderr, keeping spawn stdout
+reserved for its result. A nonzero exit fails the spawn and removes the new tree (including
+setup-created files), so a retry runs setup again. The branch remains; omit `--base` when
+retrying. Neither setting applies to plain spawns or `--tree`.
+
+Concurrent creation/join of the same branch fails while creation or setup holds its lock. Niles
+records pending creation before adding the tree, so failed Git creation, interrupted setup, or
+failed cleanup block subsequent joins, even if setup later finishes in an orphan process. Setup
+is never rerun on that existing tree. To recover, stop any remaining setup process, inspect/save
+needed files, remove the incomplete worktree with Git, then remove the `.pending` file named in
+the error (`~/.niles/state/<workspace-key>/worktrees/<branch>/.pending`). Recreate without
+`--base` if the branch already exists. Keep the sibling `.lock` file; removing a live lock can
+break exclusion. Trees created before this tracking existed are treated as existing trees and
+skip setup.
+
 Only put trusted commands in this operator-owned manifest: setup runs with your permissions.
 
 Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default

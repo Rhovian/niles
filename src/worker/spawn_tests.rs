@@ -16,7 +16,16 @@ fn resolve_from_cli(project: &Utf8Path, args: &[&str]) -> Result<String> {
         panic!("expected spawn");
     };
     let config = load_project_config_from(project)?;
-    resolve_agent(project, assignment.role, assignment.tier, agent, &config)
+    let path = workspace_manifest::manifest_path(project)?;
+    let manifest = workspace_manifest::load(project)?;
+    resolve_agent(
+        &path,
+        manifest.as_ref(),
+        assignment.role,
+        assignment.tier,
+        agent,
+        &config,
+    )
 }
 
 #[test]
