@@ -36,7 +36,11 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let hints = match &form.screen {
         Screen::Roles => {
             roles(frame, body, form, theme, false);
-            "↑↓ role · ↵ edit standard primary · s save"
+            if form.can_save() {
+                "↑↓ role · ↵ edit standard primary · s save"
+            } else {
+                "↑↓ role · ↵ edit standard primary"
+            }
         }
         Screen::Review => {
             roles(frame, body, form, theme, true);
