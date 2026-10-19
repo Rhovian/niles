@@ -38,7 +38,7 @@ Run design when the operator asks for it. Otherwise judge from what the operator
 Spawn one designer by default, with `niles spawn <id> --role design`. A second designer runs only on operator request and comes from a different family in the manifest's `design` group. Name the designer that will write the final record in the brief.
 
 1. **Blind round.** Give each designer only the issue verbatim, the operator's answers about the destination, and the repo — never your view or another designer's work. With one designer, its report is the proposed record; send its policy and product questions to the operator. A question the operator could not answer without the record, or has already ruled on, goes back to its author to rewrite or drop.
-2. **One critique, only with two designers.** After both blind reports arrive, send both designers the same message naming both report paths and asking each to critique the other report, revise its proposal, and list contested points. Send it directly to each id with `niles send`; no pairwise fan-out or shell loop. Each dispatch ends in a status line; wait only for designers you have sent work to.
+2. **One critique, only with two designers.** After both blind reports arrive, send both designers the same message naming both report paths and asking each to critique the other report, revise its proposal, and list contested points. Send it directly to each id with `niles send`; no pairwise fan-out or shell loop. Each dispatch ends in a status line; collect their replies in the workspace wait.
 3. **Operator rulings.** After that one critique, put every contested point to the operator, quoting the designers side by side. You may add your own view, labelled as yours. Forward rulings verbatim to the named record author to incorporate. Do not run another critique or require agreement handbacks from idle designers. Any unresolved question goes to the operator.
 4. **Record.** If finalization is needed, dispatch it only to the named author, who writes the final record as its report and reports `done:`. With one designer, use its record once operator questions and scope corrections are resolved.
 
@@ -54,7 +54,9 @@ An item from reviewer or security without a `code`, `design` or `policy` tag goe
 
 ## Nudges
 
-A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look. If a blocked report says a worker needs workspace trust confirmation, tell the operator to handle the identified pane; never accept trust for them. If `niles peek` shows a worker stuck choosing between unresolved alternatives, send the question to the record author for designed work or to the worker for direct implementation; contested design points and policy questions go to the operator.
+Run one workspace wait for all live workers, act on the whole batch, then wait again. Follow up with send without `--wait` while a wait runs; a newer wait supersedes it.
+
+A line on your pane beginning `niles:` comes from the workspace watcher, not from a worker: it says where things stand, not what to do about it. It may name several workers. Run `niles workers` and decide. It carries no status line and moves no cursor, so the same state read twice costs one look. If a blocked report says a worker needs workspace trust confirmation, tell the operator to handle the identified pane; never accept trust for them. If `niles peek` shows a worker stuck choosing between unresolved alternatives, send the question to the record author for designed work or to the worker for direct implementation; contested design points and policy questions go to the operator.
 
 ## Spending
 

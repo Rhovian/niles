@@ -41,3 +41,19 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
     assert!(stdout.contains("spawned: w1"), "{stdout}");
     assert!(stdout.contains("done: first report"), "{stdout}");
 }
+
+#[test]
+fn spawn_wait_collects_other_workers_pending_reports() {
+    let lab = Lab::start("niles-spawn-workspace");
+    lab.worker("other", None, b"done: already pending\n");
+    let output = lab
+        .niles(&[
+            "spawn", "--role", "research", "w1", "--agent", "codex", "research", "--wait",
+        ])
+        .output()
+        .unwrap();
+    assert_command_success("spawn workspace wait", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("spawned: w1"), "{stdout}");
+    assert!(stdout.contains("other done: already pending\n"), "{stdout}");
+}

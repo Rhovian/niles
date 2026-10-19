@@ -110,11 +110,11 @@ pub enum CommandName {
     /// `security` is the adversarial pass, `design` writes the design record, and `research`
     /// answers one question with cited evidence. Workers may use --design for a record or --mechanical to log mechanical work.
     ///
-    /// `--wait` then blocks for this worker's first actionable line, so the turn does not need a
+    /// `--wait` starts the workspace wait after spawning, so the turn does not need a
     /// separate `niles wait`.
     #[command(verbatim_doc_comment)]
     Spawn {
-        /// Block for this worker's first actionable wake after spawning.
+        /// Wait for workspace reports after spawning.
         #[arg(long)]
         wait: bool,
         /// Worker task id used for window and metadata names.
@@ -194,11 +194,11 @@ pub enum CommandName {
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
     /// Appends a reminder with this worker's report path and status-line command.
     ///
-    /// `--wait` then blocks for that worker's reply, with `niles wait`'s exit codes. Exit 11 means
-    /// the message was sent but another wait on the worker gets the reply: do not resend.
+    /// `--wait` starts the workspace wait, with `niles wait`'s exit codes. Exit 11 means
+    /// a newer workspace wait took over after the message was sent: do not resend.
     #[command(verbatim_doc_comment)]
     Send {
-        /// Block for this worker's next actionable wake after sending.
+        /// Wait for workspace reports after sending.
         #[arg(long)]
         wait: bool,
         /// Check-in delay for this worker's next report: a duration such as 1s, 90s, 5m or 1h.
@@ -210,24 +210,17 @@ pub enum CommandName {
         #[command(flatten)]
         message: MessageInput,
     },
-    /// Wait for the next actionable status-log wake and print it
+    /// Wait for pending reports from every live worker in the workspace
     ///
-    /// Each wait consumes one actionable line and records how far it read, so after a wake and a
-    /// follow-up you run it again for the next one. One wait per worker: a second wait on a worker
-    /// that is already being waited on exits at once, and the running wait gets the line.
+    /// Includes workers spawned while waiting. Returns immediately when anything is pending,
+    /// printing every pending report, at most one per worker: `<id> <kind>: <detail>`.
+    /// Each escaped line is at most 4096 bytes. Run one wait, act on the batch, then wait again.
+    /// A newer wait supersedes the running wait without consuming its reports.
     ///
-    /// A worker whose tmux window has gone ends the wait rather than blocking on a log nothing
-    /// can append to again — but only once its log holds no further line, so a worker that
-    /// reported and then exited still hands that report over. A worker that sits idle for 30s
-    /// with nothing new in its log ends the wait the same way.
-    ///
-    /// Exits 0 on a wake, 10 when the worker closed or its window is gone, 11 when another wait is
-    /// already running on the worker, 12 when the worker went idle without reporting, 22 on
-    /// timeout.
+    /// Exits 0 on reports, 11 when superseded, 22 on timeout. Stdout contains only wake lines;
+    /// diagnostics go to stderr. Closed and idle workers do not end a workspace wait.
     #[command(verbatim_doc_comment)]
     Wait {
-        /// Worker id to wait on.
-        worker: String,
         /// Poll interval: a duration such as 500ms, 90s, 5m or 1h. Must be greater than zero.
         #[arg(
             long,
@@ -348,7 +341,7 @@ mod tests {
 
     #[test]
     fn wait_default_spellings_parse_to_the_runtime_defaults() {
-        let cli = Cli::try_parse_from(["niles", "wait", "worker"]).unwrap();
+        let cli = Cli::try_parse_from(["niles", "wait"]).unwrap();
         let Some(CommandName::Wait {
             interval, timeout, ..
         }) = cli.command

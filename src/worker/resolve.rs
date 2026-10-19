@@ -11,20 +11,6 @@ use super::{
     validation::validate_id,
 };
 
-/// Whether this worker's tmux window is gone by [`TargetState::is_gone`]. Anything short of a
-/// confirmed absence is `false`: a wait that stops early on a healthy worker is a worse failure
-/// than one that waits out its timeout.
-pub fn window_is_gone(id: &str) -> Result<bool> {
-    let Some(worker_dir) = resolve_worker_if_exists(id)? else {
-        return Ok(false);
-    };
-    let Some(meta) = read_meta_if_exists(&worker_dir)? else {
-        return Ok(false);
-    };
-
-    Ok(window_state(&meta).is_gone())
-}
-
 pub(super) fn window_state(meta: &WorkerMeta) -> TargetState {
     match WindowTarget::parse(&meta.window) {
         Ok(target) => tmux::target_state(&target, &meta.project, &meta.id),

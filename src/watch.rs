@@ -44,6 +44,7 @@ mod cadence;
 mod checkin;
 pub(crate) mod composer;
 mod decide;
+mod digest;
 mod due;
 mod report;
 mod sink;
@@ -53,7 +54,8 @@ mod trust;
 
 use cadence::Cadence;
 pub(crate) use checkin::Checkin;
-use decide::{Commit, Nudge, Plan, WatchMemory, parse_report_text};
+use decide::{Plan, WatchMemory};
+use digest::Item;
 use due::read_checkins;
 use sink::{Sink, WatchSink};
 
@@ -316,7 +318,7 @@ fn tick(
     apply(&plan, memory, sink, stop);
 }
 
-/// Delivers a plan, one nudge at a time.
+/// Delivers all pending items in one nudge.
 ///
 /// Every file this touches is re-read first: a tick spends seconds inside `send_line`, and anything
 /// armed or answered in that window is newer than the plan and is left for the next tick to judge.
@@ -340,53 +342,41 @@ fn apply(plan: &Plan, memory: &mut WatchMemory, sink: &mut dyn Sink, stop: &Atom
         );
     }
 
-    for nudge in &plan.nudges {
-        // The lead is exiting. What is left of the plan stays undelivered and uncommitted, and the
-        // state it described is still on disk for the next session.
-        if stop.load(Ordering::Relaxed) {
-            sink.note("the foreground agent is exiting: the rest of this plan waits for next time");
-            return;
-        }
-        match sink.nudge(&nudge.text) {
-            Ok(()) => {
-                // Only a delivered nudge moves the state forward: this is the whole retry
-                // mechanism, and it is why a failure here is not an error.
-                memory.commit(nudge);
-                if let Commit::Checkin { planned, next } = &nudge.commit {
-                    rearm(nudge, planned, next.as_ref(), sink);
-                }
-                sink.note(&format!("nudged {}: {}", nudge.id, nudge.text));
-            }
-            Err(err) => sink.note(&format!(
-                "the nudge for {} did not land, retrying next tick: {err:#}",
-                nudge.id
-            )),
-        }
+    if plan.nudges.is_empty() || stop.load(Ordering::Relaxed) {
+        return;
     }
-}
-
-/// Writes the next check-in, or removes it when there is none, but only over the state this tick
-/// planned on.
-fn rearm(nudge: &Nudge, planned: &Checkin, next: Option<&Checkin>, sink: &mut dyn Sink) {
-    with_planned_checkin(
-        &nudge.id,
-        &nudge.worker_dir,
-        planned,
-        sink,
-        |worker_dir, sink| {
-            let written = match next {
-                Some(next) => next.write(worker_dir),
-                None => Checkin::disarm(worker_dir).map(|_| ()),
-            };
-            if let Err(err) = written {
-                sink.note(&format!(
-                    "the check-in for {} is still armed at its old deadline, so it fires again: \
-                     {err:#}",
-                    nudge.id
-                ));
+    let text = digest::text(&plan.nudges);
+    let ids: Vec<_> = plan.nudges.iter().map(Item::id).collect();
+    match sink.nudge(&text) {
+        Ok(()) => {
+            for item in &plan.nudges {
+                memory.commit(item);
+                if let Item::Checkin {
+                    id,
+                    worker_dir,
+                    planned,
+                    next,
+                    ..
+                } = item
+                {
+                    with_planned_checkin(id, worker_dir, planned, sink, |dir, sink| {
+                        let written = match next {
+                            Some(next) => next.write(dir),
+                            None => Checkin::disarm(dir).map(|_| ()),
+                        };
+                        if let Err(err) = written {
+                            sink.note(&format!("the check-in for {id} is still armed: {err:#}"));
+                        }
+                    });
+                }
             }
-        },
-    );
+            sink.note(&format!("nudged {}: {text}", ids.join(",")));
+        }
+        Err(err) => sink.note(&format!(
+            "the nudge for {} did not land, retrying next tick: {err:#}",
+            ids.join(",")
+        )),
+    }
 }
 
 /// Runs `action` on a check-in only when the file is still the state the plan was built from.
@@ -430,16 +420,16 @@ pub(crate) fn delivered_reports(
         return Ok(Vec::new());
     };
     #[expect(clippy::disallowed_methods, reason = "other notes are not reports")]
-    let reports = body.lines().filter_map(|line| {
-        let (stamp, note) = line.split_once(' ')?;
-        let (_, text) = note.strip_prefix("nudged ")?.split_once(": ")?;
-        let (id, kind) = parse_report_text(text)?;
-        Some((
-            DateTime::parse_from_rfc3339(stamp).ok()?.to_utc(),
-            id.to_owned(),
-            kind,
-        ))
-    });
+    let reports = body
+        .lines()
+        .filter_map(|line| {
+            let (stamp, note) = line.split_once(' ')?;
+            let (_, text) = note.strip_prefix("nudged ")?.split_once(": ")?;
+            Some((DateTime::parse_from_rfc3339(stamp).ok()?.to_utc(), text))
+        })
+        .flat_map(|(at, text)| {
+            digest::parse_reports(text).map(move |(id, kind)| (at, id.to_owned(), kind))
+        });
     Ok(reports.collect())
 }
 

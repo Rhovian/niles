@@ -81,16 +81,13 @@ fn run() -> Result<ExitCode> {
             message,
         }) => {
             let task = message.resolve()?;
-            let worker_id = id.clone();
             let tree = match worktree {
                 Some(branch) => Some(worker::SpawnTree::Worktree { branch, base }),
                 None => tree.map(worker::SpawnTree::Path),
             };
             worker::spawn(id, assignment, task_label, agent, task, checkin, tree)?;
             if wait {
-                return Ok(
-                    wait::wait(worker_id, wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit(),
-                );
+                return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
             }
         }
         Some(CommandName::Close {
@@ -111,18 +108,14 @@ fn run() -> Result<ExitCode> {
             message,
         }) => {
             let message = message.resolve()?;
-            let sent = worker::send(wait, checkin, id, message)?;
-            if sent.wait_requested {
-                return Ok(
-                    wait::wait(sent.id, wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit(),
-                );
+            worker::send(wait, checkin, id, message)?;
+            if wait {
+                return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
             }
         }
-        Some(CommandName::Wait {
-            worker,
-            interval,
-            timeout,
-        }) => return Ok(wait::wait(worker, interval, timeout)?.emit()),
+        Some(CommandName::Wait { interval, timeout }) => {
+            return Ok(wait::wait(interval, timeout)?.emit());
+        }
         Some(CommandName::Quiet { id }) => {
             if watch::quiet(&id)? {
                 println!("quiet: {id}");

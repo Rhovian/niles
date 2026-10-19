@@ -193,7 +193,12 @@ mod tests {
 
     #[test]
     fn lead_brief_does_not_duplicate_fetched_commands() {
-        for command in ["niles peek <id>", "niles close <id>", "niles wait <id>"] {
+        for command in [
+            "niles peek <id>",
+            "niles close <id>",
+            "niles wait <id>",
+            "niles wait --all",
+        ] {
             assert!(
                 !LEAD_BRIEF_TEMPLATE.contains(command),
                 "{command} is available from spawn output and --help"

@@ -199,3 +199,12 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
 any additional terms or conditions.
+
+`niles wait` covers every live worker in the current workspace, including workers spawned
+while it runs. It returns immediately with all pending reports, one escaped
+`<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
+the batch, then wait again; reports accumulate while you act, with no batching timer.
+A newer wait supersedes the old one. Exit codes: 0 reports, 11 superseded, 22 timeout.
+`spawn --wait` and `send --wait` start this same workspace wait after dispatch.
+The watcher also combines pending reports and overdue check-ins in one `niles:` line;
+while a wait runs, it leaves report delivery to that wait.

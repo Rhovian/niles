@@ -168,5 +168,5 @@ fn spawn_accepts_literal_flag_text() {
     let literal_brief =
         fs::read_to_string(env.root.join(".niles/worker/literal/brief.md")).unwrap();
     assert!(literal_brief.contains("\n--wait\n"), "{literal_brief}");
-    assert!(stdout_of(&literal).contains("wait: niles wait literal"));
+    assert!(stdout_of(&literal).contains("wait: niles wait"));
 }

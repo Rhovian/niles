@@ -33,7 +33,7 @@ fn a_line_that_lands_while_a_wait_runs_is_left_to_it() {
     write_worker(&root, "impl", WINDOW);
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
     // Held the way a running wait holds it.
-    let wait = fs::File::create(worker_dir(&root, "impl").join("status.waiting")).unwrap();
+    let wait = fs::File::create(root.join(".niles/worker/wait.running")).unwrap();
     wait.lock_shared().unwrap();
     append_log(&root, "impl", BLOCKED);
 
