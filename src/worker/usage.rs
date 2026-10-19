@@ -12,7 +12,7 @@ use crate::{
 use super::{
     WorkerSnapshot,
     list::print_json,
-    meta::{WorkerMeta, meta_path, read_meta_if_exists, report_path},
+    meta::{WorkerMeta, meta_path, report_path},
     resolve::window_state,
     snapshot::worker_snapshot,
 };
@@ -91,16 +91,6 @@ pub(crate) fn collect(
         });
     }
     Ok(sessions)
-}
-
-/// The resolved worker state, or `None` when there is no worker metadata.
-pub(crate) fn session_state(worker_dir: &Utf8Path) -> Result<Option<SessionState>> {
-    let Some(meta) = read_meta_if_exists(worker_dir)? else {
-        return Ok(None);
-    };
-    let mut worker = WorkerSnapshot::new(meta.id.clone(), worker_dir.to_path_buf(), None);
-    worker.meta = Some(meta);
-    Ok(Some(worker_session(&worker, Utc::now())?.state))
 }
 
 pub(crate) fn lead_session(

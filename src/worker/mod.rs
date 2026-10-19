@@ -19,7 +19,6 @@ pub use close::worker_close;
 pub use list::workers;
 pub use pane::{peek, send};
 pub use report::report;
-pub use resolve::window_is_gone;
 pub use retier::retier;
 pub use role::WorkerRole;
 pub use spawn::{Assignment, spawn};
@@ -29,8 +28,8 @@ pub use worktree::SpawnTree;
 pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub(crate) use resolve::resolve_worker as worker_dir;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
+pub(crate) use usage::lead_session;
 pub(crate) use usage::worker_session;
-pub(crate) use usage::{lead_session, session_state};
 pub(crate) use validation::validate_task_label;
 
 pub(crate) struct StatusWorker {
@@ -74,4 +73,18 @@ pub(crate) fn window_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<
         }
     }
     Ok(labels)
+}
+
+/// Worker directories whose metadata is present and readable.
+pub(crate) fn live_worker_locations(
+    workspace: &camino::Utf8Path,
+) -> anyhow::Result<Vec<crate::store::WorkerListEntry>> {
+    let mut live = Vec::new();
+    for entry in crate::store::worker_locations(workspace)? {
+        if meta::read_meta_if_exists(&entry.worker_dir)?.is_some() {
+            validation::validate_id(&entry.id)?;
+            live.push(entry);
+        }
+    }
+    Ok(live)
 }

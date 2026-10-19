@@ -22,7 +22,7 @@ fn send_advances_the_cursor_so_a_pre_send_line_cannot_satisfy_the_wait_after_it(
 
     // The pre-send `done:` must not satisfy the wait that follows the send.
     let waited = lab
-        .niles(&["wait", "auth-fix", "--interval", "50ms", "--timeout", "0"])
+        .niles(&["wait", "--interval", "50ms", "--timeout", "0"])
         .output()
         .unwrap();
     assert_eq!(
@@ -49,7 +49,7 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
         .unwrap();
     // The wait takes its claim only after `send` has moved the cursor past the stale line, so the
     // reply appended now cannot be skipped by that advance.
-    wait_for_file(&worker_dir.join("status.waiter"));
+    wait_for_file(&state_dir(&lab.workspace).join("worker/wait.lock"));
 
     append_status(&worker_dir.join("status.log"), b"done: second pass\n");
 
@@ -58,7 +58,10 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
     let stdout = stdout_of(&output);
     assert!(stdout.contains("sent: auth-fix"), "stdout: {stdout}");
     // The reply, not the `done:` that was already sitting in the log before the send.
-    assert!(stdout.contains("done: second pass"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("auth-fix done: second pass"),
+        "stdout: {stdout}"
+    );
     assert!(!stdout.contains("stale pass"), "stdout: {stdout}");
 }
 
@@ -197,4 +200,32 @@ fn send_rejects_an_embedded_paste_terminator() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn send_wait_takes_over_the_workspace_and_collects_other_workers_reports() {
+    let lab = Lab::start("niles-send-workspace");
+    let dir = receiving_worker(&lab, b"working: ready\n");
+    let old = lab
+        .niles(&["wait", "--interval", "1h", "--timeout", "1h"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_file(&dir.join("status.cursor"));
+    lab.worker("other", None, b"done: unrelated report\n");
+    let output = lab
+        .niles(&["send", "auth-fix", "follow up", "--wait"])
+        .output()
+        .unwrap();
+    assert_command_success("send workspace wait", &output);
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("sent: auth-fix"), "{stdout}");
+    assert!(
+        stdout.contains("other done: unrelated report\n"),
+        "{stdout}"
+    );
+    let output = old.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(11));
+    assert!(stdout_of(&output).is_empty());
 }

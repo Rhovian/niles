@@ -203,7 +203,7 @@ pub fn spawn(
         println!("task: {label}");
     }
     println!("brief: {}", meta.brief);
-    println!("wait: niles wait {id}");
+    println!("wait: niles wait");
     println!("peek: niles peek {id}");
     println!("report: niles report {id}");
     println!("send: niles send {id} <message>");

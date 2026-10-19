@@ -245,3 +245,15 @@ fn migrated_pi_transcripts_remain_readable() {
     assert_eq!(usage["sessions"][0]["usage"]["input_tokens"], 20);
     assert!(!legacy.exists());
 }
+
+#[test]
+fn workspace_wait_locks_stay_in_global_project_state() {
+    let env = TestEnv::new("niles-global-wait");
+    let output = env.run(&["wait", "--timeout", "0"]);
+    assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
+    assert!(stdout_of(&output).is_empty());
+    let workers = state(&env).join("worker");
+    assert!(workers.join("wait.lock").is_file());
+    assert!(workers.join("wait.running").is_file());
+    assert!(!env.root.join(".niles").exists());
+}

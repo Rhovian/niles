@@ -75,10 +75,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(send_stdout.contains("sent: auth-fix"));
     // `wait` first, as spawn prints it: the send just armed a wake, and collecting it is the
     // next move.
-    assert!(
-        send_stdout.contains("wait: niles wait auth-fix"),
-        "{send_stdout}"
-    );
+    assert!(send_stdout.contains("wait: niles wait"), "{send_stdout}");
     assert!(
         send_stdout.contains("peek: niles peek auth-fix"),
         "{send_stdout}"
@@ -145,7 +142,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
         .output()
         .unwrap();
     assert_command_success("send literal --wait", &literal);
-    assert!(stdout_of(&literal).contains("wait: niles wait worker"));
+    assert!(stdout_of(&literal).contains("wait: niles wait"));
 
     let log = env.tmux_log();
     let dir = state_dir(&env.root).join("worker/worker");

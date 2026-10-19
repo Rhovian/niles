@@ -10,16 +10,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::{telemetry::SessionState, wake::WakeKind, worker::WorkerSnapshot};
+use crate::{telemetry::SessionState, worker::WorkerSnapshot};
 
-use super::checkin::Checkin;
+use super::{checkin::Checkin, digest::Item};
 
 const MAX_NUDGE_HOLD: TimeDelta = TimeDelta::minutes(5);
 
 /// What one tick should do, in the order the edge does it.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Plan {
-    pub(crate) nudges: Vec<Nudge>,
+    pub(crate) nudges: Vec<Item>,
     /// Check-ins the worker has answered: the arm state goes, and a fresh assignment arms its own.
     pub(crate) disarms: Vec<Disarm>,
 }
@@ -34,31 +34,6 @@ pub(crate) struct Disarm {
     pub(crate) id: String,
     pub(crate) worker_dir: Utf8PathBuf,
     pub(crate) planned: Checkin,
-}
-
-/// One line to type into the lead's pane, and what to record once it has landed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Nudge {
-    pub(crate) id: String,
-    pub(crate) worker_dir: Utf8PathBuf,
-    pub(crate) text: String,
-    pub(crate) commit: Commit,
-}
-
-/// The state a delivered nudge moves forward.
-///
-/// Nothing is recorded for a nudge that did not land, which is the whole retry mechanism: the next
-/// tick sees the same log, reaches the same decision, and types it again.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Commit {
-    /// Everything up to this log length has been reported; the next report is a later line.
-    Seen(u64),
-    /// This check-in landed: `next` replaces `planned`, if `planned` is still what is on disk.
-    /// `None` disarms it: an idle worker stays idle until the lead acts, so one nudge is enough.
-    Checkin {
-        planned: Checkin,
-        next: Option<Checkin>,
-    },
 }
 
 /// What the thread remembers between ticks.
@@ -137,15 +112,13 @@ impl WatchMemory {
                             .get(&worker.id)
                             .filter(|(deadline, _)| *deadline == checkin.deadline)
                             .and_then(|(_, state)| *state);
-                        plan.nudges.push(Nudge {
+                        plan.nudges.push(Item::Checkin {
                             id: worker.id.clone(),
                             worker_dir: worker.worker_dir.clone(),
-                            text: no_report_text(&worker.id, state),
-                            commit: Commit::Checkin {
-                                planned: *checkin,
-                                next: (state != Some(SessionState::Waiting))
-                                    .then(|| checkin.rearmed(now)),
-                            },
+                            state,
+                            planned: *checkin,
+                            next: (state != Some(SessionState::Waiting))
+                                .then(|| checkin.rearmed(now)),
                         });
                     }
                     _ => {}
@@ -156,11 +129,10 @@ impl WatchMemory {
                 && let Some(wake) = worker.last_actionable
                 && wake.end > accounted
             {
-                plan.nudges.push(Nudge {
+                plan.nudges.push(Item::Reported {
                     id: worker.id.clone(),
-                    worker_dir: worker.worker_dir.clone(),
-                    text: report_text(&worker.id, wake.kind),
-                    commit: Commit::Seen(worker.log_len),
+                    kind: wake.kind,
+                    log_len: worker.log_len,
                 });
             }
         }
@@ -173,37 +145,16 @@ impl WatchMemory {
     }
 
     /// Records a nudge that landed.
-    pub(crate) fn commit(&mut self, nudge: &Nudge) {
-        if let Commit::Seen(len) = nudge.commit {
-            self.seen.insert(nudge.id.clone(), len);
-        }
-    }
-}
-
-/// `niles: impl reported (done) — check workers`
-fn report_text(id: &str, kind: WakeKind) -> String {
-    format!("niles: {id} reported ({kind}) — check workers")
-}
-
-/// The worker and state a `report_text` names.
-pub(super) fn parse_report_text(text: &str) -> Option<(&str, WakeKind)> {
-    let (id, rest) = text.strip_prefix("niles: ")?.split_once(" reported (")?;
-    let kind = rest.strip_suffix(") — check workers")?;
-    Some((id, WakeKind::parse(kind)?))
-}
-
-fn no_report_text(id: &str, state: Option<SessionState>) -> String {
-    match state {
-        Some(SessionState::Waiting) => format!("niles: {id} stopped without a report — check it"),
-        // Unknown here is uncertain liveness or a declined report: re-armed, so it is asked again.
-        Some(SessionState::Starting | SessionState::Working | SessionState::Unknown) | None => {
-            format!("niles: no report from {id} — check it")
+    pub(crate) fn commit(&mut self, nudge: &Item) {
+        if let Item::Reported { id, log_len, .. } = nudge {
+            self.seen.insert(id.clone(), *log_len);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+
     use std::{path::PathBuf, time::Duration};
 
     use super::super::cadence::Recheck;
@@ -212,16 +163,6 @@ mod tests {
 
     const WINDOW: &str = "working: launch\n";
 
-    #[test]
-    fn report_text_parses_back() {
-        for kind in WakeKind::ALL {
-            assert_eq!(
-                parse_report_text(&report_text("impl-2", kind)),
-                Some(("impl-2", kind))
-            );
-        }
-        assert_eq!(parse_report_text(&no_report_text("impl", None)), None);
-    }
     const DONE: &str = "done: shipped\n";
 
     fn worker(id: &str, log: &str) -> WorkerSnapshot {
@@ -245,11 +186,11 @@ mod tests {
         )])
     }
 
-    fn reports(plan: &Plan) -> Vec<&str> {
+    fn reports(plan: &Plan) -> Vec<String> {
         plan.nudges
             .iter()
-            .filter(|nudge| matches!(nudge.commit, Commit::Seen(_)))
-            .map(|nudge| nudge.text.as_str())
+            .filter(|nudge| matches!(nudge, Item::Reported { .. }))
+            .map(|nudge| nudge.text())
             .collect()
     }
 
@@ -350,14 +291,11 @@ mod tests {
         );
         let idle = memory.plan(&[busy()], &armed, at(1300));
         assert_eq!(
-            idle.nudges[0].text,
-            "niles: impl stopped without a report — check it"
+            idle.nudges[0].text(),
+            "niles: impl stopped without a report — check workers"
         );
         // An idle worker is told about once; it stays idle until the lead acts.
-        assert!(matches!(
-            idle.nudges[0].commit,
-            Commit::Checkin { next: None, .. }
-        ));
+        assert!(matches!(idle.nudges[0], Item::Checkin { next: None, .. }));
 
         memory.activity.clear();
         // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
@@ -367,9 +305,9 @@ mod tests {
             assert_eq!(
                 plan.nudges
                     .iter()
-                    .map(|nudge| nudge.text.as_str())
+                    .map(|nudge| nudge.text())
                     .collect::<Vec<_>>(),
-                vec!["niles: no report from impl — check it"],
+                vec!["niles: no report from impl — check workers"],
                 "at {offset}s"
             );
             assert!(plan.disarms.is_empty());
@@ -378,9 +316,9 @@ mod tests {
             // from firing the same check-in again.
             let nudge = plan.nudges[0].clone();
             memory.commit(&nudge);
-            let Commit::Checkin {
+            let Item::Checkin {
                 next: Some(next), ..
-            } = nudge.commit
+            } = nudge
             else {
                 panic!("a check-in nudge must carry its re-arm");
             };
@@ -401,12 +339,13 @@ mod tests {
 
         assert_eq!(first.nudges.len(), 1);
         assert_eq!(
-            first.nudges[0].text, retry.nudges[0].text,
+            first.nudges[0].text(),
+            retry.nudges[0].text(),
             "the same check-in comes round again rather than being lost"
         );
         // Only the re-arm deadline moved: it is computed from the tick that is trying, since the
         // nudge it belongs to has not landed yet.
-        assert_ne!(first.nudges[0].commit, retry.nudges[0].commit);
+        assert_ne!(first.nudges[0], retry.nudges[0]);
     }
 
     #[test]
@@ -449,10 +388,13 @@ mod tests {
             let deadline = checkins["impl"].deadline;
             memory.activity.insert("impl".into(), (deadline, state));
             let plan = memory.plan(&[worker("impl", WINDOW)], &checkins, at(1300));
-            assert_eq!(plan.nudges[0].text, "niles: no report from impl — check it");
+            assert_eq!(
+                plan.nudges[0].text(),
+                "niles: no report from impl — check workers"
+            );
             assert!(matches!(
-                plan.nudges[0].commit,
-                Commit::Checkin { next: Some(_), .. }
+                plan.nudges[0],
+                Item::Checkin { next: Some(_), .. }
             ));
         }
     }

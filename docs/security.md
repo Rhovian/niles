@@ -116,13 +116,23 @@ text; this is session routing, not authentication against same-user processes.
 Worker IDs and task labels accept only ASCII letters, digits, hyphens, and
 underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's own
 file appends (through `append_line` or the trust watcher's held descriptor), spawn's log creation,
-and the opens of `status.cursor`, `status.waiter`, `status.waiting` and `checkin.lock` use
-`O_NOFOLLOW`. An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan,
-and cursor advance, serializing a wait against `send`'s cursor skip. A wait holds an exclusive
-`flock` on `status.waiter` for its whole life, so a second wait on the same worker is refused, and a
-shared `flock` on `status.waiting`, which the watcher probes to leave the lines that wait will
-deliver unreported. Every write or removal of a worker's check-in holds an exclusive `flock` on
-`checkin.lock`, so the watcher's re-read and the action that follows cannot interleave with a `send`
+and the opens of `status.cursor`, `wait.lock`, `wait.running`, and `checkin.lock` use
+`O_NOFOLLOW`. Wait state lives under `~/.niles/state/<mangled-absolute-workspace-path>/worker/`:
+`wait.lock`, `wait.running`, and temporary `wait.running.<uuid>` files are siblings of the
+worker directories. No wait state is written inside the repository. A workspace wait reads
+every live worker's log and cursor from that project's global state tree.
+An exclusive advisory `flock` on `status.cursor` covers the cursor read, status scan, flushed
+output, and cursor advance, serializing delivery against `send`'s cursor skip. Each line is
+flushed before its cursor moves: a killed wait cannot consume an unprinted line. A kill after
+printing but before advancing can replay that printed line. The short-lived exclusive lock on
+`wait.lock` serializes registration with delivery: a newer registration supersedes the
+old wait, which checks that its held presence inode is still current before any delivery. The kernel releases locks on death;
+no old registration can prevent takeover. A shared `flock` on workspace `wait.running` lets the
+watcher suppress report nudges while a wait runs. Registration publishes a newly locked
+presence inode by renaming a unique `wait.running.<uuid>` file over `wait.running`; old waits
+retain only the unlinked inode, so a suspended stale wait cannot suppress later report nudges.
+Temporary presence files use `create_new` and `O_NOFOLLOW`. Every write or removal of a
+worker's check-in holds an exclusive `flock` on `checkin.lock`, so the watcher's re-read and the action that follows cannot interleave with a `send`
 arming a fresh one. See [`src/worker/validation.rs`](../src/worker/validation.rs) and
 [`src/wait.rs`](../src/wait.rs).
 
@@ -137,8 +147,8 @@ other filesystem operations are not protected globally against symlink traversal
 The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
 `O_NOFOLLOW`.
 The advisory locks authenticate neither writers nor status content, and any process with the
-operator's permissions can hold `status.waiter`'s lock and so refuse every wait on that worker, or
-hold `status.waiting`'s and so silence the watcher's report nudges for it.
+operator's permissions can hold `wait.lock`'s lock and so block workspace waits, or
+hold `wait.running`'s and so silence the watcher's report nudges in the workspace.
 Other global project state is not universally locked. Niles does not defend its state from a process that
 already has the operator's filesystem permissions.
 
@@ -163,8 +173,8 @@ captured tmux panes, or be included in the repository text an agent reads. This 
 terminal-control risks and semantic prompt-injection risks.
 
 **Existing mitigations.** `niles wait` escapes characters for which Rust's `char::is_control` is
-true and limits the escaped rendered line to 4,096 bytes plus the `... (truncated)` suffix. Worker
-IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
+true and limits each escaped rendered line, including its worker id and truncation suffix,
+to 4,096 bytes. Worker IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
 worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
 tmux uses literal-key mode with explicit bracketed-paste delimiters. Niles refuses text containing
 ESC so message bytes cannot end the paste early. Framing does not depend on the pane advertising

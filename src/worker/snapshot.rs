@@ -41,7 +41,7 @@ pub(crate) struct WorkerSnapshot {
     /// The wake cursor: how far `niles wait` has delivered. No cursor means no wait has ever
     /// consumed a line, which is position zero.
     cursor: u64,
-    /// Whether a `niles wait` on this worker was running when the snapshot was taken.
+    /// Whether a workspace `niles wait` was running when the snapshot was taken.
     pub(crate) wait_running: bool,
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot
         // Probed before the cursor is read: a wait that finishes in between has advanced the
         // cursor before it stopped running, so a line read above is either being delivered or
         // shows as delivered.
-        let wait_running = wait_running(&entry.worker_dir)?;
+        let wait_running = wait_running(workspace)?;
         let cursor = read_wake_cursor(&entry.worker_dir)?;
         let mut snapshot = WorkerSnapshot::new(entry.id, entry.worker_dir, log);
         snapshot.meta = meta;

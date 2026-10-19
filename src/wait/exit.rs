@@ -1,101 +1,31 @@
 use std::{process::ExitCode, time::Duration};
 
-use camino::Utf8PathBuf;
-
-use crate::wake::{self, WakeKind};
-
 pub(super) enum Outcome {
-    Wake {
-        line: String,
-    },
-    Closed {
-        id: String,
-        status: Utf8PathBuf,
-        line: String,
-    },
-    WindowGone {
-        id: String,
-        status: Utf8PathBuf,
-    },
-    AlreadyWaiting {
-        id: String,
-    },
-    Idle {
-        id: String,
-    },
-    Timeout {
-        subject: String,
-        timeout: Duration,
-    },
+    Wake,
+    Superseded,
+    Timeout { timeout: Duration },
 }
 
 pub(crate) struct WaitExit {
     code: u8,
-    stdout: Option<String>,
     stderr: Option<String>,
 }
 
 impl WaitExit {
     pub(super) fn from_outcome(outcome: Outcome) -> Self {
         match outcome {
-            Outcome::Wake { line } => Self {
+            Outcome::Wake => Self {
                 code: super::EXIT_WAKE,
-                stdout: Some(line),
                 stderr: None,
             },
-            Outcome::Closed { id, status, line } => Self {
-                code: super::EXIT_WORKER_CLOSED,
-                stdout: Some(line),
-                stderr: Some(format!(
-                    "wait: worker-closed worker={} status={} detail={}",
-                    field(&id),
-                    field(status.as_str()),
-                    detail(&format!("worker '{id}' closed"))
-                )),
+            Outcome::Superseded => Self {
+                code: super::EXIT_SUPERSEDED,
+                stderr: Some("wait: superseded by a newer workspace wait".to_owned()),
             },
-            Outcome::WindowGone { id, status } => Self {
-                code: super::EXIT_WORKER_CLOSED,
-                stdout: Some(wake::line(
-                    WakeKind::Failed,
-                    &format!("worker '{id}' exited without reporting; its window is gone"),
-                )),
-                stderr: Some(format!(
-                    "wait: window-gone worker={} status={} detail={}",
-                    field(&id),
-                    field(status.as_str()),
-                    detail(&format!(
-                        "worker '{id}' tmux window is gone and its status log ended without a final line"
-                    ))
-                )),
-            },
-            Outcome::AlreadyWaiting { id } => Self {
-                code: super::EXIT_ALREADY_WAITING,
-                stdout: None,
-                stderr: Some(format!(
-                    "wait: already-waiting worker={} detail={}",
-                    field(&id),
-                    detail(&format!(
-                        "another wait is already running on worker '{id}'; it gets the next line"
-                    ))
-                )),
-            },
-            Outcome::Idle { id } => Self {
-                code: super::EXIT_WORKER_IDLE,
-                stdout: None,
-                stderr: Some(format!(
-                    "wait: worker-idle worker={} detail={}",
-                    field(&id),
-                    detail(&format!(
-                        "worker '{id}' went idle without a new status line"
-                    ))
-                )),
-            },
-            Outcome::Timeout { subject, timeout } => Self {
+            Outcome::Timeout { timeout } => Self {
                 code: super::EXIT_TIMEOUT,
-                stdout: None,
                 stderr: Some(format!(
-                    "wait: timeout target={} timeout={}",
-                    field(&subject),
+                    "wait: timeout target=workspace timeout={}",
                     format_duration(timeout)
                 )),
             },
@@ -103,9 +33,6 @@ impl WaitExit {
     }
 
     pub(crate) fn emit(self) -> ExitCode {
-        if let Some(stdout) = self.stdout {
-            println!("{stdout}");
-        }
         if let Some(stderr) = self.stderr {
             eprintln!("{stderr}");
         }
@@ -125,24 +52,4 @@ fn format_duration(duration: Duration) -> String {
         return format!("{}ms", nanos / 1_000_000);
     }
     format!("{:.3}s", duration.as_secs_f64())
-}
-
-fn field(value: &str) -> String {
-    if value.is_empty()
-        || value
-            .chars()
-            .any(|ch| ch.is_whitespace() || ch == '\'' || ch == '"')
-    {
-        quoted(value)
-    } else {
-        value.to_owned()
-    }
-}
-
-fn quoted(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn detail(value: &str) -> String {
-    serde_json::Value::from(value).to_string()
 }
