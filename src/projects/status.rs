@@ -33,6 +33,47 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
     }
 }
 
+#[cfg(feature = "remote")]
+#[derive(Clone)]
+pub(crate) struct ForegroundSession {
+    pub project: String,
+    pub meta: crate::session::SessionMeta,
+    pub waiting: bool,
+    pub worker_count: usize,
+}
+
+#[cfg(feature = "remote")]
+pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
+    let mut sessions = Vec::new();
+    for row in rows::collect(registry::entries()?)? {
+        if matches!(row.state, rows::State::Missing | rows::State::NotRunning) {
+            continue;
+        }
+        let Some(meta) = crate::session::latest_lead(&row.entry.path)? else {
+            continue;
+        };
+        let Some(windows) = tmux::windows(&row.entry.name.session()?)? else {
+            continue;
+        };
+        let labels = crate::worker::window_labels(&row.entry.path)?;
+        let worker_count = labels
+            .iter()
+            .filter(|(_, target)| {
+                windows
+                    .iter()
+                    .any(|window| *target == format!("{}:{}", row.entry.name.as_str(), window.name))
+            })
+            .count();
+        sessions.push(ForegroundSession {
+            project: row.entry.name.as_str().to_owned(),
+            meta,
+            waiting: matches!(row.state, rows::State::Waiting(_)),
+            worker_count,
+        });
+    }
+    Ok(sessions)
+}
+
 /// The home session's header: projects, agents, lost agents, and their total tokens.
 fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
     let lost = sessions

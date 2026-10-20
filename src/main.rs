@@ -10,6 +10,8 @@ mod doctor;
 mod duration;
 mod models;
 mod projects;
+#[cfg(feature = "remote")]
+mod remote;
 mod session;
 mod store;
 mod telemetry;
@@ -65,6 +67,15 @@ fn run() -> Result<ExitCode> {
                     ExitCode::FAILURE
                 }
             });
+        }
+        Some(CommandName::Remote { port }) => {
+            #[cfg(feature = "remote")]
+            remote::run(port)?;
+            #[cfg(not(feature = "remote"))]
+            {
+                let _ = port;
+                anyhow::bail!("built without remote; reinstall with --features remote");
+            }
         }
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Compat { families }) => return compat::compat(&families),

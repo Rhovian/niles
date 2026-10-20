@@ -335,6 +335,29 @@ This model does not promise protection from:
 These non-goals do not make a cloned repository trustworthy. They clarify that Niles coordinates
 the operator's existing tools and permissions rather than reducing them.
 
+### Remote API
+
+The optional `remote` Cargo feature adds an HTTP/SSE listener only while `niles remote`
+runs, always on IPv4 loopback. Startup requires a nonempty global `remote.allowed_users`.
+Every route, including unknown routes and SSE, requires exactly one matching
+`Tailscale-User-Login` header. This is an identity assertion from Tailscale Serve,
+not a credential accepted from arbitrary network clients: Serve must terminate tailnet
+access and supply the trusted header. Local processes can forge it and already have
+access to the same user's plaintext state; hostile local users remain outside this model.
+There is no CORS grant. API responses, errors included, carry `Cache-Control: no-store`.
+
+Session IDs are resolved only against registered, running project sessions; request
+IDs are never used as filesystem paths or tmux targets. Session collection and transcript
+reads run on blocking workers rather than the async executor. SSE uses the independent
+incremental readers, bounded event queues, and a fresh snapshot on each connection.
+Snapshots limit turn count to 200, not bytes per turn; initial transcript reads still
+scan the available history. Disconnected clients stop polling; vanished sessions close
+the stream. Read errors are logged locally and close the stream without exposing
+filesystem/error details to the client. Append cursors do not replay in-place edits
+or switch transcript files underneath an open reader. No message/spawn/push endpoint
+is provided by this implementation. Serving trusted frontend JavaScript from this host
+remains essential when message sending is added.
+
 ### Remote PWA frontend
 
 The standalone `web/` app is an instruction surface for the foreground agent, which

@@ -72,6 +72,11 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
+    /// Serve the remote API on loopback (requires --features remote).
+    Remote {
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+    },
     /// Worker-facing commands.
     Agent {
         #[command(subcommand)]

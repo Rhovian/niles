@@ -12,7 +12,7 @@ mod hermes;
 mod pi;
 mod processes;
 #[cfg_attr(
-    not(test),
+    all(not(test), not(feature = "remote")),
     expect(
         dead_code,
         reason = "remote transcript consumer is implemented in #315"

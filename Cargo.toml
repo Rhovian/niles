@@ -10,7 +10,11 @@ categories = ["command-line-utilities", "development-tools"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Rhovian/niles"
 homepage = "https://github.com/Rhovian/niles"
-exclude = [".github/**"]
+exclude = [".github/**", "web/**"]
+
+[features]
+default = []
+remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -19,6 +23,10 @@ wildcard_enum_match_arm = "deny"
 disallowed_methods = "deny"
 
 [dependencies]
+axum = { version = "0.8", optional = true, default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", optional = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+tokio-stream = { version = "0.1", optional = true, default-features = false }
+tower = { version = "0.5", optional = true, default-features = false, features = ["util"] }
 anyhow = "1.0"
 camino = { version = "1.1", features = ["serde1"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

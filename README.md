@@ -224,6 +224,28 @@ fixed recheck must be greater than zero, and `recheck: backoff` selects backoff.
 See [role workflows](docs/roles.md#design-and-implementation) for design, implementation,
 and the `--design` and `--mechanical` spawn flags.
 
+## Remote API (opt-in)
+
+Install with `cargo install niles --features remote`, add an explicit allowlist to
+`~/.niles/config.yaml`, then run `niles remote` (default port 8765; `--port` changes it):
+
+```yaml
+remote:
+  allowed_users: [you@example.com]
+```
+
+The server binds only `127.0.0.1` and refuses an empty allowlist. Expose `/api` through
+Tailscale Serve and serve the separately built [PWA](web/README.md) from the same Niles
+host/origin. The API trusts Serve's `Tailscale-User-Login` header; it must never be
+proxied through an untrusted/public identity-header source. No CORS or static assets
+are served by the Rust crate. Builds and release binaries omit the feature by default.
+
+API v1 provides `GET /api/sessions` and `GET /api/sessions/:id/events`. Every SSE
+connection begins with at most 200 recent turns and an explicit `truncated` flag,
+then streams appended turns and status changes; reconnects receive a new snapshot.
+The API version is independent of the CLI JSON schema. Sending messages and Web Push
+are separate follow-up work.
+
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute. Report suspected vulnerabilities privately

@@ -20,6 +20,18 @@ pub(crate) struct FileConfig {
     pub(crate) theme: Option<ThemeName>,
     #[serde(skip_serializing_if = "tmux_is_empty")]
     pub(crate) tmux: FileTmux,
+    #[serde(skip_serializing_if = "remote_is_empty")]
+    pub(crate) remote: FileRemote,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct FileRemote {
+    pub(crate) allowed_users: Vec<String>,
+}
+
+fn remote_is_empty(remote: &FileRemote) -> bool {
+    remote.allowed_users.is_empty()
 }
 
 #[derive(Default, Deserialize, Serialize)]
