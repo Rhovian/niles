@@ -83,8 +83,13 @@ fn send_exits_copy_mode_and_delivers_the_message_once() {
 
     assert_command_success("send from copy mode", &send);
     let message = fs::read_to_string(lab.workspace.join("delivered")).unwrap();
-    assert!(message.starts_with("\x1b[200~delivered\n\n## Reporting this follow-up\n"));
-    assert_eq!(message.matches("## Reporting this follow-up").count(), 1);
+    assert!(message.starts_with("\x1b[200~delivered\n\nUpdate `"));
+    assert_eq!(
+        message
+            .matches("then report with `niles agent status`")
+            .count(),
+        1
+    );
 }
 
 fn receiving_worker(lab: &Lab, status: &[u8]) -> PathBuf {
@@ -162,17 +167,8 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
         assert_command_success(family, &sent);
         let dir = fs::canonicalize(dir).unwrap();
         let report = dir.join("report.md");
-        let status = dir.join("status.log");
         let footer = include_str!("../../prompts/followup_reporting.md")
-            .replace("{report_path}", report.to_str().unwrap())
-            .replace(
-                "{status_command}",
-                &format!(
-                    "printf '%s\\n' 'done: <short result>; report: {}' >> '{}'",
-                    report.display(),
-                    status.display()
-                ),
-            );
+            .replace("{report_path}", report.to_str().unwrap());
         assert_eq!(
             fs::read_to_string(lab.workspace.join("delivered")).unwrap(),
             format!("\x1b[200~{body}\n\n{footer}\x1b[201~\r"),

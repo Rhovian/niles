@@ -46,6 +46,7 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(CommandName::Agent { command }) => worker::agent_status::run(command)?,
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,

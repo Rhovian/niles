@@ -117,9 +117,9 @@ recorded pane to match `TMUX_PANE`, validates the worker label and rejects contr
 text; this is session routing, not authentication against same-user processes.
 
 Worker IDs and task labels accept only ASCII letters, digits, hyphens, and
-underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, Niles's own
-file appends (through `append_line` or the trust watcher's held descriptor), spawn's log creation,
-and the opens of `status.cursor`, `wait.lock`, `wait.running`, and `checkin.lock` use
+underscores (and reserve `archive`). The final open of `status.log` for `niles wait`, the worker
+status CLI, Niles file appends (through `append_line` or the trust watcher's held descriptor),
+spawn's log creation, and the opens of `status.cursor`, `wait.lock`, `wait.running`, and `checkin.lock` use
 `O_NOFOLLOW`. Wait state lives under `~/.niles/state/<mangled-absolute-workspace-path>/worker/`:
 `wait.lock`, `wait.running`, and temporary `wait.running.<uuid>` files are siblings of the
 worker directories. No wait state is written inside the repository. A workspace wait reads
@@ -153,8 +153,14 @@ newest session. Archive and session entries are checked with `symlink_metadata`,
 files are left alone. Unparseable names are also retained. See
 [`src/projects/prune.rs`](../src/projects/prune.rs).
 
+`niles agent status` accepts only worker-owned kinds and non-empty details without control
+characters. It requires an existing status log and uses `append_line` with `O_NOFOLLOW`;
+`done` also requires a non-empty report. Status text remains unauthenticated input to the lead.
+
 **Known gaps.** `O_NOFOLLOW` protects only those final path components; parent directories and
 other filesystem operations are not protected globally against symlink traversal or replacement.
+The status CLI checks that the log exists before calling `append_line`, which opens with
+creation enabled: concurrent removal between the check and open can recreate that log.
 The worker launch script's shell append (`echo closed: ... >> "$STATUS"`) does not use
 `O_NOFOLLOW`.
 The advisory locks authenticate neither writers nor status content, and any process with the
@@ -216,7 +222,7 @@ liveness nudges and re-arms instead. A structured terminal failure in a Codex, C
 becomes `blocked: provider refused (<label>): <first line>`, never from pane text: the message is
 stripped of controls and capped at 1,024 characters, the label at 256; nudges carry only the worker
 ID and status kind. Appends use `O_NOFOLLOW` and recheck the check-in under its lock and the log
-length; worker echo does not take that lock, so a racing report can interleave (accepted, #348).
+length; worker status append does not take that lock, so a racing report can interleave (accepted, #348).
 
 `niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
 are clamped and stripped of control characters before terminal rendering. The shared roles picker

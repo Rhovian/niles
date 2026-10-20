@@ -48,9 +48,13 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
             "compat directory",
         )?;
         fs::create_dir(&dir)?;
+        fs::write(dir.join("status.log"), "")?;
+        invocation
+            .env
+            .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
         let nonce = Uuid::new_v4().to_string();
         let prompt = format!(
-            "Run this shell command, then reply with only the word done: printf %s {nonce} > niles-compat-nonce"
+            "Run this shell command, then reply with only the word done: niles agent status working {nonce}"
         );
         match invocation.brief {
             BriefDelivery::Arg => invocation.args.push(prompt.clone()),
@@ -124,7 +128,8 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
                 Some(format!("exit {code}{detail}"))
             }
             Some(_) => {
-                if read_optional_string(&dir.join("niles-compat-nonce"))?.as_deref() != Some(&nonce)
+                if read_optional_string(&dir.join("status.log"))?.as_deref()
+                    != Some(format!("working: {nonce}\n").as_str())
                 {
                     Some("nonce not written (tool use blocked or skipped)".to_owned())
                 } else {

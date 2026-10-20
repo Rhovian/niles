@@ -76,7 +76,7 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
 }
 
 /// Wiring only: `--role` reaches brief composition and each role gets its own fragment on
-/// top of the shared contract. What each fragment *says* is asserted in `worker::role`.
+/// top of the bootstrap. What each fragment *says* is asserted in `worker::role`.
 #[test]
 fn role_selects_which_fragment_the_brief_carries() {
     let env = TestEnv::new("niles-worker-roles");
@@ -102,8 +102,8 @@ fn role_selects_which_fragment_the_brief_carries() {
         )
         .unwrap();
         assert!(brief.contains(&format!("You are the {role}")), "{brief}");
-        assert!(brief.contains("## Reporting"), "{brief}");
-        assert!(brief.contains("done: <short result>; report:"), "{brief}");
+        assert!(brief.contains("niles agent status --help"), "{brief}");
+        assert!(!brief.contains("## Reporting"), "{brief}");
         if role == "worker" {
             let (header, _) = brief.split_once("\n\n## Task").unwrap();
             assert!(!header.contains("design_record:"));
@@ -122,7 +122,7 @@ fn role_selects_which_fragment_the_brief_carries() {
 }
 
 #[test]
-fn stdin_task_is_composed_with_the_role_and_reporting_contract() {
+fn stdin_task_is_composed_with_the_role_and_bootstrap() {
     let env = TestEnv::new("niles-worker-stdin-task");
     let mut child = env
         .niles(
@@ -153,10 +153,12 @@ fn stdin_task_is_composed_with_the_role_and_reporting_contract() {
 
     let brief =
         fs::read_to_string(state_dir(&env.root).join("worker/review-file/brief.md")).unwrap();
-    assert!(brief.contains("## Reporting"), "{brief}");
+    assert!(brief.contains("niles agent status --help"), "{brief}");
     assert!(brief.contains("You are the reviewer"), "{brief}");
     let (_, task_and_reporting) = brief.split_once("## Task\n\n").unwrap();
-    let (task, _) = task_and_reporting.split_once("\n\n## Reporting").unwrap();
+    let (task, _) = task_and_reporting
+        .split_once("\n\nWork from this brief")
+        .unwrap();
     assert_eq!(
         task,
         "  Inspect the parser edge cases.\nKeep this line verbatim.\n"

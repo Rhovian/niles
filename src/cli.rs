@@ -72,6 +72,11 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
+    /// Worker-facing commands.
+    Agent {
+        #[command(subcommand)]
+        command: crate::worker::agent_status::AgentCommand,
+    },
     #[command(hide = true)]
     Status {
         #[command(subcommand)]

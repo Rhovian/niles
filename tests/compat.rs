@@ -12,9 +12,8 @@ fi
 "#;
 const NONCE: &str = r#"for prompt do :; done
 case "$prompt" in */prompt.md) prompt=$(cat "$prompt");; esac
-nonce=${prompt#*printf %s }
-nonce=${nonce%% *}
-printf %s "$nonce" > niles-compat-nonce
+nonce=${prompt##*working }
+"$NILES_TEST_BINARY" agent status working "$nonce"
 "#;
 
 fn run_fake(body: &str) -> std::process::Output {
@@ -29,7 +28,10 @@ fn run_fake(body: &str) -> std::process::Output {
         "agents:\n  claude:\n    binary: missing-cli\n",
     )
     .unwrap();
-    env.run(&["compat", "claude"])
+    env.niles(&env.root, &["compat", "claude"])
+        .env("NILES_TEST_BINARY", env!("CARGO_BIN_EXE_niles"))
+        .output()
+        .unwrap()
 }
 
 fn assert_failed_turn(body: &str, detail: &str) {
@@ -58,7 +60,10 @@ fn successful_nonce_turn() {
 
 #[test]
 fn missing_or_wrong_nonce_fails() {
-    for body in ["exit 0\n", "printf wrong > niles-compat-nonce\n"] {
+    for body in [
+        "exit 0\n",
+        "printf wrong > \"$NILES_AGENT_DIR/status.log\"\n",
+    ] {
         assert_failed_turn(body, "nonce not written (tool use blocked or skipped)");
     }
 }
@@ -120,7 +125,11 @@ fn all_families_use_their_brief_and_launch_environment() {
             &format!("#!/bin/sh\n{VERSION}{check}{NONCE}"),
         );
     }
-    let output = env.run(&["compat"]);
+    let output = env
+        .niles(&env.root, &["compat"])
+        .env("NILES_TEST_BINARY", env!("CARGO_BIN_EXE_niles"))
+        .output()
+        .unwrap();
     assert_command_success("compat all", &output);
     assert_eq!(stdout_of(&output).matches("\tpass\t").count(), 4);
 }
