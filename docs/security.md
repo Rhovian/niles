@@ -354,9 +354,21 @@ Snapshots limit turn count to 200, not bytes per turn; initial transcript reads 
 scan the available history. Disconnected clients stop polling; vanished sessions close
 the stream. Read errors are logged locally and close the stream without exposing
 filesystem/error details to the client. Append cursors do not replay in-place edits
-or switch transcript files underneath an open reader. No message/spawn/push endpoint
-is provided by this implementation. Serving trusted frontend JavaScript from this host
-remains essential when message sending is added.
+or switch transcript files underneath an open reader.
+
+Authenticated message POSTs resolve the opaque ID again against the live catalog and
+send only to its recorded foreground agent pane through `tmux::send_line`. No fallback
+target, draft/prompt guard, or watcher-shared lock is introduced. JSON bodies are capped
+at 16 KiB; text must be nonblank and cannot contain ESC (paste framing) or NUL (process
+arguments). Other content, including newlines and shell-looking text, remains literal.
+Authorization runs before body parsing or tmux actions. A 200 follows the shared send
+path's pane-change acknowledgement; it is not proof that the model acted on the message.
+A send failure can follow a paste/submit, so clients must not retry automatically.
+Tmux failure details stay in local diagnostics, not HTTP responses. Catalog resolution
+and injection are not atomic; concurrent session exit/restart or desk/watcher input can
+race with sending, under the operator's no-lock/no-draft-guard ruling. No spawn/push
+endpoint is provided. Trusted frontend JavaScript from this host is essential: an
+allowed tailnet user can instruct an agent with the host user's execution privileges.
 
 ### Remote PWA frontend
 

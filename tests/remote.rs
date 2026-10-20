@@ -44,7 +44,13 @@ fn server_binds_loopback_and_reads_registered_live_sessions() {
     let env = TestEnv::with_tmux(
         "remote-live",
         r#"#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  capture-pane) cat "$TMUX_LOG.pane" 2>/dev/null; exit 0 ;;
+  send-keys)
+    if [ -f "$TMUX_LOG.fail" ]; then echo 'private tmux failure' >&2; exit 1; fi
+    if [ "$4" = "-l" ]; then printf '%s\n' "$5" >> "$TMUX_LOG.pane";
+    else printf 'submitted\n' >> "$TMUX_LOG.pane"; fi ;;
   has-session) exit 0 ;;
   display) printf '%s\n' "$TMUX_PROJECT_TAG" ;;
   list-windows)
@@ -82,9 +88,8 @@ esac
             .unwrap(),
     );
     let mut line = String::new();
-    BufReader::new(server.0.stderr.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
+    let mut diagnostics = BufReader::new(server.0.stderr.take().unwrap());
+    diagnostics.read_line(&mut line).unwrap();
     let addr: std::net::SocketAddr = line
         .strip_prefix("remote listening on ")
         .unwrap()
@@ -92,20 +97,22 @@ esac
         .parse()
         .unwrap();
     assert_eq!(addr.ip(), std::net::Ipv4Addr::LOCALHOST);
-    let get = |login: &str| {
+    let request = |method: &str, path: &str, login: &str, body: &str| {
         let mut socket = std::net::TcpStream::connect(addr).unwrap();
         socket
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
         write!(
             socket,
-            "GET /api/sessions HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{login}\r\n"
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{login}\r\n{body}",
+            body.len()
         )
         .unwrap();
         let mut response = String::new();
         socket.read_to_string(&mut response).unwrap();
         response
     };
+    let get = |login| request("GET", "/api/sessions", login, "");
     assert!(get("").starts_with("HTTP/1.1 403"));
     let response = get("Tailscale-User-Login: alice@example.com\r\n");
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
@@ -117,4 +124,74 @@ esac
         json!({"api_version":1,"sessions":[{"id":"api:session","project":"api",
         "agent":{"family":"claude","entry_skill":"lead"},"waiting":true,"worker_count":1}]})
     );
+    let login = "Tailscale-User-Login: alice@example.com\r\n";
+    let endpoint = "/api/sessions/api%3Asession/message";
+    let post = |path: &str, login: &str, body: &str| request("POST", path, login, body);
+    let before_auth = env.tmux_log();
+    assert!(post(endpoint, "", r#"{"text":"hi"}"#).starts_with("HTTP/1.1 403"));
+    assert!(
+        post(
+            endpoint,
+            "Tailscale-User-Login: mallory@example.com\r\n",
+            r#"{"text":"hi"}"#
+        )
+        .starts_with("HTTP/1.1 403")
+    );
+    assert!(post(endpoint, "", "not json").starts_with("HTTP/1.1 403"));
+    assert_eq!(env.tmux_log(), before_auth);
+    assert!(
+        post(
+            "/api/sessions/%2Fetc%2Fpasswd/message",
+            login,
+            r#"{"text":"hi"}"#
+        )
+        .starts_with("HTTP/1.1 404")
+    );
+    assert!(post(endpoint, login, r#"{"text":"hi"}"#).starts_with("HTTP/1.1 503"));
+    assert!(!env.tmux_log().contains("send-keys"));
+    let meta_path = dir.join("session.json");
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+    meta["lead_pane"] = json!("%7");
+    meta["entry_skill"] = json!("solo");
+    fs::write(&meta_path, meta.to_string()).unwrap();
+    for invalid in [
+        r#"{}"#,
+        r#"{"text":5}"#,
+        r#"{"text":"   "}"#,
+        r#"{"text":""}"#,
+        r#"{"text":"x\u001b[201~"}"#,
+        r#"{"text":"x\u0000"}"#,
+        r#"{"text":"hi","client_id":"old"}"#,
+        "not json",
+    ] {
+        let response = post(endpoint, login, invalid);
+        let expected = if invalid == "not json" { "400" } else { "422" };
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {expected}")),
+            "{response}"
+        );
+        assert!(response.contains("cache-control: no-store"));
+    }
+    let oversized = json!({"text":"x".repeat(16 * 1024)}).to_string();
+    assert!(post(endpoint, login, &oversized).starts_with("HTTP/1.1 413"));
+    assert!(!env.tmux_log().contains("send-keys"));
+    let text = "literal $(touch nope); \"quoted\"\nsecond line 🦀";
+    let sent = post(endpoint, login, &json!({"text":text}).to_string());
+    assert!(sent.starts_with("HTTP/1.1 200"), "{sent}");
+    assert!(sent.contains("cache-control: no-store"));
+    assert!(!sent.contains("access-control-allow-origin"));
+    let log = env.tmux_log();
+    assert!(
+        log.contains(&format!("send-keys -t %7 -l \u{1b}[200~{text}\u{1b}[201~")),
+        "{log}"
+    );
+    assert!(log.contains("send-keys -t %7 C-m"));
+    assert!(!env.root.join("nope").exists());
+    fs::write(format!("{}.fail", env.tmux_log.display()), "").unwrap();
+    let failed = post(endpoint, login, r#"{"text":"fail"}"#);
+    assert!(failed.starts_with("HTTP/1.1 500"), "{failed}");
+    assert!(failed.contains("cache-control: no-store"));
+    assert!(!failed.contains("private tmux failure"));
+    assert_eq!(failed.split_once("\r\n\r\n").unwrap().1, "");
 }

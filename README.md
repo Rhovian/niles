@@ -240,11 +240,18 @@ host/origin. The API trusts Serve's `Tailscale-User-Login` header; it must never
 proxied through an untrusted/public identity-header source. No CORS or static assets
 are served by the Rust crate. Builds and release binaries omit the feature by default.
 
-API v1 provides `GET /api/sessions` and `GET /api/sessions/:id/events`. Every SSE
+API v1 provides `GET /api/sessions`, `GET /api/sessions/:id/events`, and
+`POST /api/sessions/:id/message` with JSON `{ "text": "message" }`. Every SSE
 connection begins with at most 200 recent turns and an explicit `truncated` flag,
 then streams appended turns and status changes; reconnects receive a new snapshot.
-The API version is independent of the CLI JSON schema. Sending messages and Web Push
-are separate follow-up work.
+The API version is independent of the CLI JSON schema. Message POSTs return 200 after
+`tmux::send_line` confirms submission to the recorded foreground agent pane, including
+solo sessions. They have no draft/prompt guard, watcher lock, client IDs, idempotency
+state or automatic retry. Text is preserved, including newlines; blank text, ESC/NUL,
+unknown JSON fields, and request bodies over 16 KiB are rejected. Unknown sessions
+return 404; sessions without a recorded pane return 503. Send failures return an empty
+500 (details logged locally); delivery may already have occurred, so inspect the
+transcript before retrying. Web Push remains separate follow-up work.
 
 ## Contributing and security
 

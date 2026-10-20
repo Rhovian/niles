@@ -3,14 +3,14 @@ use std::{convert::Infallible, net::Ipv4Addr, sync::Arc, time::Duration};
 use anyhow::{Result, ensure};
 use axum::{
     Json, Router,
-    extract::{Path, Request, State},
+    extract::{DefaultBodyLimit, Path, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
     },
-    routing::get,
+    routing::{get, post},
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -22,6 +22,7 @@ use crate::{
 };
 
 mod feed;
+mod message;
 #[cfg(test)]
 mod tests;
 
@@ -114,6 +115,10 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}/events", get(events))
+        .route(
+            "/api/sessions/{id}/message",
+            post(message::send).layer(DefaultBodyLimit::max(message::MAX_BODY_BYTES)),
+        )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, authorize))
 }
