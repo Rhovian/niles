@@ -7,7 +7,7 @@ import { selectedSession, sessionHash } from './notification';
 const SESSION_REFRESH_MS = 15_000;
 export function App() {
   const [items, setItems] = useState<Session[]>([]);
-  const [selected, setSelected] = useState<string>(selectedSession(window.location.hash));
+  const [selected, setSelected] = useState<string | undefined>(selectedSession(window.location.hash));
   const [version, setVersion] = useState<number>();
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
