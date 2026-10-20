@@ -11,9 +11,11 @@ use uuid::Uuid;
 
 use crate::{
     agent_window::shell_quote,
-    agents::{self, BriefDelivery, InvocationDefaults, ModelRoster},
+    agents::{self, AgentSpec, BriefDelivery, InvocationDefaults, picker::Role},
+    config::spec::load_project_config_from,
     doctor::version_line,
-    util::{find_on_path, read_optional_string, utf8_path},
+    util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path},
+    workspace_manifest,
 };
 
 const COMPAT_TURN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -30,19 +32,34 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
         agents::profile_for(family).with_context(|| format!("unknown built-in family `{family}`"))
     })
     .collect::<Result<Vec<_>>>()?;
-    let models = ModelRoster::builtin()?;
+    let root = current_dir_utf8()?;
+    let models = load_project_config_from(&root)?.models;
+    let manifest =
+        workspace_manifest::load(&root)?.context("compat requires a workspace manifest")?;
+    let specs = Role::ALL
+        .into_iter()
+        .flat_map(|role| role.binding(&manifest).agents())
+        .map(|agent| AgentSpec::parse(agent, &models))
+        .collect::<Result<Vec<_>>>()?;
     let mut passed = true;
     println!("family\tversion\tresult\tdetail");
     for profile in profiles {
+        let Some(spec) = specs.iter().find(|spec| spec.family() == profile.id) else {
+            println!("{}\t-\tskip\tnot used by manifest", profile.id);
+            continue;
+        };
         let Some(path) = find_on_path(profile.binary) else {
             println!("{}\tmissing\tfail\tnot found on PATH", profile.id);
             passed = false;
             continue;
         };
         let version = version_line(&path, "--version");
-        let spec = format!("{}:{}:low", profile.id, profile.default_model);
-        let mut invocation =
-            agents::invocation(&spec, None, InvocationDefaults::Headless, &models)?;
+        let mut invocation = agents::invocation(
+            &spec.canonical(),
+            None,
+            InvocationDefaults::Headless,
+            &models,
+        )?;
         let dir = utf8_path(
             std::env::temp_dir().join(format!("niles-compat-{}", Uuid::new_v4())),
             "compat directory",

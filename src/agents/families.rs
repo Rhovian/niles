@@ -15,7 +15,6 @@ pub struct AgentProfile {
     pub headless: &'static [&'static str],
     pub worker_brief: BriefDelivery,
     pub lead_brief: BriefDelivery,
-    pub default_model: &'static str,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
     pub composer: Option<&'static str>,
@@ -102,7 +101,6 @@ const PROFILES: &[AgentProfile] = &[
         headless: &["exec", "--skip-git-repo-check"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::Arg,
-        default_model: "gpt-5.5",
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Config {
@@ -122,7 +120,6 @@ const PROFILES: &[AgentProfile] = &[
         headless: &["-p"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
-        default_model: "opus",
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--effort"),
@@ -144,7 +141,6 @@ const PROFILES: &[AgentProfile] = &[
         worker_brief: HERMES_QUERY,
         // The lead's turn has no single file, so it goes by value.
         lead_brief: HERMES_QUERY,
-        default_model: "tencent/hy3",
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--reasoning"),
@@ -161,7 +157,6 @@ const PROFILES: &[AgentProfile] = &[
         headless: &["-p"],
         worker_brief: BriefDelivery::Arg,
         lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
-        default_model: "tencent/hy3",
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--thinking"),

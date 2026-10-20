@@ -22,6 +22,7 @@ fn run_fake(body: &str) -> std::process::Output {
         &env.bin.join("claude"),
         &format!("#!/bin/sh\n{VERSION}{body}"),
     );
+    write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
     // The shipped profile must win over workspace overrides.
     fs::write(
         env.root.join("niles.yaml"),
@@ -52,10 +53,8 @@ fn successful_nonce_turn() {
         stdout_of(&output),
         "family\tversion\tresult\tdetail\nclaude\tFake CLI 1.0.0\tpass\t\n"
     );
-    assert!(
-        stderr_of(&output)
-            .contains("'--dangerously-skip-permissions' '-p' '--model' 'opus' '--effort' 'low'")
-    );
+    assert!(stderr_of(&output).contains("'--dangerously-skip-permissions' '-p' '--model' 'haiku'"));
+    assert!(!stderr_of(&output).contains("--effort"));
 }
 
 #[test]
@@ -87,6 +86,7 @@ fn version_change_fails() {
 #[test]
 fn missing_binary_fails() {
     let env = TestEnv::new("niles-compat-missing");
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "codex");
     fs::remove_file(env.bin.join("claude")).unwrap();
     let output = env
         .niles(&env.root, &["compat", "claude"])
@@ -112,6 +112,13 @@ fn unknown_family_fails_before_running_turns() {
 #[test]
 fn all_families_use_their_brief_and_launch_environment() {
     let env = TestEnv::new("niles-compat-all");
+    write_workspace_manifest(
+        &env.root,
+        "claude",
+        "codex",
+        "hermes:z-ai/glm-5.3-flash:high",
+        "pi:deepseek/deepseek-v4.1-flash:high",
+    );
     for family in ["claude", "codex", "hermes", "pi"] {
         let check = match family {
             "claude" => {
@@ -132,4 +139,22 @@ fn all_families_use_their_brief_and_launch_environment() {
         .unwrap();
     assert_command_success("compat all", &output);
     assert_eq!(stdout_of(&output).matches("\tpass\t").count(), 4);
+    assert!(
+        stderr_of(&output)
+            .contains("'--model' 'gpt-6.1-sol' '--config' 'model_reasoning_effort=\"medium\"'")
+    );
+}
+
+#[test]
+fn unused_family_is_skipped_and_missing_manifest_errors() {
+    let env = TestEnv::new("niles-compat-selection");
+    assert_failure_contains(
+        "no manifest",
+        &env.run(&["compat"]),
+        "compat requires a workspace manifest",
+    );
+    write_workspace_manifest(&env.root, "claude", "codex", "claude", "codex");
+    let output = env.run(&["compat", "hermes"]);
+    assert_command_success("unused family", &output);
+    assert!(stdout_of(&output).contains("hermes\t-\tskip\tnot used by manifest"));
 }

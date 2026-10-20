@@ -394,16 +394,5 @@ mod tests {
         let profile_families = families::known_agent_ids().collect::<BTreeSet<_>>();
 
         assert_eq!(roster_families, profile_families);
-        for family in families::known_agent_ids() {
-            let profile = families::profile_for(family).unwrap();
-            assert!(
-                roster
-                    .supported_efforts(family, profile.default_model)
-                    .is_some(),
-                "{} default model `{}` is missing from the built-in roster",
-                profile.id,
-                profile.default_model
-            );
-        }
     }
 }

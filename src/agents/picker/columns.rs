@@ -167,14 +167,12 @@ impl Columns {
 
     #[expect(
         clippy::disallowed_methods,
-        reason = "a missing current or profile model selects the first effective roster entry"
+        reason = "a missing current model selects the first effective roster entry"
     )]
     fn select_model(&mut self) {
         let family = &self.families[self.family];
         let current = Some(&self.current).filter(|spec| spec.family() == family.name);
-        let model = current
-            .and_then(AgentSpec::model)
-            .or_else(|| agents::profile_for(&family.name).map(|profile| profile.default_model));
+        let model = current.and_then(AgentSpec::model);
         self.model = family
             .models
             .iter()

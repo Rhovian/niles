@@ -96,7 +96,7 @@ pub enum CommandName {
     },
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
-    /// Run one headless turn per built-in agent family with Niles's launch arguments
+    /// Run one headless turn per manifest family with Niles's launch arguments
     /// (maintainer check; makes real model calls with approval-bypass flags).
     Compat { families: Vec<String> },
     /// Remove dated metadata across registered projects (preview unless --apply)

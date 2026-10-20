@@ -47,8 +47,10 @@ are sequential and are not a transaction; a later failure does not undo earlier 
 
 `niles compat` launches built-in CLIs with approval-bypass flags and operator credentials in a
 fresh temp directory, using a fixed prompt with no outside input. It tests shipped profiles,
-ignoring workspace overrides; the directory is evidence, not a sandbox. Release notes and compare
-text are upstream-controlled inputs to an agent that may run commands; the maintainer procedure
+taking only model and effort from the workspace manifest, validated against the effective model
+registry. Workspace binary, argument and prompt overrides do not apply; the directory is evidence,
+not a sandbox. Release notes and compare text are upstream-controlled inputs to an agent that may
+run commands; the maintainer procedure
 treats them as data, never executable instructions. Updates require operator approval of the plan.
 
 ### Cloned repository manifest and configuration
