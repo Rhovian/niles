@@ -331,3 +331,25 @@ This model does not promise protection from:
 
 These non-goals do not make a cloned repository trustworthy. They clarify that Niles coordinates
 the operator's existing tools and permissions rather than reducing them.
+
+### Remote PWA frontend
+
+The standalone `web/` app is an instruction surface for the foreground agent, which
+can execute code with the host user's permissions. Serve its release asset only
+from the Niles host through Tailscale, on the API's origin. Whoever controls this
+JavaScript effectively controls that instruction surface. The frontend supplies
+no authentication; the loopback remote API must authorize trusted Tailscale identity
+headers. Public static hosting moves this trust boundary and is unsupported.
+
+Agent transcript text can echo hostile repository or web content. Every markdown
+render passes Marked output through DOMPurify; forms, active content, remote images,
+and inline style attributes are excluded. Sanitized links open in separate tabs with `noopener noreferrer`. The shell's CSP
+restricts scripts, connections and workers to its own origin and permits no inline
+script. Meta CSP cannot enforce `frame-ancestors`; the specified direct-directory
+Tailscale Serve deployment has no custom response-header setting. Framing protection
+is a known gap for #314–316/security review; an alternative same-host HTTP server
+behind Serve could supply the header.
+The service worker precaches only built shell assets, never API traffic; transcripts
+and optimistic messages stay in memory. API responses must use `Cache-Control:
+no-store` to cover HTTP caching as well. Push hooks ignore payload URLs and open
+only the app root; subscription and payload policy are deferred to #318.
