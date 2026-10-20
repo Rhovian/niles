@@ -66,10 +66,14 @@ change. `gh` must be installed and authenticated. Nothing runs in CI.
    updater. Planning requires installer tools and Unix `realpath`. Updates stop on failure
    without rolling back earlier updates; exit 1 still means newer than tested.
 5. Run `niles compat` (or `niles compat <family>...` for changed families). It makes one real
-   model call per family with the shipped worker arguments, default model and low effort,
-   approval-bypass flags and operator logins. A pass requires tool execution writing a random
-   nonce, exit 0 and an unchanged version. On failure quote the TSV row, argv from stderr,
-   and the kept evidence directory's `stdout` and `stderr`. Re-check versions afterwards.
+   model call per used family with the shipped worker arguments, approval-bypass flags and
+   operator logins. A workspace manifest is required. It uses the first exact binding for each
+   family in role order (lead, worker, reviewer, security, design, research), then tier order
+   (standard, frontier, economy, mechanical), primary before secondaries. Model and effort come
+   from that binding, validated against the effective registry; unused families are skipped.
+   A pass requires tool execution writing a random nonce, exit 0 and an unchanged version.
+   On failure quote the TSV row, argv from stderr, and the kept evidence directory's `stdout`
+   and `stderr`. Re-check versions afterwards.
 6. The headless turn leaves surfaces uncovered: check TUI composer markers, the lead's
    `--append-system-prompt` (claude, pi) and `foreground_args`, telemetry readers, and worker
    brief-as-TUI-opening-turn against the notes and each CLI's `--help`.

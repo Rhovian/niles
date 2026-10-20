@@ -1,10 +1,8 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-/// The part of a worker brief that does not depend on the role: what it is, where its report
-/// goes, and how it wakes the lead. Kept here rather than in a fourth template so the three
-/// role files hold only what differs between roles, and the contract has one home.
-const SHARED_CONTRACT: &str = r#"# Niles {role} brief
+const BOOTSTRAP: &str = r#"# Niles {role} brief
+You are niles worker `{id}`. Report with `niles agent status --help`.
 
 id: {id}
 task_label: {task_label}
@@ -14,25 +12,13 @@ report_file: {report_path}{design_record}
 ## Task
 
 {task}
+"#;
 
-## Reporting
-
-Appending a status line is the only thing that wakes the lead:
-
-```sh
-echo "done: <short result>; report: {report_path}" >> {status_path}
-```
-
-The states are `done:`, `blocked:`, `needs-decision:` and `failed:`, all in that form. `working:` lines are recorded but wake nobody — use them sparingly, for durable phase changes.
+const SHARED_PREFACE: &str = "Work from this brief and the code. Do not read other agents' briefs, reports or notes in Niles state unless this brief or a message from the lead names one.
 
 Deliverables go in the report file; the lead reads it, not your terminal.
 
-Work from this brief and the code. Do not read other agents' briefs, reports or notes in Niles state unless this brief or a message from the lead names one.
-
-Stay open after `done:` — it means you have something to hand back, not that you are exiting. The lead closes you with `niles close {id}`.
-
-Report uncertainty as uncertainty. `blocked:` and `needs-decision:` are far cheaper than a confident wrong answer.
-"#;
+Report uncertainty as uncertainty.";
 
 const ROLE_WORKER_TEMPLATE: &str = include_str!("../../prompts/role_worker.md");
 const ROLE_REVIEWER_TEMPLATE: &str = include_str!("../../prompts/role_reviewer.md");
@@ -42,7 +28,7 @@ const ROLE_DESIGN_TEMPLATE: &str = include_str!("../../prompts/role_design.md");
 
 /// Which role a spawned worker is playing.
 ///
-/// A worker's brief is the shared reporting contract plus exactly one of these fragments. The
+/// A worker's brief is the bootstrap plus exactly one of these fragments. The
 /// split exists so a role is never handed instructions addressed to a different one — most
 /// importantly, so only the worker is told to run the project's checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
@@ -84,9 +70,9 @@ impl WorkerRole {
         }
     }
 
-    /// The full brief for this role: the shared contract, then the role's own fragment.
+    /// The full brief for this role: bootstrap, shared preface, then its own fragment.
     pub(crate) fn brief(self) -> String {
-        format!("{SHARED_CONTRACT}\n{}", self.fragment())
+        format!("{BOOTSTRAP}\n{SHARED_PREFACE}\n\n{}", self.fragment())
     }
 
     pub(crate) fn fragment(self) -> &'static str {
@@ -112,15 +98,15 @@ mod tests {
         WorkerRole::Design,
     ];
 
-    /// The contract is shared, so every role carries it exactly once.
+    /// Every role points at the same self-describing status command.
     #[test]
-    fn every_brief_carries_the_shared_contract_once() {
+    fn every_brief_carries_the_bootstrap_once() {
         for role in ALL {
             let brief = role.brief();
             assert_eq!(
-                brief.matches("## Reporting").count(),
+                brief.matches("niles agent status --help").count(),
                 1,
-                "{} brief should carry the reporting contract once",
+                "{} brief should carry the status command once",
                 role.as_str()
             );
             // `{role}` is interpolated later, by `write_brief`.
@@ -137,27 +123,6 @@ mod tests {
                 lines <= 20,
                 "{} fragment is {lines} lines; keep role briefs short",
                 role.as_str()
-            );
-        }
-    }
-
-    /// The shared contract must name every non-`Closed` wake state exactly as `wake.rs` parses it.
-    /// `Closed` is niles-owned and withheld from workers, so it is deliberately absent here.
-    #[test]
-    fn shared_contract_names_every_worker_wake_state() {
-        use crate::wake::WakeKind;
-
-        for kind in [
-            WakeKind::Done,
-            WakeKind::Failed,
-            WakeKind::Blocked,
-            WakeKind::NeedsDecision,
-            WakeKind::Working,
-        ] {
-            let token = format!("{kind}:");
-            assert!(
-                SHARED_CONTRACT.contains(&token),
-                "SHARED_CONTRACT must instruct workers to emit {token}"
             );
         }
     }

@@ -310,8 +310,10 @@ fn hermes_sources_are_unique_per_launch() {
 fn headless_invocation_orders_worker_headless_and_tier_args() {
     for family in known_agent_ids() {
         let profile = profile_for(family).unwrap();
+        let roster = models();
+        let model = roster.model_names(family).next().unwrap();
         let invocation = invocation(
-            &format!("{family}:{}:low", profile.default_model),
+            &format!("{family}:{model}:low"),
             None,
             InvocationDefaults::Headless,
             &models(),
@@ -322,11 +324,7 @@ fn headless_invocation_orders_worker_headless_and_tier_args() {
             .iter()
             .chain(profile.headless)
             .map(|arg| (*arg).to_owned())
-            .chain(families::tier_args(
-                profile,
-                Some(profile.default_model),
-                Some("low"),
-            ))
+            .chain(families::tier_args(profile, Some(model), Some("low")))
             .collect();
         assert_eq!(invocation.args, expected, "{family}");
         if family == "codex" {

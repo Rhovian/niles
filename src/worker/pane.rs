@@ -3,7 +3,6 @@ use camino::Utf8PathBuf;
 use chrono::Utc;
 
 use crate::{
-    agent_window::shell_quote,
     tmux::{self, WindowTarget},
     wait, watch,
 };
@@ -56,17 +55,6 @@ pub fn send(wait: bool, checkin: Option<String>, id: String, message: String) ->
         "{message}\n\n{}",
         include_str!("../../prompts/followup_reporting.md")
             .replace("{report_path}", dir.join("report.md").as_str())
-            .replace(
-                "{status_command}",
-                &format!(
-                    "printf '%s\\n' {} >> {}",
-                    shell_quote(&format!(
-                        "done: <short result>; report: {}",
-                        dir.join("report.md")
-                    )),
-                    shell_quote(dir.join("status.log").as_str())
-                )
-            )
     );
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.

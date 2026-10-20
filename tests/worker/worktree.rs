@@ -172,7 +172,7 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
     fs::create_dir_all(&cache).unwrap();
     fs::write(cache.join("warm"), "dependency").unwrap();
     repo.configure(&format!(
-        "  env:\n    CARGO_TARGET_DIR: '{}'\n    LITERAL: '$(touch injected); spaces'\n  setup: |\n    test -f \"$CARGO_TARGET_DIR/warm\"\n    printf '%s' \"$LITERAL\" >> setup-runs\n    pwd > setup-cwd",
+        "  env:\n    CARGO_TARGET_DIR: '{}'\n    LITERAL: '$(touch injected); spaces'\n    NILES_AGENT_DIR: /wrong-worker\n  setup: |\n    test -f \"$CARGO_TARGET_DIR/warm\"\n    printf '%s' \"$LITERAL\" >> setup-runs\n    pwd > setup-cwd",
         cache.display()
     ));
     repo.spawn("first", true);
@@ -193,7 +193,7 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
     let agent = repo.env.bin.join("claude");
     write_executable(
         &agent,
-        "#!/bin/sh\nprintf '%s' \"$CARGO_TARGET_DIR\" > worker-cache\nprintf '%s' \"$LITERAL\" > worker-literal\n",
+        "#!/bin/sh\nprintf '%s' \"$CARGO_TARGET_DIR\" > worker-cache\nprintf '%s' \"$LITERAL\" > worker-literal\nprintf '%s' \"$NILES_AGENT_DIR\" > worker-agent-dir\n",
     );
     let output = Command::new("sh")
         .arg(launch)
@@ -209,6 +209,13 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
     assert_eq!(
         fs::read_to_string(repo.tree.join("worker-literal")).unwrap(),
         "$(touch injected); spaces"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.tree.join("worker-agent-dir")).unwrap(),
+        state_dir(&repo.workspace)
+            .join("worker/second")
+            .to_str()
+            .unwrap()
     );
     assert!(!repo.tree.join("injected").exists());
 }

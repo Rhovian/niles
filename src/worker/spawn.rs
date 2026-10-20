@@ -130,6 +130,9 @@ pub fn spawn(
             Some(path)
         }
     };
+    invocation
+        .env
+        .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
     let agent_spec = &invocation.spec;
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
@@ -307,13 +310,12 @@ fn write_brief(
     basis: &DesignBasis,
 ) -> Result<Utf8PathBuf> {
     let path = dir.join("brief.md");
-    let status_path = wake::status_log_path(dir);
     let report_file = report_path(dir);
     let task_label = match task_label {
         Some(task_label) => task_label,
         None => UNLABELED_TASK_LABEL,
     };
-    // Every worker gets the shared contract plus exactly one role fragment, so a worker is not
+    // Every worker gets the bootstrap plus exactly one role fragment, so a worker is not
     // handed doctrine addressed to a role it is not playing.
     let body = render_template(
         &role.brief(),
@@ -322,7 +324,6 @@ fn write_brief(
             ("{role}", role.as_str()),
             ("{task_label}", task_label),
             ("{project}", project.as_str()),
-            ("{status_path}", status_path.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
             (

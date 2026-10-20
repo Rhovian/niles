@@ -41,7 +41,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(brief.contains("Fix auth"));
     assert!(brief.contains("report_file:"));
     assert!(brief.contains("worker/auth-fix/report.md"));
-    assert!(brief.contains("done: <short result>; report:"));
+    assert!(brief.contains("niles agent status --help"));
     assert!(brief.contains("You are the research"));
     assert!(brief.contains("Do not run the gate"));
     assert!(!brief.contains("You are the reviewer"));
@@ -49,6 +49,10 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 
     let launch =
         fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/launch.sh")).unwrap();
+    assert!(launch.contains(&format!(
+        "NILES_AGENT_DIR={}\n",
+        state_dir(&env.root).join("worker/auth-fix").display()
+    )));
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
     assert!(launch.contains("CLAUDE_CODE_DISABLE_AGENT_VIEW=1"));
     // The agent runs as a child, not via exec, so the script survives to report its exit.
@@ -131,9 +135,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     let stdin = child.wait_with_output().unwrap();
     assert_command_success("send stdin", &stdin);
     let delivered = fs::read_to_string(&pane_file).unwrap();
-    assert!(
-        delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\n\n## Reporting")
-    );
+    assert!(delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\n\nUpdate `"));
     assert!(delivered.ends_with("\nsubmitted\n"));
 
     let literal = env
@@ -146,27 +148,13 @@ fn send_accepts_stdin_and_literal_flag_text() {
 
     let log = env.tmux_log();
     let dir = state_dir(&env.root).join("worker/worker");
-    let quoted_dir = dir.display().to_string().replace('\'', "'\\''");
-    let command = format!(
-        "printf '%s\\n' 'done: <short result>; report: {quoted_dir}/report.md' >> '{quoted_dir}/status.log'"
+    assert_eq!(
+        log.matches("then report with `niles agent status`").count(),
+        2
     );
-    assert_eq!(log.matches(&command).count(), 2, "{log}");
-    let report_status = std::process::Command::new("sh")
-        .args(["-c", &command])
-        .output()
-        .unwrap();
-    assert_command_success("follow-up status command", &report_status);
     assert_eq!(
         fs::read_to_string(dir.join("status.log")).unwrap(),
-        format!(
-            "working: follow-up dispatch started\nworking: follow-up dispatch started\ndone: <short result>; report: {}/report.md\n",
-            dir.display()
-        )
-    );
-    assert_eq!(
-        log.matches("Use `done:`, `blocked:`, `needs-decision:` or `failed:`")
-            .count(),
-        2
+        "working: follow-up dispatch started\nworking: follow-up dispatch started\n"
     );
     for message in ["  stdin first\nstdin second\n", "--wait"] {
         assert!(

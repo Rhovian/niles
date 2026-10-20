@@ -66,7 +66,10 @@ fn picker_requires_exact_effort_and_skips_it_only_for_no_effort_models() {
 }
 
 #[test]
-fn menu_is_effective_roster_only_and_defaults_to_profile_model() {
+fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
+    let picker = columns("claude");
+    let family = &picker.families[picker.family];
+    assert_eq!(family.models[picker.model].name, family.models[0].name);
     let mut picker = columns("codex:gpt-5.4:high");
     let family = &picker.families[picker.family];
     assert!(!family.models.iter().any(|model| model.name == "gpt-5.4"));
