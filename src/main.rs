@@ -68,12 +68,15 @@ fn run() -> Result<ExitCode> {
                 }
             });
         }
-        Some(CommandName::Remote { port }) => {
+        Some(CommandName::Remote { port, command }) => {
             #[cfg(feature = "remote")]
-            remote::run(port)?;
+            match command {
+                Some(cli::RemoteCommand::Init { subject }) => remote::push::init(&subject)?,
+                None => remote::run(port)?,
+            }
             #[cfg(not(feature = "remote"))]
             {
-                let _ = port;
+                let _ = (port, command);
                 anyhow::bail!("built without remote; reinstall with --features remote");
             }
         }

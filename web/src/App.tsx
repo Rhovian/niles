@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { API_VERSION, connectionError, type Session, sessions, sortedSessions } from './api';
 import { Chat } from './Chat';
+import { Notifications } from './push';
+import { selectedSession, sessionHash } from './notification';
 
 const SESSION_REFRESH_MS = 15_000;
 export function App() {
   const [items, setItems] = useState<Session[]>([]);
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useState<string>(selectedSession(window.location.hash));
   const [version, setVersion] = useState<number>();
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const statusRevision = useRef(0);
+  useEffect(() => {
+    const select = () => setSelected(selectedSession(window.location.hash));
+    window.addEventListener('hashchange', select);
+    return () => window.removeEventListener('hashchange', select);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     let inFlight = false;
@@ -41,10 +48,11 @@ export function App() {
   const compatible = version === API_VERSION;
   return <div class="app">
     <aside><header><h1>Niles</h1><small>Your sessions</small></header>
+      {compatible && <Notifications />}
       {error && <p class="banner" role="alert">{error}</p>}
       {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
       <nav aria-label="Sessions">{sortedSessions(items).map(item => <button key={item.id}
-        class={`session ${selected === item.id ? 'selected' : ''}`} onClick={() => setSelected(item.id)} aria-pressed={selected === item.id}>
+        class={`session ${selected === item.id ? 'selected' : ''}`} onClick={() => { window.location.hash = sessionHash(item.id); setSelected(item.id); }} aria-pressed={selected === item.id}>
         <strong>{item.project}</strong><span class="badge">Agent · {item.agent.family} · {item.agent.entry_skill}</span>
         <span>{item.waiting ? '⚠ Waiting · ' : ''}{item.worker_count} workers</span>
       </button>)}</nav>

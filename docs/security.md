@@ -366,8 +366,7 @@ path's pane-change acknowledgement; it is not proof that the model acted on the 
 A send failure can follow a paste/submit, so clients must not retry automatically.
 Tmux failure details stay in local diagnostics, not HTTP responses. Catalog resolution
 and injection are not atomic; concurrent session exit/restart or desk/watcher input can
-race with sending, under the operator's no-lock/no-draft-guard ruling. No spawn/push
-endpoint is provided. Trusted frontend JavaScript from this host is essential: an
+race with sending, under the operator's no-lock/no-draft-guard ruling. No spawn endpoint is provided. Trusted frontend JavaScript from this host is essential: an
 allowed tailnet user can instruct an agent with the host user's execution privileges.
 
 ### Remote PWA frontend
@@ -389,5 +388,28 @@ is a known gap for #314–316/security review; an alternative same-host HTTP ser
 behind Serve could supply the header.
 The service worker precaches only built shell assets, never API traffic; transcripts
 and optimistic messages stay in memory. API responses must use `Cache-Control:
-no-store` to cover HTTP caching as well. Push hooks ignore payload URLs and open
-only the app root; subscription and payload policy are deferred to #318.
+no-store` to cover HTTP caching as well. Push payloads contain only session ID, project, and a generic reason, never transcript
+text. They are encrypted/signed using `web-push` (RFC 8291/VAPID); OpenSSL generates
+the keypair. Push services observe delivery metadata, and OS notification surfaces
+can display project/reason while the device is locked or outside the tailnet.
+Clicks encode the ID into a fixed same-origin session hash, ignoring arbitrary URLs.
+Malformed pushes still display a generic visible notification.
+
+VAPID and per-device subscription files are private (0600, directories 0700), with
+no-follow file reads and atomic subscription replacement. Initialization refuses to
+rotate existing signing keys. Subscriptions record their authenticated owner; push
+only targets devices whose owner is still in the startup allowlist. Revocation and
+key initialization require restart, like other remote configuration changes.
+The subscription API accepts only HTTPS/443 endpoints at the fixed Chrome/Firefox/
+Safari push service hosts, with no credentials, fragments, or redirects. This prevents
+arbitrary endpoint registration from becoming an HTTP client into the host/tailnet.
+Subscription crypto keys are checked through the encryption library before storage.
+
+Push monitoring is server-side and independent of open web clients. It detects
+waiting transitions from the shared live catalog, sends only a minimal encrypted
+payload, and prunes 404/410. It has no automatic retry; other provider/store/catalog
+failures propagate and stop the remote server. Restart can re-notify an already-waiting
+session. A five-minute TTL limits stale delivery. Push requires outbound public
+internet even when API access is restricted to Tailscale; message access still uses
+the tailnet boundary. Directory ancestor replacement and same-user state tampering
+remain outside the existing threat model.

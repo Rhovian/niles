@@ -195,3 +195,25 @@ esac
     assert!(!failed.contains("private tmux failure"));
     assert_eq!(failed.split_once("\r\n\r\n").unwrap().1, "");
 }
+
+#[cfg(feature = "remote")]
+#[test]
+fn remote_init_creates_private_keys_once_and_refuses_invalid_contact() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let env = TestEnv::new("remote-push-init");
+    let key = env.home.join(".niles/remote/vapid.json");
+    let invalid = env.run(&["remote", "init", "--subject", "file:///private"]);
+    assert!(!invalid.status.success());
+    assert!(!key.exists());
+    let args = ["remote", "init", "--subject", "mailto:operator@example.com"];
+    let initialized = env.run(&args);
+    assert!(initialized.status.success(), "{}", stderr_of(&initialized));
+    assert_eq!(
+        fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let before = fs::read(&key).unwrap();
+    let repeated = env.run(&args);
+    assert!(!repeated.status.success());
+    assert_eq!(fs::read(&key).unwrap(), before);
+}

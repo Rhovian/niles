@@ -14,7 +14,7 @@ exclude = [".github/**", "web/**"]
 
 [features]
 default = []
-remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower"]
+remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:tempfile", "dep:isahc", "dep:ece"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -40,6 +40,13 @@ serde-saphyr = "1"
 uuid = { version = "1", features = ["v4"] }
 ratatui-themes = "0.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+web-push = { version = "0.11", optional = true }
+openssl = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+url = { version = "2", optional = true }
+tempfile = { version = "3", optional = true }
+isahc = { version = "1", optional = true }
+ece = { version = "2", optional = true }
 
 # The profile that 'dist' will build with
 [profile.dist]

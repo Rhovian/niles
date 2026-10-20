@@ -11,7 +11,7 @@ pnpm dev
 
 Open the printed localhost URL. Development uses in-memory mock sessions (including
 `solo`); messages are echoed, SSE snapshots are sent on every connection, and status
-changes follow sends. Push endpoints return 501 pending #318. Mock state disappears
+changes follow sends. Push endpoints return 501 in the local mock; real push requires the remote server. Mock state disappears
 when Vite stops and is never included in the production client.
 
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` run in web CI. `pnpm preview` serves a previously built `dist/` without the mock API.
@@ -73,11 +73,33 @@ the client percent-encodes session IDs in URL path segments.
   failure can occur after server acceptance. There is no 409 draft guard or shared
   watcher lock. A transcript echo arriving before 200 can transiently coexist with
   the pending bubble; no accepted duplicate persists.
-- Push endpoints from the epic belong to #318; no unused speculative client types.
-  The mock responds 501. Worker hooks show a generic notification and open/focus
-  `/`; they ignore payloads and accept no arbitrary target URL.
+- `GET /api/push/vapid` → `200 {public_key: string}`, base64url uncompressed
+  application server key. `POST /api/push/subscribe` accepts browser subscription
+  JSON (`endpoint`, `keys.p256dh`, `keys.auth`; expirationTime may be present),
+  returns 200 with empty body. Both require the remote server's authorization;
+  503 means initialize push and restart the server first. Subscription JSON is
+  capped at 4096 bytes. The local mock responds 501.
+- Push payload: `{session_id: string, project: string, reason: string}`; no
+  transcript. Notifications contain plain text, and clicks construct only the
+  same-origin `/#/sessions/<encoded-id>` URL. Existing windows are navigated/focused;
+  new windows use that URL. Invalid payloads still show a generic visible notification.
 
 An incompatible `api_version` is detected before parsing version-specific session
 data. Malformed JSON/events surface errors; an invalid stream closes and disables
 sending, with an explicit reconnect action. Links open in a separate tab with
 `noopener noreferrer`. The server's errors are shown as status codes, never trusted HTML.
+
+## Notifications
+
+Run `niles remote init --subject mailto:you@example.com` once, then restart
+`niles remote`. Choose **Enable notifications** in this app; permission is requested
+only in response to that button. Existing browser subscriptions are re-registered
+with the host; a failed save is visible and can be retried. The UI never claims
+success before the server accepts registration. Reopening the app shows the enable
+button again so the server can recover registration if necessary.
+
+On iOS 16.4+, add the PWA to the home screen first. Every push displays a notification,
+including a malformed/empty payload. Delivery can arrive with Tailscale off via the
+public push service; opening the session and all API operations still need Tailscale.
+An ended session link reports that it has ended. No transcript is stored by push or
+in offline caches. Notification clicks navigate the app, so finish any draft first.

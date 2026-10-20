@@ -4,7 +4,7 @@ import { App } from './App';
 
 const session = { id: 'solo', project: 'notes', agent: { family: 'codex', entry_skill: 'solo' }, waiting: false, worker_count: 0 };
 const response = (sessions: unknown[]) => ({ ok: true, json: async () => ({ api_version: 1, sessions }) });
-beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
+beforeEach(() => { window.history.replaceState(null, '', '/'); Element.prototype.scrollIntoView = vi.fn(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
   let tick!: () => void;
@@ -22,7 +22,7 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   expect(interval).toHaveBeenCalledWith(expect.any(Function), 15_000);
   resolve(response([session]));
   await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('button', { name: /notes/ }));
   tick();
   expect(fetch).toHaveBeenCalledTimes(2);
   resolve(response([]));
@@ -39,7 +39,7 @@ it('does not overwrite an SSE status with an older in-flight snapshot', async ()
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response([session])).mockImplementation(() => new Promise(done => { resolve = done; })));
   render(<App />);
   await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('button', { name: /notes/ }));
   await waitFor(() => expect(stream).toBeDefined());
   fireEvent(window, new Event('focus'));
   stream.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, waiting: true }) }));

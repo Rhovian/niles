@@ -18,7 +18,7 @@ class Stream extends EventTarget {
   constructor() { super(); Stream.latest = this; }
   emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
 }
-beforeEach(() => {
+beforeEach(() => { window.history.replaceState(null, '', '/');
   vi.stubGlobal('EventSource', Stream);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -45,7 +45,7 @@ it('pins waiting sessions and displays the foreground entry skill', async () => 
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 1, sessions: [{ ...session, id: 'busy', waiting: false }, session] }) }));
   render(<App />);
   await screen.findAllByText('notes');
-  const buttons = screen.getAllByRole('button');
+  const buttons = screen.getAllByRole('button', { name: /notes/ });
   expect(buttons[0].textContent).toContain('⚠ Waiting');
   expect(buttons[0].textContent).toContain('solo');
 });

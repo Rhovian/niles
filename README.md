@@ -251,7 +251,41 @@ state or automatic retry. Text is preserved, including newlines; blank text, ESC
 unknown JSON fields, and request bodies over 16 KiB are rejected. Unknown sessions
 return 404; sessions without a recorded pane return 503. Send failures return an empty
 500 (details logged locally); delivery may already have occurred, so inspect the
-transcript before retrying. Web Push remains separate follow-up work.
+transcript before retrying.
+
+For Web Push, initialize once with a VAPID contact URI, then restart the server:
+
+```sh
+niles remote init --subject mailto:you@example.com
+niles remote
+```
+
+Initialization creates a P-256 VAPID keypair at `~/.niles/remote/vapid.json` (0600)
+and never overwrites an existing identity. Device files live under
+`~/.niles/remote/subscriptions/` (0600, private directories). In the PWA, choose
+**Enable notifications** to grant permission and register this browser/device.
+`GET /api/push/vapid` returns `{ public_key }`; `POST /api/push/subscribe` accepts
+browser subscription JSON and returns 200. Both require the same tailnet identity.
+Without initialization the read/message API works, but push routes return 503.
+Initialize before starting/restarting `niles remote` to activate push monitoring.
+
+Waiting transitions notify registered devices even with no browser/SSE connection.
+Already-waiting sessions notify once at server startup; subsequent polls do not
+repeat until the session leaves and re-enters waiting. Payloads contain only
+session ID, project, and a generic reason, encrypted by `web-push`. TTL is five
+minutes. Tapping opens the matching session. Subscriptions whose owning user is
+removed from the configured allowlist are excluded after restart. Endpoints
+returning 404/410 are pruned; other storage/catalog/provider errors stop the server
+and surface diagnostics rather than silently losing notifications. No automatic
+retry is performed; restart after resolving the failure.
+
+Supported push services are Chrome/FCM (`fcm.googleapis.com`), Firefox
+(`updates.push.services.mozilla.com`), and Safari (`web.push.apple.com`), HTTPS
+port 443 only, with redirects disabled. Other services require an explicit endpoint
+policy extension. The opt-in remote feature requires system OpenSSL; none is
+vendored. On iOS 16.4+, install the home-screen PWA before enabling notifications.
+Every push displays a notification. Push delivery uses the public internet and can
+arrive with Tailscale off; opening the session still requires tailnet connectivity.
 
 ## Contributing and security
 

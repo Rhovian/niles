@@ -76,6 +76,8 @@ pub enum CommandName {
     Remote {
         #[arg(long, default_value_t = 8765)]
         port: u16,
+        #[command(subcommand)]
+        command: Option<RemoteCommand>,
     },
     /// Worker-facing commands.
     Agent {
@@ -265,6 +267,16 @@ pub enum CommandName {
     Quiet {
         /// Worker task id.
         id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteCommand {
+    /// Generate a private VAPID keypair for Web Push; never overwrites existing keys.
+    Init {
+        /// VAPID contact URI (mailto: or https:).
+        #[arg(long)]
+        subject: String,
     },
 }
 

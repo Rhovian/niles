@@ -23,10 +23,12 @@ use crate::{
 
 mod feed;
 mod message;
+pub(crate) mod push;
 #[cfg(test)]
 mod tests;
 
 const API_VERSION: u32 = 1;
+const SUBSCRIPTION_BODY_BYTES: usize = 4096;
 const POLL: Duration = Duration::from_secs(1);
 type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
 
@@ -34,6 +36,7 @@ type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
 struct AppState {
     users: Arc<Vec<String>>,
     source: Source,
+    push: Option<Arc<push::Store>>,
 }
 
 impl AppState {
@@ -48,6 +51,7 @@ impl AppState {
         Ok(Self {
             users: Arc::new(users),
             source,
+            push: None,
         })
     }
 }
@@ -104,15 +108,32 @@ fn resolve(source: &Source, id: &str) -> Result<Option<ForegroundSession>> {
 pub(crate) async fn run(port: u16) -> Result<()> {
     let users =
         blocking(|| Ok(user::FileConfig::load(&user::path()?)?.remote.allowed_users)).await?;
-    let state = AppState::new(users, Arc::new(status::live_sessions))?;
+    let mut state = AppState::new(users, Arc::new(status::live_sessions))?;
+    state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     eprintln!("remote listening on {}", listener.local_addr()?);
-    axum::serve(listener, router(state)).await?;
+    let notifier = state.push.clone();
+    let source = state.source.clone();
+    let users = state.users.clone();
+    let server = axum::serve(listener, router(state)).into_future();
+    if let Some(store) = notifier {
+        tokio::select! {
+            result = server => result?,
+            result = push::watch(source, store, users) => result?,
+        }
+    } else {
+        server.await?;
+    }
     Ok(())
 }
 
 fn router(state: AppState) -> Router {
     Router::new()
+        .route("/api/push/vapid", get(push::vapid))
+        .route(
+            "/api/push/subscribe",
+            post(push::subscribe).layer(DefaultBodyLimit::max(SUBSCRIPTION_BODY_BYTES)),
+        )
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}/events", get(events))
         .route(
@@ -123,17 +144,22 @@ fn router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state, authorize))
 }
 
-async fn authorize(State(state): State<AppState>, request: Request, next: Next) -> Response {
+#[derive(Clone)]
+struct AuthorizedUser(String);
+
+async fn authorize(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     let mut logins = request.headers().get_all("tailscale-user-login").iter();
-    let allowed = logins
+    let login = logins
         .next()
         .and_then(|value| match value.to_str() {
             Ok(login) => Some(login),
             Err(_) => None,
         })
-        .is_some_and(|login| state.users.iter().any(|user| user == login))
-        && logins.next().is_none();
-    let mut response = if allowed {
+        .filter(|login| state.users.iter().any(|user| user == login))
+        .filter(|_| logins.next().is_none())
+        .map(str::to_owned);
+    let mut response = if let Some(login) = login {
+        request.extensions_mut().insert(AuthorizedUser(login));
         next.run(request).await
     } else {
         StatusCode::FORBIDDEN.into_response()
