@@ -242,7 +242,9 @@ async fn sse_follows_partial_appends_status_changes_and_session_exit() {
         .open(fixture.root.join("001.jsonl"))
         .unwrap();
     let line = message("new\ntext");
-    append.write_all(line[..line.len() - 1].as_bytes()).unwrap();
+    append
+        .write_all(&line.as_bytes()[..line.len() - 1])
+        .unwrap();
     fixture.records.lock().unwrap()[0].waiting = false;
     let (kind, status) = event(&mut body).await;
     assert_eq!(kind, "status");

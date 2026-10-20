@@ -147,14 +147,15 @@ fn router(state: AppState) -> Router {
 #[derive(Clone)]
 struct AuthorizedUser(String);
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Malformed identity headers intentionally become a 403, not a server error"
+)]
 async fn authorize(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     let mut logins = request.headers().get_all("tailscale-user-login").iter();
     let login = logins
         .next()
-        .and_then(|value| match value.to_str() {
-            Ok(login) => Some(login),
-            Err(_) => None,
-        })
+        .and_then(|value| value.to_str().ok())
         .filter(|login| state.users.iter().any(|user| user == login))
         .filter(|_| logins.next().is_none())
         .map(str::to_owned);

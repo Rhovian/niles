@@ -159,7 +159,7 @@ fn unknown_shapes_preserve_status_and_known_text() {
         }
         let message = json!({"type":"message","timestamp":"2026-10-20T00:00:00Z",
             "message":{"role":"user","content":content}});
-        assert!(pi::pi_session(&lines(&[message.clone()])).is_some());
+        assert!(pi::pi_session(&lines(std::slice::from_ref(&message))).is_some());
         assert!(file_turns(Family::Pi, message).is_ok());
     }
 }

@@ -7,7 +7,6 @@ const response = (sessions: unknown[]) => ({ ok: true, json: async () => ({ api_
 beforeEach(() => { window.history.replaceState(null, '', '/'); Element.prototype.scrollIntoView = vi.fn(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
-  let tick!: () => void;
   const interval = vi.spyOn(globalThis, 'setInterval');
   let resolve!: (result: ReturnType<typeof response>) => void;
   const fetch = vi.fn(() => new Promise(done => { resolve = done; }));
@@ -15,7 +14,7 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   class Stream extends EventTarget { close() {} }
   vi.stubGlobal('EventSource', Stream);
   render(<App />);
-  tick = interval.mock.calls.find(([, delay]) => delay === 15_000)![0] as () => void;
+  const tick = interval.mock.calls.find(([, delay]) => delay === 15_000)![0] as () => void;
   fireEvent(window, new Event('focus'));
   tick();
   expect(fetch).toHaveBeenCalledTimes(1);
@@ -32,17 +31,20 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   resolve(response([]));
 });
 it('does not overwrite an SSE status with an older in-flight snapshot', async () => {
-  let stream!: EventTarget;
-  class Stream extends EventTarget { constructor() { super(); stream = this; } close() {} }
+  class Stream extends EventTarget {
+    static latest: Stream;
+    constructor() { super(); Stream.latest = this; }
+    close() {}
+  }
   vi.stubGlobal('EventSource', Stream);
   let resolve!: (result: ReturnType<typeof response>) => void;
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response([session])).mockImplementation(() => new Promise(done => { resolve = done; })));
   render(<App />);
   await screen.findByText('notes');
   fireEvent.click(screen.getByRole('button', { name: /notes/ }));
-  await waitFor(() => expect(stream).toBeDefined());
+  await waitFor(() => expect(Stream.latest).toBeDefined());
   fireEvent(window, new Event('focus'));
-  stream.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, waiting: true }) }));
+  Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, waiting: true }) }));
   await screen.findByText(/⚠ Waiting/);
   await act(async () => { resolve(response([session])); });
   expect(screen.getByText(/⚠ Waiting/)).toBeDefined();
