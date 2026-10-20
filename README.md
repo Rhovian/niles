@@ -224,68 +224,17 @@ fixed recheck must be greater than zero, and `recheck: backoff` selects backoff.
 See [role workflows](docs/roles.md#design-and-implementation) for design, implementation,
 and the `--design` and `--mechanical` spawn flags.
 
-## Remote API (opt-in)
+## Remote access (opt-in)
 
-Install with `cargo install niles --features remote`, add an explicit allowlist to
-`~/.niles/config.yaml`, then run `niles remote` (default port 8765; `--port` changes it):
+Use the installable [PWA](web/README.md) to list sessions, chat with the foreground
+agent (including solo sessions), and receive Web Push when attention is needed.
+Phone access is shell access on the host: Niles does not sandbox agents or workers.
 
-```yaml
-remote:
-  allowed_users: [you@example.com]
-```
-
-The server binds only `127.0.0.1` and refuses an empty allowlist. Expose `/api` through
-Tailscale Serve and serve the separately built [PWA](web/README.md) from the same Niles
-host/origin. The API trusts Serve's `Tailscale-User-Login` header; it must never be
-proxied through an untrusted/public identity-header source. No CORS or static assets
-are served by the Rust crate. Builds and release binaries omit the feature by default.
-
-API v1 provides `GET /api/sessions`, `GET /api/sessions/:id/events`, and
-`POST /api/sessions/:id/message` with JSON `{ "text": "message" }`. Every SSE
-connection begins with at most 200 recent turns and an explicit `truncated` flag,
-then streams appended turns and status changes; reconnects receive a new snapshot.
-The API version is independent of the CLI JSON schema. Message POSTs return 200 after
-`tmux::send_line` confirms submission to the recorded foreground agent pane, including
-solo sessions. They have no draft/prompt guard, watcher lock, client IDs, idempotency
-state or automatic retry. Text is preserved, including newlines; blank text, ESC/NUL,
-unknown JSON fields, and request bodies over 16 KiB are rejected. Unknown sessions
-return 404; sessions without a recorded pane return 503. Send failures return an empty
-500 (details logged locally); delivery may already have occurred, so inspect the
-transcript before retrying.
-
-For Web Push, initialize once with a VAPID contact URI, then restart the server:
-
-```sh
-niles remote init --subject mailto:you@example.com
-niles remote
-```
-
-Initialization creates a P-256 VAPID keypair at `~/.niles/remote/vapid.json` (0600)
-and never overwrites an existing identity. Device files live under
-`~/.niles/remote/subscriptions/` (0600, private directories). In the PWA, choose
-**Enable notifications** to grant permission and register this browser/device.
-`GET /api/push/vapid` returns `{ public_key }`; `POST /api/push/subscribe` accepts
-browser subscription JSON and returns 200. Both require the same tailnet identity.
-Without initialization the read/message API works, but push routes return 503.
-Initialize before starting/restarting `niles remote` to activate push monitoring.
-
-Waiting transitions notify registered devices even with no browser/SSE connection.
-Already-waiting sessions notify once at server startup; subsequent polls do not
-repeat until the session leaves and re-enters waiting. Payloads contain only
-session ID, project, and a generic reason, encrypted by `web-push`. TTL is five
-minutes. Tapping opens the matching session. Subscriptions whose owning user is
-removed from the configured allowlist are excluded after restart. Endpoints
-returning 404/410 are pruned; other storage/catalog/provider errors stop the server
-and surface diagnostics rather than silently losing notifications. No automatic
-retry is performed; restart after resolving the failure.
-
-Supported push services are Chrome/FCM (`fcm.googleapis.com`), Firefox
-(`updates.push.services.mozilla.com`), and Safari (`web.push.apple.com`), HTTPS
-port 443 only, with redirects disabled. Other services require an explicit endpoint
-policy extension. The opt-in remote feature requires system OpenSSL; none is
-vendored. On iOS 16.4+, install the home-screen PWA before enabling notifications.
-Every push displays a notification. Push delivery uses the public internet and can
-arrive with Tailscale off; opening the session still requires tailnet connectivity.
+Follow the [remote setup guide](docs/remote.md) for the optional Rust feature,
+OpenSSL, allowlist, matching release asset, and exact `tailscale serve` commands
+for static `/` plus the loopback `/api` proxy. Prebuilt release binaries omit
+`remote`. Serve the PWA from the Niles host on the API's origin, never a public site.
+See the [threat model](docs/security.md#remote-api) and documented framing gap.
 
 ## Contributing and security
 

@@ -337,14 +337,26 @@ the operator's existing tools and permissions rather than reducing them.
 
 ### Remote API
 
-The optional `remote` Cargo feature adds an HTTP/SSE listener only while `niles remote`
+**Phone access is shell access on the host.** Foreground agents can execute commands
+and spawn workers that bypass approval prompts; Niles provides no sandbox. Device
+admission is tailnet membership plus ACLs/grants, followed by Niles's user allowlist.
+See the [deployment guide](remote.md) for the supported static-root/API-proxy setup.
+
+The optional `remote` Cargo feature is off in default/release binaries and requires
+system OpenSSL, without vendoring. It adds an HTTP/SSE listener only while `niles remote`
 runs, always on IPv4 loopback. Startup requires a nonempty global `remote.allowed_users`.
 Every route, including unknown routes and SSE, requires exactly one matching
 `Tailscale-User-Login` header. This is an identity assertion from Tailscale Serve,
 not a credential accepted from arbitrary network clients: Serve must terminate tailnet
 access and supply the trusted header. Local processes can forge it and already have
 access to the same user's plaintext state; hostile local users remain outside this model.
-There is no CORS grant. API responses, errors included, carry `Cache-Control: no-store`.
+Serve removes client-supplied identity headers and injects verified ones; tagged
+clients lack user identity headers and cannot pass this authorization. The API must
+never bind a LAN/tailnet address or trust a public proxy's asserted login. No Funnel.
+The static shell is not allowlist-gated: tailnet ACLs govern its retrieval, while the
+API enforces the allowlist before transcripts/actions. Serve only built shell assets,
+not repository/state/key directories. There is no CORS grant. API responses, errors
+included, carry `Cache-Control: no-store`.
 
 Session IDs are resolved only against registered, running project sessions; request
 IDs are never used as filesystem paths or tmux targets. Session collection and transcript
@@ -384,7 +396,7 @@ and inline style attributes are excluded. Sanitized links open in separate tabs 
 restricts scripts, connections and workers to its own origin and permits no inline
 script. Meta CSP cannot enforce `frame-ancestors`; the specified direct-directory
 Tailscale Serve deployment has no custom response-header setting. Framing protection
-is a known gap for #314–316/security review; an alternative same-host HTTP server
+is a known clickjacking gap of this deployment; an alternative same-host HTTP server
 behind Serve could supply the header.
 The service worker precaches only built shell assets, never API traffic; transcripts
 and optimistic messages stay in memory. API responses must use `Cache-Control:
@@ -400,9 +412,9 @@ no-follow file reads and atomic subscription replacement. Initialization refuses
 rotate existing signing keys. Subscriptions record their authenticated owner; push
 only targets devices whose owner is still in the startup allowlist. Revocation and
 key initialization require restart, like other remote configuration changes.
-The subscription API accepts only HTTPS/443 endpoints at the fixed Chrome/Firefox/
-Safari push service hosts, with no credentials, fragments, or redirects. This prevents
-arbitrary endpoint registration from becoming an HTTP client into the host/tailnet.
+The subscription API accepts only HTTPS/443 endpoints at exactly `fcm.googleapis.com`,
+`updates.push.services.mozilla.com`, or `web.push.apple.com` (Google/Mozilla/Apple),
+with no credentials, fragments, or redirects. This prevents arbitrary endpoint registration from becoming an HTTP client into the host/tailnet.
 Subscription crypto keys are checked through the encryption library before storage.
 
 Push monitoring is server-side and independent of open web clients. It detects

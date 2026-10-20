@@ -18,29 +18,19 @@ when Vite stops and is never included in the production client.
 The service worker is registered only in production. Install from the browser's
 install/Add to Home Screen control over HTTPS (localhost also works).
 
-The release workflow uploads `niles-web.tar.gz` after cargo-dist announces a release.
-Extract it to a dedicated directory on the Niles host. Serve that directory at `/`
-with `tailscale serve`, proxying `/api` on the **same origin** to the remote API's
-loopback listener. Never host this app on a public frontend service: its JavaScript
-can send instructions to an agent with host access. Tailnet authorization and
-`Tailscale-User-Login` validation belong to the remote server (#314–316).
-
-Only versioned shell assets are precached. No transcript, API response, or outgoing
-message is saved to browser storage. The API must also send `Cache-Control: no-store`
-on all responses, including SSE, to prevent HTTP caches retaining transcripts.
-The HTML ships a strict CSP without inline scripts/styles. The specified direct-directory `tailscale serve` deployment does not provide a
-custom response-header setting. Meta CSP cannot enforce `frame-ancestors`, so
-framing protection remains a known deployment gap for #314–316/security review.
-A same-host HTTP server behind Serve could supply `Content-Security-Policy:
-frame-ancestors 'none'`, but that is an alternative deployment, not a requirement
-this static asset can fulfill. Preserve the HTML CSP when deploying.
+For installation from `niles-web.tar.gz`, same-host Tailscale Serve configuration,
+allowlist and VAPID initialization, follow the [remote setup guide](../docs/remote.md).
+Only the built shell directory is served; Cargo never builds this frontend.
+The [threat model](../docs/security.md#remote-pwa-frontend) covers sanitized markdown,
+shell-only caching, CSP and the known framing gap. API responses must use no-store;
+no transcript or outgoing message is saved in browser storage.
 
 Updates install in the background and activate when existing app windows close;
 close all Niles tabs/app windows, then reopen to load a newer shell. An API mismatch
 blocks chat and shows an update banner. Offline mode shows the shell and a tailnet
 connection banner; it does not replay transcripts or queue messages for later.
 
-## API v1 contract for #315/#316
+## API v1 contract
 
 `src/api.ts` is the single client contract and runtime JSON parse boundary. All
 URLs are same origin. JSON property names use snake_case. IDs are opaque strings;
@@ -91,8 +81,8 @@ sending, with an explicit reconnect action. Links open in a separate tab with
 
 ## Notifications
 
-Run `niles remote init --subject mailto:you@example.com` once, then restart
-`niles remote`. Choose **Enable notifications** in this app; permission is requested
+After [server initialization](../docs/remote.md#install-the-backend-and-shell-on-the-host),
+choose **Enable notifications** in this app; permission is requested
 only in response to that button. Existing browser subscriptions are re-registered
 with the host; a failed save is visible and can be retried. The UI never claims
 success before the server accepts registration. Reopening the app shows the enable
