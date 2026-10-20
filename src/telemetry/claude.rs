@@ -1,7 +1,7 @@
 use super::{Buckets, Turn, TurnState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -10,18 +10,27 @@ pub(super) fn read_claude(
     home: &Utf8Path,
     session_id: &str,
 ) -> Result<Option<super::SessionRecord>> {
+    let Some((project, path)) = transcript_path(home, session_id)? else {
+        return Ok(None);
+    };
+    let main = super::read_transcript(&path)?;
+    let subagents = read_dir_utf8_paths(&project.join(session_id).join("subagents"))?
+        .into_iter()
+        .filter(|path| path.extension() == Some("jsonl"))
+        .map(|path| super::read_transcript(&path))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(claude_session(&main, &subagents))
+}
+
+pub(super) fn transcript_path(
+    home: &Utf8Path,
+    session_id: &str,
+) -> Result<Option<(Utf8PathBuf, Utf8PathBuf)>> {
     for project in read_dir_utf8_paths(&home.join(".claude/projects"))? {
         let path = project.join(format!("{session_id}.jsonl"));
-        if !path.is_file() {
-            continue;
+        if path.is_file() {
+            return Ok(Some((project, path)));
         }
-        let main = super::read_transcript(&path)?;
-        let subagents = read_dir_utf8_paths(&project.join(session_id).join("subagents"))?
-            .into_iter()
-            .filter(|path| path.extension() == Some("jsonl"))
-            .map(|path| super::read_transcript(&path))
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(claude_session(&main, &subagents));
     }
     Ok(None)
 }

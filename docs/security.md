@@ -297,8 +297,11 @@ values. These are launch-integrity measures, not containment. See
 [`src/agent_window.rs`](../src/agent_window.rs), and
 [`src/agents/families.rs`](../src/agents/families.rs).
 
-Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage. It uses
-read-only access to those stores and links sessions through launch identifiers or a Codex brief.
+Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage and extract
+user/assistant text and structured tool calls. It uses read-only access to those stores and links
+sessions through launch identifiers or a Codex brief. Transcript content is untrusted display
+data, including tool arguments; consumers must escape it and must never execute it. Tool results,
+images, and private reasoning blocks are omitted.
 For Hermes, it opens the local `state.db` read-only to read session usage and state.
 For pi, Niles chooses transcript directories under its global project worker and lead session
 state directories using `--session-dir`, and reads the newest JSONL transcript there.
