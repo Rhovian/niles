@@ -358,6 +358,19 @@ API enforces the allowlist before transcripts/actions. Serve only built shell as
 not repository/state/key directories. There is no CORS grant. API responses, errors
 included, carry `Cache-Control: no-store`.
 
+`niles remote setup` persists this existing host/origin boundary in a launchd/systemd
+user service and two Tailscale Serve handlers. It merges explicit allowed identities,
+keeps existing VAPID keys, and refuses existing background root/API mounts, unknown
+Serve schema fields and existing service files. Tailscale applies its other Serve rules.
+Setup invokes local `tailscale`, service-manager,
+and `curl` executables from the operator's PATH; these and the selected built web assets
+are trusted host code. It does not configure tailnet ACLs, join devices, or enable
+HTTPS/MagicDNS. Host-side API verification is advisory: a failed check warns and
+prints a check for an allowed tailnet device without undoing setup. The Serve
+inspection and mount commands are sequential, not atomic;
+do not change Serve concurrently during setup. Partial failures leave completed
+configuration in place for inspection and manual cleanup.
+
 Session IDs are resolved only against registered, running project sessions; request
 IDs are never used as filesystem paths or tmux targets. Session collection and transcript
 reads run on blocking workers rather than the async executor. SSE uses the independent

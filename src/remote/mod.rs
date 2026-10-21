@@ -1,6 +1,6 @@
 use std::{convert::Infallible, net::Ipv4Addr, sync::Arc, time::Duration};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Request, State},
@@ -24,6 +24,7 @@ use crate::{
 mod feed;
 mod message;
 pub(crate) mod push;
+pub(crate) mod setup;
 #[cfg(test)]
 mod tests;
 
@@ -41,13 +42,7 @@ struct AppState {
 
 impl AppState {
     fn new(users: Vec<String>, source: Source) -> Result<Self> {
-        ensure!(!users.is_empty(), "remote.allowed_users must not be empty");
-        ensure!(
-            users.iter().all(|user| !user.is_empty()
-                && user.trim() == user
-                && !user.chars().any(char::is_control)),
-            "remote.allowed_users contains an invalid login"
-        );
+        user::validate_users(&users)?;
         Ok(Self {
             users: Arc::new(users),
             source,

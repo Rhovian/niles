@@ -7,6 +7,18 @@ Whoever controls its JavaScript can send instructions to that agent. Same-origin
 serving keeps this trust boundary at the host/tailnet and needs no CORS grant.
 See the [threat model](security.md#remote-api).
 
+With a remote-enabled binary and matching built web assets installed, configure the
+host with:
+
+```sh
+niles remote setup --web-dir /absolute/path/to/web --allow-user you@example.com \
+  --subject mailto:you@example.com
+```
+
+This merges authorization, initializes push if needed, starts a user service, mounts
+the same-origin shell/API through Tailscale Serve, and attempts API verification.
+Installation and tailnet prerequisites follow; see [setup details](#configure-with-niles-remote-setup).
+
 ## Prerequisites
 
 Use a release containing the remote feature. Prebuilt release binaries omit it;
@@ -52,74 +64,68 @@ never the repository, home directory, or `~/.niles/` state/keys. Treat the relea
 asset and its update source as executable host code. The web build is independent
 of Cargo; the API version is separate from the CLI JSON schema.
 
-Merge an explicit allowlist into `~/.niles/config.yaml`, preserving other settings:
+## Configure with `niles remote setup`
 
-```yaml
-remote:
-  allowed_users: [you@example.com]
-```
+After installing the backend and matching web asset above, run the setup command
+at the top of this guide with `--web-dir "$NILES_WEB_DIR"`. Use your ordinary user
+with permission to configure `tailscaled`, not root. The directory must contain
+only trusted built web assets; setup checks for index.html, not directory contents.
+Stop any manually running backend before installing the user service.
 
-Use the exact `Tailscale-User-Login` identity, not a device name. Niles refuses an
-empty/invalid list. Authorization applies to every API route; the static shell is
-available to devices permitted by the tailnet rules. Config changes require restart.
+Repeat `--allow-user` to add more exact `Tailscale-User-Login` identities. Setup
+merges them into `~/.niles/config.yaml`, preserving other settings and existing users.
+It rejects empty/invalid logins. Omit `--subject` for chat without push; when supplied,
+setup reuses `niles remote init` only if keys are absent and keeps existing keys and
+subscriptions. `niles remote init --subject mailto:you@example.com` remains available
+for adding push later; restart the service afterward.
 
-If using notifications, initialize once before starting the server:
+Setup requires Tailscale 1.96.2 or newer with a three-component numeric version
+(suffixed/development versions are unsupported). It rejects unknown Serve schema
+fields and existing background `/`, `/api`, or `/api/...` handlers on HTTPS 443.
+Other mounts remain in place; Tailscale applies its own remaining Serve rules.
+Setup installs and starts a user service using this executable's absolute path and
+current HOME/PATH:
 
-```sh
-niles remote init --subject mailto:you@example.com
-```
+- macOS: `~/Library/LaunchAgents/dev.niles.remote.plist` in the logged-in GUI domain.
+- Linux: `~/.config/systemd/user/niles-remote.service`. To run without login, enable
+  lingering with `loginctl enable-linger "$USER"` (administrator permission may be needed).
 
-This writes private VAPID/device state under `~/.niles/remote/`; repeated init fails
-instead of rotating existing keys. Skip it to use chat without push. Now run:
+An existing service file is never overwritten. If service activation fails, setup
+removes the file it just created so activation can be retried. Config/key changes
+remain in place. `--port 9123` selects another nonzero loopback port for both service
+and proxy. The service manager keeps `niles remote` running; no tmux pane is needed.
 
-```sh
-niles remote --port 8765
-```
+Setup mounts static `/` and proxies `/api` to `http://127.0.0.1:PORT/api`. The target's
+`/api` suffix matters: Serve strips the mount prefix before joining the target URL.
+The API stays on IPv4 loopback; exposing it on a LAN/tailnet IP would allow forged
+identity headers. Serve injects verified identities and strips caller-supplied ones.
+Use **Serve, never Funnel**, and keep Tailscale available on the host.
 
-It prints `remote listening on 127.0.0.1:8765`. Keep this process running in tmux or
-your service manager. The listener is **IPv4 loopback only**; do not expose it on
-`0.0.0.0`, the LAN, or a tailnet IP. Only the local Serve proxy should reach it:
-otherwise clients could forge the trusted identity header.
+Setup attempts HTTPS `/api/sessions` verification with curl 7.84+: HTTP 200,
+`Cache-Control: no-store`, expected API version and a sessions array. It sends no
+identity header and follows no redirects. **Verification failure is a warning**;
+installed configuration stays active and setup succeeds. Host self-resolution,
+a tagged/disallowed host identity, an older curl, or service startup delay can
+prevent this check even when the phone can connect. Follow the printed `curl -i`
+command from an allowed user-owned device on the tailnet. Expect the same response
+contract; do not supply an identity header yourself. Direct unauthenticated requests
+to the loopback API return 403 by design.
 
-## Serve static `/` and proxy `/api`
+Setup does not join devices, change tailnet policies, build the PWA, or install the
+binary. Complete these manual steps before setup: join host and phone to the tailnet,
+enable MagicDNS/HTTPS, restrict TCP 443 with ACLs/grants, and on macOS install the
+open-source `tailscaled` variant. After setup, open the printed URL on the phone and
+install/Add to Home Screen; enable notifications in the installed app for push.
 
-Inspect existing mappings first; these commands replace `/` and `/api` on port 443.
-Run as a user permitted to configure `tailscaled` (use sudo if required).
-Keep `NILES_WEB_DIR` from the installation shell, or set it to that absolute path.
+Failures other than advisory verification stop setup and leave completed steps in
+place. Diagnostics name the failed command. Inspect the config, service and Serve status before retrying; remove only
+this service and its `/` and `/api` mappings if installed. Never reset unrelated
+Serve configuration. To upgrade, stop/remove this service, remove its two mappings,
+and rerun setup with the newly installed executable and matching dedicated web directory.
+Config changes require a service restart (`launchctl kickstart -k gui/$(id -u)/dev.niles.remote`
+on macOS; `systemctl --user restart niles-remote` on Linux).
 
-```sh
-tailscale serve status
-tailscale serve --bg --https=443 --set-path=/ "$NILES_WEB_DIR"
-tailscale serve --bg --https=443 --set-path=/api http://127.0.0.1:8765/api
-tailscale serve status
-```
-
-The `/api` suffix on the **target** is required: Serve removes the mount prefix,
-then joins the remaining path to the target URL. Thus `/api/sessions` reaches
-`127.0.0.1:8765/api/sessions`; a target ending at `:8765` would reach `/sessions`
-and return 404. The more specific API mount wins over the static `/` handler.
-This behavior is in [Tailscale 1.96.2's proxy implementation](https://github.com/tailscale/tailscale/blob/v1.96.2/ipn/ipnlocal/serve.go#L1097);
-see also the [Serve CLI reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
-
-Serve supplies the verified identity header to the proxy and removes caller-supplied
-identity headers. Do not add an untrusted proxy or forward public identity headers.
-Use **Serve, never Funnel**: Funnel publishes to the internet and does not supply
-the user identity this API requires. `--bg` persists Serve across restarts; it does
-not start or supervise `niles remote`. No public frontend, port-forward or CORS setup
-is needed. Tailscale must remain available on the host.
-
-## Verify and install
-
-From a user-owned device connected to the tailnet, replace the hostname below:
-
-```sh
-curl -i https://HOST.TAILNET.ts.net/api/sessions
-```
-
-Expect HTTP 200, `Cache-Control: no-store`, and JSON with `api_version: 1` and a
-`sessions` array (possibly empty). Do not supply an identity header yourself; this
-checks Serve's identity injection and path mapping. Direct unauthenticated requests
-to `http://127.0.0.1:8765/api/sessions` return 403 by design.
+## Install on the phone
 
 Open `https://HOST.TAILNET.ts.net/` on the phone. Select a live session; its agent
 family and entry skill (including `solo`) appear together. Chat becomes live after
@@ -164,8 +170,23 @@ tailscale serve --bg --https=443 --set-path=/api off
 tailscale serve --bg --https=443 --set-path=/ off
 ```
 
-Stop `niles remote` separately. Avoid `tailscale serve reset` on a host with other
-mappings; it removes the whole Serve configuration.
+To stop and remove the generated user service on macOS:
+
+```sh
+launchctl bootout "gui/$(id -u)/dev.niles.remote"
+rm "$HOME/Library/LaunchAgents/dev.niles.remote.plist"
+```
+
+On Linux:
+
+```sh
+systemctl --user disable --now niles-remote.service
+rm "$HOME/.config/systemd/user/niles-remote.service"
+systemctl --user daemon-reload
+```
+
+Avoid `tailscale serve reset` on a host with other mappings; it removes the whole
+Serve configuration.
 
 ## Known framing gap
 

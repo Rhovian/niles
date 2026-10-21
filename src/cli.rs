@@ -73,6 +73,7 @@ impl MessageInput {
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
     /// Serve the remote API on loopback (requires --features remote).
+    #[command(args_conflicts_with_subcommands = true)]
     Remote {
         #[arg(long, default_value_t = 8765)]
         port: u16,
@@ -272,6 +273,22 @@ pub enum CommandName {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
+    /// Configure same-origin Tailscale Serve, authorization, and a user service.
+    #[cfg(feature = "remote")]
+    Setup {
+        #[arg(long, default_value = "8765")]
+        port: std::num::NonZeroU16,
+        /// Dedicated built PWA directory containing index.html.
+        #[arg(long)]
+        web_dir: camino::Utf8PathBuf,
+        /// Exact Tailscale login to add to the allowlist (repeatable).
+        #[arg(long, required = true)]
+        allow_user: Vec<String>,
+        /// Initialize Web Push if absent, using this mailto: or https: contact URI.
+        #[arg(long)]
+        subject: Option<String>,
+    },
+
     /// Generate a private VAPID keypair for Web Push; never overwrites existing keys.
     Init {
         /// VAPID contact URI (mailto: or https:).
