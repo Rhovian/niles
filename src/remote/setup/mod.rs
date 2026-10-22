@@ -6,9 +6,15 @@ use serde::{Deserialize, de::IgnoredAny};
 
 use crate::config::user;
 
+mod preflight;
 mod service;
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn doctor() -> Result<()> {
+    preflight::check()?;
+    Ok(())
+}
 
 pub(crate) fn run(
     web_dir: &Utf8Path,
@@ -18,7 +24,8 @@ pub(crate) fn run(
 ) -> Result<()> {
     user::validate_users(&users)?;
     let plan = Plan::prepare(web_dir, port)?;
-    plan.apply(users, subject)?;
+    plan.apply(users, subject)
+        .with_context(|| plan.service.recovery())?;
     // Host self-resolution/identity can fail on a valid setup; verification is advisory by policy.
     match plan.verify() {
         Ok(()) => println!("Verified {}/api/sessions", plan.origin),
@@ -50,17 +57,7 @@ impl Plan {
             web_dir.join("index.html").is_file(),
             "web directory must contain index.html"
         );
-        check_version(&command("tailscale", &["version"])?)?;
-        // https://github.com/tailscale/tailscale/blob/v1.96.2/ipn/ipnstate/ipnstate.go
-        let status: serde_json::Value =
-            serde_json::from_str(&command("tailscale", &["status", "--json"])?)?;
-        let dns = status
-            .pointer("/Self/DNSName")
-            .and_then(serde_json::Value::as_str)
-            .context("Tailscale did not return a host DNS name; join the tailnet first")?;
-        let host =
-            url::Host::parse(dns.trim_end_matches('.')).context("invalid Tailscale DNS name")?;
-        let origin = format!("https://{host}");
+        let origin = preflight::check()?;
         let serve: Option<Serve> =
             serde_json::from_str(&command("tailscale", &["serve", "status", "--json"])?)?;
         if let Some(serve) = serve {
@@ -69,8 +66,9 @@ impl Plan {
         let service = service::Service::new(&crate::util::home_dir()?, port.get())?;
         ensure!(
             !service.path.try_exists()?,
-            "service already exists at {}; inspect/remove it before setup",
-            service.path
+            "service already exists at {}; inspect it before recovery:\n{}",
+            service.path,
+            service.recovery()
         );
         Ok(Self {
             mounts: [
@@ -170,7 +168,7 @@ fn check_version(text: &str) -> Result<()> {
     );
     ensure!(
         numbers.as_slice() >= [1, 96, 2].as_slice(),
-        "requires Tailscale >=1.96.2"
+        "requires Tailscale >=1.96.2; update from https://tailscale.com/download (macOS: brew upgrade tailscale; sudo brew services restart tailscale)"
     );
     Ok(())
 }

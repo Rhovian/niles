@@ -273,6 +273,10 @@ pub enum CommandName {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
+    /// Check remote prerequisites without changing configuration or services.
+    #[cfg(feature = "remote")]
+    Doctor,
+
     /// Configure same-origin Tailscale Serve, authorization, and a user service.
     #[cfg(feature = "remote")]
     Setup {

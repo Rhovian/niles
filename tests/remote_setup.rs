@@ -27,14 +27,33 @@ impl Setup {
             r#"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$*" in
- version) echo 1.96.2 ;;
+ 'version --daemon --json')
+   if [ -n "$TAILNET_VERSION" ]; then printf '%s' "$TAILNET_VERSION";
+   else echo '{"majorMinorPatch":"1.96.2","daemonLong":"1.96.2-t123"}'; fi ;;
+ 'debug prefs')
+   if [ -n "$TAILNET_PREFS" ]; then printf '%s' "$TAILNET_PREFS";
+   else echo '{"OperatorUser":"tester"}'; fi ;;
  'status --json')
    if [ -n "$TAILNET_STATUS" ]; then printf '%s\n' "$TAILNET_STATUS";
-   else echo '{"Self":{"DNSName":"host.tail.ts.net."}}'; fi ;;
+   else echo '{"Self":{"DNSName":"host.tail.ts.net."},"CertDomains":["host.tail.ts.net"]}'; fi ;;
  'serve status --json')
    if [ -n "$SERVE_CONFIG" ]; then printf '%s\n' "$SERVE_CONFIG"; else echo null; fi ;;
+ 'serve --bg --https=443 --set-path=/ '*|'serve --bg --https=443 --set-path=/api '*)
+   if [ "$SERVE_FAIL" = 1 ]; then echo 'serve denied' >&2; exit 1; fi ;;
 esac
 "#,
+        );
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_niles"), env.bin.join("niles")).unwrap();
+        common::write_executable(
+            &env.bin.join("id"),
+            "#!/bin/sh\ncase \"$1\" in -un) echo tester;; -Gn) echo admin;; -u) echo 501;; esac\n",
+        );
+        common::write_executable(
+            &env.bin.join("plutil"),
+            &format!(
+                "#!/bin/sh\nif [ -n \"$DAEMON_PLIST\" ]; then printf '%s' \"$DAEMON_PLIST\"; else echo '{{\"EnvironmentVariables\":{{\"PATH\":\"{}:/usr/bin:/bin\"}}}}'; fi\n",
+                env.bin.display()
+            ),
         );
         for manager in ["launchctl", "systemctl"] {
             common::write_executable(
@@ -274,4 +293,96 @@ fn remote_setup_rejects_zero_port_and_init_rejects_port() {
     ] {
         assert!(!fixture.0.run(&args).status.success());
     }
+}
+
+#[test]
+fn remote_preflight_failures_leave_all_setup_state_untouched() {
+    for (key, value, message) in [
+        (
+            "TAILNET_VERSION",
+            r#"{"majorMinorPatch":"1.104.2","daemonLong":"1.96.2"}"#,
+            "client 1.104.2 != daemon",
+        ),
+        ("TAILNET_PREFS", r#"{}"#, "sudo tailscale set --operator"),
+        (
+            "TAILNET_STATUS",
+            r#"{"Self":{"DNSName":"host.tail.ts.net."},"CertDomains":[]}"#,
+            "https://login.tailscale.com/admin/dns",
+        ),
+    ] {
+        let fixture = Setup::new();
+        let before = fixture.config();
+        let output = fixture
+            .command()
+            .args(["--subject", "mailto:a@example.com"])
+            .env(key, value)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            stderr_of(&output).contains(message),
+            "{}",
+            stderr_of(&output)
+        );
+        assert_eq!(fixture.config(), before);
+        assert!(!fixture.0.home.join(SERVICE).exists());
+        assert!(!fixture.0.home.join(".niles/remote/vapid.json").exists());
+        assert!(!fixture.0.tmux_log().contains("serve --bg"));
+    }
+}
+
+#[test]
+fn remote_doctor_is_read_only_and_checks_path_shadowing() {
+    let fixture = Setup::new();
+    let before = fixture.config();
+    let output = fixture.0.run(&["remote", "doctor"]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(fixture.config(), before);
+    assert!(!fixture.0.home.join(SERVICE).exists());
+    assert!(!fixture.0.tmux_log().contains("serve --bg"));
+    fs::remove_file(fixture.0.bin.join("niles")).unwrap();
+    common::write_executable(&fixture.0.bin.join("niles"), "#!/bin/sh\nexit 0\n");
+    let output = fixture.0.run(&["remote", "doctor"]);
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("shadows this niles"));
+}
+
+#[test]
+fn remote_setup_late_failure_prints_exact_recovery() {
+    let fixture = Setup::new();
+    let output = fixture.command().env("SERVE_FAIL", "1").output().unwrap();
+    assert!(!output.status.success());
+    assert!(fixture.0.home.join(SERVICE).exists());
+    let error = stderr_of(&output);
+    for command in [
+        "tailscale serve --bg --https=443 --set-path=/api off",
+        "tailscale serve --bg --https=443 --set-path=/ off",
+        "rm -- '",
+        "Then rerun the same setup command.",
+    ] {
+        assert!(error.contains(command), "{error}");
+    }
+    let output = fixture.command().output().unwrap();
+    assert!(stderr_of(&output).contains("Then rerun the same setup command."));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn remote_doctor_detects_gui_and_reverted_homebrew_path() {
+    let fixture = Setup::new();
+    let app = fixture.0.home.join("Applications/Tailscale.app");
+    fs::create_dir_all(&app).unwrap();
+    let output = fixture.0.run(&["remote", "doctor"]);
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("https://tailscale.com/kb/1069/uninstall"));
+    fs::remove_dir(app).unwrap();
+    let output = fixture
+        .0
+        .niles(&fixture.0.root, &["remote", "doctor"])
+        .env("DAEMON_PLIST", "{}")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("tailscaled PATH cannot find"));
+    assert!(!fixture.0.home.join(SERVICE).exists());
 }

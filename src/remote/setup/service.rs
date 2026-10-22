@@ -79,6 +79,17 @@ impl Service {
         })
     }
 
+    pub(super) fn recovery(&self) -> String {
+        let stop = match self.manager {
+            Manager::Launchd => "launchctl bootout \"gui/$(id -u)/dev.niles.remote\"",
+            Manager::Systemd => "systemctl --user disable --now niles-remote.service",
+        };
+        format!(
+            "Setup may have left completed steps in place. Inspect tailscale serve status and this service first. To retry, remove only setup's mounts/service (skip absent entries):\ntailscale serve --bg --https=443 --set-path=/api off\ntailscale serve --bg --https=443 --set-path=/ off\n{stop}\nrm -- '{}'\nThen rerun the same setup command.",
+            self.path.as_str().replace('\'', "'\\''")
+        )
+    }
+
     pub(super) fn install(&self) -> Result<()> {
         fs::create_dir_all(self.path.parent().context("service path has no parent")?)?;
         let mut file = fs::File::create_new(&self.path)?;

@@ -32,8 +32,7 @@ membership plus these rules register the device; Niles adds no device password.
 Tailscale handles roaming networks and DERP relay connections. The phone must have
 a user identity: tagged clients do not get the identity header Niles requires.
 
-Enable MagicDNS/HTTPS for the tailnet; Serve's setup flow provides an enablement
-link if needed. It provisions HTTPS at `https://<host>.<tailnet>.ts.net`.
+Enable MagicDNS/HTTPS at https://login.tailscale.com/admin/dns before setup. It provisions HTTPS at `https://<host>.<tailnet>.ts.net`.
 On macOS, serving directories requires the open-source `tailscaled` variant;
 sandboxed GUI clients cannot serve the directory in this setup. These commands use
 the modern Serve CLI, checked with 1.96.2. See [Serve prerequisites/limitations](https://tailscale.com/docs/features/tailscale-serve).
@@ -79,6 +78,33 @@ setup reuses `niles remote init` only if keys are absent and keeps existing keys
 subscriptions. `niles remote init --subject mailto:you@example.com` remains available
 for adding push later; restart the service afterward.
 
+Run `niles remote doctor` at any time to repeat the read-only prerequisite checks;
+it needs no web directory or allowlist and works after setup. Setup runs the same
+checks before writing config, keys, service files, or Serve state. The checks stop
+at the first failure with commands or an admin-console link to fix it:
+
+- The `niles` selected by PATH must resolve to the running executable. If an older
+  installation shadows it, put the new binary's directory first on PATH and run
+  `hash -r`. If `niles remote doctor` itself reports “built without remote”, use the
+  absolute path of the binary installed with `--features remote`; inspect `type -a niles`.
+- CLI and daemon releases must match. Release build hashes in the daemon version
+  are accepted. Repair stale GUI wrappers using `type -a tailscale` and reinstall
+  the Homebrew CLI if needed.
+- On macOS, remove the GUI app before using Homebrew `tailscaled`. The Homebrew
+  LaunchDaemon plist must give PATH access to the selected CLI directory. Doctor
+  prints the exact PlistBuddy and bootout/bootstrap commands when PATH is missing.
+  `brew services restart tailscale` regenerates this plist and can revert the fix;
+  rerun doctor afterward. Plist inspection describes the on-disk configuration;
+  bootstrap it after editing so the running daemon uses it.
+- The current user must be the Tailscale operator and, on macOS, an administrator.
+  Set the operator with `sudo tailscale set --operator="$(id -un)"`.
+- The host DNS name must have an HTTPS certificate domain in Tailscale status.
+
+Setup and doctor never run sudo. Custom sudoers policy cannot be proven by these
+read-only checks: doctor prints `sudo --other-user="$(id -un)" --list tailscale`
+for manual confirmation. The daemon performs that check when serving a directory;
+its environment must resolve `tailscale` too.
+
 Setup requires Tailscale 1.96.2 or newer with a three-component numeric version
 (suffixed/development versions are unsupported). It rejects unknown Serve schema
 fields and existing background `/`, `/api`, or `/api/...` handlers on HTTPS 443.
@@ -118,8 +144,11 @@ open-source `tailscaled` variant. After setup, open the printed URL on the phone
 install/Add to Home Screen; enable notifications in the installed app for push.
 
 Failures other than advisory verification stop setup and leave completed steps in
-place. Diagnostics name the failed command. Inspect the config, service and Serve status before retrying; remove only
-this service and its `/` and `/api` mappings if installed. Never reset unrelated
+place. Diagnostics name the failed command. A failure during application prints exact
+commands to remove setup's two mounts and stop/remove its service before retrying
+the same setup command; skip entries that were never installed. An existing service
+file also prints this recovery sequence. Inspect it and `tailscale serve status`
+first: only remove this service and its `/` and `/api` mappings if setup created them. Never reset unrelated
 Serve configuration. To upgrade, stop/remove this service, remove its two mappings,
 and rerun setup with the newly installed executable and matching dedicated web directory.
 Config changes require a service restart (`launchctl kickstart -k gui/$(id -u)/dev.niles.remote`
