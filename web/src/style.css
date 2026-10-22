@@ -21,6 +21,8 @@ small, .badge { color: var(--muted); font-size: .8rem; }
 nav .session { width: 100%; }
 nav details { margin: .6rem 1rem; }
 nav summary { cursor: pointer; text-transform: capitalize; }
+.workers { list-style: none; padding-left: .6rem; }
+.worker-actions { display: grid; gap: .5rem; padding: .5rem 0 .5rem 1rem; }
 nav li { overflow-wrap: anywhere; margin: .4rem 0; }
 .welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem; text-align: center; }
 aside { overflow-y: auto; border-right: 1px solid var(--line); }

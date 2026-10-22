@@ -114,6 +114,7 @@ it('opens worker transcripts and exposes confirmed lifecycle actions with refetc
   render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu();
   expandProject('demo');
   fireEvent.click(screen.getByRole('button', { name: 'nav', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open nav chat' }));
   await screen.findByRole('region', { name: 'Chat with nav' });
   expect(Stream.urls).toContain('/api/projects/demo/workers/nav/events');
   openMenu(); expandProject('demo');
@@ -126,6 +127,7 @@ it('opens worker transcripts and exposes confirmed lifecycle actions with refetc
     ['demo', 'Close review', 'DELETE', '/api/projects/demo/workers/review'],
   ]) {
     expandProject(project);
+    if (label === 'Close review') fireEvent.click(screen.getByRole('button', { name: 'review', exact: true }));
     const before = fetcher.mock.calls.filter(([url]) => url === '/api/projects').length;
     fireEvent.click(screen.getByRole('button', { name: label }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(url, { method, cache: 'no-store' }));
@@ -169,4 +171,24 @@ it.each(['running', 'starting', 'waiting', 'not running', 'missing'] as const)('
   rerender(<Navigation projects={[{ name: 'sample', state: live ? 'not running' : 'running', workers: [] }]}
     openProject={vi.fn()} openWorker={vi.fn()} refresh={vi.fn()} help={vi.fn()} />);
   expect(button.textContent?.includes('Live')).toBe(!live);
+});
+
+it('nests worker actions one at a time, labels roles and loss, and resets on project changes', async () => {
+  render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu(); expandProject('demo');
+  const nav = screen.getByRole('button', { name: 'nav', description: 'worker', expanded: false });
+  const review = screen.getByRole('button', { name: 'review', description: 'reviewer · Lost', expanded: false });
+  expect(screen.queryByRole('button', { name: /Open nav chat|Close nav|Close review/ })).toBeNull();
+  fireEvent.click(nav);
+  expect(screen.getByRole('button', { name: 'Open nav chat' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Close nav' })).toBeDefined();
+  fireEvent.click(review);
+  expect(nav.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('button', { name: 'Close nav' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Close review' })).toBeDefined();
+  fireEvent.click(review);
+  expect(screen.queryByRole('button', { name: 'Close review' })).toBeNull();
+  fireEvent.click(nav); expandProject('offline'); expandProject('demo');
+  expect(screen.getByRole('button', { name: 'nav', expanded: false })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Open nav chat' })).toBeNull();
+  expect(Stream.urls).toEqual([]);
 });
