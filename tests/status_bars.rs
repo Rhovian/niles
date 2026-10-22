@@ -119,6 +119,7 @@ fn projects_use_name_order_and_only_live_matching_membership() {
     let env = TestEnv::with_tmux(
         "niles-project-bar",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1:$3" in
   has-session:=absent) printf "can't find session\n" >&2; exit 1 ;;

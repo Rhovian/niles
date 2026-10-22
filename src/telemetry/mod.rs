@@ -11,6 +11,14 @@ mod codex;
 mod hermes;
 mod pi;
 mod processes;
+#[cfg_attr(
+    all(not(test), not(feature = "remote")),
+    expect(
+        dead_code,
+        reason = "remote transcript consumer is implemented in #315"
+    )
+)]
+pub(crate) mod transcript;
 
 pub(crate) use activity::{
     Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, TurnState, initial_deadline,

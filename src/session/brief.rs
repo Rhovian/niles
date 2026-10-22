@@ -16,6 +16,11 @@ use super::{sessions_dir, startup::startup_context};
 
 const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
 
+const DEFAULT_ENTRY_SKILL: &str = "lead";
+fn default_entry_skill() -> String {
+    DEFAULT_ENTRY_SKILL.to_owned()
+}
+
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
 
@@ -23,6 +28,8 @@ const LEAD_PANE_ENV: &str = "TMUX_PANE";
 pub(crate) struct SessionMeta {
     pub id: String,
     pub agent: String,
+    #[serde(default = "default_entry_skill")]
+    pub entry_skill: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,6 +67,7 @@ pub(super) fn write_manager_session(
     let meta = SessionMeta {
         id: id.clone(),
         agent: agent.canonical(),
+        entry_skill: default_entry_skill(),
         agent_family: agent.tiered_family(),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
@@ -229,6 +237,7 @@ mod tests {
         let workspace = temp_test_path("session-lead-pane");
         fs::create_dir_all(&workspace).unwrap();
         let mut meta = SessionMeta {
+            entry_skill: default_entry_skill(),
             id: "session".to_owned(),
             agent: "claude".to_owned(),
             agent_family: None,
@@ -246,6 +255,22 @@ mod tests {
 
         let body = fs::read_to_string(&file).unwrap();
         assert!(body.contains("\"lead_pane\": \"%7\""), "{body}");
+
+        let mut value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        value.as_object_mut().unwrap().remove("entry_skill");
+        assert_eq!(
+            serde_json::from_value::<SessionMeta>(value.clone())
+                .unwrap()
+                .entry_skill,
+            "lead"
+        );
+        value["entry_skill"] = "solo".into();
+        assert_eq!(
+            serde_json::from_value::<SessionMeta>(value)
+                .unwrap()
+                .entry_skill,
+            "solo"
+        );
 
         // A session with no pane omits the field rather than writing a null nobody records.
         meta.lead_pane = None;

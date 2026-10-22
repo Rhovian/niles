@@ -365,3 +365,12 @@ jobs:
     with:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
+
+  custom-web-release:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/web-release.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit

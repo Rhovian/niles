@@ -1,9 +1,9 @@
 use super::*;
 use crate::projects::{
     registry::{Entry, ProjectName},
-    rows::State,
+    rows::{Row, State},
     status::Segment,
-    windows::Role,
+    windows::{Role, SessionAgents},
 };
 use crate::theme::{State as ThemeState, StyleKey};
 

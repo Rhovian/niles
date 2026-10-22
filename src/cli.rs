@@ -72,6 +72,14 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
+    /// Serve the remote API on loopback (requires --features remote).
+    #[command(args_conflicts_with_subcommands = true)]
+    Remote {
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+        #[command(subcommand)]
+        command: Option<RemoteCommand>,
+    },
     /// Worker-facing commands.
     Agent {
         #[command(subcommand)]
@@ -84,7 +92,10 @@ pub enum CommandName {
     },
     /// Start the lead in a project session.
     #[command(hide = true)]
-    Lead,
+    Lead {
+        #[arg(long)]
+        keep_roles: bool,
+    },
     /// Run the project explorer in the home session.
     #[command(hide = true)]
     Explorer,
@@ -260,6 +271,40 @@ pub enum CommandName {
     Quiet {
         /// Worker task id.
         id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteCommand {
+    /// Remove the remote service and its Serve mounts, retaining config and push state.
+    #[cfg(feature = "remote")]
+    Uninstall,
+
+    /// Check remote prerequisites without changing configuration or services.
+    #[cfg(feature = "remote")]
+    Doctor,
+
+    /// Configure same-origin Tailscale Serve, authorization, and a user service.
+    #[cfg(feature = "remote")]
+    Setup {
+        #[arg(long, default_value = "8765")]
+        port: std::num::NonZeroU16,
+        /// Dedicated built PWA directory containing index.html.
+        #[arg(long)]
+        web_dir: camino::Utf8PathBuf,
+        /// Exact Tailscale login to add to the allowlist (repeatable).
+        #[arg(long, required = true)]
+        allow_user: Vec<String>,
+        /// Initialize Web Push if absent, using this mailto: or https: contact URI.
+        #[arg(long)]
+        subject: Option<String>,
+    },
+
+    /// Generate a private VAPID keypair for Web Push; never overwrites existing keys.
+    Init {
+        /// VAPID contact URI (mailto: or https:).
+        #[arg(long)]
+        subject: String,
     },
 }
 

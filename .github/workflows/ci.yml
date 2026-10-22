@@ -20,6 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        features: ["", "remote"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -34,13 +35,37 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install tmux
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --no-fail-fast
+      - run: cargo clippy --all-targets --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo test --features "${{ matrix.features }}" --no-fail-fast
 
   msrv:
+    strategy:
+      matrix:
+        features: ["", "remote"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --all-targets
+      - run: cargo check --locked --all-targets --features "${{ matrix.features }}"
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

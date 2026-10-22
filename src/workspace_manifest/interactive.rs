@@ -10,10 +10,13 @@ use crate::{
 };
 
 /// The manifest to launch with, or `None` when the operator quit the picker.
-pub fn ensure_interactive(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
+pub(crate) fn ensure_interactive(
+    root: &Utf8Path,
+    start: crate::tmux::LeadStart,
+) -> Result<Option<WorkspaceManifest>> {
     ensure(
         root,
-        io::stdin().is_terminal(),
+        start == crate::tmux::LeadStart::Attended && io::stdin().is_terminal(),
         &mut io::stdout(),
         picker::roles,
     )

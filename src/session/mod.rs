@@ -24,13 +24,13 @@ use foreground::launch_foreground_agent;
 ///
 /// Niles creates one session per project, named after its registry entry and tagged with its path.
 /// Its lead and workers run in that session.
-pub fn run() -> Result<()> {
+pub(crate) fn run(start: crate::tmux::LeadStart) -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
     let worker_dir = store::workers_dir(&workspace)?;
     fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
-    let Some(manifest) = workspace_manifest::ensure_interactive(&workspace)? else {
+    let Some(manifest) = workspace_manifest::ensure_interactive(&workspace, start)? else {
         return Ok(());
     };
     launch_foreground_agent(&workspace, &manifest)

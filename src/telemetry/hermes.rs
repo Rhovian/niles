@@ -38,15 +38,18 @@ fn hermes_home(home: &Utf8Path, configured: Option<&str>) -> Result<Utf8PathBuf>
 }
 
 pub(super) fn read_hermes(home: &Utf8Path, source: &str) -> Result<Option<super::SessionRecord>> {
+    read_session(&open_db(home)?, source)
+}
+
+pub(super) fn open_db(home: &Utf8Path) -> Result<Connection> {
     let configured = match env::var("HERMES_HOME") {
         Ok(path) => Some(path),
         Err(env::VarError::NotPresent) => None,
         Err(error) => return Err(error).context("HERMES_HOME is invalid"),
     };
     let path = hermes_home(home, configured.as_deref())?.join("state.db");
-    let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .with_context(|| format!("open Hermes database {path}"))?;
-    read_session(&db, source)
+    Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open Hermes database {path}"))
 }
 
 fn read_session(db: &Connection, source: &str) -> Result<Option<super::SessionRecord>> {
@@ -209,6 +212,19 @@ pub(super) mod tests {
         let usage = record.usage.unwrap();
         assert!(record.turn.is_none());
         assert_eq!(usage.last_turn_at, None);
+    }
+
+    #[test]
+    fn malformed_model_arguments_do_not_gate_usage_or_activity() {
+        let db = fixture();
+        db.execute(
+            "UPDATE messages SET tool_calls = ?1",
+            [r#"[{"function":{"name":"Bash","arguments":"{bad"}}]"#],
+        )
+        .unwrap();
+        let record = read_session(&db, "niles:test").unwrap().unwrap();
+        assert_eq!(record.usage.unwrap().output_tokens, 22);
+        assert!(matches!(record.turn.unwrap().state, TurnState::InProgress));
     }
 
     #[test]
