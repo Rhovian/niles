@@ -73,6 +73,12 @@ pub(super) fn register(name: &ProjectName, path: &Utf8Path) -> std::io::Result<(
     symlink(path, dir.join(name.as_str()))
 }
 
+pub(super) fn find(name: &str) -> Result<Option<Entry>> {
+    Ok(entries()?
+        .into_iter()
+        .find(|entry| entry.name.as_str() == name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,10 +89,4 @@ mod tests {
             assert!(ProjectName::parse(name).is_err());
         }
     }
-}
-
-pub(super) fn find(name: &str) -> Result<Option<Entry>> {
-    Ok(entries()?
-        .into_iter()
-        .find(|entry| entry.name.as_str() == name))
 }

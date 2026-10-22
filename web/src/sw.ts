@@ -21,7 +21,12 @@ self.addEventListener('push', event => {
       tag: `session:${parsed.data.session_id}`,
       data: { session_id: parsed.data.session_id },
     } : { body: 'A session needs your attention.' };
-    await self.registration.showNotification(title, { ...options, icon: '/icon-192.png', renotify: false });
+    // TypeScript 5.9's lib.webworker.d.ts omits this standard option.
+    // https://notifications.spec.whatwg.org/#dictdef-notificationoptions
+    const notificationOptions: NotificationOptions & { renotify: boolean } = {
+      ...options, icon: '/icon-192.png', renotify: false,
+    };
+    await self.registration.showNotification(title, notificationOptions);
   })());
 });
 self.addEventListener('notificationclick', event => {
