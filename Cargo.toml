@@ -14,7 +14,7 @@ exclude = [".github/**", "web/**"]
 
 [features]
 default = []
-remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:tempfile", "dep:isahc", "dep:ece"]
+remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:tempfile", "dep:isahc", "dep:ece", "dep:pulldown-cmark"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -47,6 +47,7 @@ url = { version = "2", optional = true }
 tempfile = { version = "3", optional = true }
 isahc = { version = "1", optional = true }
 ece = { version = "2", optional = true }
+pulldown-cmark = { version = "0.13.5", default-features = false, optional = true }
 
 # The profile that 'dist' will build with
 [profile.dist]

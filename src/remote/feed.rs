@@ -63,18 +63,15 @@ impl Feed {
         };
         Ok(turns
             .into_iter()
-            .map(|turn| {
-                let id = format!("{}:{}", self.chat.id, self.next);
-                self.next += 1;
+            .filter_map(|turn| {
                 let role = match turn.role {
                     TextRole::User => "user",
                     TextRole::Assistant => "agent",
                 };
-                Turn {
-                    id,
-                    role,
-                    text: render(turn),
-                }
+                let text = mobile_text(turn)?;
+                let id = format!("{}:{}", self.chat.id, self.next);
+                self.next += 1;
+                Some(Turn { id, role, text })
             })
             .collect())
     }
@@ -98,21 +95,28 @@ impl Feed {
     }
 }
 
-// serde_json exposes fields, not provider tool summaries for the text-only API v1.
-// https://docs.rs/serde_json/1.0.151/serde_json/enum.Value.html
-pub(super) fn render(turn: TextTurn) -> String {
-    match turn.content {
+pub(super) fn mobile_text(turn: TextTurn) -> Option<String> {
+    let mut text = match turn.content {
         TextBlock::Text { text } => text,
-        TextBlock::ToolUse { name, input } => {
-            let summary = ["command", "cmd", "description", "path"]
-                .into_iter()
-                .find_map(|key| input.get(key).and_then(serde_json::Value::as_str))
-                .or_else(|| input.as_str())
-                .and_then(|summary| summary.lines().next());
-            match summary {
-                Some(summary) => format!("▸ {name}: {summary}"),
-                None => format!("▸ {name}"),
-            }
+        TextBlock::ToolUse { .. } => return None,
+    };
+    if matches!(turn.role, TextRole::Assistant) {
+        // pulldown-cmark supplies complete code-block source ranges; remove them without
+        // reserializing prose or implementing Markdown fence/indentation parsing ourselves.
+        // https://docs.rs/pulldown-cmark/0.13.5/pulldown_cmark/struct.OffsetIter.html
+        let blocks = pulldown_cmark::Parser::new_ext(&text, pulldown_cmark::Options::ENABLE_TABLES)
+            .into_offset_iter()
+            .filter_map(|(event, range)| {
+                matches!(
+                    event,
+                    pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+                )
+                .then_some(range)
+            })
+            .collect::<Vec<_>>();
+        for block in blocks.into_iter().rev() {
+            text.replace_range(block, "");
         }
     }
+    (!text.trim().is_empty()).then_some(text)
 }

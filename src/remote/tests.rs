@@ -307,22 +307,77 @@ async fn internal_errors_are_not_returned_to_the_client_or_cached() {
 }
 
 #[test]
-fn tool_summaries_show_one_collapsed_line() {
+fn mobile_text_omits_tools_and_assistant_code_blocks() {
     use crate::telemetry::transcript::{TextBlock, TextRole, TextTurn};
-    for input in [
-        json!({"command":"cargo test\nlarge output"}),
-        json!("cargo test\nlarge patch"),
-    ] {
-        let text = super::feed::render(TextTurn {
-            role: TextRole::Assistant,
+    let mobile = |role, text: &str| {
+        super::feed::mobile_text(TextTurn {
+            role,
             timestamp: None,
-            content: TextBlock::ToolUse {
-                name: "Bash".into(),
-                input,
-            },
-        });
-        assert_eq!(text, "▸ Bash: cargo test");
+            content: TextBlock::Text { text: text.into() },
+        })
+    };
+    for code in [
+        "```diff\n-secret\n```",
+        "~~~~rust\nsecret\n~~~~",
+        "    secret\n",
+        "```\nsecret",
+        "> ```\n> secret\n> ```",
+        "- item\n\n    ```\n    secret\n    ```",
+    ] {
+        let text = format!("Before 🦀\n\n{code}\n\nAfter `inline`.");
+        let visible = mobile(TextRole::Assistant, &text).unwrap();
+        assert!(!visible.contains("secret"), "{visible}");
+        assert!(visible.contains("Before 🦀"));
+        // An unclosed fence consumes the remainder according to Markdown's grammar.
+        assert_eq!(
+            visible.contains("After `inline`."),
+            !code.ends_with("secret")
+        );
+        assert_eq!(mobile(TextRole::User, &text), Some(text));
     }
+    assert_eq!(
+        mobile(TextRole::Assistant, "```rust\nfn main() {}\n```"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn mobile_sse_filters_snapshot_and_live_turns_before_delivery() {
+    let fixture = Fixture::new(0);
+    let path = fixture.root.join("001.jsonl");
+    let tool = format!(
+        "{}\n",
+        json!({"type":"message","message":{"role":"assistant",
+        "content":[{"type":"toolCall","name":"Bash","arguments":{"command":"private command"}}]}})
+    );
+    let hidden = message("```diff\nprivate diff\n```");
+    fs::write(
+        &path,
+        format!(
+            "{tool}{hidden}{}",
+            message("Summary\n\n```rust\nprivate code\n```\n\nDone.")
+        ),
+    )
+    .unwrap();
+    let response = fixture
+        .app()
+        .oneshot(request("/api/sessions/project:session/events"))
+        .await
+        .unwrap();
+    let mut body = response.into_body().into_data_stream();
+    let (_, snapshot) = event(&mut body).await;
+    assert_eq!(snapshot["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["turns"][0]["text"], "Summary\n\n\n\nDone.");
+    assert_eq!(event(&mut body).await.0, "status");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(format!("{tool}{hidden}{}", message("Live prose")).as_bytes())
+        .unwrap();
+    let (kind, turn) = event(&mut body).await;
+    assert_eq!(kind, "turn");
+    assert_eq!(turn["text"], "Live prose");
 }
 
 #[tokio::test]

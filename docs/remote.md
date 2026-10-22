@@ -175,6 +175,11 @@ link still needs Tailscale. See [PWA notification behavior](../web/README.md#not
 
 ## Chat and project control
 
+Phone transcripts omit tool calls and assistant Markdown code blocks on the server,
+including diffs and file contents inside those blocks. Replies left empty are omitted;
+surrounding prose, inline code, and operator messages remain. Complete transcripts
+remain available at the desk. This is a display filter, not secret redaction.
+
 Tap a worker in the menu to read its live transcript and send directly to its recorded
 window. The lead is not notified and its worker wait is not re-armed. Lost workers
 remain readable but sending returns 503. Close works for live and lost workers.

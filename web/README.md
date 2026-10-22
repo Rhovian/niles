@@ -55,7 +55,10 @@ the client percent-encodes session IDs in URL path segments.
   client stays “catching up” until a snapshot arrives and retains at most 200 turns
   during live updates. This bounds turn count, not the byte size of a single turn.
   `Turn = {id, role, text}`: stable nonempty string ID, role `agent` or `user`, and
-  full markdown text. A `turn` replaces the same ID or appends a new turn. Status
+  markdown text. The server omits tool calls and assistant Markdown code blocks
+  (fenced or indented) before sending snapshots or live turns. Empty filtered turns
+  are omitted; surrounding prose, inline code, and operator messages remain intact.
+  Tool results were already excluded by the shared transcript reader. A `turn` replaces the same ID or appends a new turn. Status
   replaces selected-session metadata and must match the stream's session ID.
   EventSource owns reconnection; bounded snapshots avoid a cursor retention and
   restart protocol. Unchanged Markdown bubbles are memoized by text.
