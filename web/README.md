@@ -44,7 +44,7 @@ the client percent-encodes session IDs in URL path segments.
 - `GET /api/sessions` → `200 {"api_version":1,"sessions":[Session]}`.
   `Session = {id, project, agent:{family, entry_skill}, waiting, worker_count}`.
   `id`, `project`, `family`, `entry_skill` are strings; `id` is nonempty;
-  `waiting` is boolean; `worker_count` is a nonnegative integer. The foreground
+  `waiting` reflects the lead alone, independently of worker activity; `worker_count` is a nonnegative integer. The foreground
   **agent** can have any entry skill (including `lead` and `solo`). The list refreshes
   every 15 seconds and on window focus; waiting sessions sort first.
 - `GET /api/sessions/:id/events` → `200 text/event-stream`. Named events:

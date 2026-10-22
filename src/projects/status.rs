@@ -64,10 +64,11 @@ pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
                     .any(|window| *target == format!("{}:{}", row.entry.name.as_str(), window.name))
             })
             .count();
+        let lead = crate::worker::lead_session(&meta, chrono::Utc::now())?;
         sessions.push(ForegroundSession {
             project: row.entry.name.as_str().to_owned(),
             meta,
-            waiting: matches!(row.state, rows::State::Waiting(_)),
+            waiting: lead.state.displayed() == crate::telemetry::SessionState::Waiting,
             worker_count,
         });
     }

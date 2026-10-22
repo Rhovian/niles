@@ -5,7 +5,7 @@ import { Markdown } from './Markdown';
 const HISTORY_NOTICE_MS = 5_000;
 
 type Outgoing = Message & { id: string };
-export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id: string; title: string; subtitle: string; onStatus?: (session: Session) => void }) {
+export function Chat({ base, id, title, subtitle, working, onStatus }: { base: string; id: string; title: string; subtitle: string; working?: boolean; onStatus?: (session: Session) => void }) {
   const [history, setHistory] = useState<{ turns: Turn[]; truncated: boolean }>({ turns: [], truncated: false });
   const [historyNoticeDismissed, setHistoryNoticeDismissed] = useState(false);
   const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
@@ -61,7 +61,7 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
     const timer = setTimeout(() => setHistoryNoticeDismissed(true), HISTORY_NOTICE_MS);
     return () => clearTimeout(timer);
   }, [history.truncated]);
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing, waitingForReply]);
+  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing, waitingForReply, working]);
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!draft.trim() || connection !== 'live') return;
@@ -92,7 +92,7 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
       {outgoing.map(item => <article class="bubble user" key={item.id}>
         <small>You · Sending…</small><p class="plaintext">{item.text}</p>
       </article>)}
-      {waitingForReply && connection === 'live' && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply">
+      {(working ?? waitingForReply) && connection === 'live' && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply">
         <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
       </div>}
       <div ref={bottom} />

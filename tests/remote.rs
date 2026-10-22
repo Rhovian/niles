@@ -53,6 +53,7 @@ case "$1" in
     if [ "$4" = "-l" ]; then printf '%s\n' "$5" >> "$TMUX_LOG.pane";
     else printf 'submitted\n' >> "$TMUX_LOG.pane"; fi ;;
   has-session) exit 0 ;;
+  display-message) printf '0\n' ;;
   display) printf '%s\n' "$TMUX_PROJECT_TAG" ;;
   list-windows)
     case "$*" in
@@ -79,7 +80,15 @@ esac
         .to_string(),
     )
     .unwrap();
-    common::write_worker(&env.root, "live", "api:w", None, b"");
+    let live = common::write_worker(&env.root, "live", "api:w", None, b"");
+    let transcript = env.root.join("working-worker");
+    fs::create_dir(&transcript).unwrap();
+    fs::write(transcript.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-01-02T03:04:05Z\",\"message\":{\"role\":\"user\"}}\n").unwrap();
+    let worker_meta = live.join("meta.json");
+    let mut worker: serde_json::Value =
+        serde_json::from_slice(&fs::read(&worker_meta).unwrap()).unwrap();
+    worker["session_link"] = json!({"family": "pi", "session_dir": transcript});
+    fs::write(worker_meta, worker.to_string()).unwrap();
     common::write_worker(&env.root, "lost", "api:gone", None, b"");
     let mut server = Server(
         env.niles(&env.root, &["remote", "--port", "0"])

@@ -205,3 +205,26 @@ it.each(['/api/sessions/solo', '/api/projects/demo/workers/nav'])('animates wait
   Stream.latest.emit('turn', { id: 'answer', role: 'agent', text: 'Reply' });
   await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
 });
+
+it('keeps lead dots through agent prose until the server reports waiting again', async () => {
+  localStorage.setItem('niles.activeProject', 'notes');
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url === '/api/projects'
+    ? { api_version: 1, projects: [{ name: 'notes', state: 'waiting', workers: [] }] }
+    : { api_version: 1, sessions: [session] } })));
+  const previous = Stream.latest;
+  render(<App />);
+  await screen.findByRole('region', { name: 'Chat with notes' });
+  await waitFor(() => expect(Stream.latest).not.toBe(previous));
+  Stream.latest.emit('snapshot', { turns: [{ id: 'user', role: 'user', text: 'hello' }], truncated: false });
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe('live'));
+  expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull();
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  Stream.latest.emit('status', { ...session, waiting: false });
+  await screen.findByRole('status', { name: 'Waiting for reply' });
+  await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+  Stream.latest.emit('turn', { id: 'prose', role: 'agent', text: 'Still working…' });
+  await screen.findByText('Still working…');
+  expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
+  Stream.latest.emit('status', { ...session, waiting: true });
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
+});
