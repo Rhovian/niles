@@ -61,7 +61,9 @@ it('opens the session selected by a notification hash on initial app load', asyn
   window.history.replaceState(null, '', '/#/sessions/project%3Asession');
   vi.stubGlobal('EventSource', class extends EventTarget { close() {} });
   Element.prototype.scrollIntoView = vi.fn();
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 1, sessions: [{ id: 'project:session', project: 'project', agent: { family: 'codex', entry_skill: 'solo' }, waiting: true, worker_count: 0 }] }) }));
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url === '/api/projects'
+    ? { api_version: 1, projects: [{ name: 'project', state: 'waiting', workers: [] }] }
+    : { api_version: 1, sessions: [{ id: 'project:session', project: 'project', agent: { family: 'codex', entry_skill: 'solo' }, waiting: true, worker_count: 0 }] } })));
   render(<App />);
   expect(await screen.findByLabelText('Message agent')).toBeDefined();
 });

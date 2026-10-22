@@ -36,6 +36,11 @@ connection banner; it does not replay transcripts or queue messages for later.
 URLs are same origin. JSON property names use snake_case. IDs are opaque strings;
 the client percent-encodes session IDs in URL path segments.
 
+- `GET /api/projects` → `200 {"api_version":1,"projects":[Project]}`. Additive v1
+  endpoint using the explorer's registered-project snapshot. `Project` contains
+  `name`, `state` (`missing`, `not running`, `running`, `starting`, `waiting`), and
+  `workers: [{id, role, lost}]`. Roles are worker, reviewer, security, research,
+  design. Filesystem paths, window targets, and agent prompts are excluded.
 - `GET /api/sessions` → `200 {"api_version":1,"sessions":[Session]}`.
   `Session = {id, project, agent:{family, entry_skill}, waiting, worker_count}`.
   `id`, `project`, `family`, `entry_skill` are strings; `id` is nonempty;
@@ -97,3 +102,10 @@ public push service; opening the session and all API operations still need Tails
 An ended session link reports that it has ended. No transcript is stored by push or
 in offline caches. Notification clicks navigate the app, so finish any draft first.
 Dismiss any notifications left by the older, untagged app version once after upgrading.
+
+The hamburger menu lists all registered projects and workers grouped by role,
+including lost workers. Selecting a project opens its live lead chat; the project
+name is remembered in local storage across visits and lead restarts. Notification
+session links still open the corresponding project. With no selection, the main
+screen shows the Niles logo and invites opening projects on the sidebar. Worker
+chat and project start/stop controls are separate follow-up work.

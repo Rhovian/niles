@@ -126,6 +126,7 @@ fn configuration_requires_explicit_nonempty_users_and_survives_config_save() {
 async fn all_routes_require_one_allowed_identity_and_never_cache() {
     let fixture = Fixture::new(0);
     for path in [
+        "/api/projects",
         "/api/sessions",
         "/api/sessions/project:session/events",
         "/api/unknown",
@@ -322,4 +323,36 @@ fn tool_summaries_show_one_collapsed_line() {
         });
         assert_eq!(text, "▸ Bash: cargo test");
     }
+}
+
+#[tokio::test]
+async fn projects_are_versioned_uncached_and_collection_errors_are_private() {
+    let mut fixture = Fixture::new(0);
+    fixture.state.projects = Arc::new(|| Ok(Vec::new()));
+    let response = fixture
+        .app()
+        .oneshot(request("/api/projects"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"api_version": 1, "projects": []})
+    );
+    fixture.state.projects = Arc::new(|| anyhow::bail!("private registry path"));
+    let response = fixture
+        .app()
+        .oneshot(request("/api/projects"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

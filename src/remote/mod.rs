@@ -32,11 +32,14 @@ const API_VERSION: u32 = 1;
 const SUBSCRIPTION_BODY_BYTES: usize = 4096;
 const POLL: Duration = Duration::from_secs(1);
 type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
+type ProjectSource =
+    Arc<dyn Fn() -> Result<Vec<crate::projects::navigation::Project>> + Send + Sync>;
 
 #[derive(Clone)]
 struct AppState {
     users: Arc<Vec<String>>,
     source: Source,
+    projects: ProjectSource,
     push: Option<Arc<push::Store>>,
 }
 
@@ -46,6 +49,7 @@ impl AppState {
         Ok(Self {
             users: Arc::new(users),
             source,
+            projects: Arc::new(crate::projects::navigation::collect),
             push: None,
         })
     }
@@ -129,6 +133,7 @@ fn router(state: AppState) -> Router {
             "/api/push/subscribe",
             post(push::subscribe).layer(DefaultBodyLimit::max(SUBSCRIPTION_BODY_BYTES)),
         )
+        .route("/api/projects", get(projects))
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}/events", get(events))
         .route(
@@ -184,6 +189,11 @@ impl IntoResponse for ApiError {
         eprintln!("remote request: {:#}", self.0);
         StatusCode::INTERNAL_SERVER_ERROR.into_response()
     }
+}
+
+async fn projects(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let projects = blocking(move || (state.projects)()).await?;
+    Ok(Json(serde_json::json!({"api_version": API_VERSION, "projects": projects})).into_response())
 }
 
 async fn sessions(State(state): State<AppState>) -> Result<Response, ApiError> {

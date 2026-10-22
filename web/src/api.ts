@@ -8,6 +8,20 @@ export const sessionSchema = z.object({
 });
 export type Session = z.infer<typeof sessionSchema>;
 export const sessionsSchema = z.object({ api_version: z.number().int(), sessions: z.array(sessionSchema) });
+export const projectSchema = z.object({
+  name: z.string().min(1), state: z.enum(['missing', 'not running', 'running', 'starting', 'waiting']),
+  workers: z.array(z.object({ id: z.string().min(1), role: z.enum(['worker', 'reviewer', 'security', 'research', 'design']), lost: z.boolean() })),
+});
+export type Project = z.infer<typeof projectSchema>;
+const projectsSchema = z.object({ api_version: z.number().int(), projects: z.array(projectSchema) });
+export async function projects(signal?: AbortSignal) {
+  const response = await fetch('/api/projects', { cache: 'no-store', signal });
+  if (!response.ok) throw new ApiError(response.status);
+  const data: unknown = await response.json();
+  const { api_version } = z.object({ api_version: z.number().int() }).parse(data);
+  if (api_version !== API_VERSION) return { api_version, projects: [] };
+  return projectsSchema.parse(data);
+}
 export const turnSchema = z.object({
   id: z.string().min(1), role: z.enum(['agent', 'user']), text: z.string(),
 });
@@ -39,10 +53,6 @@ export function upsertTurn(turns: Turn[], incoming: Turn): Turn[] {
   const index = turns.findIndex(turn => turn.id === incoming.id);
   return index < 0 ? [...turns, incoming] : turns.map((turn, i) => i === index ? incoming : turn);
 }
-export function sortedSessions(items: Session[]) {
-  return [...items].sort((a, b) => Number(b.waiting) - Number(a.waiting) || a.project.localeCompare(b.project));
-}
-
 export function connectionError(cause: unknown): string {
   if (cause instanceof ApiError) return cause.message;
   return cause instanceof TypeError ? `Cannot reach Niles. Check your tailnet connection. ${String(cause)}` : `Invalid API response: ${String(cause)}`;

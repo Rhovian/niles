@@ -6,16 +6,11 @@ use chrono::{DateTime, Utc};
 
 use crate::projects::{
     panels::{Panel, Range},
-    rows::Row,
-    windows::{AgentWindow, Role, SessionAgents},
+    windows::{AgentWindow, Role},
 };
 use crate::worker::WorkerRole;
 
-pub(super) struct Project {
-    pub row: Row,
-    /// Present exactly when the project's lead is running.
-    pub agents: Option<SessionAgents>,
-}
+pub(super) use crate::projects::snapshot::Project;
 
 impl Project {
     fn members(&self, role: WorkerRole) -> impl Iterator<Item = Item<'_>> {

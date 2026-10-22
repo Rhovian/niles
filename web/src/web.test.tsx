@@ -5,7 +5,7 @@ import { Chat } from './Chat';
 import { Markdown } from './Markdown';
 import DOMPurify from 'dompurify';
 import { API_NAVIGATION_PATH } from './shell';
-import { type Session, sessionsSchema, sortedSessions, upsertTurn } from './api';
+import { type Session, sessionsSchema, upsertTurn } from './api';
 
 const session: Session = { id: 'solo', project: 'notes', agent: { family: 'codex', entry_skill: 'solo' }, waiting: true, worker_count: 0 };
 class Stream extends EventTarget {
@@ -18,7 +18,7 @@ class Stream extends EventTarget {
   constructor() { super(); Stream.latest = this; }
   emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
 }
-beforeEach(() => { window.history.replaceState(null, '', '/');
+beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clear();
   vi.stubGlobal('EventSource', Stream);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -36,24 +36,24 @@ it('sanitizes every markdown render, including markup, URLs, forms and attribute
 it('rejects malformed session data at the boundary', () => {
   expect(() => sessionsSchema.parse({ api_version: 1, sessions: [{ ...session, worker_count: -1 }] })).toThrow();
 });
-it('upserts streaming revisions and sorts projects ascending within waiting groups', () => {
+it('upserts streaming revisions', () => {
   const turns = [{ id: 'server', role: 'user' as const, text: 'hello' }];
   expect(upsertTurn(turns, { ...turns[0], text: 'revised' })).toEqual([{ ...turns[0], text: 'revised' }]);
-  expect(sortedSessions([{ ...session, project: 'z' }, { ...session, project: 'a' }]).map(item => item.project)).toEqual(['a', 'z']);
 });
-it('pins waiting sessions and displays the foreground entry skill', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 1, sessions: [{ ...session, id: 'busy', waiting: false }, session] }) }));
+it('displays the active project lead’s foreground entry skill', async () => {
+  localStorage.setItem('niles.activeProject', 'notes');
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url === '/api/projects'
+    ? { api_version: 1, projects: [{ name: 'notes', state: 'waiting', workers: [] }] }
+    : { api_version: 1, sessions: [session] } })));
   render(<App />);
-  await screen.findAllByText('notes');
-  const buttons = screen.getAllByRole('button', { name: /notes/ });
-  expect(buttons[0].textContent).toContain('⚠ Waiting');
-  expect(buttons[0].textContent).toContain('solo');
+  await screen.findByRole('region', { name: 'Chat with notes' });
+  expect(screen.getByText('codex · solo')).toBeDefined();
 });
 it('blocks chat on API version mismatch', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) }));
   render(<App />);
   await screen.findByText(/Update the web app/);
-  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Open menu' })).toBeDefined();
   expect(screen.queryByLabelText('Message agent')).toBeNull();
 });
 it('shows a tailnet banner on list network failure', async () => {

@@ -23,6 +23,10 @@ export function mockApi(): Plugin {
       const json = (status: number, body: unknown) => {
         response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(body));
       };
+      if (path === '/api/projects' && request.method === 'GET') return json(200, { api_version: API_VERSION, projects: [
+        ...sessions.map(session => ({ name: session.project, state: session.waiting ? 'waiting' : 'running', workers: session.worker_count ? [{ id: 'nav', role: 'worker', lost: false }, { id: 'review', role: 'reviewer', lost: true }] : [] })),
+        { name: 'offline', state: 'not running', workers: [] },
+      ] });
       if (path === '/api/sessions' && request.method === 'GET') return json(200, { api_version: API_VERSION, sessions });
       // #318 owns VAPID/subscription behavior; mock refuses rather than pretending to subscribe.
       if (path.startsWith('/api/push/')) return json(501, { error: 'Push is not implemented in this mock (#318)' });

@@ -2,14 +2,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 
+const navigation = { ok: true, json: async () => ({ api_version: 1, projects: [{ name: 'notes', state: 'running', workers: [] }] }) };
+const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+
 const session = { id: 'solo', project: 'notes', agent: { family: 'codex', entry_skill: 'solo' }, waiting: false, worker_count: 0 };
 const response = (sessions: unknown[]) => ({ ok: true, json: async () => ({ api_version: 1, sessions }) });
-beforeEach(() => { window.history.replaceState(null, '', '/'); Element.prototype.scrollIntoView = vi.fn(); });
+beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clear(); Element.prototype.scrollIntoView = vi.fn(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
   const interval = vi.spyOn(globalThis, 'setInterval');
   let resolve!: (result: ReturnType<typeof response>) => void;
-  const fetch = vi.fn(() => new Promise(done => { resolve = done; }));
+  const fetch = vi.fn((url: string) => url === '/api/projects' ? Promise.resolve(navigation) : new Promise(done => { resolve = done; }));
   vi.stubGlobal('fetch', fetch);
   class Stream extends EventTarget { close() {} }
   vi.stubGlobal('EventSource', Stream);
@@ -17,17 +20,18 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   const tick = interval.mock.calls.find(([, delay]) => delay === 15_000)![0] as () => void;
   fireEvent(window, new Event('focus'));
   tick();
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
   expect(interval).toHaveBeenCalledWith(expect.any(Function), 15_000);
   resolve(response([session]));
+  openMenu();
   await screen.findByText('notes');
   fireEvent.click(screen.getByRole('button', { name: /notes/ }));
   tick();
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(4);
   resolve(response([]));
-  await screen.findByText('This session has ended.');
+  await screen.findByText(/This project’s lead is not running/);
   fireEvent(window, new Event('focus'));
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(6);
   resolve(response([]));
 });
 it('does not overwrite an SSE status with an older in-flight snapshot', async () => {
@@ -38,16 +42,18 @@ it('does not overwrite an SSE status with an older in-flight snapshot', async ()
   }
   vi.stubGlobal('EventSource', Stream);
   let resolve!: (result: ReturnType<typeof response>) => void;
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response([session])).mockImplementation(() => new Promise(done => { resolve = done; })));
+  let calls = 0;
+  vi.stubGlobal('fetch', vi.fn((url: string) => url === '/api/projects' ? Promise.resolve(navigation) : ++calls === 1 ? Promise.resolve(response([session])) : new Promise(done => { resolve = done; })));
   render(<App />);
+  openMenu();
   await screen.findByText('notes');
   fireEvent.click(screen.getByRole('button', { name: /notes/ }));
   await waitFor(() => expect(Stream.latest).toBeDefined());
   fireEvent(window, new Event('focus'));
-  Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, waiting: true }) }));
-  await screen.findByText(/⚠ Waiting/);
+  Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, agent: { family: 'claude', entry_skill: 'lead' } }) }));
+  await screen.findByText('claude · lead');
   await act(async () => { resolve(response([session])); });
-  expect(screen.getByText(/⚠ Waiting/)).toBeDefined();
+  expect(screen.getByText('claude · lead')).toBeDefined();
 });
 it.each([401, 403, 500])('reports HTTP %s without claiming a tailnet failure', async status => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status }));

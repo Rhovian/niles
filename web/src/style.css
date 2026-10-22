@@ -12,7 +12,16 @@ button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px sol
 h1, h2, p { margin: 0; }
 h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; overflow-wrap: anywhere; }
 small, .badge { color: var(--muted); font-size: .8rem; }
-.app { display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); height: 100dvh; }
+.app { display: flex; flex-direction: column; height: 100dvh; }
+.app > main, .app > .chat { flex: 1; min-height: 0; }
+.toolbar { justify-content: flex-start; padding: .6rem 1rem; }
+#project-menu { position: fixed; inset: 0 auto 0 0; width: min(22rem, 85vw); background: var(--surface); z-index: 3; }
+.scrim { position: fixed; inset: 0; z-index: 2; background: #0008; border: 0; border-radius: 0; }
+nav .session { width: 100%; }
+nav details { margin: .6rem 1rem; }
+nav summary { cursor: pointer; text-transform: capitalize; }
+nav li { overflow-wrap: anywhere; margin: .4rem 0; }
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem; text-align: center; }
 aside { overflow-y: auto; border-right: 1px solid var(--line); }
 header { padding: 1.2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); }
 nav { display: grid; gap: .5rem; padding: .8rem; }
@@ -38,11 +47,5 @@ label { display: block; font-size: .8rem; margin-bottom: .5rem; color: var(--mut
 textarea { flex: 1; width: 0; resize: vertical; color: inherit; background: #12201e; border: 1px solid var(--line); border-radius: .5rem; padding: .7rem; }
 .composer button { background: var(--accent); color: #12201e; font-weight: 600; }
 .empty { color: var(--muted); padding: 2rem; }
-@media (max-width: 700px) {
-  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  aside { max-height: 30dvh; border-right: 0; border-bottom: 1px solid var(--line); }
-  aside header { padding: .6rem 1rem; }
-  nav { display: flex; overflow-x: auto; }
-  .session { min-width: 15rem; } .bubble { max-width: 100%; }
-}
+@media (max-width: 700px) { .bubble { max-width: 100%; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }

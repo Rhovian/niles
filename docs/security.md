@@ -358,6 +358,12 @@ API enforces the allowlist before transcripts/actions. Serve only built shell as
 not repository/state/key directories. There is no CORS grant. API responses, errors
 included, carry `Cache-Control: no-store`.
 
+`GET /api/projects` shares the explorer's registered-project collection and the
+same authorization and no-store boundary. It exposes project names/states and
+worker IDs/roles/loss, including inactive projects; it excludes filesystem paths,
+window targets, briefs, and telemetry. The PWA stores only the last opened project
+name in origin-local storage. Worker rows expose no execution action.
+
 `niles remote setup` persists this existing host/origin boundary in a launchd/systemd
 user service and two Tailscale Serve handlers. It merges explicit allowed identities,
 keeps existing VAPID keys, and refuses existing background root/API mounts, unknown

@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, connectionError, type Session, sessions, sortedSessions } from './api';
+import { API_VERSION, connectionError, type Session, type Project, projects, sessions } from './api';
+import { Navigation } from './Navigation';
 import { Chat } from './Chat';
 import { Notifications } from './push';
-import { selectedSession, sessionHash } from './notification';
+import { selectedSession } from './notification';
 
 const SESSION_REFRESH_MS = 15_000;
 export function App() {
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [menu, setMenu] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [registered, setRegistered] = useState<Project[]>([]);
+  const [active, setActive] = useState<string | null>(() => localStorage.getItem('niles.activeProject'));
   const [items, setItems] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | undefined>(selectedSession(window.location.hash));
   const [version, setVersion] = useState<number>();
@@ -13,7 +20,14 @@ export function App() {
   const [loaded, setLoaded] = useState(false);
   const statusRevision = useRef(0);
   useEffect(() => {
-    const select = () => setSelected(selectedSession(window.location.hash));
+    if (!menu) return;
+    closeButton.current?.focus();
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenu(false); };
+    window.addEventListener('keydown', escape);
+    return () => { window.removeEventListener('keydown', escape); menuButton.current?.focus(); };
+  }, [menu]);
+  useEffect(() => {
+    const select = () => { setSelected(selectedSession(window.location.hash)); setHelp(false); setMenu(false); };
     window.addEventListener('hashchange', select);
     return () => window.removeEventListener('hashchange', select);
   }, []);
@@ -25,9 +39,10 @@ export function App() {
       inFlight = true;
       const revision = statusRevision.current;
       try {
-        const response = await sessions(controller.signal);
+        const [response, navigation] = await Promise.all([sessions(controller.signal), projects(controller.signal)]);
         if (controller.signal.aborted) return;
-        setVersion(response.api_version);
+        setVersion(response.api_version === API_VERSION ? navigation.api_version : response.api_version);
+        setRegistered(navigation.projects);
         // An SSE status received after this request started is newer than its snapshot.
         if (revision === statusRevision.current) setItems(response.sessions);
         setError(''); setLoaded(true);
@@ -44,22 +59,38 @@ export function App() {
     statusRevision.current += 1;
     setItems(old => old.map(item => item.id === status.id ? status : item));
   }, []);
-  const current = items.find(item => item.id === selected);
+  useEffect(() => {
+    const project = items.find(item => item.id === selected)?.project;
+    if (project) {
+      setActive(project); localStorage.setItem('niles.activeProject', project);
+      setSelected(undefined); window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [items, selected]);
+  const openProject = (name: string) => {
+    setActive(name); localStorage.setItem('niles.activeProject', name);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    setSelected(undefined); setMenu(false); setHelp(false);
+  };
+  const current = selected ? items.find(item => item.id === selected) : items.find(item => item.project === active);
   const compatible = version === API_VERSION;
   return <div class="app">
-    <aside><header><h1>Niles</h1><small>Your sessions</small></header>
+    <header class="toolbar"><button ref={menuButton} aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu}
+      aria-controls="project-menu" onClick={() => setMenu(!menu)}>☰</button><h1>Niles</h1></header>
+    {menu && <aside id="project-menu">
+      <header><h2>Projects</h2><button ref={closeButton} onClick={() => setMenu(false)}>Close sidebar</button></header>
       {compatible && <Notifications />}
-      {error && <p class="banner" role="alert">{error}</p>}
-      {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
-      <nav aria-label="Sessions">{sortedSessions(items).map(item => <button key={item.id}
-        class={`session ${selected === item.id ? 'selected' : ''}`} onClick={() => { window.location.hash = sessionHash(item.id); setSelected(item.id); }} aria-pressed={selected === item.id}>
-        <strong>{item.project}</strong><span class="badge">Agent · {item.agent.family} · {item.agent.entry_skill}</span>
-        <span>{item.waiting ? '⚠ Waiting · ' : ''}{item.worker_count} workers</span>
-      </button>)}</nav>
-      {loaded && compatible && items.length === 0 && <p class="empty">No live sessions.</p>}
-      {!loaded && !error && <p class="empty">Connecting…</p>}
-    </aside>
-    {compatible && current ? <Chat key={current.id} session={current} onStatus={onStatus} /> :
-      <main class="empty">{version !== undefined && !compatible ? 'Install the matching web release to continue.' : selected && !current ? 'This session has ended.' : 'Choose a session to chat with its agent.'}</main>}
+      <Navigation projects={registered} selected={active ?? undefined} openProject={openProject}
+        help={() => { setHelp(true); setMenu(false); }} />
+      {loaded && compatible && registered.length === 0 && <p class="empty">No registered projects.</p>}
+    </aside>}
+    {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
+    {error && <p class="banner" role="alert">{error}</p>}
+    {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
+    {help ? <main class="empty"><h2>Help</h2><p>Open the menu and choose a project to chat with its lead. Workers are grouped by role; Lost means their recorded window is gone.</p>
+      <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
+      compatible && current ? <Chat key={current.id} session={current} onStatus={onStatus} /> :
+      <main class="empty welcome"><img src="/icon-192.png" alt="Niles logo" width="192" height="192" />
+        <p>{version !== undefined && !compatible ? 'Install the matching web release to continue.' :
+          !loaded && !error ? 'Connecting…' : active || selected ? 'This project’s lead is not running. Open projects on the sidebar.' : 'Open projects on the sidebar.'}</p></main>}
   </div>;
 }
