@@ -12,6 +12,7 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
   const [connection, setConnection] = useState<Connection>('catching up');
   const [streamError, setStreamError] = useState('');
   const [sendError, setSendError] = useState('');
+  const [waitingForReply, setWaitingForReply] = useState(false);
   const [draft, setDraft] = useState('');
   const [attempt, setAttempt] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
@@ -35,9 +36,14 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
         setStreamError('Session stream closed. Check access permissions, session availability, and API compatibility, then reconnect.');
       } else setConnection('reconnecting');
     };
-    receive('snapshot', data => { setHistory(snapshotSchema.parse(data)); setConnection('live'); setSendError(''); });
+    receive('snapshot', data => {
+      const snapshot = snapshotSchema.parse(data);
+      setHistory(snapshot); setWaitingForReply(snapshot.turns.at(-1)?.role === 'user');
+      setConnection('live'); setSendError('');
+    });
     receive('turn', data => {
       const turn = turnSchema.parse(data);
+      setWaitingForReply(turn.role === 'user');
       setHistory(old => {
         const turns = upsertTurn(old.turns, turn);
         return { turns: turns.slice(-RECENT_TURN_LIMIT), truncated: old.truncated || turns.length > RECENT_TURN_LIMIT };
@@ -55,17 +61,18 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
     const timer = setTimeout(() => setHistoryNoticeDismissed(true), HISTORY_NOTICE_MS);
     return () => clearTimeout(timer);
   }, [history.truncated]);
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing]);
+  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing, waitingForReply]);
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!draft.trim() || connection !== 'live') return;
     const message: Outgoing = { id: crypto.randomUUID(), text: draft };
-    setDraft(''); setSendError('');
+    setDraft(''); setSendError(''); setWaitingForReply(true);
     setOutgoing(old => [...old, message]);
     try {
       await sendMessage(base, { text: message.text });
       setSendError('');
     } catch (cause) {
+      setWaitingForReply(false);
       // Preserve anything typed while this request was in flight.
       setDraft(current => current ? `${current}\n${message.text}` : message.text);
       setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${String(cause)}`);
@@ -85,6 +92,9 @@ export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id
       {outgoing.map(item => <article class="bubble user" key={item.id}>
         <small>You · Sending…</small><p class="plaintext">{item.text}</p>
       </article>)}
+      {waitingForReply && connection === 'live' && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply">
+        <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
+      </div>}
       <div ref={bottom} />
     </div>
     <form onSubmit={submit}>

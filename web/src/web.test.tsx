@@ -85,6 +85,9 @@ it('drops optimistic send on 200 without requiring transcript IDs', async () => 
   await waitFor(() => expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByText('Send'));
   await screen.findByText('You · Sending…');
+  expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
+  Stream.latest.emit('turn', { id: 'quick', role: 'agent', text: 'Quick reply' });
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
   resolve(new Response(null, { status: 200 }));
   await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
   Stream.latest.emit('snapshot', { turns: [{ id: 'server', role: 'user', text: 'hello' }], truncated: false });
@@ -102,6 +105,7 @@ it('shows an unconfirmed send on non-200 without retrying', async () => {
   expect((screen.getByLabelText('Message agent') as HTMLTextAreaElement).value).toBe('hello');
   expect(screen.getByRole('alert').textContent).toContain('403');
   expect(fetch).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull();
 });
 
 it('rejects status for a different session and closes on unmount', async () => {
@@ -180,4 +184,24 @@ it('sends directly to the selected worker chat', async () => {
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello worker' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() => expect(send).toHaveBeenCalledWith('/api/projects/demo/workers/nav/message', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hello worker' }) })));
+});
+
+it.each(['/api/sessions/solo', '/api/projects/demo/workers/nav'])('animates waiting dots until a reply in %s', async base => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
+  render(<Chat base={base} id="chat" title="chat" subtitle="" />);
+  Stream.latest.emit('snapshot', { turns: [], truncated: false });
+  expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull();
+  fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
+  fireEvent.click(screen.getByText('Send'));
+  const indicator = await screen.findByRole('status', { name: 'Waiting for reply' });
+  expect(indicator.children).toHaveLength(3);
+  await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
+  Stream.latest.emit('turn', { id: 'echo', role: 'user', text: 'hello' });
+  expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
+  Stream.latest.onerror?.();
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
+  Stream.latest.emit('snapshot', { turns: [{ id: 'echo', role: 'user', text: 'hello' }], truncated: false });
+  await screen.findByRole('status', { name: 'Waiting for reply' });
+  Stream.latest.emit('turn', { id: 'answer', role: 'agent', text: 'Reply' });
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
 });
