@@ -14,7 +14,7 @@ self.addEventListener('push', event => {
     let input: unknown;
     try { input = event.data?.json(); } catch { input = undefined; }
     const parsed = pushPayload.safeParse(input);
-    const title = parsed.success ? `Niles · ${parsed.data.session_id}` : 'Niles';
+    const title = parsed.success ? `Niles · ${parsed.data.project}` : 'Niles';
     const options = parsed.success ? {
       body: `${parsed.data.project}: ${parsed.data.reason}`,
       // Browser-owned replacement survives worker and server restarts.

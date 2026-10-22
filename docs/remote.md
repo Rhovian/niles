@@ -227,7 +227,7 @@ changes can leave lost workers after stop; close those from the menu.
   no redirects. Payload is session ID/project/generic reason, never transcript.
   Five-minute TTL; 404/410 prunes a device. Other provider/store/catalog errors stop
   the server: inspect its diagnostics, fix the cause and restart. No automatic retry.
-  The PWA shows the session ID in the title and project/reason in the body. Repeated
+  The PWA shows the project name in the title and project/reason in the body. Repeated
   pushes replace the session's active notification without alerting again; different
   sessions remain separate. After dismissal, the next push can alert again.
   Startup can notify already-waiting sessions again, replacing any active notification

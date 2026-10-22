@@ -22,16 +22,18 @@ it('always displays a visible notification and opens only an encoded same-origin
       await work;
     };
     await deliver('s');
-    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ body: 'p: waiting', data: { session_id: 's' }, tag: 'session:s', renotify: false }));
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ body: 'p: waiting', data: { session_id: 's' }, tag: 'session:s', renotify: false }));
     await deliver('s', 'waiting again');
-    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ body: 'p: waiting again', tag: 'session:s', renotify: false }));
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ body: 'p: waiting again', tag: 'session:s', renotify: false }));
     await deliver('other');
-    expect(showNotification).toHaveBeenLastCalledWith('Niles · other', expect.objectContaining({ tag: 'session:other', data: { session_id: 'other' } }));
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:other', data: { session_id: 'other' } }));
+    await deliver('p:20261022T173949644004000Z');
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:p:20261022T173949644004000Z', data: { session_id: 'p:20261022T173949644004000Z' } }));
     // Worker restarts must not reset the notification identity.
     vi.resetModules();
     await import('./sw');
     await deliver('s');
-    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ tag: 'session:s', renotify: false }));
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:s', renotify: false }));
     listeners.get('push')!({ data: { json: () => { throw new SyntaxError(); } }, waitUntil });
     await work;
     expect(showNotification).toHaveBeenLastCalledWith('Niles', expect.objectContaining({ body: 'A session needs your attention.' }));
