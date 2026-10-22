@@ -39,7 +39,7 @@ textarea { flex: 1; width: 0; resize: vertical; color: inherit; background: #122
 .composer button { background: var(--accent); color: #12201e; font-weight: 600; }
 .empty { color: var(--muted); padding: 2rem; }
 @media (max-width: 700px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   aside { max-height: 30dvh; border-right: 0; border-bottom: 1px solid var(--line); }
   aside header { padding: .6rem 1rem; }
   nav { display: flex; overflow-x: auto; }
