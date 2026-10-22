@@ -64,13 +64,16 @@ the client percent-encodes session IDs in URL path segments.
   restart protocol. Unchanged Markdown bubbles are memoized by text.
 - `POST /api/sessions/:id/message`, JSON `{text: string}` → **200** when accepted
   (body ignored; mock returns `{}`). Text must be nonempty. Optimistic bubbles
-  exist only while POST is in flight and are removed on 200; transcript turns are
-  authoritative. No `client_id`, transcript echo/matching, durable idempotency map,
-  or automatic retry. A failed/unconfirmed POST restores the draft, preserving new
+  remain visible as “Sent” after 200 until a new user transcript turn with matching
+  text replaces one local bubble, in send order. Previously received turn IDs are
+  remembered within the recent-turn window so reconnect snapshots do not consume
+  another identical send. An echo before 200 also replaces its local bubble.
+  There is no client ID/cross-device correlation, durable idempotency map, or
+  automatic retry. A failed/unconfirmed POST restores the draft, preserving new
   text typed during the request. Check the transcript before resending: a network
-  failure can occur after server acceptance. There is no 409 draft guard or shared
-  watcher lock. A transcript echo arriving before 200 can transiently coexist with
-  the pending bubble; no accepted duplicate persists.
+  failure can occur after server acceptance. Local sent bubbles are memory-only;
+  unmatched bubbles remain until leaving the chat. There is no 409 draft guard or
+  shared watcher lock.
 - `GET /api/push/vapid` → `200 {public_key: string}`, base64url uncompressed
   application server key. `POST /api/push/subscribe` accepts browser subscription
   JSON (`endpoint`, `keys.p256dh`, `keys.auth`; expirationTime may be present),

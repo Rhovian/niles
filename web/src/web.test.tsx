@@ -76,22 +76,22 @@ it('shows catching up until snapshot, reconnects, and fails closed on bad events
   expect(screen.queryByText(/Check that you’re connected/)).toBeNull();
   expect(Stream.latest.close).toHaveBeenCalled();
 });
-it('drops optimistic send on 200 without requiring transcript IDs', async () => {
+it.each(['turn', 'snapshot'] as const)('keeps sent text until its %s echo without matching older identical messages', async event => {
   let resolve!: (response: Response) => void;
   vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(() => new Promise(done => { resolve = done; })));
-  render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
-  Stream.latest.emit('snapshot', { turns: [], truncated: false });
+  render(<Chat base="/api/sessions/solo" id="solo" title="notes" subtitle="" />);
+  const earlier = { id: 'earlier', role: 'user', text: 'hello' };
+  Stream.latest.emit('snapshot', { turns: [earlier], truncated: false });
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
-  await waitFor(() => expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByText('Send'));
   await screen.findByText('You · Sending…');
-  expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
-  Stream.latest.emit('turn', { id: 'quick', role: 'agent', text: 'Quick reply' });
-  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
   resolve(new Response(null, { status: 200 }));
-  await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
-  Stream.latest.emit('snapshot', { turns: [{ id: 'server', role: 'user', text: 'hello' }], truncated: false });
-  expect(await screen.findAllByText('hello')).toHaveLength(1);
+  await screen.findByText('You · Sent');
+  expect(screen.getAllByText('hello')).toHaveLength(2);
+  const echo = { id: 'echo', role: 'user', text: 'hello' };
+  Stream.latest.emit(event, event === 'turn' ? echo : { turns: [earlier, echo], truncated: false });
+  await waitFor(() => expect(screen.queryByText('You · Sent')).toBeNull());
+  expect(screen.getAllByText('hello')).toHaveLength(2);
 });
 it('shows an unconfirmed send on non-200 without retrying', async () => {
   const fetch = vi.fn().mockResolvedValue({ status: 403 });
@@ -227,4 +227,28 @@ it('keeps lead dots through agent prose until the server reports waiting again',
   expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
   Stream.latest.emit('status', { ...session, waiting: true });
   await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
+});
+
+it('hands off identical pending sends one echo at a time, even before POST completion', async () => {
+  const complete: ((response: Response) => void)[] = [];
+  vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(() => new Promise(done => { complete.push(done); })));
+  render(<Chat base="/api/sessions/solo" id="solo" title="notes" subtitle="" />);
+  Stream.latest.emit('snapshot', { turns: [], truncated: false });
+  for (let n = 0; n < 2; n++) {
+    fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'same' } });
+    fireEvent.click(screen.getByText('Send'));
+  }
+  await waitFor(() => expect(screen.getAllByText('same')).toHaveLength(2));
+  Stream.latest.emit('turn', { id: 'quick', role: 'agent', text: 'Quick reply' });
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull());
+  const echo = { id: 'first', role: 'user', text: 'same' };
+  Stream.latest.emit('turn', echo);
+  await waitFor(() => expect(screen.getAllByText('You · Sending…')).toHaveLength(1));
+  expect(screen.getAllByText('same')).toHaveLength(2);
+  Stream.latest.emit('snapshot', { turns: [echo], truncated: false });
+  expect(screen.getAllByText('same')).toHaveLength(2);
+  Stream.latest.emit('turn', { ...echo, id: 'second' });
+  await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
+  await act(async () => { complete.forEach(done => done(new Response(null, { status: 200 }))); });
+  expect(screen.getAllByText('same')).toHaveLength(2);
 });

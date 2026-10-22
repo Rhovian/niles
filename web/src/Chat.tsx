@@ -4,7 +4,7 @@ import { Markdown } from './Markdown';
 
 const HISTORY_NOTICE_MS = 5_000;
 
-type Outgoing = Message & { id: string };
+type Outgoing = Message & { id: string; sent: boolean };
 export function Chat({ base, id, title, subtitle, working, onStatus }: { base: string; id: string; title: string; subtitle: string; working?: boolean; onStatus?: (session: Session) => void }) {
   const [history, setHistory] = useState<{ turns: Turn[]; truncated: boolean }>({ turns: [], truncated: false });
   const [historyNoticeDismissed, setHistoryNoticeDismissed] = useState(false);
@@ -15,10 +15,21 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
   const [waitingForReply, setWaitingForReply] = useState(false);
   const [draft, setDraft] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const received = useRef(new Set<string>());
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setConnection('catching up'); setStreamError('');
     const stream = new EventSource(`${base}/events`);
+    // Preact stores UI state; correlating POSTs with SSE echoes belongs to the app.
+    // https://github.com/preactjs/preact/blob/11.0.1/hooks/src/index.js
+    const acceptEchoes = (turns: Turn[]) => {
+      const echoes = turns.filter(turn => turn.role === 'user' && !received.current.has(turn.id));
+      received.current = new Set([...received.current, ...turns.map(turn => turn.id)].slice(-RECENT_TURN_LIMIT));
+      setOutgoing(old => echoes.reduce((pending, turn) => {
+        const index = pending.findIndex(item => item.text === turn.text);
+        return index < 0 ? pending : pending.filter((_, i) => i !== index);
+      }, old));
+    };
     const receive = (name: string, accept: (data: unknown) => void) => {
       stream.addEventListener(name, event => {
         try { accept(JSON.parse((event as MessageEvent<string>).data)); }
@@ -38,11 +49,13 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
     };
     receive('snapshot', data => {
       const snapshot = snapshotSchema.parse(data);
+      acceptEchoes(snapshot.turns);
       setHistory(snapshot); setWaitingForReply(snapshot.turns.at(-1)?.role === 'user');
       setConnection('live'); setSendError('');
     });
     receive('turn', data => {
       const turn = turnSchema.parse(data);
+      acceptEchoes([turn]);
       setWaitingForReply(turn.role === 'user');
       setHistory(old => {
         const turns = upsertTurn(old.turns, turn);
@@ -65,18 +78,20 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!draft.trim() || connection !== 'live') return;
-    const message: Outgoing = { id: crypto.randomUUID(), text: draft };
+    const message: Outgoing = { id: crypto.randomUUID(), text: draft, sent: false };
     setDraft(''); setSendError(''); setWaitingForReply(true);
     setOutgoing(old => [...old, message]);
     try {
       await sendMessage(base, { text: message.text });
+      setOutgoing(old => old.map(item => item.id === message.id ? { ...item, sent: true } : item));
       setSendError('');
     } catch (cause) {
+      setOutgoing(old => old.filter(item => item.id !== message.id));
       setWaitingForReply(false);
       // Preserve anything typed while this request was in flight.
       setDraft(current => current ? `${current}\n${message.text}` : message.text);
       setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${String(cause)}`);
-    } finally { setOutgoing(old => old.filter(item => item.id !== message.id)); }
+    }
   }
   return <section class="chat" aria-label={`Chat with ${title}`}>
     <header><div><h2>{title}</h2><small>{subtitle}</small></div>
@@ -90,7 +105,7 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
         <small>{turn.role === 'agent' ? 'Agent' : 'You'}</small><Markdown text={turn.text} />
       </article>)}
       {outgoing.map(item => <article class="bubble user" key={item.id}>
-        <small>You · Sending…</small><p class="plaintext">{item.text}</p>
+        <small>{item.sent ? 'You · Sent' : 'You · Sending…'}</small><p class="plaintext">{item.text}</p>
       </article>)}
       {(working ?? waitingForReply) && connection === 'live' && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply">
         <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
