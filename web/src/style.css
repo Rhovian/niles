@@ -27,6 +27,7 @@ aside { overflow-y: auto; border-right: 1px solid var(--line); }
 header { padding: 1.2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); }
 nav { display: grid; gap: .5rem; padding: .8rem; }
 .session { display: flex; align-items: center; gap: .5rem; text-align: left; overflow-wrap: anywhere; }
+.project-live { margin-left: auto; color: var(--accent); }
 .session.selected { border-color: var(--accent); }
 .badge { display: block; }
 .chat { min-height: 0; display: flex; flex-direction: column; }

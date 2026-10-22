@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
+import { Navigation } from './Navigation';
 import { projects, type Project } from './api';
 
 const registered: Project[] = [
@@ -156,4 +157,16 @@ it('preserves start conflict text and treats already gone as success', async () 
   await expect(startProject('demo')).rejects.toThrow('<b>No saved manifest</b>');
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 404 }));
   await expect(stopProject('demo')).resolves.toBeUndefined();
+});
+
+it.each(['running', 'starting', 'waiting', 'not running', 'missing'] as const)('marks %s projects as live only when appropriate', state => {
+  const { rerender } = render(<Navigation projects={[{ name: 'sample', state, workers: [] }]}
+    openProject={vi.fn()} openWorker={vi.fn()} refresh={vi.fn()} help={vi.fn()} />);
+  const button = screen.getByRole('button', { name: 'sample', expanded: false });
+  const live = ['running', 'starting', 'waiting'].includes(state);
+  expect(button.textContent?.includes('Live')).toBe(live);
+  expect(screen.queryByRole('button', { name: 'sample', description: 'Live' }) !== null).toBe(live);
+  rerender(<Navigation projects={[{ name: 'sample', state: live ? 'not running' : 'running', workers: [] }]}
+    openProject={vi.fn()} openWorker={vi.fn()} refresh={vi.fn()} help={vi.fn()} />);
+  expect(button.textContent?.includes('Live')).toBe(!live);
 });

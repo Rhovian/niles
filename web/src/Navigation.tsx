@@ -1,6 +1,7 @@
 import { type Project, startProject, stopProject, closeWorker } from './api';
 import { useState } from 'preact/hooks';
 
+const liveStates = new Set<Project['state']>(['running', 'starting', 'waiting']);
 const roles = ['worker', 'reviewer', 'security', 'research', 'design'] as const;
 export function Navigation({ projects, selected, openProject, openWorker, refresh, help }: {
   projects: Project[]; selected?: string; openProject: (name: string) => void; openWorker: (project: string, id: string) => void; refresh: () => void; help: () => void;
@@ -17,10 +18,13 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
   return <nav aria-label="Projects">
     {error && <p class="banner" role="alert">{error}</p>}
     {projects.map(project => <section key={project.name}>
-      <button class={`session ${selected === project.name ? 'selected' : ''}`}
+      <button aria-label={project.name}
+        aria-describedby={liveStates.has(project.state) ? `live-${encodeURIComponent(project.name)}` : undefined}
+        class={`session ${selected === project.name ? 'selected' : ''}`}
         aria-expanded={expanded === project.name} aria-controls={`project-${encodeURIComponent(project.name)}`}
         onClick={() => setExpanded(expanded === project.name ? undefined : project.name)}>
         <span aria-hidden="true">{expanded === project.name ? '▾' : '▸'}</span><strong>{project.name}</strong>
+        {liveStates.has(project.state) && <span class="badge project-live" id={`live-${encodeURIComponent(project.name)}`}>Live</span>}
       </button>
       {expanded === project.name && <div class="project-details" id={`project-${encodeURIComponent(project.name)}`}>
         <p class="badge">{project.state}</p>
