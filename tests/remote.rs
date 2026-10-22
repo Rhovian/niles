@@ -44,6 +44,7 @@ fn server_binds_loopback_and_reads_registered_live_sessions() {
     let env = TestEnv::with_tmux(
         "remote-live",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   capture-pane) cat "$TMUX_LOG.pane" 2>/dev/null; exit 0 ;;

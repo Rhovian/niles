@@ -59,6 +59,7 @@ fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     let env = TestEnv::with_tmux(
         "niles-worker-failed-spawn",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'niles-test-session\n'; exit 0 ;;
@@ -123,6 +124,7 @@ fn spawn_meta_write_failure_kills_window_and_cleans_location() {
     let env = TestEnv::with_tmux(
         "niles-worker-meta-write-failed-spawn",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'niles-test-session\n'; exit 0 ;;

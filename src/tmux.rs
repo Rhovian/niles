@@ -59,6 +59,9 @@ fn query(args: &[&str]) -> Result<String> {
 
 fn output(args: &[&str]) -> Result<Output> {
     Command::new("tmux")
+        // Without -u, tmux sanitizes even tab delimiters when the client has no UTF-8 locale.
+        // https://github.com/tmux/tmux/blob/3.8/tmux.1 (-u)
+        .arg("-u")
         .args(args)
         .stdin(Stdio::null())
         .output()
