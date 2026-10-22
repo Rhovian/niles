@@ -92,7 +92,10 @@ pub enum CommandName {
     },
     /// Start the lead in a project session.
     #[command(hide = true)]
-    Lead,
+    Lead {
+        #[arg(long)]
+        keep_roles: bool,
+    },
     /// Run the project explorer in the home session.
     #[command(hide = true)]
     Explorer,

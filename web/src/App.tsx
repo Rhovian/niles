@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, connectionError, type Session, type Project, projects, sessions } from './api';
+import { API_VERSION, leadBase, workerBase, connectionError, type Session, type Project, projects, sessions } from './api';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
 import { Notifications } from './push';
@@ -18,6 +18,8 @@ export function App() {
   const [version, setVersion] = useState<number>();
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [worker, setWorker] = useState<{ project: string; id: string }>();
+  const refreshMenu = useRef<() => void>(() => {});
   const statusRevision = useRef(0);
   useEffect(() => {
     if (!menu) return;
@@ -27,7 +29,7 @@ export function App() {
     return () => { window.removeEventListener('keydown', escape); menuButton.current?.focus(); };
   }, [menu]);
   useEffect(() => {
-    const select = () => { setSelected(selectedSession(window.location.hash)); setHelp(false); setMenu(false); };
+    const select = () => { setWorker(undefined); setSelected(selectedSession(window.location.hash)); setHelp(false); setMenu(false); };
     window.addEventListener('hashchange', select);
     return () => window.removeEventListener('hashchange', select);
   }, []);
@@ -50,6 +52,7 @@ export function App() {
         if (!controller.signal.aborted) setError(connectionError(cause));
       } finally { inFlight = false; }
     };
+    refreshMenu.current = () => { void refresh(); };
     void refresh();
     const timer = setInterval(() => { void refresh(); }, SESSION_REFRESH_MS);
     window.addEventListener('focus', refresh);
@@ -67,6 +70,7 @@ export function App() {
     }
   }, [items, selected]);
   const openProject = (name: string) => {
+    setWorker(undefined);
     setActive(name); localStorage.setItem('niles.activeProject', name);
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
     setSelected(undefined); setMenu(false); setHelp(false);
@@ -79,16 +83,17 @@ export function App() {
     {menu && <aside id="project-menu">
       <header><h2>Projects</h2><button ref={closeButton} onClick={() => setMenu(false)}>Close sidebar</button></header>
       {compatible && <Notifications />}
-      <Navigation projects={registered} selected={active ?? undefined} openProject={openProject}
+      <Navigation projects={registered} selected={active ?? undefined} refresh={() => refreshMenu.current()} openProject={openProject} openWorker={(project, id) => { openProject(project); setWorker({ project, id }); }}
         help={() => { setHelp(true); setMenu(false); }} />
       {loaded && compatible && registered.length === 0 && <p class="empty">No registered projects.</p>}
     </aside>}
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
     {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
-    {help ? <main class="empty"><h2>Help</h2><p>Open the menu and choose a project to chat with its lead. Workers are grouped by role; Lost means their recorded window is gone.</p>
+    {help ? <main class="empty"><h2>Help</h2><p>Open the menu and choose a project to chat with its lead, or a worker to chat directly. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
-      compatible && current ? <Chat key={current.id} session={current} onStatus={onStatus} /> :
+      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} subtitle={worker.project} /> :
+      compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} subtitle={`${current.agent.family} · ${current.agent.entry_skill}`} onStatus={onStatus} /> :
       <main class="empty welcome"><img src="/icon-192.png" alt="Niles logo" width="192" height="192" />
         <p>{version !== undefined && !compatible ? 'Install the matching web release to continue.' :
           !loaded && !error ? 'Connecting…' : active || selected ? 'This project’s lead is not running. Open projects on the sidebar.' : 'Open projects on the sidebar.'}</p></main>}

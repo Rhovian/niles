@@ -1,14 +1,11 @@
 use std::collections::VecDeque;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::response::sse::Event;
 use serde::Serialize;
 
-use super::{Session, Source, resolve};
-use crate::{
-    projects::status::ForegroundSession,
-    telemetry::transcript::{TextBlock, TextRole, TextTurn, TranscriptReader},
-};
+use super::chat::{Chat, Lookup};
+use crate::telemetry::transcript::{TextBlock, TextRole, TextTurn, TranscriptReader};
 
 const RECENT_TURNS: usize = 200;
 
@@ -26,8 +23,7 @@ pub(super) struct Snapshot {
 }
 
 pub(super) struct Feed {
-    record: ForegroundSession,
-    view: Session,
+    chat: Chat,
     reader: Option<TranscriptReader>,
     next: u64,
     status_sent: bool,
@@ -36,10 +32,9 @@ pub(super) struct Feed {
 impl Feed {
     // axum's event stream has no transcript retention or reconnect snapshot policy.
     // https://docs.rs/axum/0.8.9/axum/response/struct.Sse.html
-    pub(super) fn open(record: ForegroundSession) -> Result<(Self, Snapshot)> {
+    pub(super) fn open(chat: Chat) -> Result<(Self, Snapshot)> {
         let mut feed = Self {
-            view: Session::from_record(&record),
-            record,
+            chat,
             reader: None,
             next: 0,
             status_sent: false,
@@ -59,19 +54,8 @@ impl Feed {
     }
 
     fn read(&mut self) -> Result<Vec<Turn>> {
-        if self.reader.is_none()
-            && let Some(link) = &self.record.meta.session_link
-        {
-            self.reader = TranscriptReader::open(
-                link,
-                &self.record.meta.workspace,
-                self.record
-                    .meta
-                    .brief
-                    .parent()
-                    .context("session brief has no parent")?,
-                self.record.meta.created_at,
-            )?;
+        if self.reader.is_none() {
+            self.reader = self.chat.transcript.open()?;
         }
         let turns = match &mut self.reader {
             Some(reader) => reader.read()?,
@@ -80,7 +64,7 @@ impl Feed {
         Ok(turns
             .into_iter()
             .map(|turn| {
-                let id = format!("{}:{}", self.view.id, self.next);
+                let id = format!("{}:{}", self.chat.id, self.next);
                 self.next += 1;
                 let role = match turn.role {
                     TextRole::User => "user",
@@ -95,17 +79,18 @@ impl Feed {
             .collect())
     }
 
-    pub(super) fn poll(&mut self, source: &Source) -> Result<Option<Vec<Event>>> {
-        let Some(record) = resolve(source, &self.view.id)? else {
+    pub(super) fn poll(&mut self, lookup: &Lookup) -> Result<Option<Vec<Event>>> {
+        let Some(chat) = lookup()? else {
             return Ok(None);
         };
-        let view = Session::from_record(&record);
         let mut events = Vec::new();
-        if !self.status_sent || view != self.view {
-            events.push(Event::default().event("status").json_data(&view)?);
+        if let Some(status) = &chat.status
+            && (!self.status_sent || chat.status != self.chat.status)
+        {
+            events.push(Event::default().event("status").json_data(status)?);
             self.status_sent = true;
-            self.view = view;
         }
+        self.chat = chat;
         for turn in self.read()? {
             events.push(Event::default().event("turn").json_data(turn)?);
         }

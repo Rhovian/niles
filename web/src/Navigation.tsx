@@ -1,20 +1,36 @@
-import type { Project } from './api';
+import { type Project, startProject, stopProject, closeWorker } from './api';
+import { useState } from 'preact/hooks';
 
 const roles = ['worker', 'reviewer', 'security', 'research', 'design'] as const;
-export function Navigation({ projects, selected, openProject, help }: {
-  projects: Project[]; selected?: string; openProject: (name: string) => void; help: () => void;
+export function Navigation({ projects, selected, openProject, openWorker, refresh, help }: {
+  projects: Project[]; selected?: string; openProject: (name: string) => void; openWorker: (project: string, id: string) => void; refresh: () => void; help: () => void;
 }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  async function act(action: () => Promise<void>) {
+    setPending(true); setError('');
+    try { await action(); refresh(); }
+    catch (cause) { setError(String(cause)); }
+    finally { setPending(false); }
+  }
   return <nav aria-label="Projects">
+    {error && <p class="banner" role="alert">{error}</p>}
     {projects.map(project => <section key={project.name}>
       <button class={`session ${selected === project.name ? 'selected' : ''}`}
         aria-pressed={selected === project.name} onClick={() => openProject(project.name)}>
         <strong>{project.name}</strong><span class="badge">{project.state}</span>
       </button>
+      {project.state !== 'missing' && <button disabled={pending} onClick={() => {
+        if (project.state === 'not running') void act(() => startProject(project.name));
+        else if (window.confirm(`Stop ${project.name}?`)) void act(() => stopProject(project.name));
+      }}>{project.state === 'not running' ? 'Start' : 'Stop'} {project.name}</button>}
       {roles.map(role => {
         const workers = project.workers.filter(worker => worker.role === role);
         return workers.length > 0 && <details key={role} open>
           <summary>{role}</summary><ul>{workers.map(worker =>
-            <li key={worker.id}>{worker.id}{worker.lost && <span class="badge">Lost</span>}</li>)}</ul>
+            <li key={worker.id}><button onClick={() => openWorker(project.name, worker.id)}>{worker.id}</button>{worker.lost && <span class="badge">Lost</span>}<button disabled={pending} onClick={() => {
+              if (window.confirm(`Close ${worker.id}?`)) void act(() => closeWorker(project.name, worker.id));
+            }}>Close {worker.id}</button></li>)}</ul>
         </details>;
       })}
     </section>)}

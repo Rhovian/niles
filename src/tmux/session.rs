@@ -113,8 +113,19 @@ pub(super) fn set_options(session: &SessionName, options: &[(&str, &str)]) -> Re
     run(&args)
 }
 
-pub(crate) fn open_session(session: &SessionName, path: &Utf8Path) -> Result<()> {
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum LeadStart {
+    Attended,
+    Unattended,
+}
+
+pub(crate) fn open_session(session: &SessionName, path: &Utf8Path, start: LeadStart) -> Result<()> {
     let executable = executable()?;
+    let command = match start {
+        LeadStart::Attended => vec![executable.as_str(), "lead"],
+        LeadStart::Unattended => vec![executable.as_str(), "lead", "--keep-roles"],
+    };
+    let launch = |before: &[&str], after: &[&str]| run(&[before, &command, after].concat());
     let name = session.as_str();
     let window = format!("{}:=niles", target::exact(name));
     match project_session(session)? {
@@ -124,28 +135,51 @@ pub(crate) fn open_session(session: &SessionName, path: &Utf8Path) -> Result<()>
         Some(_) => match super::window_presence_in(session, "niles")? {
             WindowPresence::Live => return Ok(()),
             WindowPresence::PaneExited => {
-                return run(&[
-                    "respawn-window",
-                    "-k",
+                return launch(
+                    &["respawn-window", "-k", "-t", &window, "-c", path.as_str()],
+                    &[],
+                );
+            }
+            WindowPresence::Absent => launch(
+                &[
+                    "new-window",
+                    "-d",
                     "-t",
-                    &window,
+                    &format!("{}:", target::exact(name)),
+                    "-n",
+                    "niles",
                     "-c",
                     path.as_str(),
-                    &executable,
-                    "lead",
-                ]);
-            }
-            WindowPresence::Absent => run(&[
-                "new-window",
+                ],
+                &[
+                    ";",
+                    "set-option",
+                    "-w",
+                    "-t",
+                    &window,
+                    "remain-on-exit",
+                    "failed",
+                ],
+            )?,
+        },
+        None => launch(
+            &[
+                "new-session",
                 "-d",
-                "-t",
-                &format!("{}:", target::exact(name)),
-                "-n",
-                "niles",
+                "-s",
+                name,
                 "-c",
                 path.as_str(),
-                &executable,
-                "lead",
+                "-n",
+                "niles",
+            ],
+            &[
+                ";",
+                "set-option",
+                "-t",
+                &format!("{}:", target::exact(name)),
+                "@niles-project",
+                path.as_str(),
                 ";",
                 "set-option",
                 "-w",
@@ -153,33 +187,8 @@ pub(crate) fn open_session(session: &SessionName, path: &Utf8Path) -> Result<()>
                 &window,
                 "remain-on-exit",
                 "failed",
-            ])?,
-        },
-        None => run(&[
-            "new-session",
-            "-d",
-            "-s",
-            name,
-            "-c",
-            path.as_str(),
-            "-n",
-            "niles",
-            &executable,
-            "lead",
-            ";",
-            "set-option",
-            "-t",
-            &format!("{}:", target::exact(name)),
-            "@niles-project",
-            path.as_str(),
-            ";",
-            "set-option",
-            "-w",
-            "-t",
-            &window,
-            "remain-on-exit",
-            "failed",
-        ])?,
+            ],
+        )?,
     }
     Ok(())
 }

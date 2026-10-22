@@ -52,7 +52,11 @@ fn run() -> Result<ExitCode> {
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Lead) => session::run()?,
+        Some(CommandName::Lead { keep_roles }) => session::run(if keep_roles {
+            tmux::LeadStart::Unattended
+        } else {
+            tmux::LeadStart::Attended
+        })?,
         Some(CommandName::Status { line }) => {
             return Ok(match projects::status::run(line) {
                 Ok(text) => {

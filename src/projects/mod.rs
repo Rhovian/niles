@@ -1,4 +1,5 @@
 pub mod explorer;
+pub(crate) mod lifecycle;
 #[cfg(feature = "remote")]
 pub(crate) mod navigation;
 pub(crate) mod panels;

@@ -30,6 +30,7 @@ export function mockApi(): Plugin {
       if (path === '/api/sessions' && request.method === 'GET') return json(200, { api_version: API_VERSION, sessions });
       // #318 owns VAPID/subscription behavior; mock refuses rather than pretending to subscribe.
       if (path.startsWith('/api/push/')) return json(501, { error: 'Push is not implemented in this mock (#318)' });
+      if (/^\/api\/projects\/[^/]+\/(session|workers\/)/.test(path)) return json(501, { error: 'Project control and worker chat are not implemented in this mock' });
       const match = /^\/api\/sessions\/([^/]+)\/(events|message)$/.exec(path);
       const session = sessions.find(item => item.id === match?.[1]);
       if (!match || !session) return json(404, { error: 'Unknown endpoint or session' });

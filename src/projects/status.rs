@@ -103,11 +103,8 @@ fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
     parts.join("  ")
 }
 
-fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
-    Ok(registry::entries()?
-        .into_iter()
-        .find(|entry| entry.name.as_str() == name)
-        .map(|entry| entry.path))
+pub(crate) fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
+    Ok(registry::find(name)?.map(|entry| entry.path))
 }
 
 fn project_line(theme: &Theme) -> Result<String> {

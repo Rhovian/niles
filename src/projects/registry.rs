@@ -84,3 +84,9 @@ mod tests {
         }
     }
 }
+
+pub(super) fn find(name: &str) -> Result<Option<Entry>> {
+    Ok(entries()?
+        .into_iter()
+        .find(|entry| entry.name.as_str() == name))
+}

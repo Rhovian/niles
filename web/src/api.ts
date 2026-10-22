@@ -32,7 +32,7 @@ export type Message = { text: string };
 export type Connection = 'live' | 'reconnecting' | 'catching up' | 'disconnected';
 
 export class ApiError extends Error {
-  constructor(readonly status: number) { super(`API request failed (${status})`); }
+  constructor(readonly status: number, readonly detail?: string) { super(detail ?? `API request failed (${status})`); }
 }
 export async function sessions(signal?: AbortSignal) {
   const response = await fetch('/api/sessions', { cache: 'no-store', signal });
@@ -42,8 +42,8 @@ export async function sessions(signal?: AbortSignal) {
   if (api_version !== API_VERSION) return { api_version, sessions: [] };
   return sessionsSchema.parse(data);
 }
-export async function sendMessage(id: string, message: Message) {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/message`, {
+export async function sendMessage(base: string, message: Message) {
+  const response = await fetch(`${base}/message`, {
     method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(message),
   });
@@ -57,3 +57,15 @@ export function connectionError(cause: unknown): string {
   if (cause instanceof ApiError) return cause.message;
   return cause instanceof TypeError ? `Cannot reach Niles. Check your tailnet connection. ${String(cause)}` : `Invalid API response: ${String(cause)}`;
 }
+
+export const leadBase = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
+export const workerBase = (project: string, id: string) => `/api/projects/${encodeURIComponent(project)}/workers/${encodeURIComponent(id)}`;
+
+async function request(method: 'PUT' | 'DELETE', url: string) {
+  const response = await fetch(url, { method, cache: 'no-store' });
+  if (response.status === 200 || response.status === 404) return;
+  throw new ApiError(response.status, response.status === 409 ? await response.text() : undefined);
+}
+export const startProject = (name: string) => request('PUT', `/api/projects/${encodeURIComponent(name)}/session`);
+export const stopProject = (name: string) => request('DELETE', `/api/projects/${encodeURIComponent(name)}/session`);
+export const closeWorker = (project: string, id: string) => request('DELETE', workerBase(project, id));

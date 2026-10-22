@@ -10,7 +10,7 @@ use axum::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
     },
-    routing::{get, post},
+    routing::{delete, get, post, put},
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -21,6 +21,8 @@ use crate::{
     projects::status::{self, ForegroundSession},
 };
 
+mod chat;
+mod control;
 mod feed;
 mod message;
 pub(crate) mod push;
@@ -134,11 +136,27 @@ fn router(state: AppState) -> Router {
             post(push::subscribe).layer(DefaultBodyLimit::max(SUBSCRIPTION_BODY_BYTES)),
         )
         .route("/api/projects", get(projects))
+        .route(
+            "/api/projects/{project}/session",
+            put(control::start).delete(control::stop),
+        )
+        .route(
+            "/api/projects/{project}/workers/{id}",
+            delete(control::close),
+        )
+        .route(
+            "/api/projects/{project}/workers/{id}/events",
+            get(worker_events),
+        )
+        .route(
+            "/api/projects/{project}/workers/{id}/message",
+            post(worker_message).layer(DefaultBodyLimit::max(message::MAX_BODY_BYTES)),
+        )
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}/events", get(events))
         .route(
             "/api/sessions/{id}/message",
-            post(message::send).layer(DefaultBodyLimit::max(message::MAX_BODY_BYTES)),
+            post(lead_message).layer(DefaultBodyLimit::max(message::MAX_BODY_BYTES)),
         )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, authorize))
@@ -211,9 +229,28 @@ async fn events(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let source = state.source.clone();
-    let initial =
-        blocking(move || resolve(&source, &id)?.map(feed::Feed::open).transpose()).await?;
+    stream(chat::lead(state.source, id)).await
+}
+
+async fn worker_events(Path((project, id)): Path<(String, String)>) -> Result<Response, ApiError> {
+    stream(chat::worker(project, id)).await
+}
+async fn lead_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    message: Json<message::Message>,
+) -> Result<StatusCode, ApiError> {
+    message::send(chat::lead(state.source, id), message).await
+}
+async fn worker_message(
+    Path((project, id)): Path<(String, String)>,
+    message: Json<message::Message>,
+) -> Result<StatusCode, ApiError> {
+    message::send(chat::worker(project, id), message).await
+}
+async fn stream(lookup: chat::Lookup) -> Result<Response, ApiError> {
+    let initial_lookup = lookup.clone();
+    let initial = blocking(move || initial_lookup()?.map(feed::Feed::open).transpose()).await?;
     let Some((feed, snapshot)) = initial else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
@@ -226,7 +263,7 @@ async fn events(
         .await
         .map_err(anyhow::Error::from)?;
     tokio::spawn(async move {
-        if let Err(error) = pump(state.source, feed, sender).await {
+        if let Err(error) = pump(lookup, feed, sender).await {
             eprintln!("remote stream: {error:#}");
         }
     });
@@ -239,7 +276,7 @@ async fn events(
 // https://docs.rs/axum/0.8.9/axum/response/sse/index.html
 // https://docs.rs/tokio/1.54.0/tokio/sync/mpsc/struct.Sender.html#method.closed
 async fn pump(
-    source: Source,
+    source: chat::Lookup,
     mut feed: feed::Feed,
     sender: mpsc::Sender<Result<Event, Infallible>>,
 ) -> Result<()> {

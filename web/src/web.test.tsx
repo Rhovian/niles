@@ -62,7 +62,7 @@ it('shows a tailnet banner on list network failure', async () => {
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('tailnet'));
 });
 it('shows catching up until snapshot, reconnects, and fails closed on bad events', async () => {
-  render(<Chat session={session} onStatus={vi.fn()} />);
+  render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
   expect(screen.getByRole('status').textContent).toBe('catching up');
   Stream.latest.emit('snapshot', { turns: [], truncated: false });
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe('live'));
@@ -79,7 +79,7 @@ it('shows catching up until snapshot, reconnects, and fails closed on bad events
 it('drops optimistic send on 200 without requiring transcript IDs', async () => {
   let resolve!: (response: Response) => void;
   vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(() => new Promise(done => { resolve = done; })));
-  render(<Chat session={session} onStatus={vi.fn()} />);
+  render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
   Stream.latest.emit('snapshot', { turns: [], truncated: false });
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
   await waitFor(() => expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(false));
@@ -93,7 +93,7 @@ it('drops optimistic send on 200 without requiring transcript IDs', async () => 
 it('shows an unconfirmed send on non-200 without retrying', async () => {
   const fetch = vi.fn().mockResolvedValue({ status: 403 });
   vi.stubGlobal('fetch', fetch);
-  render(<Chat session={session} onStatus={vi.fn()} />);
+  render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
   Stream.latest.emit('snapshot', { turns: [], truncated: false });
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
   await waitFor(() => expect((screen.getByText('Send') as HTMLButtonElement).disabled).toBe(false));
@@ -106,7 +106,7 @@ it('shows an unconfirmed send on non-200 without retrying', async () => {
 
 it('rejects status for a different session and closes on unmount', async () => {
   const onStatus = vi.fn();
-  const { unmount } = render(<Chat session={session} onStatus={onStatus} />);
+  const { unmount } = render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={onStatus} />);
   Stream.latest.emit('status', { ...session, id: 'other' });
   await screen.findByText(/Status session does not match/);
   expect(onStatus).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ it('excludes API navigations while keeping shell navigation available', () => {
   for (const path of ['/', '/chat', '/apiary']) expect(API_NAVIGATION_PATH.test(path)).toBe(false);
 });
 it('surfaces a terminal stream failure and allows explicit reconnection', async () => {
-  render(<Chat session={session} onStatus={vi.fn()} />);
+  render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
   Stream.latest.readyState = Stream.CLOSED;
   Stream.latest.onerror?.();
   await screen.findByText(/Session stream closed/);
@@ -141,7 +141,7 @@ it('surfaces a terminal stream failure and allows explicit reconnection', async 
 it('rejects form submission before a snapshot and clears stale send errors on recovery', async () => {
   const fetch = vi.fn().mockResolvedValueOnce({ status: 403 }).mockResolvedValue({ status: 200 });
   vi.stubGlobal('fetch', fetch);
-  const { container } = render(<Chat session={session} onStatus={vi.fn()} />);
+  const { container } = render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
   fireEvent.submit(container.querySelector('form')!);
   expect(fetch).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ it('rejects form submission before a snapshot and clears stale send errors on re
 it('dismisses the history notice after five seconds without live turns extending it', async () => {
   vi.useFakeTimers();
   try {
-    render(<Chat session={session} onStatus={vi.fn()} />);
+    render(<Chat base={`/api/sessions/${encodeURIComponent(session.id)}`} id={session.id} title={session.project} subtitle={`${session.agent.family} · ${session.agent.entry_skill}`} onStatus={vi.fn()} />);
     const snapshot = { turns: [{ id: 'first', role: 'agent', text: 'Recent message' }], truncated: true };
     await act(async () => { Stream.latest.emit('snapshot', snapshot); });
     expect(screen.getByText(/Showing the most recent 200 turns/)).toBeDefined();
@@ -171,4 +171,13 @@ it('dismisses the history notice after five seconds without live turns extending
     await act(async () => { Stream.latest.emit('snapshot', snapshot); });
     expect(screen.queryByText(/Showing the most recent 200 turns/)).toBeNull();
   } finally { cleanup(); vi.useRealTimers(); }
+});
+
+it('sends directly to the selected worker chat', async () => {
+  const send = vi.fn().mockResolvedValue({ status: 200 }); vi.stubGlobal('fetch', send);
+  render(<Chat base="/api/projects/demo/workers/nav" id="demo/nav" title="nav" subtitle="demo" />);
+  Stream.latest.emit('snapshot', { turns: [], truncated: false });
+  fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello worker' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith('/api/projects/demo/workers/nav/message', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hello worker' }) })));
 });

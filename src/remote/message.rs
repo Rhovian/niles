@@ -1,12 +1,8 @@
 use anyhow::{Result, ensure};
-use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
-};
+use axum::{Json, http::StatusCode};
 use serde::Deserialize;
 
-use super::{ApiError, AppState, blocking, resolve};
+use super::{ApiError, blocking, chat::Lookup};
 use crate::tmux;
 
 pub(super) const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -35,18 +31,17 @@ impl TryFrom<String> for MessageText {
 }
 
 pub(super) async fn send(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
+    lookup: Lookup,
     Json(message): Json<Message>,
 ) -> Result<StatusCode, ApiError> {
     Ok(blocking(move || {
-        let Some(session) = resolve(&state.source, &id)? else {
+        let Some(session) = lookup()? else {
             return Ok(StatusCode::NOT_FOUND);
         };
-        let Some(pane) = session.meta.lead_pane else {
+        let Some(pane) = session.target else {
             return Ok(StatusCode::SERVICE_UNAVAILABLE);
         };
-        tmux::send_line(&tmux::TmuxTarget::pane(&pane)?, &message.text.0)?;
+        tmux::send_line(&pane, &message.text.0)?;
         Ok(StatusCode::OK)
     })
     .await?)

@@ -6,13 +6,13 @@ use std::{
     env, fs,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc::TryRecvError,
     time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use chrono::Utc;
 use ratatui::{
     DefaultTerminal, Frame,
@@ -283,7 +283,7 @@ impl Explorer {
                         )));
                     }
                     State::NotRunning => {
-                        tmux::open_session(&session, &entry.path)?;
+                        tmux::open_session(&session, &entry.path, tmux::LeadStart::Attended)?;
                         tmux::configure_status(&session, &self.theme)?;
                     }
                     State::Running | State::Starting | State::Waiting(_) => {}
@@ -396,14 +396,16 @@ fn shown(outcome: Result<Option<String>>) -> Option<String> {
 
 fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
     match closing {
-        Closing::Worker { id, project } => niles(&["close", id], project).map(Some),
+        Closing::Worker { id, project } => {
+            super::lifecycle::niles_in(project, &["close", id]).map(Some)
+        }
         Closing::Project {
             name,
             path,
             workers,
         } => {
             for id in workers {
-                niles(&["close", id], path)?;
+                super::lifecycle::niles_in(path, &["close", id])?;
             }
             // Before the session goes, so its client never moves to another session.
             tmux::close_view(explorer)?;
@@ -411,30 +413,6 @@ fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
             Ok(Some(format!("closed {}", name.as_str())))
         }
     }
-}
-
-/// Runs a worker command as its own process in the worker's project, so the explorer writes
-/// nothing the CLI wouldn't.
-fn niles(args: &[&str], project: &Utf8Path) -> Result<String> {
-    let output = Command::new(env::current_exe().context("failed to find niles executable")?)
-        .args(args)
-        .current_dir(project)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("failed to run niles {}", args.join(" ")))?;
-    let stream = if output.status.success() {
-        &output.stdout
-    } else {
-        &output.stderr
-    };
-    let text = String::from_utf8_lossy(stream)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if !output.status.success() {
-        bail!(text);
-    }
-    Ok(text)
 }
 
 #[cfg(test)]

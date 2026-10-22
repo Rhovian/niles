@@ -5,7 +5,7 @@ import { Markdown } from './Markdown';
 const HISTORY_NOTICE_MS = 5_000;
 
 type Outgoing = Message & { id: string };
-export function Chat({ session, onStatus }: { session: Session; onStatus: (session: Session) => void }) {
+export function Chat({ base, id, title, subtitle, onStatus }: { base: string; id: string; title: string; subtitle: string; onStatus?: (session: Session) => void }) {
   const [history, setHistory] = useState<{ turns: Turn[]; truncated: boolean }>({ turns: [], truncated: false });
   const [historyNoticeDismissed, setHistoryNoticeDismissed] = useState(false);
   const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
@@ -17,7 +17,7 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setConnection('catching up'); setStreamError('');
-    const stream = new EventSource(`/api/sessions/${encodeURIComponent(session.id)}/events`);
+    const stream = new EventSource(`${base}/events`);
     const receive = (name: string, accept: (data: unknown) => void) => {
       stream.addEventListener(name, event => {
         try { accept(JSON.parse((event as MessageEvent<string>).data)); }
@@ -45,11 +45,11 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
     });
     receive('status', data => {
       const status = sessionSchema.parse(data);
-      if (status.id !== session.id) throw new Error('Status session does not match stream');
-      onStatus(status);
+      if (status.id !== id) throw new Error('Status session does not match stream');
+      onStatus?.(status);
     });
     return () => stream.close();
-  }, [session.id, onStatus, attempt]);
+  }, [base, id, onStatus, attempt]);
   useEffect(() => {
     if (!history.truncated) return;
     const timer = setTimeout(() => setHistoryNoticeDismissed(true), HISTORY_NOTICE_MS);
@@ -63,7 +63,7 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
     setDraft(''); setSendError('');
     setOutgoing(old => [...old, message]);
     try {
-      await sendMessage(session.id, { text: message.text });
+      await sendMessage(base, { text: message.text });
       setSendError('');
     } catch (cause) {
       // Preserve anything typed while this request was in flight.
@@ -71,8 +71,8 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
       setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${String(cause)}`);
     } finally { setOutgoing(old => old.filter(item => item.id !== message.id)); }
   }
-  return <section class="chat" aria-label={`Chat with ${session.project}`}>
-    <header><div><h2>{session.project}</h2><small>{session.agent.family} · {session.agent.entry_skill}</small></div>
+  return <section class="chat" aria-label={`Chat with ${title}`}>
+    <header><div><h2>{title}</h2><small>{subtitle}</small></div>
       <span class={`pill ${connection === 'live' ? 'live' : ''}`} role="status">{connection}</span></header>
     {connection === 'reconnecting' && <p class="banner" role="alert">Cannot reach Niles. Check that you’re connected to your tailnet.</p>}
     {streamError && <p class="banner" role="alert">{streamError} <button onClick={() => setAttempt(old => old + 1)}>Reconnect</button></p>}

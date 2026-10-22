@@ -41,7 +41,8 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['worker', 'reviewer', 'security', 'research', 'design']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
   expect(screen.queryByText('Config')).toBeNull(); expect(screen.queryByText('Telemetry')).toBeNull();
-  expect(screen.queryByRole('button', { name: /nav|review|Start|Stop/ })).toBeNull();
+  expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Start missing' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Help' }));
   expect(screen.getByRole('heading', { name: 'Help' })).toBeDefined();
   expect(screen.queryByRole('navigation')).toBeNull();
@@ -59,7 +60,7 @@ it('opens and remembers the project, including after its lead restarts', async (
   app.unmount(); window.history.replaceState(null, '', '/'); render(<App />);
   await screen.findByRole('region', { name: 'Chat with demo' });
 });
-it('remembers an inactive project without offering start or stop', async () => {
+it('remembers an inactive project', async () => {
   const app = render(<App />); openMenu();
   fireEvent.click(await screen.findByRole('button', { name: /offline.*not running/ }));
   await screen.findByText(/This project’s lead is not running/);
@@ -91,4 +92,38 @@ it('checks project API versions before parsing and rejects malformed compatible 
   expect(await projects()).toEqual({ api_version: 99, projects: [] });
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 1, projects: [{ name: 'bad', state: 'unknown', workers: [] }] }) }));
   await expect(projects()).rejects.toThrow();
+});
+
+it('opens worker transcripts and exposes confirmed lifecycle actions with refetch', async () => {
+  const fetcher = vi.mocked(fetch);
+  const initial = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation((url, options) => options?.method
+    ? Promise.resolve({ status: 200 } as Response) : initial(url, options));
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu();
+  fireEvent.click(screen.getByRole('button', { name: 'nav', exact: true }));
+  await screen.findByRole('region', { name: 'Chat with nav' });
+  expect(Stream.urls).toContain('/api/projects/demo/workers/nav/events');
+  openMenu();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop demo' }));
+  expect(fetcher.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
+  confirm.mockReturnValue(true);
+  for (const [label, method, url] of [
+    ['Start offline', 'PUT', '/api/projects/offline/session'],
+    ['Stop demo', 'DELETE', '/api/projects/demo/session'],
+    ['Close review', 'DELETE', '/api/projects/demo/workers/review'],
+  ]) {
+    const before = fetcher.mock.calls.filter(([url]) => url === '/api/projects').length;
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(url, { method, cache: 'no-store' }));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === '/api/projects').length).toBeGreaterThan(before));
+  }
+  confirm.mockRestore();
+});
+it('preserves start conflict text and treats already gone as success', async () => {
+  const { startProject, stopProject } = await import('./api');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 409, text: async () => '<b>No saved manifest</b>' }));
+  await expect(startProject('demo')).rejects.toThrow('<b>No saved manifest</b>');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 404 }));
+  await expect(stopProject('demo')).resolves.toBeUndefined();
 });

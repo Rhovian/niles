@@ -13,6 +13,26 @@ use std::{
 mod project;
 use project::{file_turns, message_turns};
 
+#[cfg(feature = "remote")]
+pub(crate) struct TranscriptSource {
+    pub link: Option<SessionLink>,
+    pub workspace: camino::Utf8PathBuf,
+    pub needle: camino::Utf8PathBuf,
+    pub created_at: DateTime<Utc>,
+}
+
+#[cfg(feature = "remote")]
+impl TranscriptSource {
+    pub fn open(&self) -> Result<Option<TranscriptReader>> {
+        match &self.link {
+            Some(link) => {
+                TranscriptReader::open(link, &self.workspace, &self.needle, self.created_at)
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 /// One visible text/tool block, in persisted order. Identical blocks remain distinct.
 #[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct TextTurn {

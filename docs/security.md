@@ -362,7 +362,7 @@ included, carry `Cache-Control: no-store`.
 same authorization and no-store boundary. It exposes project names/states and
 worker IDs/roles/loss, including inactive projects; it excludes filesystem paths,
 window targets, briefs, and telemetry. The PWA stores only the last opened project
-name in origin-local storage. Worker rows expose no execution action.
+name in origin-local storage. Worker rows open transcripts and expose a close action.
 
 `niles remote setup` persists this existing host/origin boundary in a launchd/systemd
 user service and two Tailscale Serve handlers. It merges explicit allowed identities,
@@ -378,7 +378,8 @@ do not change Serve concurrently during setup. Partial failures leave completed
 configuration in place for inspection and manual cleanup.
 
 Session IDs are resolved only against registered, running project sessions; request
-IDs are never used as filesystem paths or tmux targets. Session collection and transcript
+IDs are never used as filesystem paths or tmux targets. Worker IDs are resolved by enumerating live metadata and comparing IDs by equality.
+Worker transcript inputs use the recorded agent directory and report path. Session collection and transcript
 reads run on blocking workers rather than the async executor. SSE uses the independent
 incremental readers, bounded event queues, and a fresh snapshot on each connection.
 Snapshots limit turn count to 200, not bytes per turn; initial transcript reads still
@@ -388,7 +389,9 @@ filesystem/error details to the client. Append cursors do not replay in-place ed
 or switch transcript files underneath an open reader.
 
 Authenticated message POSTs resolve the opaque ID again against the live catalog and
-send only to its recorded foreground agent pane through `tmux::send_line`. No fallback
+send only to its recorded foreground agent pane or live worker window through
+`tmux::send_line`. Worker targets must be live or recovered through their project/ID tags;
+lost workers retain readable transcripts but sending returns 503. No fallback
 target, draft/prompt guard, or watcher-shared lock is introduced. JSON bodies are capped
 at 16 KiB; text must be nonblank and cannot contain ESC (paste framing) or NUL (process
 arguments). Other content, including newlines and shell-looking text, remains literal.
@@ -397,8 +400,28 @@ path's pane-change acknowledgement; it is not proof that the model acted on the 
 A send failure can follow a paste/submit, so clients must not retry automatically.
 Tmux failure details stay in local diagnostics, not HTTP responses. Catalog resolution
 and injection are not atomic; concurrent session exit/restart or desk/watcher input can
-race with sending, under the operator's no-lock/no-draft-guard ruling. No spawn endpoint is provided. Trusted frontend JavaScript from this host is essential: an
+race with sending, under the operator's no-lock/no-draft-guard ruling. Trusted frontend JavaScript from this host is essential: an
 allowed tailnet user can instruct an agent with the host user's execution privileges.
+
+Remote control can start only a saved manifest's default lead for a registered project,
+stop a session tagged with that registry path, and close enumerated live/lost workers.
+No request chooses an agent, command, args, role or filesystem path. Registration and
+manifest creation remain desk-only. Start checks the directory, parses the manifest,
+and refuses foreign session names. Its fixed 409 texts distinguish those three
+operator-fixable conflicts; other errors expose only status codes. Phone starts bypass
+the role picker with `niles lead --keep-roles`. Agents run with the host user's privileges
+and the service/tmux server environment; registration already trusts project configuration.
+Shell-rc-only credentials may be unavailable. Worker close runs `current_exe` with a
+registry cwd and enumerated ID as argv, without a shell. Stop closes workers before
+killing the tagged session. These operations are not atomic against desk/lead actions:
+concurrent disappearance is rechecked and logged; workers spawned during stop can
+remain as lost metadata, closable later. Concurrent crashed-lead starts can respawn
+over one another, leaving an orphan session directory for `niles prune`.
+
+Tailscale identity is ambient on requests from an allowed device, including cross-site
+requests. Control mutations accept only PUT/DELETE, requiring a CORS preflight that
+gets no grant. Message POSTs require JSON content type for the same reason. GETs
+have no side effects. No API route grants CORS access.
 
 ### Remote PWA frontend
 

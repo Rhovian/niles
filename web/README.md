@@ -79,10 +79,24 @@ the client percent-encodes session IDs in URL path segments.
   same-origin `/#/sessions/<encoded-id>` URL. Existing windows are navigated/focused;
   new windows use that URL. Invalid payloads still show a generic visible notification.
 
+
+- `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the
+  lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
+  Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
+- `PUT /api/projects/:project/session` starts the saved manifest's default lead,
+  bypassing the role picker. Already running returns 200. Start returns 409 with one
+  fixed plain-text body: `Project directory missing`, `No saved manifest; start once
+  at the desk`, or `Tmux session name held by a foreign session`.
+- `DELETE /api/projects/:project/session` closes workers then stops the tagged project
+  session; `DELETE /api/projects/:project/workers/:id` closes a live or lost worker.
+  Both return 200 on success, 404 when already gone/unregistered. Stop/Close ask for
+  confirmation. Actions refetch the menu; they do not update it optimistically.
+
 An incompatible `api_version` is detected before parsing version-specific session
 data. Malformed JSON/events surface errors; an invalid stream closes and disables
 sending, with an explicit reconnect action. Links open in a separate tab with
-`noopener noreferrer`. The server's errors are shown as status codes, never trusted HTML.
+`noopener noreferrer`. The server's errors are status codes except fixed plain-text 409 start conflicts;
+all are rendered as text, never trusted HTML.
 
 ## Notifications
 
@@ -108,4 +122,5 @@ including lost workers. Selecting a project opens its live lead chat; the projec
 name is remembered in local storage across visits and lead restarts. Notification
 session links still open the corresponding project. With no selection, the main
 screen shows the Niles logo and invites opening projects on the sidebar. Worker
-chat and project start/stop controls are separate follow-up work.
+rows open direct chat; Start launches the default lead and Stop/Close end sessions/workers.
+The local mock refuses control and worker chat with 501.

@@ -118,3 +118,41 @@ pub(crate) fn wait_health(
         crate::telemetry::SessionState::Unknown => WaitHealth::Unknown,
     }))
 }
+
+#[cfg(feature = "remote")]
+pub(crate) struct ChatTarget {
+    pub transcript: crate::telemetry::transcript::TranscriptSource,
+    pub window: Option<crate::tmux::WindowTarget>,
+}
+
+#[cfg(feature = "remote")]
+pub(crate) fn chat_target(
+    project: &camino::Utf8Path,
+    id: &str,
+) -> anyhow::Result<Option<ChatTarget>> {
+    let Some(entry) = live_worker_locations(project)?
+        .into_iter()
+        .find(|entry| entry.id == id)
+    else {
+        return Ok(None);
+    };
+    let meta = meta::read_meta(&entry.worker_dir)?;
+    let window = match resolve::window_state(&meta) {
+        crate::tmux::TargetState::Live => Some(crate::tmux::WindowTarget::parse(&meta.window)?),
+        crate::tmux::TargetState::OrphanRecovered { actual } => Some(actual),
+        crate::tmux::TargetState::PaneExited
+        | crate::tmux::TargetState::WindowDead
+        | crate::tmux::TargetState::OrphanGone
+        | crate::tmux::TargetState::OrphanLegacyCandidate { .. }
+        | crate::tmux::TargetState::Unknown { .. } => None,
+    };
+    Ok(Some(ChatTarget {
+        transcript: crate::telemetry::transcript::TranscriptSource {
+            workspace: meta.agent_dir().to_owned(),
+            needle: meta::report_path(meta.brief.parent().context("worker brief has no parent")?),
+            link: meta.session_link,
+            created_at: meta.created_at,
+        },
+        window,
+    }))
+}

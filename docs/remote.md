@@ -173,6 +173,36 @@ requires the installed home-screen app. Choose **Enable notifications** there.
 Push arrives over the public internet even with Tailscale off; opening its session
 link still needs Tailscale. See [PWA notification behavior](../web/README.md#notifications).
 
+## Chat and project control
+
+Tap a worker in the menu to read its live transcript and send directly to its recorded
+window. The lead is not notified and its worker wait is not re-armed. Lost workers
+remain readable but sending returns 503. Close works for live and lost workers.
+
+Start appears for registered projects that are not running. It requires a saved,
+parsing manifest: start once at the desk to choose roles. Phone starts always use
+that manifest's default lead and skip the picker (`niles lead --keep-roles`); desk
+starts still show it. Stop and Close require confirmation. The API routes are:
+
+- `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the
+  lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
+  Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
+- `PUT /api/projects/:project/session` starts the saved manifest's default lead,
+  bypassing the role picker. Already running returns 200. Start returns 409 with one
+  fixed plain-text body: `Project directory missing`, `No saved manifest; start once
+  at the desk`, or `Tmux session name held by a foreign session`.
+- `DELETE /api/projects/:project/session` closes workers then stops the tagged project
+  session; `DELETE /api/projects/:project/workers/:id` closes a live or lost worker.
+  Both return 200 on success, 404 when already gone/unregistered. Stop/Close ask for
+  confirmation. Actions refetch the menu; they do not update it optimistically.
+
+A launch that fails afterwards appears as not running; the API does not diagnose
+agent login/trust dialogs or missing credentials. Agents inherit the service/tmux
+server environment, so shell-rc-only credentials may be missing. Stop with many workers
+can take tens of seconds; proxy timeout behavior is unverified. The server continues
+an in-flight operation after disconnect, and retrying is safe. Concurrent desk/lead
+changes can leave lost workers after stop; close those from the menu.
+
 ## Operations and troubleshooting
 
 - 403: confirm the exact allowed login, restart after config edits, check tailnet

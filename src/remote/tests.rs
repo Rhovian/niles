@@ -356,3 +356,38 @@ async fn projects_are_versioned_uncached_and_collection_errors_are_private() {
             .is_empty()
     );
 }
+
+#[test]
+fn worker_feed_streams_turns_without_lead_status_and_ends_when_gone() {
+    let fixture = Fixture::new(1);
+    let records = fixture.records.clone();
+    let lookup: chat::Lookup = Arc::new(move || {
+        Ok(records.lock().unwrap().first().map(|record| chat::Chat {
+            id: "project/worker".into(),
+            transcript: crate::telemetry::transcript::TranscriptSource {
+                link: record.meta.session_link.clone(),
+                workspace: record.meta.workspace.clone(),
+                needle: record.meta.brief.clone(),
+                created_at: record.meta.created_at,
+            },
+            target: None,
+            status: None,
+        }))
+    });
+    let (mut feed, snapshot) = feed::Feed::open(lookup().unwrap().unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(snapshot).unwrap()["turns"][0]["id"],
+        "project/worker:0"
+    );
+    assert!(feed.poll(&lookup).unwrap().unwrap().is_empty());
+    fs::OpenOptions::new()
+        .append(true)
+        .open(fixture.root.join("001.jsonl"))
+        .unwrap()
+        .write_all(message("worker reply").as_bytes())
+        .unwrap();
+    let events = feed.poll(&lookup).unwrap().unwrap();
+    assert_eq!(events.len(), 1);
+    fixture.records.lock().unwrap().clear();
+    assert!(feed.poll(&lookup).unwrap().is_none());
+}
