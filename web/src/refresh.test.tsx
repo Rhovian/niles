@@ -25,7 +25,8 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   resolve(response([session]));
   openMenu();
   await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button', { name: /notes/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'notes', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
   tick();
   expect(fetch).toHaveBeenCalledTimes(4);
   resolve(response([]));
@@ -47,7 +48,8 @@ it('does not overwrite an SSE status with an older in-flight snapshot', async ()
   render(<App />);
   openMenu();
   await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button', { name: /notes/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'notes', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
   await waitFor(() => expect(Stream.latest).toBeDefined());
   fireEvent(window, new Event('focus'));
   Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, agent: { family: 'claude', entry_skill: 'lead' } }) }));

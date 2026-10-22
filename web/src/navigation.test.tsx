@@ -19,6 +19,10 @@ class Stream extends EventTarget {
   close() {}
 }
 const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+const expandProject = (name: string) => {
+  const button = screen.getByRole('button', { name, exact: true });
+  if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button);
+};
 beforeEach(() => {
   localStorage.clear(); window.history.replaceState(null, '', '/');
   Element.prototype.scrollIntoView = vi.fn(); Stream.urls = [];
@@ -37,7 +41,11 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(screen.queryByRole('navigation')).toBeNull();
   openMenu();
   const menu = screen.getByRole('navigation', { name: 'Projects' });
-  for (const text of ['demo', 'offline', 'waiting', 'not running', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
+  expect(screen.queryByRole('button', { name: 'Stop demo' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Start offline' })).toBeNull();
+  expect(menu.querySelectorAll('details')).toHaveLength(0);
+  expandProject('demo');
+  for (const text of ['demo', 'offline', 'waiting', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
   expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['worker', 'reviewer', 'security', 'research', 'design']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
   expect(screen.queryByText('Config')).toBeNull(); expect(screen.queryByText('Telemetry')).toBeNull();
@@ -49,7 +57,8 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
 });
 it('opens and remembers the project, including after its lead restarts', async () => {
   const app = render(<App />); openMenu();
-  fireEvent.click(await screen.findByRole('button', { name: /demo.*waiting/ }));
+  await screen.findByRole('button', { name: 'demo', exact: true }); expandProject('demo');
+  fireEvent.click(screen.getByRole('button', { name: 'Open demo lead chat' }));
   await screen.findByRole('region', { name: 'Chat with demo' });
   expect(localStorage.getItem('niles.activeProject')).toBe('demo');
   expect(screen.queryByRole('navigation')).toBeNull();
@@ -62,7 +71,8 @@ it('opens and remembers the project, including after its lead restarts', async (
 });
 it('remembers an inactive project', async () => {
   const app = render(<App />); openMenu();
-  fireEvent.click(await screen.findByRole('button', { name: /offline.*not running/ }));
+  await screen.findByRole('button', { name: 'offline', exact: true }); expandProject('offline');
+  fireEvent.click(screen.getByRole('button', { name: 'Open offline lead chat' }));
   await screen.findByText(/This project’s lead is not running/);
   expect(localStorage.getItem('niles.activeProject')).toBe('offline');
   app.unmount(); render(<App />);
@@ -101,24 +111,44 @@ it('opens worker transcripts and exposes confirmed lifecycle actions with refetc
     ? Promise.resolve({ status: 200 } as Response) : initial(url, options));
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu();
+  expandProject('demo');
   fireEvent.click(screen.getByRole('button', { name: 'nav', exact: true }));
   await screen.findByRole('region', { name: 'Chat with nav' });
   expect(Stream.urls).toContain('/api/projects/demo/workers/nav/events');
-  openMenu();
+  openMenu(); expandProject('demo');
   fireEvent.click(screen.getByRole('button', { name: 'Stop demo' }));
   expect(fetcher.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
   confirm.mockReturnValue(true);
-  for (const [label, method, url] of [
-    ['Start offline', 'PUT', '/api/projects/offline/session'],
-    ['Stop demo', 'DELETE', '/api/projects/demo/session'],
-    ['Close review', 'DELETE', '/api/projects/demo/workers/review'],
+  for (const [project, label, method, url] of [
+    ['offline', 'Start offline', 'PUT', '/api/projects/offline/session'],
+    ['demo', 'Stop demo', 'DELETE', '/api/projects/demo/session'],
+    ['demo', 'Close review', 'DELETE', '/api/projects/demo/workers/review'],
   ]) {
+    expandProject(project);
     const before = fetcher.mock.calls.filter(([url]) => url === '/api/projects').length;
     fireEvent.click(screen.getByRole('button', { name: label }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(url, { method, cache: 'no-store' }));
     await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === '/api/projects').length).toBeGreaterThan(before));
   }
   confirm.mockRestore();
+});
+it('expands only one project, supports collapsing it, and preserves expansion on refresh', async () => {
+  render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu();
+  expandProject('demo');
+  expect(screen.getByRole('button', { name: 'demo', expanded: true })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Stop demo' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
+  expandProject('offline');
+  expect(screen.getByRole('button', { name: 'demo', expanded: false })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Stop demo' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'nav', exact: true })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Start offline' })).toBeDefined();
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+  expect(screen.getByRole('button', { name: 'offline', expanded: true })).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'offline', exact: true }));
+  expect(screen.queryByRole('button', { name: 'Start offline' })).toBeNull();
+  expect(screen.queryByRole('region', { name: /Chat with/ })).toBeNull();
 });
 it('preserves start conflict text and treats already gone as success', async () => {
   const { startProject, stopProject } = await import('./api');

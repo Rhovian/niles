@@ -90,7 +90,7 @@ export function App() {
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
     {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
-    {help ? <main class="empty"><h2>Help</h2><p>Open the menu and choose a project to chat with its lead, or a worker to chat directly. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
+    {help ? <main class="empty"><h2>Help</h2><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
       compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} subtitle={worker.project} /> :
       compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} subtitle={`${current.agent.family} · ${current.agent.entry_skill}`} onStatus={onStatus} /> :

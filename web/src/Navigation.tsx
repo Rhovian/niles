@@ -5,6 +5,7 @@ const roles = ['worker', 'reviewer', 'security', 'research', 'design'] as const;
 export function Navigation({ projects, selected, openProject, openWorker, refresh, help }: {
   projects: Project[]; selected?: string; openProject: (name: string) => void; openWorker: (project: string, id: string) => void; refresh: () => void; help: () => void;
 }) {
+  const [expanded, setExpanded] = useState<string>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   async function act(action: () => Promise<void>) {
@@ -17,22 +18,27 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
     {error && <p class="banner" role="alert">{error}</p>}
     {projects.map(project => <section key={project.name}>
       <button class={`session ${selected === project.name ? 'selected' : ''}`}
-        aria-pressed={selected === project.name} onClick={() => openProject(project.name)}>
-        <strong>{project.name}</strong><span class="badge">{project.state}</span>
+        aria-expanded={expanded === project.name} aria-controls={`project-${encodeURIComponent(project.name)}`}
+        onClick={() => setExpanded(expanded === project.name ? undefined : project.name)}>
+        <span aria-hidden="true">{expanded === project.name ? '▾' : '▸'}</span><strong>{project.name}</strong>
       </button>
-      {project.state !== 'missing' && <button disabled={pending} onClick={() => {
-        if (project.state === 'not running') void act(() => startProject(project.name));
-        else if (window.confirm(`Stop ${project.name}?`)) void act(() => stopProject(project.name));
-      }}>{project.state === 'not running' ? 'Start' : 'Stop'} {project.name}</button>}
-      {roles.map(role => {
-        const workers = project.workers.filter(worker => worker.role === role);
-        return workers.length > 0 && <details key={role} open>
-          <summary>{role}</summary><ul>{workers.map(worker =>
-            <li key={worker.id}><button onClick={() => openWorker(project.name, worker.id)}>{worker.id}</button>{worker.lost && <span class="badge">Lost</span>}<button disabled={pending} onClick={() => {
-              if (window.confirm(`Close ${worker.id}?`)) void act(() => closeWorker(project.name, worker.id));
-            }}>Close {worker.id}</button></li>)}</ul>
-        </details>;
-      })}
+      {expanded === project.name && <div class="project-details" id={`project-${encodeURIComponent(project.name)}`}>
+        <p class="badge">{project.state}</p>
+        <button onClick={() => openProject(project.name)}>Open {project.name} lead chat</button>
+        {project.state !== 'missing' && <button disabled={pending} onClick={() => {
+          if (project.state === 'not running') void act(() => startProject(project.name));
+          else if (window.confirm(`Stop ${project.name}?`)) void act(() => stopProject(project.name));
+        }}>{project.state === 'not running' ? 'Start' : 'Stop'} {project.name}</button>}
+        {roles.map(role => {
+          const workers = project.workers.filter(worker => worker.role === role);
+          return workers.length > 0 && <details key={role} open>
+            <summary>{role}</summary><ul>{workers.map(worker =>
+              <li key={worker.id}><button onClick={() => openWorker(project.name, worker.id)}>{worker.id}</button>{worker.lost && <span class="badge">Lost</span>}<button disabled={pending} onClick={() => {
+                if (window.confirm(`Close ${worker.id}?`)) void act(() => closeWorker(project.name, worker.id));
+              }}>Close {worker.id}</button></li>)}</ul>
+          </details>;
+        })}
+      </div>}
     </section>)}
     <button onClick={help}>Help</button>
   </nav>;
