@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => ({
     injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'] },
     manifest: {
       name: 'Niles', short_name: 'Niles', description: 'Chat with your session agent',
-      start_url: '/', scope: '/', display: 'standalone',
+      start_url: '/', scope: '/', display: 'minimal-ui',
       theme_color: '#12201e', background_color: '#12201e',
       icons: [192, 512].map(size => ({ src: `/icon-${size}.png`, sizes: `${size}x${size}`, type: 'image/png' })),
     },

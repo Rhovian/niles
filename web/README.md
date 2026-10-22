@@ -17,6 +17,8 @@ when Vite stops and is never included in the production client.
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` run in web CI. `pnpm preview` serves a previously built `dist/` without the mock API.
 The service worker is registered only in production. Install from the browser's
 install/Add to Home Screen control over HTTPS (localhost also works).
+The manifest requests `minimal-ui`, keeping a small browser toolbar in installed apps
+to avoid Chrome’s separate “Tap to copy the URL for this app” notification.
 
 For installation from `niles-web.tar.gz`, same-host Tailscale Serve configuration,
 allowlist and VAPID initialization, follow the [remote setup guide](../docs/remote.md).

@@ -425,7 +425,7 @@ have no side effects. No API route grants CORS access.
 
 ### Remote PWA frontend
 
-The standalone `web/` app is an instruction surface for the foreground agent, which
+The installable `web/` app is an instruction surface for the foreground agent, which
 can execute code with the host user's permissions. Serve its release asset only
 from the Niles host through Tailscale, on the API's origin. Whoever controls this
 JavaScript effectively controls that instruction surface. The frontend supplies
