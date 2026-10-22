@@ -1,35 +1,36 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { type Connection, type Message, type Session, type Turn, RECENT_TURN_LIMIT, sendMessage, sessionSchema, snapshotSchema, turnSchema, upsertTurn } from './api';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { type Connection, type Session, type Turn, RECENT_TURN_LIMIT, sendMessage, sessionSchema, snapshotSchema, turnSchema } from './api';
 import { Markdown } from './Markdown';
 
 const HISTORY_NOTICE_MS = 5_000;
 
-type Outgoing = Message & { id: string; sent: boolean };
+type ChatTurn = Turn & { local?: { id: string; sent: boolean } };
+
+// Preact reconciles keyed children; transcript echoes must retain the local key and position.
+// https://github.com/preactjs/preact/blob/11.0.1/src/diff/children.js
+function mergeTurns(current: ChatTurn[], incoming: Turn[]): ChatTurn[] {
+  return incoming.reduce((turns, turn) => {
+    const existing = turns.findIndex(item => item.id === turn.id);
+    const index = existing >= 0 ? existing : turn.role === 'user'
+      ? turns.findIndex(item => item.local?.id === item.id && item.text === turn.text) : -1;
+    const local = turns[index]?.local;
+    const received = local ? { ...turn, local: { ...local, sent: true } } : turn;
+    return index < 0 ? [...turns, received] : turns.map((item, i) => i === index ? received : item);
+  }, current);
+}
 export function Chat({ base, id, title, subtitle, working, onStatus }: { base: string; id: string; title: string; subtitle: string; working?: boolean; onStatus?: (session: Session) => void }) {
-  const [history, setHistory] = useState<{ turns: Turn[]; truncated: boolean }>({ turns: [], truncated: false });
+  const [history, setHistory] = useState<{ turns: ChatTurn[]; truncated: boolean }>({ turns: [], truncated: false });
   const [historyNoticeDismissed, setHistoryNoticeDismissed] = useState(false);
-  const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
   const [connection, setConnection] = useState<Connection>('catching up');
   const [streamError, setStreamError] = useState('');
   const [sendError, setSendError] = useState('');
   const [waitingForReply, setWaitingForReply] = useState(false);
   const [draft, setDraft] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const received = useRef(new Set<string>());
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setConnection('catching up'); setStreamError('');
     const stream = new EventSource(`${base}/events`);
-    // Preact stores UI state; correlating POSTs with SSE echoes belongs to the app.
-    // https://github.com/preactjs/preact/blob/11.0.1/hooks/src/index.js
-    const acceptEchoes = (turns: Turn[]) => {
-      const echoes = turns.filter(turn => turn.role === 'user' && !received.current.has(turn.id));
-      received.current = new Set([...received.current, ...turns.map(turn => turn.id)].slice(-RECENT_TURN_LIMIT));
-      setOutgoing(old => echoes.reduce((pending, turn) => {
-        const index = pending.findIndex(item => item.text === turn.text);
-        return index < 0 ? pending : pending.filter((_, i) => i !== index);
-      }, old));
-    };
     const receive = (name: string, accept: (data: unknown) => void) => {
       stream.addEventListener(name, event => {
         try { accept(JSON.parse((event as MessageEvent<string>).data)); }
@@ -49,17 +50,17 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
     };
     receive('snapshot', data => {
       const snapshot = snapshotSchema.parse(data);
-      acceptEchoes(snapshot.turns);
-      setHistory(snapshot); setWaitingForReply(snapshot.turns.at(-1)?.role === 'user');
+      const ids = new Set(snapshot.turns.map(turn => turn.id));
+      setHistory(old => ({ ...snapshot, turns: mergeTurns(old.turns.filter(turn => turn.local?.id === turn.id || ids.has(turn.id)), snapshot.turns) }));
+      setWaitingForReply(snapshot.turns.at(-1)?.role === 'user');
       setConnection('live'); setSendError('');
     });
     receive('turn', data => {
       const turn = turnSchema.parse(data);
-      acceptEchoes([turn]);
       setWaitingForReply(turn.role === 'user');
       setHistory(old => {
-        const turns = upsertTurn(old.turns, turn);
-        return { turns: turns.slice(-RECENT_TURN_LIMIT), truncated: old.truncated || turns.length > RECENT_TURN_LIMIT };
+        const turns = mergeTurns(old.turns, [turn]);
+        return { turns: turns.filter((item, index) => index >= turns.length - RECENT_TURN_LIMIT || item.local?.id === item.id), truncated: old.truncated || turns.length > RECENT_TURN_LIMIT };
       });
     });
     receive('status', data => {
@@ -74,25 +75,28 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
     const timer = setTimeout(() => setHistoryNoticeDismissed(true), HISTORY_NOTICE_MS);
     return () => clearTimeout(timer);
   }, [history.truncated]);
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing, waitingForReply, working]);
+  const latest = history.turns.at(-1);
+  useLayoutEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history.turns.length, latest?.local?.id ?? latest?.id, latest?.text]);
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!draft.trim() || connection !== 'live') return;
-    const message: Outgoing = { id: crypto.randomUUID(), text: draft, sent: false };
+    const localId = crypto.randomUUID();
+    const message: ChatTurn = { id: localId, role: 'user', text: draft, local: { id: localId, sent: false } };
     setDraft(''); setSendError(''); setWaitingForReply(true);
-    setOutgoing(old => [...old, message]);
+    setHistory(old => ({ ...old, turns: [...old.turns, message] }));
     try {
       await sendMessage(base, { text: message.text });
-      setOutgoing(old => old.map(item => item.id === message.id ? { ...item, sent: true } : item));
+      setHistory(old => ({ ...old, turns: old.turns.map(turn => turn.local?.id === localId ? { ...turn, local: { id: localId, sent: true } } : turn) }));
       setSendError('');
     } catch (cause) {
-      setOutgoing(old => old.filter(item => item.id !== message.id));
+      setHistory(old => ({ ...old, turns: old.turns.filter(turn => turn.id !== localId) }));
       setWaitingForReply(false);
       // Preserve anything typed while this request was in flight.
       setDraft(current => current ? `${current}\n${message.text}` : message.text);
       setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${String(cause)}`);
     }
   }
+  const replying = (working ?? waitingForReply) && connection === 'live';
   return <section class="chat" aria-label={`Chat with ${title}`}>
     <header><div><h2>{title}</h2><small>{subtitle}</small></div>
       <span class={`pill ${connection === 'live' ? 'live' : ''}`} role="status">{connection}</span></header>
@@ -101,13 +105,11 @@ export function Chat({ base, id, title, subtitle, working, onStatus }: { base: s
     {sendError && <p class="banner" role="alert">{sendError}</p>}
     {history.truncated && !historyNoticeDismissed && <p class="banner">Showing the most recent {RECENT_TURN_LIMIT} turns. Earlier history is available at the desk.</p>}
     <div class="transcript" aria-label="Transcript" aria-live="polite">
-      {history.turns.map(turn => <article class={`bubble ${turn.role}`} key={turn.id}>
-        <small>{turn.role === 'agent' ? 'Agent' : 'You'}</small><Markdown text={turn.text} />
+      {history.turns.map(turn => <article class={`bubble ${turn.role}`} key={turn.local?.id ?? turn.id}>
+        <small>{turn.role === 'agent' ? 'Agent' : turn.local ? turn.local.sent ? 'You · Sent' : 'You · Sending…' : 'You'}</small><Markdown text={turn.text} />
       </article>)}
-      {outgoing.map(item => <article class="bubble user" key={item.id}>
-        <small>{item.sent ? 'You · Sent' : 'You · Sending…'}</small><p class="plaintext">{item.text}</p>
-      </article>)}
-      {(working ?? waitingForReply) && connection === 'live' && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply">
+      {(waitingForReply || working) && <div class="bubble reply-wait" role="status" aria-label="Waiting for reply"
+        aria-hidden={!replying} style={{ visibility: replying ? 'visible' : 'hidden' }}>
         <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
       </div>}
       <div ref={bottom} />

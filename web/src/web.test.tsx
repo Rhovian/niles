@@ -84,13 +84,15 @@ it.each(['turn', 'snapshot'] as const)('keeps sent text until its %s echo withou
   Stream.latest.emit('snapshot', { turns: [earlier], truncated: false });
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
   fireEvent.click(screen.getByText('Send'));
-  await screen.findByText('You · Sending…');
+  const element = (await screen.findByText('You · Sending…')).closest('article')!;
+  const content = element.querySelector('.markdown');
   resolve(new Response(null, { status: 200 }));
   await screen.findByText('You · Sent');
   expect(screen.getAllByText('hello')).toHaveLength(2);
   const echo = { id: 'echo', role: 'user', text: 'hello' };
-  Stream.latest.emit(event, event === 'turn' ? echo : { turns: [earlier, echo], truncated: false });
-  await waitFor(() => expect(screen.queryByText('You · Sent')).toBeNull());
+  await act(async () => { Stream.latest.emit(event, event === 'turn' ? echo : { turns: [earlier, echo], truncated: false }); });
+  expect(screen.getByText('You · Sent').closest('article')).toBe(element);
+  expect(element.querySelector('.markdown')).toBe(content);
   expect(screen.getAllByText('hello')).toHaveLength(2);
 });
 it('shows an unconfirmed send on non-200 without retrying', async () => {
@@ -221,7 +223,7 @@ it('keeps lead dots through agent prose until the server reports waiting again',
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
   Stream.latest.emit('status', { ...session, waiting: false });
   await screen.findByRole('status', { name: 'Waiting for reply' });
-  await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+  expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   Stream.latest.emit('turn', { id: 'prose', role: 'agent', text: 'Still working…' });
   await screen.findByText('Still working…');
   expect(screen.getByRole('status', { name: 'Waiting for reply' })).toBeDefined();
@@ -251,4 +253,24 @@ it('hands off identical pending sends one echo at a time, even before POST compl
   await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
   await act(async () => { complete.forEach(done => done(new Response(null, { status: 200 }))); });
   expect(screen.getAllByText('same')).toHaveLength(2);
+});
+
+it('preserves the sending message node, Markdown content and position through early replies and echo', async () => {
+  let complete!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(() => new Promise(done => { complete = done; })));
+  const chat = { base: '/api/sessions/solo', id: 'solo', title: 'notes', subtitle: '', working: false };
+  const { rerender } = render(<Chat {...chat} />);
+  Stream.latest.emit('snapshot', { turns: [], truncated: false });
+  fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: '**hi**\n\nsecond paragraph' } });
+  fireEvent.click(screen.getByText('Send'));
+  const element = (await screen.findByText('You · Sending…')).closest('article')!;
+  const content = element.querySelector('.markdown');
+  expect(content?.querySelector('strong')?.textContent).toBe('hi');
+  await act(async () => { complete(new Response(null, { status: 200 })); });
+  rerender(<Chat {...chat} working />);
+  await act(async () => { Stream.latest.emit('turn', { id: 'reply', role: 'agent', text: 'Working' }); });
+  await act(async () => { Stream.latest.emit('turn', { id: 'echo', role: 'user', text: '**hi**\n\nsecond paragraph' }); });
+  expect(screen.getByText('You · Sent').closest('article')).toBe(element);
+  expect(element.querySelector('.markdown')).toBe(content);
+  expect(element.parentElement?.querySelector('article')).toBe(element);
 });
