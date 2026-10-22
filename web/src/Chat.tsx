@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { type Connection, type Message, type Session, type Turn, RECENT_TURN_LIMIT, sendMessage, sessionSchema, snapshotSchema, turnSchema, upsertTurn } from './api';
 import { Markdown } from './Markdown';
 
+const HISTORY_NOTICE_MS = 5_000;
+
 type Outgoing = Message & { id: string };
 export function Chat({ session, onStatus }: { session: Session; onStatus: (session: Session) => void }) {
   const [history, setHistory] = useState<{ turns: Turn[]; truncated: boolean }>({ turns: [], truncated: false });
+  const [historyNoticeDismissed, setHistoryNoticeDismissed] = useState(false);
   const [outgoing, setOutgoing] = useState<Outgoing[]>([]);
   const [connection, setConnection] = useState<Connection>('catching up');
   const [streamError, setStreamError] = useState('');
@@ -47,6 +50,11 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
     });
     return () => stream.close();
   }, [session.id, onStatus, attempt]);
+  useEffect(() => {
+    if (!history.truncated) return;
+    const timer = setTimeout(() => setHistoryNoticeDismissed(true), HISTORY_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [history.truncated]);
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [history, outgoing]);
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -69,7 +77,7 @@ export function Chat({ session, onStatus }: { session: Session; onStatus: (sessi
     {connection === 'reconnecting' && <p class="banner" role="alert">Cannot reach Niles. Check that you’re connected to your tailnet.</p>}
     {streamError && <p class="banner" role="alert">{streamError} <button onClick={() => setAttempt(old => old + 1)}>Reconnect</button></p>}
     {sendError && <p class="banner" role="alert">{sendError}</p>}
-    {history.truncated && <p class="banner">Showing the most recent {RECENT_TURN_LIMIT} turns. Earlier history is available at the desk.</p>}
+    {history.truncated && !historyNoticeDismissed && <p class="banner">Showing the most recent {RECENT_TURN_LIMIT} turns. Earlier history is available at the desk.</p>}
     <div class="transcript" aria-label="Transcript" aria-live="polite">
       {history.turns.map(turn => <article class={`bubble ${turn.role}`} key={turn.id}>
         <small>{turn.role === 'agent' ? 'Agent' : 'You'}</small><Markdown text={turn.text} />

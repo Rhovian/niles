@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 import { Chat } from './Chat';
 import { Markdown } from './Markdown';
@@ -151,4 +151,24 @@ it('rejects form submission before a snapshot and clears stale send errors on re
   await screen.findByText(/Draft restored/);
   fireEvent.submit(container.querySelector('form')!);
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
+it('dismisses the history notice after five seconds without live turns extending it', async () => {
+  vi.useFakeTimers();
+  try {
+    render(<Chat session={session} onStatus={vi.fn()} />);
+    const snapshot = { turns: [{ id: 'first', role: 'agent', text: 'Recent message' }], truncated: true };
+    await act(async () => { Stream.latest.emit('snapshot', snapshot); });
+    expect(screen.getByText(/Showing the most recent 200 turns/)).toBeDefined();
+    await act(async () => { vi.advanceTimersByTime(4_000); });
+    await act(async () => { Stream.latest.emit('turn', { id: 'next', role: 'agent', text: 'New message' }); });
+    await act(async () => { vi.advanceTimersByTime(999); });
+    expect(screen.getByText(/Showing the most recent 200 turns/)).toBeDefined();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(screen.queryByText(/Showing the most recent 200 turns/)).toBeNull();
+    expect(screen.getByText('Recent message')).toBeDefined();
+    expect(screen.getByText('New message')).toBeDefined();
+    await act(async () => { Stream.latest.emit('snapshot', snapshot); });
+    expect(screen.queryByText(/Showing the most recent 200 turns/)).toBeNull();
+  } finally { cleanup(); vi.useRealTimers(); }
 });
