@@ -17,10 +17,26 @@ it('always displays a visible notification and opens only an encoded same-origin
     await import('./sw');
     let work!: Promise<void>;
     const waitUntil = (promise: Promise<void>) => { work = promise; };
-    listeners.get('push')!({ data: { json: () => ({ session_id: 's', project: 'p', reason: 'waiting' }) }, waitUntil });
-    await work;
-    expect(showNotification).toHaveBeenLastCalledWith('Niles', expect.objectContaining({ body: 'p: waiting', data: { session_id: 's' } }));
+    const deliver = async (session_id: string, reason = 'waiting') => {
+      listeners.get('push')!({ data: { json: () => ({ session_id, project: 'p', reason }) }, waitUntil });
+      await work;
+    };
+    await deliver('s');
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ body: 'p: waiting', data: { session_id: 's' }, tag: 'session:s', renotify: false }));
+    await deliver('s', 'waiting again');
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ body: 'p: waiting again', tag: 'session:s', renotify: false }));
+    await deliver('other');
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · other', expect.objectContaining({ tag: 'session:other', data: { session_id: 'other' } }));
+    // Worker restarts must not reset the notification identity.
+    vi.resetModules();
+    await import('./sw');
+    await deliver('s');
+    expect(showNotification).toHaveBeenLastCalledWith('Niles · s', expect.objectContaining({ tag: 'session:s', renotify: false }));
     listeners.get('push')!({ data: { json: () => { throw new SyntaxError(); } }, waitUntil });
+    await work;
+    expect(showNotification).toHaveBeenLastCalledWith('Niles', expect.objectContaining({ body: 'A session needs your attention.' }));
+    expect(showNotification.mock.lastCall?.[1].tag).toBeUndefined();
+    listeners.get('push')!({ data: { json: () => ({ session_id: '', project: 'p', reason: 'waiting' }) }, waitUntil });
     await work;
     expect(showNotification).toHaveBeenLastCalledWith('Niles', expect.objectContaining({ body: 'A session needs your attention.' }));
     const close = vi.fn();

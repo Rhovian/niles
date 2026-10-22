@@ -89,7 +89,11 @@ success before the server accepts registration. Reopening the app shows the enab
 button again so the server can recover registration if necessary.
 
 On iOS 16.4+, add the PWA to the home screen first. Every push displays a notification,
-including a malformed/empty payload. Delivery can arrive with Tailscale off via the
+including a malformed/empty payload. Valid notifications show the session ID in the
+title and project/reason in the body. A new push replaces the active notification
+for that session without alerting again; different sessions remain separate. Once
+dismissed, the next push can alert again. Delivery can arrive with Tailscale off via the
 public push service; opening the session and all API operations still need Tailscale.
 An ended session link reports that it has ended. No transcript is stored by push or
 in offline caches. Notification clicks navigate the app, so finish any draft first.
+Dismiss any notifications left by the older, untagged app version once after upgrading.

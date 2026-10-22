@@ -416,7 +416,9 @@ and optimistic messages stay in memory. API responses must use `Cache-Control:
 no-store` to cover HTTP caching as well. Push payloads contain only session ID, project, and a generic reason, never transcript
 text. They are encrypted/signed using `web-push` (RFC 8291/VAPID); OpenSSL generates
 the keypair. Push services observe delivery metadata, and OS notification surfaces
-can display project/reason while the device is locked or outside the tailnet.
+can display session ID/project/reason while the device is locked or outside the tailnet.
+The PWA uses a stable session tag to replace that session's active notification,
+without re-alerting while it remains active. Different sessions use different tags.
 Clicks encode the ID into a fixed same-origin session hash, ignoring arbitrary URLs.
 Malformed pushes still display a generic visible notification.
 

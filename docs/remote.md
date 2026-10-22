@@ -186,8 +186,12 @@ link still needs Tailscale. See [PWA notification behavior](../web/README.md#not
   no redirects. Payload is session ID/project/generic reason, never transcript.
   Five-minute TTL; 404/410 prunes a device. Other provider/store/catalog errors stop
   the server: inspect its diagnostics, fix the cause and restart. No automatic retry.
-  Startup can notify already-waiting sessions again; device-owner revocation takes
-  effect after restarting with the changed allowlist.
+  The PWA shows the session ID in the title and project/reason in the body. Repeated
+  pushes replace the session's active notification without alerting again; different
+  sessions remain separate. After dismissal, the next push can alert again.
+  Startup can notify already-waiting sessions again, replacing any active notification
+  for that session. Device-owner revocation takes effect after restarting with the
+  changed allowlist.
 - Upgrade backend and trusted web asset together. Extract the new shell into its own
   version directory and repoint static `/`. Close all Niles windows, then reopen so
   the installed worker can activate. API mismatch blocks chat with an update banner.
