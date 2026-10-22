@@ -24,7 +24,7 @@ Installation and tailnet prerequisites follow; see [setup details](#configure-wi
 Use a release containing the remote feature. Prebuilt release binaries omit it;
 build with `--features remote`. The host needs Rust 1.89+ build prerequisites and system
 OpenSSL development files (no vendoring); see the [OpenSSL build instructions](https://docs.rs/openssl/0.10.81/openssl/#automatic).
-Node/pnpm are only needed if [building the PWA yourself](../web/README.md).
+The checkout installer needs Node 24 and pnpm 10.8.1; see the [web prerequisites](../web/README.md).
 
 Install Tailscale on the host and phone, join the tailnet, and restrict access to
 this host's TCP 443 to the intended users/devices with tailnet ACLs/grants. Tailnet
@@ -53,9 +53,16 @@ tar -xzf "$NILES_WEB_DIR/niles-web.tar.gz" -C "$NILES_WEB_DIR"
 rm "$NILES_WEB_DIR/niles-web.tar.gz"
 ```
 
-For a checkout, install with `cargo install --path . --locked --features remote`,
-build the [PWA separately](../web/README.md) with `pnpm build` in `web/`, and set
-`NILES_WEB_DIR` to its absolute `web/dist` path instead of downloading an asset.
+For a checkout, build and install the remote-enabled binary and matching shell in
+one step from the checkout root:
+
+```sh
+scripts/install-remote.sh
+```
+
+Then use `--web-dir "$PWD/web/dist"` for setup (`web/dist` also works), or set
+`NILES_WEB_DIR="$PWD/web/dist"` for the commands below. Serve only the built assets;
+treat this checkout and its build commands as executable host code.
 
 The archive contains the contents of `dist/`, not a surrounding `dist` directory;
 `$NILES_WEB_DIR/index.html` must exist. Serve only this dedicated shell directory,
@@ -192,8 +199,11 @@ link still needs Tailscale. See [PWA notification behavior](../web/README.md#not
   for that session. Device-owner revocation takes effect after restarting with the
   changed allowlist.
 - Upgrade backend and trusted web asset together. Extract the new shell into its own
-  version directory and repoint static `/`. Close all Niles windows, then reopen so
-  the installed worker can activate. API mismatch blocks chat with an update banner.
+  version directory and repoint static `/`. For a checkout serving `web/dist`, rerun
+  `scripts/install-remote.sh`, then restart the service using the commands above.
+  This replaces the live shell in place before the new binary starts. Close all
+  Niles windows, then reopen so the installed worker can activate. API mismatch
+  blocks chat with an update banner, including during the checkout upgrade.
 
 To stop and remove the generated user service and its two Serve mappings:
 
