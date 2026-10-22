@@ -11,6 +11,40 @@ mod service;
 #[cfg(test)]
 mod tests;
 
+const RECOVERY: &str = "Setup may have left completed steps in place. Inspect tailscale serve status and the service first. To remove setup's mounts/service, run: niles remote uninstall\nThen rerun the same setup command.";
+
+pub(crate) fn uninstall() -> Result<()> {
+    let serve: Option<Serve> =
+        serde_json::from_str(&command("tailscale", &["serve", "status", "--json"])?)?;
+    if let Some(serve) = &serve {
+        serve.check_schema()?;
+    }
+    service::uninstall(&crate::util::home_dir()?)?;
+    // The CLI's per-handler removal preserves other mounts but errors on absent ones.
+    // https://github.com/tailscale/tailscale/blob/v1.96.2/cmd/tailscale/cli/serve_v2.go#L1339-L1396
+    for mount in ["/api", "/"] {
+        if serve.as_ref().is_some_and(|serve| {
+            serve
+                .web
+                .iter()
+                .any(|(host, web)| host.ends_with(":443") && web.handlers.contains_key(mount))
+        }) {
+            command(
+                "tailscale",
+                &[
+                    "serve",
+                    "--bg",
+                    "--https=443",
+                    &format!("--set-path={mount}"),
+                    "off",
+                ],
+            )?;
+        }
+    }
+    println!("Remote service and Serve mounts removed; allowlist and push state retained.");
+    Ok(())
+}
+
 pub(crate) fn doctor() -> Result<()> {
     preflight::check()?;
     Ok(())
@@ -24,8 +58,7 @@ pub(crate) fn run(
 ) -> Result<()> {
     user::validate_users(&users)?;
     let plan = Plan::prepare(web_dir, port)?;
-    plan.apply(users, subject)
-        .with_context(|| plan.service.recovery())?;
+    plan.apply(users, subject).context(RECOVERY)?;
     // Host self-resolution/identity can fail on a valid setup; verification is advisory by policy.
     match plan.verify() {
         Ok(()) => println!("Verified {}/api/sessions", plan.origin),
@@ -68,7 +101,7 @@ impl Plan {
             !service.path.try_exists()?,
             "service already exists at {}; inspect it before recovery:\n{}",
             service.path,
-            service.recovery()
+            RECOVERY
         );
         Ok(Self {
             mounts: [
@@ -189,7 +222,7 @@ struct Web {
     handlers: BTreeMap<String, IgnoredAny>,
 }
 impl Serve {
-    fn check(&self) -> Result<()> {
+    fn check_schema(&self) -> Result<()> {
         ensure!(
             self.other.keys().all(|name| matches!(
                 name.as_str(),
@@ -197,6 +230,11 @@ impl Serve {
             )),
             "unsupported Tailscale Serve schema"
         );
+        Ok(())
+    }
+
+    fn check(&self) -> Result<()> {
+        self.check_schema()?;
         ensure!(
             !self.web.iter().any(|(host, web)| host.ends_with(":443")
                 && web

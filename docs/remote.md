@@ -144,13 +144,12 @@ open-source `tailscaled` variant. After setup, open the printed URL on the phone
 install/Add to Home Screen; enable notifications in the installed app for push.
 
 Failures other than advisory verification stop setup and leave completed steps in
-place. Diagnostics name the failed command. A failure during application prints exact
-commands to remove setup's two mounts and stop/remove its service before retrying
-the same setup command; skip entries that were never installed. An existing service
-file also prints this recovery sequence. Inspect it and `tailscale serve status`
-first: only remove this service and its `/` and `/api` mappings if setup created them. Never reset unrelated
-Serve configuration. To upgrade, stop/remove this service, remove its two mappings,
-and rerun setup with the newly installed executable and matching dedicated web directory.
+place. Diagnostics name the failed command and recommend `niles remote uninstall`
+before retrying the same setup command. Inspect `tailscale serve status` and the
+service first: uninstall removes the service and exact `/` and `/api` mappings on
+HTTPS 443, so use it only when those belong to this setup. To upgrade, run
+`niles remote uninstall`, then rerun setup with the newly installed executable and
+matching dedicated web directory.
 Config changes require a service restart (`launchctl kickstart -k gui/$(id -u)/dev.niles.remote`
 on macOS; `systemctl --user restart niles-remote` on Linux).
 
@@ -196,30 +195,25 @@ link still needs Tailscale. See [PWA notification behavior](../web/README.md#not
   version directory and repoint static `/`. Close all Niles windows, then reopen so
   the installed worker can activate. API mismatch blocks chat with an update banner.
 
-To remove only these Serve handlers, preserving unrelated mounts:
+To stop and remove the generated user service and its two Serve mappings:
 
 ```sh
-tailscale serve --bg --https=443 --set-path=/api off
-tailscale serve --bg --https=443 --set-path=/ off
+niles remote uninstall
 ```
 
-To stop and remove the generated user service on macOS:
+This leaves other Serve mounts (including other ports and `/api/...` handlers),
+`~/.niles/config.yaml` authorization, and push keys/subscriptions in place. It skips
+missing service files and missing mounts, so it also handles partial setup. It
+reads Serve status, stops/removes the service, then removes each existing mount.
+Other failures stop uninstall and name the failed command; completed removals stay
+in place. If a service file exists but the service is already stopped, service-manager
+errors are reported rather than ignored; inspect the file and remove it manually
+before retrying (`~/Library/LaunchAgents/dev.niles.remote.plist` on macOS,
+`~/.config/systemd/user/niles-remote.service` on Linux).
 
-```sh
-launchctl bootout "gui/$(id -u)/dev.niles.remote"
-rm "$HOME/Library/LaunchAgents/dev.niles.remote.plist"
-```
-
-On Linux:
-
-```sh
-systemctl --user disable --now niles-remote.service
-rm "$HOME/.config/systemd/user/niles-remote.service"
-systemctl --user daemon-reload
-```
-
-Avoid `tailscale serve reset` on a host with other mappings; it removes the whole
-Serve configuration.
+Uninstall needs no web assets, allowlist, or setup preflight. Keep Tailscale available
+until it completes. Never use `tailscale serve reset` for this: it removes unrelated
+Serve configuration too.
 
 ## Known framing gap
 

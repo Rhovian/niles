@@ -13,7 +13,7 @@ const SERVICE: &str = ".config/systemd/user/niles-remote.service";
 struct Setup(TestEnv);
 impl Setup {
     fn new() -> Self {
-        let env = TestEnv::new("remote-setup");
+        let env = TestEnv::new(&format!("remote-setup-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(env.root.join("web")).unwrap();
         fs::write(env.root.join("web/index.html"), "shell").unwrap();
         fs::create_dir_all(env.home.join(".niles")).unwrap();
@@ -355,9 +355,7 @@ fn remote_setup_late_failure_prints_exact_recovery() {
     assert!(fixture.0.home.join(SERVICE).exists());
     let error = stderr_of(&output);
     for command in [
-        "tailscale serve --bg --https=443 --set-path=/api off",
-        "tailscale serve --bg --https=443 --set-path=/ off",
-        "rm -- '",
+        "niles remote uninstall",
         "Then rerun the same setup command.",
     ] {
         assert!(error.contains(command), "{error}");
@@ -384,5 +382,86 @@ fn remote_doctor_detects_gui_and_reverted_homebrew_path() {
         .unwrap();
     assert!(!output.status.success());
     assert!(stderr_of(&output).contains("tailscaled PATH cannot find"));
+    assert!(!fixture.0.home.join(SERVICE).exists());
+}
+
+#[test]
+fn remote_uninstall_preserves_other_mounts_config_and_push_state() {
+    let fixture = Setup::new();
+    let output = fixture
+        .command()
+        .args(["--subject", "mailto:a@example.com"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let config = fixture.config();
+    let key = fixture.0.home.join(".niles/remote/vapid.json");
+    let identity = fs::read(&key).unwrap();
+    let subscription = fixture
+        .0
+        .home
+        .join(".niles/remote/subscriptions/device.json");
+    fs::write(&subscription, "registration").unwrap();
+    fs::write(&fixture.0.tmux_log, "").unwrap();
+    let output = fixture.0.niles(&fixture.0.root, &["remote", "uninstall"])
+        .env("SERVE_CONFIG", r#"{"Web":{"host:443":{"Handlers":{"/":{},"/api":{},"/api/extra":{},"/other":{}}},"host:8443":{"Handlers":{"/":{}}}}}"#)
+        .output().unwrap();
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert!(!fixture.0.home.join(SERVICE).exists());
+    assert_eq!(fixture.config(), config);
+    assert_eq!(fs::read(key).unwrap(), identity);
+    assert_eq!(fs::read_to_string(subscription).unwrap(), "registration");
+    let log = fixture.0.tmux_log();
+    let removed: Vec<_> = log
+        .lines()
+        .filter(|line| line.starts_with("serve --bg"))
+        .collect();
+    assert_eq!(
+        removed,
+        [
+            "serve --bg --https=443 --set-path=/api off",
+            "serve --bg --https=443 --set-path=/ off"
+        ]
+    );
+    assert!(!log.contains("reset"));
+    #[cfg(target_os = "macos")]
+    assert!(log.contains("bootout gui/501/dev.niles.remote"));
+    #[cfg(target_os = "linux")]
+    assert!(
+        log.contains("--user disable --now niles-remote.service")
+            && log.contains("--user daemon-reload")
+    );
+}
+
+#[test]
+fn remote_uninstall_skips_absent_entries_and_stops_on_failure() {
+    let fixture = Setup::new();
+    let output = fixture.0.run(&["remote", "uninstall"]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(fixture.0.tmux_log(), "serve status --json\n");
+    let output = fixture.command().output().unwrap();
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    fs::write(&fixture.0.tmux_log, "").unwrap();
+    let output = fixture
+        .0
+        .niles(&fixture.0.root, &["remote", "uninstall"])
+        .env("SERVICE_FAIL", "1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(fixture.0.home.join(SERVICE).exists());
+    assert!(!fixture.0.tmux_log().contains("serve --bg"));
+    let output = fixture
+        .0
+        .niles(&fixture.0.root, &["remote", "uninstall"])
+        .env(
+            "SERVE_CONFIG",
+            r#"{"Web":{"host:443":{"Handlers":{"/api":{}}}}}"#,
+        )
+        .env("SERVE_FAIL", "1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(stderr_of(&output).contains("--set-path=/api off failed"));
     assert!(!fixture.0.home.join(SERVICE).exists());
 }

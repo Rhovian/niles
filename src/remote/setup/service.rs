@@ -11,6 +11,47 @@ pub(super) enum Manager {
     Launchd,
     Systemd,
 }
+impl Manager {
+    fn current() -> Result<Self> {
+        match std::env::consts::OS {
+            "macos" => Ok(Self::Launchd),
+            "linux" => Ok(Self::Systemd),
+            os => bail!("remote setup has no service manager for {os}"),
+        }
+    }
+
+    fn path(&self, home: &Utf8Path) -> Utf8PathBuf {
+        home.join(match self {
+            Self::Launchd => "Library/LaunchAgents/dev.niles.remote.plist",
+            Self::Systemd => ".config/systemd/user/niles-remote.service",
+        })
+    }
+}
+
+pub(super) fn uninstall(home: &Utf8Path) -> Result<()> {
+    let manager = Manager::current()?;
+    let path = manager.path(home);
+    if path.try_exists()? {
+        match manager {
+            Manager::Launchd => {
+                let uid = command("id", &["-u"])?.trim().parse::<u32>()?;
+                command(
+                    "launchctl",
+                    &["bootout", &format!("gui/{uid}/dev.niles.remote")],
+                )?;
+            }
+            Manager::Systemd => {
+                command("systemctl", &["--user", "disable", "--now", SYSTEMD_UNIT])?;
+            }
+        }
+        fs::remove_file(&path)?;
+        if matches!(manager, Manager::Systemd) {
+            command("systemctl", &["--user", "daemon-reload"])?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct Service {
     pub(super) path: Utf8PathBuf,
     manager: Manager,
@@ -18,11 +59,7 @@ pub(super) struct Service {
 }
 impl Service {
     pub(super) fn new(home: &Utf8Path, port: u16) -> Result<Self> {
-        let manager = match std::env::consts::OS {
-            "macos" => Manager::Launchd,
-            "linux" => Manager::Systemd,
-            os => bail!("remote setup has no service manager for {os}"),
-        };
+        let manager = Manager::current()?;
         let executable = crate::util::utf8_path(std::env::current_exe()?, "niles executable")?;
         let path_env = std::env::var("PATH").context("PATH is missing")?;
         Self::render(manager, home, &executable, &path_env, port)
@@ -45,49 +82,33 @@ impl Service {
             values.iter().all(|s| !s.chars().any(char::is_control)),
             "service paths/environment contain control characters"
         );
-        let (path, contents) = match manager {
+        let path = manager.path(home);
+        let contents = match manager {
             Manager::Launchd => {
                 let [home, executable, path_env] = values.map(xml);
-                (
-                    Utf8PathBuf::from("Library/LaunchAgents/dev.niles.remote.plist"),
-                    format!(
-                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n\
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n\
                     <key>Label</key><string>dev.niles.remote</string>\n\
                     <key>ProgramArguments</key><array><string>{executable}</string><string>remote</string><string>--port</string><string>{port}</string></array>\n\
                     <key>EnvironmentVariables</key><dict><key>HOME</key><string>{home}</string><key>PATH</key><string>{path_env}</string></dict>\n\
                     <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n\
                     <key>StandardErrorPath</key><string>{home}/.niles/remote-service.log</string>\n</dict></plist>\n"
-                    ),
                 )
             }
             Manager::Systemd => {
                 let [home, executable, path_env] = values.map(systemd);
-                (
-                    Utf8PathBuf::from(".config/systemd/user/niles-remote.service"),
-                    format!(
-                        "[Unit]\nDescription=Niles remote API\n\n[Service]\n\
+                format!(
+                    "[Unit]\nDescription=Niles remote API\n\n[Service]\n\
                     ExecStart=\"{}\" remote --port {port}\nEnvironment=\"HOME={home}\" \"PATH={path_env}\"\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
-                        executable.replace('$', "$$")
-                    ),
+                    executable.replace('$', "$$")
                 )
             }
         };
         Ok(Self {
-            path: home.join(path),
+            path,
             manager,
             contents,
         })
-    }
-
-    pub(super) fn recovery(&self) -> String {
-        let stop = match self.manager {
-            Manager::Launchd => "launchctl bootout \"gui/$(id -u)/dev.niles.remote\"",
-            Manager::Systemd => "systemctl --user disable --now niles-remote.service",
-        };
-        format!(
-            "Setup may have left completed steps in place. Inspect tailscale serve status and this service first. To retry, remove only setup's mounts/service (skip absent entries):\ntailscale serve --bg --https=443 --set-path=/api off\ntailscale serve --bg --https=443 --set-path=/ off\n{stop}\nrm -- '{}'\nThen rerun the same setup command.",
-            self.path.as_str().replace('\'', "'\\''")
-        )
     }
 
     pub(super) fn install(&self) -> Result<()> {

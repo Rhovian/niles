@@ -273,6 +273,10 @@ pub enum CommandName {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
+    /// Remove the remote service and its Serve mounts, retaining config and push state.
+    #[cfg(feature = "remote")]
+    Uninstall,
+
     /// Check remote prerequisites without changing configuration or services.
     #[cfg(feature = "remote")]
     Doctor,
