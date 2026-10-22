@@ -24,13 +24,32 @@ enum ProjectState {
 
 #[derive(Clone, Serialize)]
 struct Worker {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
     id: String,
     role: WorkerRole,
     lost: bool,
 }
 
 pub(crate) fn collect() -> Result<Vec<Project>> {
-    Ok(snapshot::collect()?.into_iter().map(project).collect())
+    snapshot::collect()?
+        .into_iter()
+        .map(|snapshot| {
+            let labels = if snapshot.agents.is_some() {
+                crate::worker::model_labels(&snapshot.row.entry.path)?
+            } else {
+                Vec::new()
+            };
+            let mut project = project(snapshot);
+            for worker in &mut project.workers {
+                worker.model = labels
+                    .iter()
+                    .find(|(id, _)| id == &worker.id)
+                    .map(|(_, model)| model.clone());
+            }
+            Ok(project)
+        })
+        .collect()
 }
 
 fn project(project: snapshot::Project) -> Project {
@@ -46,6 +65,7 @@ fn project(project: snapshot::Project) -> Project {
         for window in agents.windows {
             if let Role::Worker(id, role) = window.role {
                 workers.push(Worker {
+                    model: None,
                     id,
                     role,
                     lost: false,
@@ -53,6 +73,7 @@ fn project(project: snapshot::Project) -> Project {
             }
         }
         workers.extend(agents.lost.into_iter().map(|(id, role)| Worker {
+            model: None,
             id,
             role,
             lost: true,

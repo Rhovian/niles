@@ -41,10 +41,10 @@ the client percent-encodes session IDs in URL path segments.
 - `GET /api/projects` → `200 {"api_version":1,"projects":[Project]}`. Additive v1
   endpoint using the explorer's registered-project snapshot. `Project` contains
   `name`, `state` (`missing`, `not running`, `running`, `starting`, `waiting`), and
-  `workers: [{id, role, lost}]`. Roles are worker, reviewer, security, research,
+  `workers: [{id, role, lost, model?}]`. Roles are worker, reviewer, security, research,
   design. Filesystem paths, window targets, and agent prompts are excluded.
 - `GET /api/sessions` → `200 {"api_version":1,"sessions":[Session]}`.
-  `Session = {id, project, agent:{family, entry_skill}, waiting, worker_count}`.
+  `Session = {id, project, agent:{family, entry_skill, model?}, waiting, worker_count}`.
   `id`, `project`, `family`, `entry_skill` are strings; `id` is nonempty;
   `waiting` reflects the lead alone, independently of worker activity; `worker_count` is a nonnegative integer. The foreground
   **agent** can have any entry skill (including `lead` and `solo`). The list refreshes
@@ -129,3 +129,10 @@ session links still open the corresponding project. With no selection, the main
 screen shows the Niles logo and invites opening projects on the sidebar. Worker
 rows open direct chat; Start launches the default lead and Stop/Close end sessions/workers.
 The local mock refuses control and worker chat with 501.
+
+Chat panes share the top toolbar: hamburger, pane role/name, recorded model label,
+connection status, and the Niles logo at the right. Older leads without recorded
+models use their agent family; legacy workers use their saved agent label. Model
+fields are additive optional API v1 metadata. The chat follows the latest content
+through viewport and content resizing; scrolling up pauses following until the
+operator scrolls back to the bottom. No extra scroll controls are shown.

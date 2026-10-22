@@ -14,7 +14,14 @@ h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; overflow-wrap: anywhere; }
 small, .badge { color: var(--muted); font-size: .8rem; }
 .app { display: flex; flex-direction: column; height: 100dvh; }
 .app > main, .app > .chat { flex: 1; min-height: 0; }
-.toolbar { justify-content: flex-start; padding: .6rem 1rem; }
+.toolbar { justify-content: flex-start; padding: .6rem .8rem; gap: .7rem; flex-shrink: 0; }
+.pane-heading { flex: 1; min-width: 0; display: flex; align-items: center; gap: .7rem; }
+.pane-heading h2, .pane-heading small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pane-heading h2 { font-size: .95rem; max-width: 45%; }
+.pane-heading small { flex: 1; }
+.pane-heading .pill.live::before { content: '●'; padding-right: .25rem; font-size: .55rem; }
+.pane-heading .pill { flex-shrink: 0; padding: .2rem .4rem; }
+.brand { flex-shrink: 0; margin-left: auto; }
 #project-menu { position: fixed; inset: 0 auto 0 0; width: min(22rem, 85vw); background: var(--surface); z-index: 3; }
 .scrim { position: fixed; inset: 0; z-index: 2; background: #0008; border: 0; border-radius: 0; }
 .project-details { display: grid; gap: .5rem; padding: .6rem 0 .6rem 1rem; }
@@ -36,7 +43,8 @@ nav { display: grid; gap: .5rem; padding: .8rem; }
 .pill { border: 1px solid var(--warning); color: var(--warning); border-radius: 2rem; padding: .3rem .6rem; white-space: nowrap; font-size: .75rem; }
 .pill.live { border-color: var(--accent); color: var(--accent); }
 .banner { background: #483c26; color: #ffe4b2; padding: 1rem; overflow-wrap: anywhere; }
-.transcript { overflow-y: auto; flex: 1; padding: 1.2rem; display: flex; flex-direction: column; gap: 1rem; }
+.transcript { overflow-y: auto; flex: 1; padding: 1.2rem; }
+.messages { display: flex; flex-direction: column; gap: 1rem; }
 .bubble { background: var(--surface); border: 1px solid var(--line); border-radius: .8rem; padding: 1rem; max-width: 90%; align-self: flex-start; overflow-wrap: anywhere; }
 .reply-wait { display: flex; gap: .35rem; }
 .reply-wait span { width: .45rem; height: .45rem; border-radius: 50%; background: var(--muted); animation: reply-dot 1.2s ease-in-out infinite; }

@@ -35,7 +35,7 @@ impl Fixture {
                 agent: "pi:model:high".into(),
                 agent_family: None,
                 entry_skill: "solo".into(),
-                model: None,
+                model: Some("test-model".into()),
                 effort: None,
                 created_at: chrono::Utc::now(),
                 workspace: root.clone(),
@@ -184,7 +184,7 @@ async fn sessions_match_v1_and_resolve_only_enumerated_live_ids() {
     assert_eq!(
         json,
         json!({"api_version":1,"sessions":[{"id":"project:session","project":"project",
-        "agent":{"family":"pi","entry_skill":"solo"},"waiting":true,"worker_count":2}]})
+        "agent":{"family":"pi","model":"test-model","entry_skill":"solo"},"waiting":true,"worker_count":2}]})
     );
     for path in [
         "/api/sessions/unknown/events",

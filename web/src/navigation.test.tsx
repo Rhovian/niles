@@ -2,18 +2,18 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 import { Navigation } from './Navigation';
-import { projects, type Project } from './api';
+import { projects, type Project, type Session } from './api';
 
 const registered: Project[] = [
   { name: 'demo', state: 'waiting', workers: [
-    { id: 'nav', role: 'worker', lost: false }, { id: 'review', role: 'reviewer', lost: true },
+    { id: 'nav', role: 'worker', lost: false, model: 'gpt-6.1' }, { id: 'review', role: 'reviewer', lost: true },
     { id: 'audit', role: 'security', lost: false }, { id: 'lookup', role: 'research', lost: false },
     { id: 'plan', role: 'design', lost: false },
   ] },
   { name: 'offline', state: 'not running', workers: [] },
   { name: 'missing', state: 'missing', workers: [] },
 ];
-let leads = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
+let leads: Session[] = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
 class Stream extends EventTarget {
   static urls: string[];
   constructor(url: string) { super(); Stream.urls.push(url); }
@@ -191,4 +191,24 @@ it('nests worker actions one at a time, labels roles and loss, and resets on pro
   expect(screen.getByRole('button', { name: 'nav', expanded: false })).toBeDefined();
   expect(screen.queryByRole('button', { name: 'Open nav chat' })).toBeNull();
   expect(Stream.urls).toEqual([]);
+});
+
+it('uses one top toolbar for pane, model and connection in lead and worker chats', async () => {
+  localStorage.setItem('niles.activeProject', 'demo');
+  leads[0].agent = { ...leads[0].agent, model: 'opus-4.6' };
+  const { container } = render(<App />);
+  await screen.findByRole('region', { name: 'Chat with demo' });
+  await screen.findByText('opus-4.6');
+  const toolbar = container.querySelector('.toolbar')!;
+  expect(toolbar.querySelector('h2')?.textContent).toBe('lead');
+  expect(toolbar.querySelector('[role="status"]')?.textContent).toBe('catching up');
+  expect(container.querySelector('.chat header')).toBeNull();
+  expect(toolbar.lastElementChild?.getAttribute('alt')).toBe('Niles');
+  openMenu(); expandProject('demo');
+  fireEvent.click(screen.getByRole('button', { name: 'nav', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open nav chat' }));
+  await screen.findByRole('region', { name: 'Chat with nav' });
+  await screen.findByText('gpt-6.1');
+  expect(toolbar.querySelector('h2')?.textContent).toBe('worker · nav');
+  expect(container.querySelectorAll('header')).toHaveLength(1);
 });

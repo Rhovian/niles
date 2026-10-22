@@ -98,6 +98,7 @@ fn waiting_transitions_include_solo_without_repeating_or_retaining_exited_sessio
         id: "s".into(),
         project: "p".into(),
         agent: super::super::Agent {
+            model: None,
             family: "claude".into(),
             entry_skill: "solo".into(),
         },

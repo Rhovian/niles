@@ -87,6 +87,7 @@ esac
     let worker_meta = live.join("meta.json");
     let mut worker: serde_json::Value =
         serde_json::from_slice(&fs::read(&worker_meta).unwrap()).unwrap();
+    worker["model"] = json!("worker-model");
     worker["session_link"] = json!({"family": "pi", "session_dir": transcript});
     fs::write(worker_meta, worker.to_string()).unwrap();
     common::write_worker(&env.root, "lost", "api:gone", None, b"");
@@ -133,6 +134,18 @@ esac
         body,
         json!({"api_version":1,"sessions":[{"id":"api:session","project":"api",
         "agent":{"family":"claude","entry_skill":"lead"},"waiting":true,"worker_count":1}]})
+    );
+    let projects = request(
+        "GET",
+        "/api/projects",
+        "Tailscale-User-Login: alice@example.com\r\n",
+        "",
+    );
+    let projects: serde_json::Value =
+        serde_json::from_str(projects.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(
+        projects["projects"][0]["workers"][0]["model"],
+        "worker-model"
     );
     let login = "Tailscale-User-Login: alice@example.com\r\n";
     let endpoint = "/api/sessions/api%3Asession/message";

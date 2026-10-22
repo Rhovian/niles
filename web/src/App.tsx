@@ -9,6 +9,7 @@ const SESSION_REFRESH_MS = 15_000;
 export function App() {
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
   const [menu, setMenu] = useState(false);
   const [help, setHelp] = useState(false);
   const [registered, setRegistered] = useState<Project[]>([]);
@@ -76,10 +77,13 @@ export function App() {
     setSelected(undefined); setMenu(false); setHelp(false);
   };
   const current = selected ? items.find(item => item.id === selected) : items.find(item => item.project === active);
+  const member = registered.find(project => project.name === worker?.project)?.workers.find(item => item.id === worker?.id);
   const compatible = version === API_VERSION;
   return <div class="app">
     <header class="toolbar"><button ref={menuButton} aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu}
-      aria-controls="project-menu" onClick={() => setMenu(!menu)}>☰</button><h1>Niles</h1></header>
+      aria-controls="project-menu" onClick={() => setMenu(!menu)}>☰</button>
+      <div class="pane-heading" ref={setHeaderTarget}>{(help || !compatible || (!worker && !current)) && <h1>{help ? 'Help' : 'Niles'}</h1>}</div>
+      <img class="brand" src="/icon-32.png" alt="Niles" width="32" height="32" /></header>
     {menu && <aside id="project-menu">
       <header><h2>Projects</h2><button ref={closeButton} onClick={() => setMenu(false)}>Close sidebar</button></header>
       {compatible && <Notifications />}
@@ -90,10 +94,10 @@ export function App() {
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
     {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
-    {help ? <main class="empty"><h2>Help</h2><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
+    {help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
-      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} subtitle={worker.project} /> :
-      compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} subtitle={`${current.agent.family} · ${current.agent.entry_skill}`} working={!current.waiting} onStatus={onStatus} /> :
+      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${member?.role ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :
+      compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} pane={current.agent.entry_skill} subtitle={current.agent.model ?? current.agent.family} headerTarget={headerTarget} working={!current.waiting} onStatus={onStatus} /> :
       <main class="empty welcome"><img src="/icon-192.png" alt="Niles logo" width="192" height="192" />
         <p>{version !== undefined && !compatible ? 'Install the matching web release to continue.' :
           !loaded && !error ? 'Connecting…' : active || selected ? 'This project’s lead is not running. Open projects on the sidebar.' : 'Open projects on the sidebar.'}</p></main>}

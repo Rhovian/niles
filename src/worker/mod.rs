@@ -76,6 +76,20 @@ pub(crate) fn window_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<
     Ok(labels)
 }
 
+#[cfg(feature = "remote")]
+pub(crate) fn model_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<(String, String)>> {
+    let mut labels = Vec::new();
+    for entry in live_worker_locations(workspace)? {
+        let meta = meta::read_meta(&entry.worker_dir)?;
+        let model = match meta.model {
+            Some(model) => model,
+            None => meta.agent,
+        };
+        labels.push((entry.id, model));
+    }
+    Ok(labels)
+}
+
 /// Worker directories whose metadata is present and readable.
 pub(crate) fn live_worker_locations(
     workspace: &camino::Utf8Path,

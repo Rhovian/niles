@@ -53,9 +53,9 @@ it('does not overwrite an SSE status with an older in-flight snapshot', async ()
   await waitFor(() => expect(Stream.latest).toBeDefined());
   fireEvent(window, new Event('focus'));
   Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, agent: { family: 'claude', entry_skill: 'lead' } }) }));
-  await screen.findByText('claude · lead');
+  await screen.findByText('claude');
   await act(async () => { resolve(response([session])); });
-  expect(screen.getByText('claude · lead')).toBeDefined();
+  expect(screen.getByText('claude')).toBeDefined();
 });
 it.each([401, 403, 500])('reports HTTP %s without claiming a tailnet failure', async status => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status }));

@@ -360,7 +360,7 @@ included, carry `Cache-Control: no-store`.
 
 `GET /api/projects` shares the explorer's registered-project collection and the
 same authorization and no-store boundary. It exposes project names/states and
-worker IDs/roles/loss, including inactive projects; it excludes filesystem paths,
+worker IDs/roles/loss/model labels, including inactive projects; it excludes filesystem paths,
 window targets, briefs, and telemetry. The PWA stores only the last opened project
 name in origin-local storage. Worker rows open transcripts and expose a close action.
 

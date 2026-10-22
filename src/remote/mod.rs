@@ -68,6 +68,8 @@ struct Session {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct Agent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
     family: String,
     entry_skill: String,
 }
@@ -85,6 +87,7 @@ impl Session {
             id: session_id(record),
             project: record.project.clone(),
             agent: Agent {
+                model: record.meta.model.clone(),
                 family,
                 entry_skill: record.meta.entry_skill.clone(),
             },

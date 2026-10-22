@@ -47,7 +47,7 @@ it('displays the active project lead’s foreground entry skill', async () => {
     : { api_version: 1, sessions: [session] } })));
   render(<App />);
   await screen.findByRole('region', { name: 'Chat with notes' });
-  expect(screen.getByText('codex · solo')).toBeDefined();
+  expect(screen.getByText('codex')).toBeDefined();
 });
 it('blocks chat on API version mismatch', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) }));

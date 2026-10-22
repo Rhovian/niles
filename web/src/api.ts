@@ -3,14 +3,14 @@ import { z } from 'zod';
 export const API_VERSION = 1;
 export const sessionSchema = z.object({
   id: z.string().min(1), project: z.string(),
-  agent: z.object({ family: z.string(), entry_skill: z.string() }),
+  agent: z.object({ family: z.string(), model: z.string().optional(), entry_skill: z.string() }),
   waiting: z.boolean(), worker_count: z.number().int().nonnegative(),
 });
 export type Session = z.infer<typeof sessionSchema>;
 export const sessionsSchema = z.object({ api_version: z.number().int(), sessions: z.array(sessionSchema) });
 export const projectSchema = z.object({
   name: z.string().min(1), state: z.enum(['missing', 'not running', 'running', 'starting', 'waiting']),
-  workers: z.array(z.object({ id: z.string().min(1), role: z.enum(['worker', 'reviewer', 'security', 'research', 'design']), lost: z.boolean() })),
+  workers: z.array(z.object({ model: z.string().optional(), id: z.string().min(1), role: z.enum(['worker', 'reviewer', 'security', 'research', 'design']), lost: z.boolean() })),
 });
 export type Project = z.infer<typeof projectSchema>;
 const projectsSchema = z.object({ api_version: z.number().int(), projects: z.array(projectSchema) });
