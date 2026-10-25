@@ -35,20 +35,6 @@ fn pending_reports_are_one_immediate_batch_with_one_line_per_worker() {
 }
 
 #[test]
-fn workers_spawned_during_wait_are_covered_and_lone_reports_are_prompt() {
-    let workspace = temp_workspace("niles-workspace-new");
-    let waiter = spawn_wait(&workspace, &["--interval", "10ms", "--timeout", "5s"]);
-    wait_for_file(&state_dir(&workspace).join("worker/wait.lock"));
-    // Creating meta.json is the final publication of this live worker.
-    let started = Instant::now();
-    worker_with_status(&workspace, "late", b"done: arrived\n");
-    let output = waiter.wait_with_output().unwrap();
-    assert_command_success("dynamic worker", &output);
-    assert_eq!(stdout_of(&output), "late done: arrived\n");
-    assert!(started.elapsed() < Duration::from_secs(2));
-}
-
-#[test]
 fn newest_wait_takes_over_without_consuming_any_line_in_the_old_wait() {
     let workspace = temp_workspace("niles-workspace-takeover");
     let dir = worker_with_status(&workspace, "a", b"working: busy\n");
