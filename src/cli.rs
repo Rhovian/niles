@@ -187,6 +187,8 @@ pub enum CommandName {
     Usage,
     /// List effective built-in and workspace model rosters.
     Models,
+    /// List bound skills, their sources, descriptions and tier primaries.
+    Skills,
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.

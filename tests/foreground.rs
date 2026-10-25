@@ -17,6 +17,10 @@ fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
         format!("entry: {entry}\n{}", fs::read_to_string(&manifest).unwrap()),
     )
     .unwrap();
+    let skill = env.root.join(format!(".niles/skills/{entry}/SKILL.md"));
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, format!("---\nname: {entry}\ndescription: Use when reviewing.\n---\nentry {{workspace}} {{unknown}}"))
+        .unwrap();
     write_executable(
         &env.bin.join("claude"),
         "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$NILES_TEST_ARGS\"\n",
@@ -29,6 +33,9 @@ fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
         .output()
         .unwrap();
     assert_command_success("lead", &output);
+    assert!(
+        stderr_of(&output).contains(&format!("skill: {entry} (workspace {})", skill.display()))
+    );
     let args = fs::read_to_string(args_log).unwrap();
     let args = args
         .strip_suffix('\0')
@@ -46,6 +53,7 @@ fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
             .unwrap();
     assert_eq!(meta["entry_skill"], entry);
     let primary = fs::read_to_string(std::path::Path::new(dir).join("lead.md")).unwrap();
+    assert_eq!(primary, format!("entry {} {{unknown}}", env.root.display()));
     assert!(
         args.windows(2)
             .any(|pair| pair == ["--append-system-prompt", primary.as_str()])

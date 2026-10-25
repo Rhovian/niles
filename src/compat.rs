@@ -64,9 +64,11 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
         invocation
             .env
             .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
-        let nonce = Uuid::new_v4().to_string();
-        invocation.pass_primary(&format!("The Niles compat secret is {nonce}"))?;
-        let prompt = "Read the Niles compat secret from your system instructions. Run `niles agent status working <secret>` with that secret, then reply with only the word done.".to_owned();
+        let sample_label = Uuid::new_v4().to_string();
+        invocation.pass_primary(&format!(
+            "The sample label for this Niles compatibility check is {sample_label}"
+        ))?;
+        let prompt = "For the Niles compatibility check, run `niles agent status working <sample-label>` using this run's sample label, then reply with only the word done.".to_owned();
         match invocation.brief {
             BriefDelivery::Arg => invocation.args.push(prompt.clone()),
             BriefDelivery::Flag { path, .. } => {
@@ -125,9 +127,9 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
             }
             Some(_) => {
                 if read_optional_string(&dir.join("status.log"))?.as_deref()
-                    != Some(format!("working: {nonce}\n").as_str())
+                    != Some(format!("working: {sample_label}\n").as_str())
                 {
-                    Some("nonce not written (tool use blocked or skipped)".to_owned())
+                    Some("sample label not written (tool use blocked or skipped)".to_owned())
                 } else {
                     let after = version_line(&path, "--version");
                     (after != version)

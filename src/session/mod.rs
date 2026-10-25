@@ -5,9 +5,7 @@ mod startup;
 #[cfg(test)]
 mod test_support;
 
-use std::fs;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
@@ -28,8 +26,6 @@ pub(crate) fn run(start: crate::tmux::LeadStart) -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
-    let worker_dir = store::workers_dir(&workspace)?;
-    fs::create_dir_all(&worker_dir).with_context(|| format!("failed to create {worker_dir}"))?;
     let Some(manifest) = workspace_manifest::ensure_interactive(&workspace, start)? else {
         return Ok(());
     };

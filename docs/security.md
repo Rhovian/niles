@@ -64,7 +64,7 @@ global per-project `manifest.yaml` file selects an entry skill and agents for sk
 listed agent the lead picks. Manifests live in operator state. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
-[`prompts/lead_brief.md`](../prompts/lead_brief.md).
+[`prompts/skills/lead/SKILL.md`](../prompts/skills/lead/SKILL.md).
 
 **Existing mitigations.** Spawn defaults to the skill's standard primary and rejects unlisted
 tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
@@ -83,6 +83,44 @@ replace their executable names or launch arguments. Skill bindings select what i
 and planning text is instruction input to the lead. The manifest can also configure a
 `worktree.setup` shell command and `worktree.env`; see the execution boundary below.
 `niles doctor` executes the selected built-in family binaries from PATH with `--version`.
+Workspace skill text has the additional instruction boundary [described below](#skills-as-an-instruction-source).
+
+### Skills as an instruction source
+
+**Attacker and capability.** A repository author can ship
+`.niles/skills/<name>/SKILL.md`. A bound primary skill's body reaches the lead or worker at
+system/developer-prompt privilege, higher than `AGENTS.md`. The resolution chain is compiled
+built-in → `~/.niles/skills/` → workspace `.niles/skills/`; a repository can override built-in
+or global text with the same name. This is an accepted instruction boundary, with no Niles
+trust gate. Global skills are operator-owned.
+**Mitigations.** Only names explicitly bound in the manifest are looked up; directories are
+never scanned. Every launch prints `skill: <name> (<source> <path>)` (built-ins have no disk
+path), to stderr for an entry session, and `niles skills` shows the same provenance. Names
+have the shared ASCII grammar. Frontmatter requires a matching name and a nonempty description
+of at most 1,024 characters. Parse errors name the source and problem without quoting content.
+Disk documents are read through a 131,072-byte limit (including frontmatter), with one
+extra byte to detect overflow; errors report the path, observed read and file sizes.
+Bodies are not summarized or truncated. Empty primary bodies, NUL, or assembled/rendered text
+over 65,536 bytes fail before worker/session state is written. Codex TOML escaping is included
+in a separate 131,071-byte argument bound; the terminating NUL stays within Linux's 128 KiB
+per-string limit. Hermes's env name/value overhead also fits that limit under the text cap.
+Shell quoting in a worker's `launch.sh` is file content, not an additional exec argument.
+Descriptions enter command output only: whitespace is collapsed, Unicode control and format characters stripped
+and output clamped to 200 characters. Semantic prompt injection remains possible.
+
+Workspace skill directories and files are checked with `symlink_metadata`; directories must
+be directories and files regular, without symlinks. The file is opened with `O_NOFOLLOW`.
+Global symlinks are allowed. The `.niles` and `skills` parents remain unprotected. A directory
+can be swapped after its check by a process already able to write the workspace; this accepted
+race is within the same-user filesystem non-goal. A missing file between manifest existence
+checking and launch fails loudly. No provenance is persisted in worker metadata.
+
+**Known gaps.** Provenance is visibility, not authorization. Niles never accepts the agent CLI's
+trust prompt, but primary text is supplied before that prompt; declining ends the session
+without un-sending the text. Whether a provider receives anything before a declined prompt is
+unverified per family. A `git pull` can change skill text without a prompt, as it changes
+`AGENTS.md`. Project registration does not establish trust. Repository configuration and skill
+text share the no-trust-gate policy described above.
 
 ### Global project state, symlinks, and locks
 

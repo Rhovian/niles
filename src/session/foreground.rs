@@ -6,12 +6,13 @@ use camino::Utf8Path;
 use crate::{
     agents::{self, BriefDelivery},
     config::spec::load_project_config_from,
+    skills,
     util::render_template,
     watch,
     workspace_manifest::WorkspaceManifest,
 };
 
-use super::brief::{ManagerSession, write_manager_session};
+use super::brief::{ManagerSession, prepare_manager_session};
 
 const SIGNAL_EXIT_LABEL: &str = "signal";
 
@@ -21,12 +22,20 @@ pub(super) fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = &manifest.binding(&manifest.entry)?.standard.primary;
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
-    let ManagerSession { meta, brief, dir } =
-        write_manager_session(workspace, &invocation.spec, &manifest.entry)?;
+    let primary = skills::resolve(&manifest.entry, workspace, &skills::global_dir()?)?;
+    let prepared = prepare_manager_session(
+        workspace,
+        &invocation.spec,
+        &manifest.entry,
+        primary.primary_body()?,
+    )?;
+    invocation.pass_primary(&prepared.brief)?;
+    eprintln!("skill: {primary}");
+    prepared.write()?;
+    let ManagerSession { meta, dir, .. } = prepared;
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
     }
-    invocation.pass_primary(&brief)?;
     let prompt = entry_prompt_args(invocation.brief, meta.entry_skill.as_str(), &dir);
     invocation.args.extend(prompt);
 
