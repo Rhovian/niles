@@ -68,7 +68,10 @@ fn missing_or_wrong_sample_label_fails() {
         "exit 0\n",
         "printf wrong > \"$NILES_AGENT_DIR/status.log\"\n",
     ] {
-        assert_failed_turn(body, "sample label not written (tool use blocked or skipped)");
+        assert_failed_turn(
+            body,
+            "sample label not written (tool use blocked or skipped)",
+        );
     }
 }
 
