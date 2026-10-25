@@ -8,10 +8,7 @@ use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
     session,
-    skills::{
-        SkillName,
-        builtin::{self, BOOTSTRAP},
-    },
+    skills::{self, SkillName, builtin::BOOTSTRAP},
     store,
     tmux::{self, WindowTarget},
     util::{
@@ -87,7 +84,12 @@ pub fn spawn(
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let mut invocation =
         agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
-    invocation.pass_primary(&builtin::primary(&skill)?)?;
+    let primary_skill = skills::resolve(&skill, &project, &skills::global_dir()?)?;
+    invocation.pass_primary(&format!(
+        "{}\n{}",
+        include_str!("../../prompts/skill_common.md"),
+        primary_skill.primary_body()?
+    ))?;
     if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
@@ -136,6 +138,7 @@ pub fn spawn(
     let agent_spec = &invocation.spec;
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
+    println!("skill: {primary_skill}");
     basis.record_mechanical(&id)?;
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;

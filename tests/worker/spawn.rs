@@ -162,20 +162,12 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
 #[test]
 fn entry_and_unbound_skills_fail_before_worker_state_even_with_override() {
     let env = TestEnv::with_manifest("spawn-bound-skill", "claude");
-    let manifest = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        format!("{body}missing: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n"),
-    )
-    .unwrap();
     for (skill, error) in [
         ("lead", "entry skill"),
         (
             "unbound",
-            "bound skills: design, lead, missing, research, reviewer, security, worker",
+            "bound skills: design, lead, research, reviewer, security, worker",
         ),
-        ("missing", "no compiled primary skill missing"),
     ] {
         assert_failure_contains(
             skill,

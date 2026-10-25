@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
-    skills::{SkillName, builtin},
+    skills::SkillName,
     telemetry::SessionLink,
     util::{read_dir_utf8_paths, render_template, timestamp_id},
     workspace_manifest,
@@ -41,23 +41,22 @@ pub(crate) struct SessionMeta {
 
 pub(super) struct ManagerSession {
     pub meta: SessionMeta,
-    pub brief: String,
     pub dir: Utf8PathBuf,
+    pub brief: String,
 }
 
-pub(super) fn write_manager_session(
+pub(super) fn prepare_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
     skill: &SkillName,
+    template: &str,
 ) -> Result<ManagerSession> {
     let now = Utc::now();
     let id = timestamp_id(&now);
     let dir = sessions_dir(workspace)?.join(&id);
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_entry_brief(agent, workspace, &dir, &startup_context, skill)?;
-    fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
-    fs::write(&path, &body).with_context(|| format!("failed to write {path}"))?;
+    let body = render_entry_brief(agent, workspace, &dir, &startup_context, template)?;
     let meta = SessionMeta {
         id: id.clone(),
         agent: agent.canonical(),
@@ -71,12 +70,20 @@ pub(super) fn write_manager_session(
         lead_pane: recorded_lead_pane(),
         session_link: agents::session_link(agent.family(), &format!("lead-{id}"), &dir),
     };
-    write_session_meta(workspace, &meta)?;
     Ok(ManagerSession {
         meta,
-        brief: body,
         dir,
+        brief: body,
     })
+}
+
+impl ManagerSession {
+    pub fn write(&self) -> Result<()> {
+        fs::create_dir_all(&self.dir).with_context(|| format!("failed to create {}", self.dir))?;
+        fs::write(&self.meta.brief, &self.brief)
+            .with_context(|| format!("failed to write {}", self.meta.brief))?;
+        write_session_meta(&self.meta.workspace, &self.meta)
+    }
 }
 
 pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
@@ -89,11 +96,11 @@ fn render_entry_brief(
     workspace: &Utf8Path,
     dir: &Utf8Path,
     startup_context: &str,
-    skill: &SkillName,
+    template: &str,
 ) -> Result<String> {
     let manifest_path = workspace_manifest::manifest_path(workspace)?;
     Ok(render_template(
-        &builtin::primary(skill)?,
+        template,
         &[
             ("{workspace}", workspace.as_str()),
             ("{agent}", &agent.canonical()),
@@ -154,7 +161,12 @@ fn recorded_lead_pane() -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_support::temp_test_path;
-    const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
+    static LEAD_BRIEF_TEMPLATE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let root = temp_test_path("lead-body");
+        crate::skills::resolve(&SkillName::default(), &root, &root)
+            .unwrap()
+            .body
+    });
 
     #[test]
     fn lead_brief_bounds_the_lead_to_the_request() {
@@ -255,23 +267,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_compiled_entry_leaves_no_session_directory() {
-        let workspace = temp_test_path("missing-entry");
-        let agent =
-            agents::AgentSpec::parse("claude", &agents::ModelRoster::builtin().unwrap()).unwrap();
-        let error = write_manager_session(&workspace, &agent, &"custom".parse().unwrap())
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(
-            error.contains("no compiled primary skill custom"),
-            "{error}"
-        );
-        assert!(!sessions_dir(&workspace).unwrap().exists());
-        crate::test_support::remove_workspace(&workspace).unwrap();
-    }
-
-    #[test]
     fn lead_brief_render_fills_every_placeholder() {
         let workspace = temp_test_path("brief-{dir}-render");
         let dir = workspace.join(".niles/sessions/test-session");
@@ -283,7 +278,7 @@ mod tests {
             &workspace,
             &dir,
             "worker: none",
-            &SkillName::default(),
+            &LEAD_BRIEF_TEMPLATE,
         )
         .unwrap();
 

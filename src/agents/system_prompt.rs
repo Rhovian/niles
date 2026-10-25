@@ -2,13 +2,32 @@ use anyhow::{Result, ensure};
 
 use super::{AgentInvocation, SystemPromptArg};
 
+const MAX_PRIMARY_BYTES: usize = 65_536;
+const MAX_EXEC_BYTES: usize = 131_072;
+
 impl AgentInvocation {
     pub fn pass_primary(&mut self, text: &str) -> Result<()> {
-        ensure!(!text.contains('\0'), "primary skill contains NUL");
+        ensure!(
+            text.len() <= MAX_PRIMARY_BYTES,
+            "primary skill is {} bytes; maximum is 65536 bytes",
+            text.len()
+        );
+        ensure!(
+            !text.contains('\0'),
+            "primary skill contains NUL ({} bytes)",
+            text.len()
+        );
         match self.system_prompt {
             SystemPromptArg::Flag(flag) => self.args.extend([flag.to_string(), text.to_owned()]),
             SystemPromptArg::Config { flag, key } => {
                 let value = format!("{key}={}", toml_basic_string(text));
+                // Linux MAX_ARG_STRLEN includes the terminating NUL; TOML escaping can
+                // grow a 64 KiB body sixfold. Check the actual exec argument, not shell quoting.
+                ensure!(
+                    value.len() < MAX_EXEC_BYTES,
+                    "encoded primary skill is {} bytes; maximum argument is 131071 bytes",
+                    value.len()
+                );
                 self.args.extend([flag.to_string(), value]);
             }
             SystemPromptArg::Env(name) => self.env.push((name.to_string(), text.to_owned())),
@@ -52,15 +71,22 @@ mod tests {
     }
 
     #[test]
-    fn nul_is_rejected_before_mutating_builtin_launches() {
+    fn limits_reject_before_mutation_and_allow_the_raw_boundary() {
         let models = ModelRoster::builtin().unwrap();
-        for family in ["claude", "codex", "hermes", "pi"] {
-            let mut agent = invocation(family, InvocationDefaults::Worker, &models).unwrap();
-            let args = agent.args.clone();
-            let env = agent.env.clone();
-            assert!(agent.pass_primary("bad\0text").is_err());
+        let mut agent = invocation("codex", InvocationDefaults::Worker, &models).unwrap();
+        let args = agent.args.clone();
+        let env = agent.env.clone();
+        for text in ["bad\0text".into(), "é".repeat(MAX_PRIMARY_BYTES / 2 + 1)] {
+            assert!(agent.pass_primary(&text).is_err());
             assert_eq!(agent.args, args);
             assert_eq!(agent.env, env);
         }
+        agent.pass_primary(&"x".repeat(MAX_PRIMARY_BYTES)).unwrap();
+        let count = (MAX_EXEC_BYTES - 1 - "developer_instructions=".len() - 2) / 2;
+        agent.pass_primary(&"\"".repeat(count)).unwrap();
+        assert!(agent.args.last().unwrap().len() < MAX_EXEC_BYTES);
+        let before = agent.args.clone();
+        assert!(agent.pass_primary(&"\"".repeat(count + 1)).is_err());
+        assert_eq!(agent.args, before);
     }
 }

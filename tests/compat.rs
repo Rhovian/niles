@@ -10,16 +10,21 @@ const VERSION: &str = r#"if [ "$1" = --version ]; then
   exit 0
 fi
 "#;
-const NONCE: &str = r#"primary=$HERMES_EPHEMERAL_SYSTEM_PROMPT
+const SAMPLE_LABEL: &str = r#"primary=$HERMES_EPHEMERAL_SYSTEM_PROMPT
+prompt=
 for arg do
   case "$previous" in
     --append-system-prompt) primary=$arg;;
+    --query-file) prompt=$(cat "$arg");;
     --config) case "$arg" in developer_instructions=*) primary=${arg#developer_instructions=}; primary=${primary#\"}; primary=${primary%\"};; esac;;
   esac
   previous=$arg
 done
-nonce=${primary##* }
-"$NILES_TEST_BINARY" agent status working "$nonce"
+[ -n "$prompt" ] || prompt=$arg
+sample_label=${primary##* }
+[ "$primary" = "The sample label for this Niles compatibility check is $sample_label" ] || exit 4
+[ "$prompt" = "For the Niles compatibility check, run \`niles agent status working <sample-label>\` using this run's sample label, then reply with only the word done." ] || exit 5
+"$NILES_TEST_BINARY" agent status working "$sample_label"
 "#;
 
 fn run_fake(body: &str) -> std::process::Output {
@@ -46,8 +51,8 @@ fn assert_failed_turn(body: &str, detail: &str) {
 }
 
 #[test]
-fn successful_nonce_turn() {
-    let output = run_fake(NONCE);
+fn successful_sample_label_turn() {
+    let output = run_fake(SAMPLE_LABEL);
     assert_command_success("compat", &output);
     assert_eq!(
         stdout_of(&output),
@@ -58,12 +63,15 @@ fn successful_nonce_turn() {
 }
 
 #[test]
-fn missing_or_wrong_nonce_fails() {
+fn missing_or_wrong_sample_label_fails() {
     for body in [
         "exit 0\n",
         "printf wrong > \"$NILES_AGENT_DIR/status.log\"\n",
     ] {
-        assert_failed_turn(body, "nonce not written (tool use blocked or skipped)");
+        assert_failed_turn(
+            body,
+            "sample label not written (tool use blocked or skipped)",
+        );
     }
 }
 
@@ -78,7 +86,7 @@ fn nonzero_exit_reports_last_stderr_line() {
 #[test]
 fn version_change_fails() {
     assert_failed_turn(
-        &format!("{NONCE}printf changed > \"$0.changed\"\n"),
+        &format!("{SAMPLE_LABEL}printf changed > \"$0.changed\"\n"),
         "version changed during turn: Fake CLI 1.0.0 -> Fake CLI 2.0.0",
     );
 }
@@ -129,7 +137,7 @@ fn all_families_use_their_brief_and_launch_environment() {
         };
         write_executable(
             &env.bin.join(family),
-            &format!("#!/bin/sh\n{VERSION}{check}{NONCE}"),
+            &format!("#!/bin/sh\n{VERSION}{check}{SAMPLE_LABEL}"),
         );
     }
     let output = env

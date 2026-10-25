@@ -2,6 +2,13 @@ use std::{fmt, str::FromStr};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+use unicode_general_category::{GeneralCategory, get_general_category};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Origin {
+    Global,
+    Workspace,
+}
 
 pub(crate) const DEFAULT_ENTRY_SKILL: &str = "lead";
 
@@ -49,6 +56,38 @@ impl fmt::Display for SkillName {
 }
 
 pub(crate) mod builtin;
+mod resolve;
+pub(crate) use resolve::{global_dir, locate, resolve};
+
+pub(crate) fn list() -> Result<()> {
+    let workspace = crate::util::current_dir_utf8()?;
+    let global = global_dir()?;
+    let manifest = crate::workspace_manifest::load(&workspace)?
+        .ok_or_else(|| anyhow::anyhow!("skills requires a workspace manifest"))?;
+    for (name, binding) in manifest.ordered_bindings() {
+        let skill = resolve(name, &workspace, &global)?;
+        let description = skill
+            .description
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .filter(|ch| {
+                !matches!(
+                    get_general_category(*ch),
+                    GeneralCategory::Control | GeneralCategory::Format
+                )
+            })
+            .take(200)
+            .collect::<String>();
+        print!("skill: {skill}\t{description}");
+        for (tier, agents) in binding.tiers() {
+            print!("\t{}: {}", tier.as_str(), agents.primary);
+        }
+        println!();
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

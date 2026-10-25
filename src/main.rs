@@ -93,6 +93,7 @@ fn run() -> Result<ExitCode> {
                 anyhow::bail!("built without remote; reinstall with --features remote");
             }
         }
+        Some(CommandName::Skills) => skills::list()?,
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Compat { families }) => return compat::compat(&families),
         Some(CommandName::Prune { older_than, apply }) => projects::prune::run(older_than, apply)?,

@@ -4,7 +4,20 @@
 
 `niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill
 (default `lead`, selected with `entry:`) cannot be spawned. Only the entry must be bound when
-the manifest loads; other skills are optional. Primary text is currently supplied by the compiled built-in prompts.
+the manifest loads; other skills are optional. Each binding must resolve to a skill. Lookup is by exact name, in order: compiled built-ins,
+`~/.niles/skills/<name>/SKILL.md`, then `<workspace>/.niles/skills/<name>/SKILL.md`; the last
+present source wins. Unbound directories are never scanned. `niles skills` lists bound skills,
+entry first, with sources, paths, descriptions and tier primaries.
+
+A `SKILL.md` starts with YAML frontmatter between `---` lines: `name` must equal the directory
+name and `description` must be nonempty and at most 1,024 characters. Other frontmatter keys
+are allowed. Disk documents are limited to 131,072 bytes including frontmatter.
+The Markdown body follows unchanged. Workers receive `prompts/skill_common.md`
+followed by that body; entry sessions retain their template rendering. Primary text must be
+nonempty, contain no NUL and fit 65,536 bytes after assembly/rendering. Codex's encoded argument
+must also fit 131,071 bytes. Invalid content fails before worker/session creation. Manifest load
+checks existence only; launch reads content. Workspace skill directories/files must not be
+symlinks; global skill symlinks are allowed. See [the threat model](security.md#skills-as-an-instruction-source).
 
 `--from <id>` passes a live worker's report path as `from_report:`; its latest status must be
 `done:`. Any skill can build on a finished report. `--mechanical <reason>` optionally logs

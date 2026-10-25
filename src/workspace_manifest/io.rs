@@ -19,7 +19,10 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         manifest
             .binding(&manifest.entry)
             .with_context(|| format!("invalid entry in {path}"))?;
+        let global = crate::skills::global_dir()?;
         for (skill, binding) in &manifest.bindings {
+            crate::skills::locate(skill, root, &global)
+                .with_context(|| format!("invalid skill in {path}"))?;
             for agent in binding.agents() {
                 super::types::exact_spec(agent, &config.models)
                     .with_context(|| format!("invalid {skill} agent in {path}"))?;
@@ -53,16 +56,15 @@ mod tests {
 
     #[test]
     fn only_entry_must_be_bound() {
-        let body =
-            "entry: custom\ncustom: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+        let body = "entry: reviewer\nreviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
         let manifest = load_body("manifest-entry", body).unwrap().unwrap();
-        assert_eq!(manifest.entry.as_str(), "custom");
+        assert_eq!(manifest.entry.as_str(), "reviewer");
         assert_eq!(manifest.bindings.len(), 1);
         let error = format!(
             "{:#}",
             load_body(
                 "manifest-entry",
-                &body.replace("entry: custom", "entry: missing")
+                &body.replace("entry: reviewer", "entry: missing")
             )
             .unwrap_err()
         );
