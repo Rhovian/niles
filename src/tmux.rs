@@ -17,8 +17,8 @@ pub(crate) use home::{
 };
 pub(crate) use panels::open_panel;
 pub(crate) use session::{
-    configure_status, kill_session, lead_running, open_session, project_session, switch_or_attach,
-    windows,
+    LeadStart, configure_status, kill_session, lead_running, open_session, project_session,
+    switch_or_attach, windows,
 };
 
 pub(crate) use send::{send_input, send_line};
@@ -59,6 +59,9 @@ fn query(args: &[&str]) -> Result<String> {
 
 fn output(args: &[&str]) -> Result<Output> {
     Command::new("tmux")
+        // Without -u, tmux sanitizes even tab delimiters when the client has no UTF-8 locale.
+        // https://github.com/tmux/tmux/blob/3.8/tmux.1 (-u)
+        .arg("-u")
         .args(args)
         .stdin(Stdio::null())
         .output()

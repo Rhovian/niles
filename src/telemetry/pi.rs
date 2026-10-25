@@ -13,14 +13,16 @@ pub(super) fn read_pi(session_dir: &Utf8Path) -> Result<Option<super::SessionRec
 }
 
 fn read_body(session_dir: &Utf8Path) -> Result<Option<String>> {
-    let Some(path) = read_dir_utf8_paths(session_dir)?
+    transcript_path(session_dir)?
+        .map(|path| read_transcript(&path))
+        .transpose()
+}
+
+pub(super) fn transcript_path(session_dir: &Utf8Path) -> Result<Option<camino::Utf8PathBuf>> {
+    Ok(read_dir_utf8_paths(session_dir)?
         .into_iter()
         .filter(|path| path.extension() == Some("jsonl"))
-        .max()
-    else {
-        return Ok(None);
-    };
-    Ok(Some(read_transcript(&path)?))
+        .max())
 }
 
 #[derive(Deserialize)]

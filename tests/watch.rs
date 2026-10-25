@@ -14,6 +14,7 @@ use std::{fs, path::PathBuf, process::Output};
 /// inherits stdout would put a line about windows and panes in the middle of the lead's screen.
 /// `capture-pane` and `display-message` are answered silently because their output *is* read.
 const STUB_TMUX: &str = r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message) printf 'niles-test-session\n'; exit 0 ;;

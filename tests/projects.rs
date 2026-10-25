@@ -10,6 +10,7 @@ fn status_tolerates_a_session_closing_after_has_session() {
     let env = TestEnv::with_tmux(
         "niles-session-race",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 if [ "$1" = "$FAIL_QUERY" ]; then
   printf "can't find session: race\n" >&2; exit 1
@@ -43,6 +44,7 @@ fn bare_niles_creates_the_home_session_and_switches() {
     let env = TestEnv::with_tmux(
         "niles-home-create",
         r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   has-session) printf "can't find session\n" >&2; exit 1 ;;
@@ -110,6 +112,7 @@ fn home_bindings_install_on_a_real_server() {
     let found = Command::new("which").arg("tmux").output().unwrap();
     let real_tmux = String::from_utf8(found.stdout).unwrap().trim().to_owned();
     let wrapper = r#"#!/bin/sh
+[ "$1" != -u ] || shift
 [ "$1" = switch-client ] || exec "$TMUX_REAL" -S "$TMUX_SOCKET" "$@"
 "#;
     let env = TestEnv::with_tmux("niles-bindings", wrapper);
@@ -154,4 +157,53 @@ fn home_bindings_install_on_a_real_server() {
         assert!(line.contains(&send), "{line}");
         assert!(line.contains(&format!("send-keys {pass}")), "{line}");
     }
+}
+
+#[test]
+fn live_projects_survive_a_service_environment() {
+    let found = Command::new("which").arg("tmux").output().unwrap();
+    let real_tmux = stdout_of(&found).trim().to_owned();
+    let env = TestEnv::new("niles-locale");
+    let socket = env.root.join("tmux.sock");
+    let tmux = |args: &[&str]| {
+        Command::new(&real_tmux)
+            .args(["-u", "-f", "/dev/null", "-S", socket.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert_ok(
+        "start tmux",
+        &tmux(&["new-session", "-d", "-s", "api", "-n", "niles", "sleep 300"]),
+    );
+    assert_ok(
+        "tag project",
+        &tmux(&[
+            "set-option",
+            "-t",
+            "api",
+            "@niles-project",
+            env.root.to_str().unwrap(),
+        ]),
+    );
+    let registry = env.home.join(".niles/projects");
+    fs::create_dir_all(&registry).unwrap();
+    std::os::unix::fs::symlink(&env.root, registry.join("api")).unwrap();
+    common::write_executable(
+        &env.bin.join("tmux"),
+        &format!(
+            "#!/bin/sh\nexec '{real_tmux}' -S '{}' \"$@\"\n",
+            socket.display()
+        ),
+    );
+    let result = env
+        .niles(&env.root, &["status", "projects"])
+        .env_clear()
+        .env("HOME", &env.home)
+        .env("PATH", common::path_with_bin(&env.bin))
+        .output()
+        .unwrap();
+    assert_ok("stop tmux", &tmux(&["kill-server"]));
+    assert_ok("status without locale or TMUX", &result);
+    assert!(stdout_of(&result).contains("api#[default]"));
 }

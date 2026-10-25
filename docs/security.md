@@ -297,8 +297,11 @@ values. These are launch-integrity measures, not containment. See
 [`src/agent_window.rs`](../src/agent_window.rs), and
 [`src/agents/families.rs`](../src/agents/families.rs).
 
-Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage. It uses
-read-only access to those stores and links sessions through launch identifiers or a Codex brief.
+Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage and extract
+user/assistant text and structured tool calls. It uses read-only access to those stores and links
+sessions through launch identifiers or a Codex brief. Transcript content is untrusted display
+data, including tool arguments; consumers must escape it and must never execute it. Tool results,
+images, and private reasoning blocks are omitted.
 For Hermes, it opens the local `state.db` read-only to read session usage and state.
 For pi, Niles chooses transcript directories under its global project worker and lead session
 state directories using `--session-dir`, and reads the newest JSONL transcript there.
@@ -331,3 +334,138 @@ This model does not promise protection from:
 
 These non-goals do not make a cloned repository trustworthy. They clarify that Niles coordinates
 the operator's existing tools and permissions rather than reducing them.
+
+### Remote API
+
+**Phone access is shell access on the host.** Foreground agents can execute commands
+and spawn workers that bypass approval prompts; Niles provides no sandbox. Device
+admission is tailnet membership plus ACLs/grants, followed by Niles's user allowlist.
+See the [deployment guide](remote.md) for the supported static-root/API-proxy setup.
+
+The optional `remote` Cargo feature is off in default/release binaries and requires
+system OpenSSL, without vendoring. It adds an HTTP/SSE listener only while `niles remote`
+runs, always on IPv4 loopback. Startup requires a nonempty global `remote.allowed_users`.
+Every route, including unknown routes and SSE, requires exactly one matching
+`Tailscale-User-Login` header. This is an identity assertion from Tailscale Serve,
+not a credential accepted from arbitrary network clients: Serve must terminate tailnet
+access and supply the trusted header. Local processes can forge it and already have
+access to the same user's plaintext state; hostile local users remain outside this model.
+Serve removes client-supplied identity headers and injects verified ones; tagged
+clients lack user identity headers and cannot pass this authorization. The API must
+never bind a LAN/tailnet address or trust a public proxy's asserted login. No Funnel.
+The static shell is not allowlist-gated: tailnet ACLs govern its retrieval, while the
+API enforces the allowlist before transcripts/actions. Serve only built shell assets,
+not repository/state/key directories. There is no CORS grant. API responses, errors
+included, carry `Cache-Control: no-store`.
+
+`GET /api/projects` shares the explorer's registered-project collection and the
+same authorization and no-store boundary. It exposes project names/states and
+worker IDs/roles/loss/model labels, including inactive projects; it excludes filesystem paths,
+window targets, briefs, and telemetry. The PWA stores only the last opened project
+name in origin-local storage. Worker rows open transcripts and expose a close action.
+
+`niles remote setup` persists this existing host/origin boundary in a launchd/systemd
+user service and two Tailscale Serve handlers. It merges explicit allowed identities,
+keeps existing VAPID keys, and refuses existing background root/API mounts, unknown
+Serve schema fields and existing service files. Tailscale applies its other Serve rules.
+Setup invokes local `tailscale`, service-manager,
+and `curl` executables from the operator's PATH; these and the selected built web assets
+are trusted host code. It does not configure tailnet ACLs, join devices, or enable
+HTTPS/MagicDNS. Host-side API verification is advisory: a failed check warns and
+prints a check for an allowed tailnet device without undoing setup. The Serve
+inspection and mount commands are sequential, not atomic;
+do not change Serve concurrently during setup. Partial failures leave completed
+configuration in place for inspection and manual cleanup.
+
+Session IDs are resolved only against registered, running project sessions; request
+IDs are never used as filesystem paths or tmux targets. Worker IDs are resolved by enumerating live metadata and comparing IDs by equality.
+Worker transcript inputs use the recorded agent directory and report path. Session collection and transcript
+reads run on blocking workers rather than the async executor. SSE uses the independent
+incremental readers, bounded event queues, and a fresh snapshot on each connection.
+Snapshots limit turn count to 200, not bytes per turn; initial transcript reads still
+scan the available history. Disconnected clients stop polling; vanished sessions close
+the stream. Read errors are logged locally and close the stream without exposing
+filesystem/error details to the client. Append cursors do not replay in-place edits
+or switch transcript files underneath an open reader.
+
+Authenticated message POSTs resolve the opaque ID again against the live catalog and
+send only to its recorded foreground agent pane or live worker window through
+`tmux::send_line`. Worker targets must be live or recovered through their project/ID tags;
+lost workers retain readable transcripts but sending returns 503. No fallback
+target, draft/prompt guard, or watcher-shared lock is introduced. JSON bodies are capped
+at 16 KiB; text must be nonblank and cannot contain ESC (paste framing) or NUL (process
+arguments). Other content, including newlines and shell-looking text, remains literal.
+Authorization runs before body parsing or tmux actions. A 200 follows the shared send
+path's pane-change acknowledgement; it is not proof that the model acted on the message.
+A send failure can follow a paste/submit, so clients must not retry automatically.
+Tmux failure details stay in local diagnostics, not HTTP responses. Catalog resolution
+and injection are not atomic; concurrent session exit/restart or desk/watcher input can
+race with sending, under the operator's no-lock/no-draft-guard ruling. Trusted frontend JavaScript from this host is essential: an
+allowed tailnet user can instruct an agent with the host user's execution privileges.
+
+Remote control can start only a saved manifest's default lead for a registered project,
+stop a session tagged with that registry path, and close enumerated live/lost workers.
+No request chooses an agent, command, args, role or filesystem path. Registration and
+manifest creation remain desk-only. Start checks the directory, parses the manifest,
+and refuses foreign session names. Its fixed 409 texts distinguish those three
+operator-fixable conflicts; other errors expose only status codes. Phone starts bypass
+the role picker with `niles lead --keep-roles`. Agents run with the host user's privileges
+and the service/tmux server environment; registration already trusts project configuration.
+Shell-rc-only credentials may be unavailable. Worker close runs `current_exe` with a
+registry cwd and enumerated ID as argv, without a shell. Stop closes workers before
+killing the tagged session. These operations are not atomic against desk/lead actions:
+concurrent disappearance is rechecked and logged; workers spawned during stop can
+remain as lost metadata, closable later. Concurrent crashed-lead starts can respawn
+over one another, leaving an orphan session directory for `niles prune`.
+
+Tailscale identity is ambient on requests from an allowed device, including cross-site
+requests. Control mutations accept only PUT/DELETE, requiring a CORS preflight that
+gets no grant. Message POSTs require JSON content type for the same reason. GETs
+have no side effects. No API route grants CORS access.
+
+### Remote PWA frontend
+
+The installable `web/` app is an instruction surface for the foreground agent, which
+can execute code with the host user's permissions. Serve its release asset only
+from the Niles host through Tailscale, on the API's origin. Whoever controls this
+JavaScript effectively controls that instruction surface. The frontend supplies
+no authentication; the loopback remote API must authorize trusted Tailscale identity
+headers. Public static hosting moves this trust boundary and is unsupported.
+
+Agent transcript text can echo hostile repository or web content. Every markdown
+render passes Marked output through DOMPurify; forms, active content, remote images,
+and inline style attributes are excluded. Sanitized links open in separate tabs with `noopener noreferrer`. The shell's CSP
+restricts scripts, connections and workers to its own origin and permits no inline
+script. Meta CSP cannot enforce `frame-ancestors`; the specified direct-directory
+Tailscale Serve deployment has no custom response-header setting. Framing protection
+is a known clickjacking gap of this deployment; an alternative same-host HTTP server
+behind Serve could supply the header.
+The service worker precaches only built shell assets, never API traffic; transcripts
+and optimistic messages stay in memory. API responses must use `Cache-Control:
+no-store` to cover HTTP caching as well. Push payloads contain only session ID, project, and a generic reason, never transcript
+text. They are encrypted/signed using `web-push` (RFC 8291/VAPID); OpenSSL generates
+the keypair. Push services observe delivery metadata, and OS notification surfaces
+can display project/reason while the device is locked or outside the tailnet.
+The PWA uses a stable session tag to replace that session's active notification,
+without re-alerting while it remains active. Different sessions use different tags.
+Clicks encode the ID into a fixed same-origin session hash, ignoring arbitrary URLs.
+Malformed pushes still display a generic visible notification.
+
+VAPID and per-device subscription files are private (0600, directories 0700), with
+no-follow file reads and atomic subscription replacement. Initialization refuses to
+rotate existing signing keys. Subscriptions record their authenticated owner; push
+only targets devices whose owner is still in the startup allowlist. Revocation and
+key initialization require restart, like other remote configuration changes.
+The subscription API accepts only HTTPS/443 endpoints at exactly `fcm.googleapis.com`,
+`updates.push.services.mozilla.com`, or `web.push.apple.com` (Google/Mozilla/Apple),
+with no credentials, fragments, or redirects. This prevents arbitrary endpoint registration from becoming an HTTP client into the host/tailnet.
+Subscription crypto keys are checked through the encryption library before storage.
+
+Push monitoring is server-side and independent of open web clients. It detects
+waiting transitions from the shared live catalog, sends only a minimal encrypted
+payload, and prunes 404/410. It has no automatic retry; other provider/store/catalog
+failures propagate and stop the remote server. Restart can re-notify an already-waiting
+session. A five-minute TTL limits stale delivery. Push requires outbound public
+internet even when API access is restricted to Tailscale; message access still uses
+the tailnet boundary. Directory ancestor replacement and same-user state tampering
+remain outside the existing threat model.

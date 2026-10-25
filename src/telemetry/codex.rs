@@ -11,20 +11,22 @@ pub(super) fn read_codex(
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<super::SessionRecord>> {
-    Ok(read_codex_lines(home, workspace, needle, created_at)?
-        .as_deref()
-        .map(|lines| super::SessionRecord {
-            turn: codex_activity(lines),
-            usage: codex_usage(lines),
-        }))
+    Ok(
+        read_codex_source(home, workspace, needle, created_at)?.map(|(_, lines)| {
+            super::SessionRecord {
+                turn: codex_activity(&lines),
+                usage: codex_usage(&lines),
+            }
+        }),
+    )
 }
 
-fn read_codex_lines(
+pub(super) fn read_codex_source(
     home: &Utf8Path,
     workspace: &Utf8Path,
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
-) -> Result<Option<Vec<CodexLine>>> {
+) -> Result<Option<(Utf8PathBuf, Vec<CodexLine>)>> {
     let start = created_at.with_timezone(&Local);
     let deadline = start + Duration::minutes(2);
     for day in [start.date_naive(), deadline.date_naive()]
@@ -50,7 +52,7 @@ fn read_codex_lines(
             if let Some(lines) = parse_lines::<CodexLine>(&body)
                 && codex_matches(&lines, workspace, needle)
             {
-                return Ok(Some(lines));
+                return Ok(Some((path, lines)));
             }
         }
     }

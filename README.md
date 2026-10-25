@@ -224,6 +224,18 @@ fixed recheck must be greater than zero, and `recheck: backoff` selects backoff.
 See [role workflows](docs/roles.md#design-and-implementation) for design, implementation,
 and the `--design` and `--mechanical` spawn flags.
 
+## Remote access (opt-in)
+
+Use the installable [PWA](web/README.md) to list sessions, chat with the foreground
+agent (including solo sessions), and receive Web Push when attention is needed.
+Phone access is shell access on the host: Niles does not sandbox agents or workers.
+
+Follow the [remote setup guide](docs/remote.md) for the optional Rust feature,
+OpenSSL, allowlist, matching release asset, and exact `tailscale serve` commands
+for static `/` plus the loopback `/api` proxy. Prebuilt release binaries omit
+`remote`. Serve the PWA from the Niles host on the API's origin, never a public site.
+See the [threat model](docs/security.md#remote-api) and documented framing gap.
+
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute. Report suspected vulnerabilities privately

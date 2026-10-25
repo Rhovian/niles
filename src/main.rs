@@ -10,6 +10,8 @@ mod doctor;
 mod duration;
 mod models;
 mod projects;
+#[cfg(feature = "remote")]
+mod remote;
 mod session;
 mod store;
 mod telemetry;
@@ -50,7 +52,11 @@ fn run() -> Result<ExitCode> {
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Lead) => session::run()?,
+        Some(CommandName::Lead { keep_roles }) => session::run(if keep_roles {
+            tmux::LeadStart::Unattended
+        } else {
+            tmux::LeadStart::Attended
+        })?,
         Some(CommandName::Status { line }) => {
             return Ok(match projects::status::run(line) {
                 Ok(text) => {
@@ -65,6 +71,26 @@ fn run() -> Result<ExitCode> {
                     ExitCode::FAILURE
                 }
             });
+        }
+        Some(CommandName::Remote { port, command }) => {
+            #[cfg(feature = "remote")]
+            match command {
+                Some(cli::RemoteCommand::Uninstall) => remote::setup::uninstall()?,
+                Some(cli::RemoteCommand::Doctor) => remote::setup::doctor()?,
+                Some(cli::RemoteCommand::Init { subject }) => remote::push::init(&subject)?,
+                Some(cli::RemoteCommand::Setup {
+                    port,
+                    web_dir,
+                    allow_user,
+                    subject,
+                }) => remote::setup::run(&web_dir, allow_user, subject.as_deref(), port)?,
+                None => remote::run(port)?,
+            }
+            #[cfg(not(feature = "remote"))]
+            {
+                let _ = (port, command);
+                anyhow::bail!("built without remote; reinstall with --features remote");
+            }
         }
         Some(CommandName::Doctor) => doctor::doctor()?,
         Some(CommandName::Compat { families }) => return compat::compat(&families),

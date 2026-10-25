@@ -15,6 +15,7 @@ use std::{
 const TEST_ENV_MARKER: &str = ".niles-test-env";
 
 const STUB_TMUX: &str = r#"#!/bin/sh
+[ "$1" != -u ] || shift
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
   display-message)
