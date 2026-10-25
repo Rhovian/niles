@@ -19,7 +19,7 @@ use super::{
     archive::archive_worker_dir,
     meta::{WorkerMeta, read_meta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
-    role::WorkerRole,
+    role::{BOOTSTRAP, WorkerRole},
     snapshot::{WorkerSnapshot, status_log, status_log_len},
     validation::{validate_id, validate_task_label},
     worktree::{self, SpawnTree},
@@ -81,14 +81,10 @@ pub fn spawn(
     let cadence = watch::resolve_cadence(checkin.as_deref(), manifest.as_ref(), &manifest_path)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
-    let agent_config = agents::config_for(&config.agents, &agent, &config.models)?;
-    let mut invocation = agents::invocation(
-        &agent,
-        agent_config,
-        agents::InvocationDefaults::Worker,
-        &config.models,
-    )?;
-    if find_on_path(&invocation.binary).is_none() {
+    let mut invocation =
+        agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
+    invocation.pass_primary(&role.primary())?;
+    if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let dir = store::workers_dir(&project)?.join(&id);
@@ -315,10 +311,8 @@ fn write_brief(
         Some(task_label) => task_label,
         None => UNLABELED_TASK_LABEL,
     };
-    // Every worker gets the bootstrap plus exactly one role fragment, so a worker is not
-    // handed doctrine addressed to a role it is not playing.
     let body = render_template(
-        &role.brief(),
+        BOOTSTRAP,
         &[
             ("{id}", id),
             ("{role}", role.as_str()),

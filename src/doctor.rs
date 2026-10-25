@@ -5,7 +5,7 @@ use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    agents::{self, InvocationDefaults},
+    agents::AgentSpec,
     build_info,
     config::spec::load_project_config_from,
     util::{current_dir_utf8, find_on_path},
@@ -48,28 +48,19 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
         .chain(manifest.research.agents());
     let mut binaries = BTreeMap::new();
     for agent in bindings {
-        let agent_config = agents::config_for(&config.agents, agent, &config.models)?;
-        let invocation = agents::invocation(
-            agent,
-            agent_config,
-            InvocationDefaults::Worker,
-            &config.models,
-        )?;
-        let tested =
-            agents::profile_for(invocation.spec.family()).map(|profile| profile.tested_version);
-        binaries.entry(invocation.binary).or_insert(tested);
+        let spec = AgentSpec::parse(agent, &config.models)?;
+        let profile = spec.profile();
+        binaries
+            .entry(profile.binary)
+            .or_insert(profile.tested_version);
     }
     for (binary, tested) in binaries {
-        match find_on_path(&binary) {
+        match find_on_path(binary) {
             Some(path) => {
-                print!(
-                    "agent {binary}: {path} — {}",
+                println!(
+                    "agent {binary}: {path} — {}; tested {tested}",
                     version_line(&path, "--version")
                 );
-                if let Some(tested) = tested {
-                    print!("; tested {tested}");
-                }
-                println!();
             }
             None => println!("agent {binary}: not found on PATH"),
         }

@@ -120,13 +120,11 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
         &[
             "[manifest]",
             "✗ global manifest.yaml",
-            "[agents]",
-            "- | - | builtin | ",
             "[models]",
             "- | - | builtin | ",
         ],
     );
-    for index in [1, 3, 5] {
+    for index in [1, 3] {
         assert_eq!(items[index].edit(), None);
     }
     crate::test_support::remove_workspace(&root).unwrap();
@@ -138,13 +136,10 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
     );
     let rows = table(&items::project(&root).unwrap());
     assert_eq!(rows[0], "[manifest]");
-    assert!(
-        rows[1].contains("custom agent name `lead` is reserved"),
-        "{rows:?}"
-    );
+    assert!(rows[1].contains("unknown field `agents`"), "{rows:?}");
     assert_eq!(rows[rows.len() - 2], "[.niles.yaml]");
     assert!(
-        rows[rows.len() - 1].contains("`lead` is reserved"),
+        rows[rows.len() - 1].contains("unknown field `agents`"),
         "{rows:?}"
     );
     crate::test_support::remove_workspace(&root).unwrap();

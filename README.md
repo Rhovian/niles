@@ -126,14 +126,9 @@ From the project root, run `niles workers` to migrate any legacy state, then cop
 `"$HOME/.niles/state/$(pwd -P | tr '/' '-')/manifest.yaml"` (create its parent directory first).
 Run `niles doctor` to check the required CLIs.
 
-The first of `niles.yaml` or `.niles.yaml` defines custom agent executables:
+The first of `niles.yaml` or `.niles.yaml` extends the model roster for the built-in agent families:
 
 ```yaml
-agents:
-  local-reviewer:
-    binary: review-agent
-    args: ["--format", "plain"]
-
 models:
   codex:
     gpt-5.7:

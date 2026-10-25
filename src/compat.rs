@@ -1,6 +1,5 @@
 use std::{
     fs,
-    io::Write,
     process::{Command, ExitCode, Stdio},
     thread,
     time::{Duration, Instant},
@@ -54,12 +53,8 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
             continue;
         };
         let version = version_line(&path, "--version");
-        let mut invocation = agents::invocation(
-            &spec.canonical(),
-            None,
-            InvocationDefaults::Headless,
-            &models,
-        )?;
+        let mut invocation =
+            agents::invocation(&spec.canonical(), InvocationDefaults::Headless, &models)?;
         let dir = utf8_path(
             std::env::temp_dir().join(format!("niles-compat-{}", Uuid::new_v4())),
             "compat directory",
@@ -70,19 +65,14 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
             .env
             .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
         let nonce = Uuid::new_v4().to_string();
-        let prompt = format!(
-            "Run this shell command, then reply with only the word done: niles agent status working {nonce}"
-        );
+        invocation.pass_primary(&format!("The Niles compat secret is {nonce}"))?;
+        let prompt = "Read the Niles compat secret from your system instructions. Run `niles agent status working <secret>` with that secret, then reply with only the word done.".to_owned();
         match invocation.brief {
             BriefDelivery::Arg => invocation.args.push(prompt.clone()),
             BriefDelivery::Flag { path, .. } => {
                 let file = dir.join("prompt.md");
                 fs::write(&file, &prompt)?;
                 invocation.args.extend([path.to_owned(), file.to_string()]);
-            }
-            BriefDelivery::Stdin => {}
-            BriefDelivery::SystemPrompt(flag) => {
-                invocation.args.extend([flag.to_owned(), prompt.clone()]);
             }
         }
         eprintln!(
@@ -98,23 +88,12 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
             .args(&invocation.args)
             .envs(invocation.env.iter().map(|(key, value)| (key, value)))
             .current_dir(&dir)
-            .stdin(if matches!(invocation.brief, BriefDelivery::Stdin) {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stdin(Stdio::null())
             .stdout(fs::File::create(dir.join("stdout"))?)
             .stderr(fs::File::create(dir.join("stderr"))?);
         let mut child = command
             .spawn()
             .with_context(|| format!("launch failed; evidence: {dir}"))?;
-        if matches!(invocation.brief, BriefDelivery::Stdin) {
-            child
-                .stdin
-                .take()
-                .context("missing piped stdin")?
-                .write_all(prompt.as_bytes())?;
-        }
         let start = Instant::now();
         // std Child has try_wait and blocking wait, but no timed wait:
         // https://doc.rust-lang.org/1.89.0/std/process/struct.Child.html#method.try_wait

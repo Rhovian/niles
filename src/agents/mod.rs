@@ -1,20 +1,15 @@
-use std::collections::BTreeMap;
-
-use anyhow::{Result, bail};
-
-use crate::config::spec::{AgentConfig, ProjectConfig};
+use anyhow::{Context, Result, bail};
 
 mod families;
 pub(crate) mod picker;
 pub(crate) mod roster;
+mod system_prompt;
 #[cfg(test)]
 mod tests;
 
-pub use families::{BriefDelivery, known_agent_ids, profile_for};
+pub use families::{BriefDelivery, SystemPromptArg, known_agent_ids, profile_for, profiles};
 pub(crate) use families::{SwitchStep, session_link, switch_steps};
 pub use roster::ModelRoster;
-
-const CUSTOM_AGENT_BRIEF: BriefDelivery = BriefDelivery::Arg;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationDefaults {
@@ -25,108 +20,50 @@ pub enum InvocationDefaults {
 
 #[derive(Debug, Clone)]
 pub struct AgentInvocation {
-    pub binary: String,
+    pub binary: &'static str,
     pub args: Vec<String>,
     pub brief: BriefDelivery,
+    pub system_prompt: SystemPromptArg,
     pub spec: AgentSpec,
     pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSpec {
-    family: String,
+    profile: families::AgentProfile,
     model: Option<String>,
     effort: Option<String>,
 }
 
-pub fn config_for<'a>(
-    configs: &'a BTreeMap<String, AgentConfig>,
-    agent: &str,
-    models: &ModelRoster,
-) -> Result<Option<&'a AgentConfig>> {
-    let spec = AgentSpec::parse(agent, models)?;
-    Ok(configs.get(agent).or_else(|| configs.get(spec.family())))
-}
-
 pub fn invocation(
     agent: &str,
-    config: Option<&AgentConfig>,
     defaults: InvocationDefaults,
     models: &ModelRoster,
 ) -> Result<AgentInvocation> {
     let spec = AgentSpec::parse(agent, models)?;
-    // Both launch paths come through here, so effective-roster validation cannot be skipped by
-    // one of them: no probe, manifest, or subprocess gets a separate answer.
     validate_model(&spec, models)?;
-    let default_invocation = default_invocation(&spec, defaults);
-
-    let mut invocation = match config {
-        Some(config) => AgentInvocation {
-            binary: configured_or_default_binary(
-                config.binary.as_deref(),
-                default_invocation.binary,
-            ),
-            args: if config.args.is_empty() {
-                default_invocation.args
-            } else {
-                config.args.clone()
-            },
-            brief: config.prompt.into(),
-            env: default_invocation.env,
-            spec,
-        },
-        None => default_invocation,
+    let profile = spec.profile();
+    let args = match defaults {
+        InvocationDefaults::Foreground => profile.foreground_args,
+        InvocationDefaults::Worker | InvocationDefaults::Headless => profile.worker_args,
     };
-    if let Some(profile) = profile_for(invocation.spec.family()) {
-        invocation.args.extend(families::tier_args(
-            profile,
-            invocation.spec.model(),
-            invocation.spec.effort(),
-        ));
+    let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    if matches!(defaults, InvocationDefaults::Headless) {
+        args.extend(profile.headless.iter().map(|arg| (*arg).to_owned()));
     }
-    Ok(invocation)
-}
-
-fn default_invocation(spec: &AgentSpec, defaults: InvocationDefaults) -> AgentInvocation {
-    match profile_for(spec.family()) {
-        Some(profile) => {
-            let (args, brief) = match defaults {
-                InvocationDefaults::Foreground => (profile.foreground_args, profile.lead_brief),
-                InvocationDefaults::Worker | InvocationDefaults::Headless => {
-                    (profile.worker_args, profile.worker_brief)
-                }
-            };
-            let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-            if matches!(defaults, InvocationDefaults::Headless) {
-                args.extend(profile.headless.iter().map(|arg| (*arg).to_owned()));
-            }
-            AgentInvocation {
-                binary: profile.binary.to_owned(),
-                args,
-                brief,
-                env: profile
-                    .launch_env
-                    .iter()
-                    .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-                    .collect(),
-                spec: spec.clone(),
-            }
-        }
-        None => AgentInvocation {
-            binary: spec.family().to_owned(),
-            args: Vec::new(),
-            brief: CUSTOM_AGENT_BRIEF,
-            env: Vec::new(),
-            spec: spec.clone(),
-        },
-    }
-}
-
-fn configured_or_default_binary(configured: Option<&str>, default: String) -> String {
-    match configured {
-        Some(binary) => binary.to_owned(),
-        None => default,
-    }
+    args.extend(families::tier_args(profile, spec.model(), spec.effort()));
+    Ok(AgentInvocation {
+        binary: profile.binary,
+        args,
+        brief: profile.opening_turn,
+        system_prompt: profile.system_prompt,
+        env: profile
+            .launch_env
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect(),
+        spec,
+    })
 }
 
 impl AgentSpec {
@@ -138,9 +75,9 @@ impl AgentSpec {
         // A model name may itself contain `:` (OpenRouter's `:free` variants). Such a name must be
         // on the roster, which is what tells its colon from the one before an effort.
         let listed = |model: &str| {
-            canonical_family(family).is_some_and(|family| {
+            profile_for(family).is_some_and(|profile| {
                 models
-                    .supported_efforts(&family, &model.to_ascii_lowercase())
+                    .supported_efforts(profile.id, &model.to_ascii_lowercase())
                     .is_some()
             })
         };
@@ -172,32 +109,33 @@ impl AgentSpec {
         effort: Option<&str>,
         models: &ModelRoster,
     ) -> Result<Self> {
-        let family = canonical_family(family).unwrap_or_else(|| family.to_owned());
+        let profile =
+            profile_for(family).with_context(|| format!("unknown agent family `{family}`"))?;
+        let family = profile.id;
         if effort.is_some() && model.is_none() {
             bail!("invalid agent spec; effort requires a model");
         }
-        if model.is_some() && profile_for(&family).is_none() {
-            bail!(
-                "unknown agent family `{family}`; model/effort qualifiers are only supported for builtin agents"
-            );
-        }
         let model = model
-            .map(|value| roster::normalize_model(&family, value))
+            .map(|value| roster::normalize_model(family, value))
             .transpose()?;
         let effort = effort
             .zip(model.as_deref())
-            .map(|(value, model)| normalize_effort(&family, model, value, models))
+            .map(|(value, model)| normalize_effort(family, model, value, models))
             .transpose()?;
 
         Ok(Self {
-            family,
+            profile,
             model,
             effort,
         })
     }
 
+    pub fn profile(&self) -> families::AgentProfile {
+        self.profile
+    }
+
     pub fn family(&self) -> &str {
-        &self.family
+        self.profile.id
     }
 
     pub fn model(&self) -> Option<&str> {
@@ -209,11 +147,11 @@ impl AgentSpec {
     }
 
     pub fn tiered_family(&self) -> Option<String> {
-        self.model.is_some().then(|| self.family.clone())
+        self.model.is_some().then(|| self.profile.id.to_owned())
     }
 
     pub fn canonical(&self) -> String {
-        let mut spec = self.family.clone();
+        let mut spec = self.profile.id.to_owned();
         if let Some(model) = &self.model {
             spec.push(':');
             spec.push_str(model);
@@ -224,10 +162,6 @@ impl AgentSpec {
         }
         spec
     }
-}
-
-fn canonical_family(family: &str) -> Option<String> {
-    profile_for(family).map(|profile| profile.id.to_owned())
 }
 
 fn normalize_effort(
@@ -262,21 +196,6 @@ pub(crate) fn validate_model(spec: &AgentSpec, models: &ModelRoster) -> Result<(
 
     bail!(
         "unsupported {} model `{model}` in agent spec",
-        spec.family()
-    )
-}
-
-pub(crate) fn canonical_manifest_agent(spec: &AgentSpec, config: &ProjectConfig) -> Result<String> {
-    validate_model(spec, &config.models)?;
-    if profile_for(spec.family()).is_some()
-        || config.agents.contains_key(&spec.canonical())
-        || config.agents.contains_key(spec.family())
-    {
-        return Ok(spec.canonical());
-    }
-
-    bail!(
-        "unknown agent `{}`; configure it in niles.yaml or choose a builtin agent",
         spec.family()
     )
 }

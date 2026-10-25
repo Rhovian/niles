@@ -42,10 +42,6 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(brief.contains("report_file:"));
     assert!(brief.contains("worker/auth-fix/report.md"));
     assert!(brief.contains("niles agent status --help"));
-    assert!(brief.contains("You are the research"));
-    assert!(brief.contains("Do not run the gate"));
-    assert!(!brief.contains("You are the reviewer"));
-    assert!(!brief.contains("name the attacker"));
 
     let launch =
         fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/launch.sh")).unwrap();

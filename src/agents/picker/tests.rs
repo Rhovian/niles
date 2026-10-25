@@ -7,7 +7,6 @@ use form::Screen;
 
 fn config() -> ProjectConfig {
     ProjectConfig {
-        agents: Default::default(),
         models: ModelRoster::builtin().unwrap(),
     }
 }

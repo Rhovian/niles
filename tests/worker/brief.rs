@@ -45,7 +45,6 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     assert_eq!(decision, "mechanical mechanical: rename\n");
     let workers = state_dir(&env.root).join("worker");
     let body = fs::read_to_string(workers.join("mechanical/brief.md")).unwrap();
-    assert!(body.contains("You own the gate"));
     let (header, _) = body.split_once("\n\n## Task").unwrap();
     assert!(!header.contains("design_record:"));
 
@@ -67,7 +66,6 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     ]);
     assert_command_success("worker with design", &spawned);
     let body = fs::read_to_string(workers.join("implementation/brief.md")).unwrap();
-    assert!(body.contains("You own the gate"));
     assert!(body.contains(&format!(
         "report_file: {}\ndesign_record: {}\n",
         workers.join("implementation/report.md").display(),
@@ -75,10 +73,9 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     )));
 }
 
-/// Wiring only: `--role` reaches brief composition and each role gets its own fragment on
-/// top of the bootstrap. What each fragment *says* is asserted in `worker::role`.
+/// Role behavior travels in the system prompt while the task remains in the opening turn.
 #[test]
-fn role_selects_which_fragment_the_brief_carries() {
+fn role_selects_primary_instructions_outside_the_opening_turn() {
     let env = TestEnv::new("niles-worker-roles");
 
     let mut briefs = Vec::new();
@@ -101,13 +98,23 @@ fn role_selects_which_fragment_the_brief_carries() {
                 .join("brief.md"),
         )
         .unwrap();
-        assert!(brief.contains(&format!("You are the {role}")), "{brief}");
+        assert!(!brief.contains(&format!("You are the {role}")), "{brief}");
+        let launch = state_dir(&env.root).join(format!("worker/{role}/launch.sh"));
+        let script = fs::read_to_string(launch).unwrap();
+        assert!(script.contains("'--append-system-prompt'"), "{script}");
+        assert!(script.contains(&format!("You are the {role}")), "{script}");
         assert!(brief.contains("niles agent status --help"), "{brief}");
-        assert!(!brief.contains("## Reporting"), "{brief}");
+        assert!(script.contains("Work from this brief and the code."));
+        assert!(
+            script.contains(
+                "Deliverables go in the report file; the lead reads it, not your terminal."
+            )
+        );
+        assert!(script.contains("Report uncertainty as uncertainty."));
         if role == "worker" {
             let (header, _) = brief.split_once("\n\n## Task").unwrap();
             assert!(!header.contains("design_record:"));
-            assert!(brief.contains("Without a design record, implement the issue directly"));
+            assert!(script.contains("Without a design record, implement the issue directly"));
             assert!(!state_dir(&env.root).join("sessions").exists());
         }
         briefs.push(brief);
@@ -122,7 +129,7 @@ fn role_selects_which_fragment_the_brief_carries() {
 }
 
 #[test]
-fn stdin_task_is_composed_with_the_role_and_bootstrap() {
+fn stdin_task_preserves_multiline_text() {
     let env = TestEnv::new("niles-worker-stdin-task");
     let mut child = env
         .niles(
@@ -154,14 +161,10 @@ fn stdin_task_is_composed_with_the_role_and_bootstrap() {
     let brief =
         fs::read_to_string(state_dir(&env.root).join("worker/review-file/brief.md")).unwrap();
     assert!(brief.contains("niles agent status --help"), "{brief}");
-    assert!(brief.contains("You are the reviewer"), "{brief}");
-    let (_, task_and_reporting) = brief.split_once("## Task\n\n").unwrap();
-    let (task, _) = task_and_reporting
-        .split_once("\n\nWork from this brief")
-        .unwrap();
+    let (_, task) = brief.split_once("## Task\n\n").unwrap();
     assert_eq!(
-        task,
-        "  Inspect the parser edge cases.\nKeep this line verbatim.\n"
+        task.trim_end_matches('\n'),
+        "  Inspect the parser edge cases.\nKeep this line verbatim."
     );
 }
 

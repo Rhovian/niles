@@ -212,16 +212,10 @@ fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> [Item; 3] {
     ]
 }
 
-/// The `niles.yaml` sections: its custom agents, and the models it adds or changes.
+/// The models `niles.yaml` adds or changes.
 fn files(config: &ProjectConfig, file: &'static str) -> Result<Vec<Item>> {
     let builtin = ModelRoster::builtin()?.rows();
-    let agents = config.agents.iter().map(|(name, agent)| {
-        let command = agent.binary.iter().chain(&agent.args);
-        plain(name, &command.cloned().collect::<Vec<_>>().join(" "), file)
-    });
-    let mut items = vec![Item::Section("agents".to_owned())];
-    items.extend(listed(agents));
-    items.push(Item::Section("models".to_owned()));
+    let mut items = vec![Item::Section("models".to_owned())];
     let models = config
         .models
         .rows()
