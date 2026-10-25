@@ -189,8 +189,11 @@ pub fn niles_home(workspace: &Path) -> PathBuf {
 }
 
 pub fn temp_workspace(prefix: &str) -> PathBuf {
-    let workspace = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = tempfile::Builder::new()
+        .prefix(&format!("{prefix}-"))
+        .tempdir()
+        .unwrap()
+        .keep();
     fs::canonicalize(workspace).unwrap()
 }
 
