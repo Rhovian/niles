@@ -70,28 +70,28 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
 }
 
 #[test]
-fn doctor_reports_configured_missing_and_unavailable_versions() {
-    let env = TestEnv::new("niles-doctor-custom");
+fn doctor_reports_missing_and_unavailable_builtin_versions() {
+    let env = TestEnv::new("niles-doctor-unavailable");
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    fs::write(
-        env.root.join("niles.yaml"),
-        "agents:\n  claude:\n    binary: custom-cli\n  codex:\n    binary: missing-cli\n",
-    )
-    .unwrap();
+    fs::remove_file(env.bin.join("codex")).unwrap();
     write_executable(
-        &env.bin.join("custom-cli"),
+        &env.bin.join("claude"),
         "#!/bin/sh\nprintf 'version failed\\n' >&2\nexit 1\n",
     );
 
-    let output = env.run(&["doctor"]);
+    let output = env
+        .niles(&env.root, &["doctor"])
+        .env("PATH", &env.bin)
+        .output()
+        .unwrap();
 
-    assert_command_success("doctor custom", &output);
+    assert_command_success("doctor unavailable", &output);
     let stdout = stdout_of(&output);
     assert!(stdout.contains(&format!(
-        "agent custom-cli: {} — version unavailable: version failed",
-        env.bin.join("custom-cli").display()
+        "agent claude: {} — version unavailable: version failed",
+        env.bin.join("claude").display()
     )));
-    assert!(stdout.contains("agent missing-cli: not found on PATH"));
+    assert!(stdout.contains("agent codex: not found on PATH"));
     assert!(!stdout.contains("agent lead:"));
 }
 

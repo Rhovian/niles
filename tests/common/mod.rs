@@ -9,7 +9,6 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 const TEST_ENV_MARKER: &str = ".niles-test-env";
@@ -190,14 +189,11 @@ pub fn niles_home(workspace: &Path) -> PathBuf {
 }
 
 pub fn temp_workspace(prefix: &str) -> PathBuf {
-    let workspace = std::env::temp_dir().join(format!(
-        "{prefix}-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&workspace).unwrap();
+    let workspace = tempfile::Builder::new()
+        .prefix(&format!("{prefix}-"))
+        .tempdir()
+        .unwrap()
+        .keep();
     fs::canonicalize(workspace).unwrap()
 }
 

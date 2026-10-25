@@ -1,5 +1,4 @@
 use super::*;
-use crate::config::spec::PromptMode;
 
 fn models() -> ModelRoster {
     ModelRoster::builtin().unwrap()
@@ -7,46 +6,14 @@ fn models() -> ModelRoster {
 
 #[test]
 fn foreground_invocation_preserves_builtin_manager_defaults() {
-    let invocation = invocation(
-        "claude:opus:max",
-        None,
-        InvocationDefaults::Foreground,
-        &models(),
-    )
-    .unwrap();
+    let invocation =
+        invocation("claude:opus:max", InvocationDefaults::Foreground, &models()).unwrap();
 
     assert_eq!(invocation.binary, "claude");
     assert_eq!(
         invocation.args,
         ["--model", "opus", "--effort", "max"].map(str::to_owned)
     );
-    // The lead's dial, not the worker's: claude's brief is standing context for the session it
-    // drives, where a worker's brief is the turn.
-    assert!(matches!(
-        invocation.brief,
-        BriefDelivery::SystemPrompt("--append-system-prompt")
-    ));
-}
-
-#[test]
-fn foreground_invocation_uses_configured_custom_manager_binary_and_args() {
-    let config = AgentConfig {
-        binary: Some("/tmp/custom-manager".to_owned()),
-        args: ["--mode", "manager"].map(str::to_owned).to_vec(),
-        prompt: PromptMode::Arg,
-    };
-
-    let invocation = invocation(
-        "gemini",
-        Some(&config),
-        InvocationDefaults::Foreground,
-        &models(),
-    )
-    .unwrap();
-
-    assert_eq!(invocation.binary, "/tmp/custom-manager");
-    assert_eq!(invocation.args, ["--mode", "manager"].map(str::to_owned));
-    assert_eq!(invocation.spec.family(), "gemini");
     assert!(matches!(invocation.brief, BriefDelivery::Arg));
 }
 
@@ -77,10 +44,7 @@ fn parses_agent_model_effort_specs() {
     assert_eq!(uppercase.model(), Some("gpt-5.6-luna"));
     assert_eq!(uppercase.effort(), Some("max"));
 
-    let bare = AgentSpec::parse("custom", &models()).unwrap();
-    assert_eq!(bare.family(), "custom");
-    assert_eq!(bare.model(), None);
-    assert_eq!(bare.effort(), None);
+    assert!(AgentSpec::parse("custom", &models()).is_err());
 }
 
 #[test]
@@ -171,13 +135,8 @@ fn rejects_invalid_agent_specs() {
 
 #[test]
 fn invocation_maps_codex_model_effort_flags() {
-    let invocation = invocation(
-        "codex:gpt-5.5:xhigh",
-        None,
-        InvocationDefaults::Worker,
-        &models(),
-    )
-    .unwrap();
+    let invocation =
+        invocation("codex:gpt-5.5:xhigh", InvocationDefaults::Worker, &models()).unwrap();
 
     assert_eq!(invocation.binary, "codex");
     assert!(matches!(invocation.brief, BriefDelivery::Arg));
@@ -197,13 +156,7 @@ fn invocation_maps_codex_model_effort_flags() {
 
 #[test]
 fn invocation_maps_claude_model_effort_flags() {
-    let invocation = invocation(
-        "claude:opus:max",
-        None,
-        InvocationDefaults::Worker,
-        &models(),
-    )
-    .unwrap();
+    let invocation = invocation("claude:opus:max", InvocationDefaults::Worker, &models()).unwrap();
 
     assert_eq!(invocation.binary, "claude");
     assert_eq!(
@@ -223,7 +176,6 @@ fn invocation_maps_claude_model_effort_flags() {
 fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
     let invocation = invocation(
         "hermes:tencent/hy3:high",
-        None,
         InvocationDefaults::Worker,
         &models(),
     )
@@ -253,7 +205,7 @@ fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
 
 #[test]
 fn hermes_foreground_keeps_the_subcommand_without_the_approval_bypass() {
-    let invocation = invocation("hermes", None, InvocationDefaults::Foreground, &models()).unwrap();
+    let invocation = invocation("hermes", InvocationDefaults::Foreground, &models()).unwrap();
 
     assert_eq!(invocation.binary, "hermes");
     assert_eq!(invocation.args, ["chat"].map(str::to_owned));
@@ -314,7 +266,6 @@ fn headless_invocation_orders_worker_headless_and_tier_args() {
         let model = roster.model_names(family).next().unwrap();
         let invocation = invocation(
             &format!("{family}:{model}:low"),
-            None,
             InvocationDefaults::Headless,
             &models(),
         )

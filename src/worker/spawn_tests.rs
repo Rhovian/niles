@@ -97,10 +97,10 @@ fn omitted_agent_requires_a_manifest() {
     assert_eq!(
         resolve_from_cli(
             &root,
-            &["niles", "spawn", "job", "--agent", "custom", "task"]
+            &["niles", "spawn", "job", "--agent", "claude", "task"]
         )
         .unwrap(),
-        "custom"
+        "claude"
     );
 }
 

@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-const BOOTSTRAP: &str = r#"# Niles {role} brief
+pub(super) const BOOTSTRAP: &str = r#"# Niles {role} brief
 You are niles worker `{id}`. Report with `niles agent status --help`.
 
 id: {id}
@@ -28,7 +28,7 @@ const ROLE_DESIGN_TEMPLATE: &str = include_str!("../../prompts/role_design.md");
 
 /// Which role a spawned worker is playing.
 ///
-/// A worker's brief is the bootstrap plus exactly one of these fragments. The
+/// A worker receives a bootstrap turn and exactly one primary fragment. The
 /// split exists so a role is never handed instructions addressed to a different one — most
 /// importantly, so only the worker is told to run the project's checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
@@ -70,9 +70,8 @@ impl WorkerRole {
         }
     }
 
-    /// The full brief for this role: bootstrap, shared preface, then its own fragment.
-    pub(crate) fn brief(self) -> String {
-        format!("{BOOTSTRAP}\n{SHARED_PREFACE}\n\n{}", self.fragment())
+    pub(crate) fn primary(self) -> String {
+        format!("{SHARED_PREFACE}\n\n{}", self.fragment())
     }
 
     pub(crate) fn fragment(self) -> &'static str {
@@ -98,21 +97,10 @@ mod tests {
         WorkerRole::Design,
     ];
 
-    /// Every role points at the same self-describing status command.
     #[test]
-    fn every_brief_carries_the_bootstrap_once() {
-        for role in ALL {
-            let brief = role.brief();
-            assert_eq!(
-                brief.matches("niles agent status --help").count(),
-                1,
-                "{} brief should carry the status command once",
-                role.as_str()
-            );
-            // `{role}` is interpolated later, by `write_brief`.
-            assert!(brief.contains("# Niles {role} brief"), "{brief}");
-            assert!(brief.contains(&format!("You are the {}", role.as_str())));
-        }
+    fn bootstrap_carries_the_status_command_once() {
+        assert_eq!(BOOTSTRAP.matches("niles agent status --help").count(), 1);
+        assert!(BOOTSTRAP.starts_with("# Niles {role} brief\n"));
     }
 
     #[test]

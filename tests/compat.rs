@@ -10,9 +10,15 @@ const VERSION: &str = r#"if [ "$1" = --version ]; then
   exit 0
 fi
 "#;
-const NONCE: &str = r#"for prompt do :; done
-case "$prompt" in */prompt.md) prompt=$(cat "$prompt");; esac
-nonce=${prompt##*working }
+const NONCE: &str = r#"primary=$HERMES_EPHEMERAL_SYSTEM_PROMPT
+for arg do
+  case "$previous" in
+    --append-system-prompt) primary=$arg;;
+    --config) case "$arg" in developer_instructions=*) primary=${arg#developer_instructions=}; primary=${primary#\"}; primary=${primary%\"};; esac;;
+  esac
+  previous=$arg
+done
+nonce=${primary##* }
 "$NILES_TEST_BINARY" agent status working "$nonce"
 "#;
 
@@ -23,12 +29,6 @@ fn run_fake(body: &str) -> std::process::Output {
         &format!("#!/bin/sh\n{VERSION}{body}"),
     );
     write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
-    // The shipped profile must win over workspace overrides.
-    fs::write(
-        env.root.join("niles.yaml"),
-        "agents:\n  claude:\n    binary: missing-cli\n",
-    )
-    .unwrap();
     env.niles(&env.root, &["compat", "claude"])
         .env("NILES_TEST_BINARY", env!("CARGO_BIN_EXE_niles"))
         .output()

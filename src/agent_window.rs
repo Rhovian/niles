@@ -59,19 +59,13 @@ fn launch_script(
         body.push_str(&format!("export {key}={}\n", shell_assignment_value(value)));
     }
     body.push_str("code=0\n");
-    body.push_str(&shell_quote(&invocation.binary));
+    body.push_str(&shell_quote(invocation.binary));
     for arg in &invocation.args {
         body.push_str(&format!(" {}", shell_quote(arg)));
     }
     match invocation.brief {
         BriefDelivery::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
-        BriefDelivery::Stdin => body.push_str(" < \"$BRIEF\""),
         BriefDelivery::Flag { path, .. } => body.push_str(&format!(" {path} \"$BRIEF\"")),
-        // A worker's brief is the turn itself, with no second turn to follow it, so the flag
-        // carries the brief alone — the lead's `<flag> <brief> <turn>` minus the turn.
-        BriefDelivery::SystemPrompt(flag) => {
-            body.push_str(&format!(" {flag} \"$(cat \"$BRIEF\")\""));
-        }
     }
     // `|| code=$?` rather than a bare call: `set -e` would otherwise abort the script on a failing
     // agent, which is precisely the case the report below exists for.
@@ -111,9 +105,10 @@ mod tests {
 
     fn script_for(brief: BriefDelivery) -> String {
         let invocation = agents::AgentInvocation {
-            binary: "codex".to_owned(),
+            binary: "codex",
             args: vec!["--flag".to_owned()],
             brief,
+            system_prompt: agents::profile_for("codex").unwrap().system_prompt,
             env: Vec::new(),
             spec: agents::AgentSpec::parse("codex", &agents::ModelRoster::builtin().unwrap())
                 .unwrap(),
@@ -143,16 +138,8 @@ mod tests {
     }
 
     #[test]
-    fn the_exit_report_follows_a_stdin_prompt_too() {
-        let script = script_for(BriefDelivery::Stdin);
-
-        assert!(script.contains(r#"< "$BRIEF" || code=$?"#), "{script}");
-        assert!(script.contains(">> \"$STATUS\""), "{script}");
-    }
-
-    #[test]
     fn a_query_file_prompt_hands_over_the_brief_path_not_its_contents() {
-        let script = script_for(agents::profile_for("hermes").unwrap().worker_brief);
+        let script = script_for(agents::profile_for("hermes").unwrap().opening_turn);
 
         assert!(
             script.contains(r#"--query-file "$BRIEF" || code=$?"#),

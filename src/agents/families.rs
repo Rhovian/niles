@@ -1,9 +1,9 @@
-use crate::{config::spec::PromptMode, telemetry::SessionLink};
+use crate::telemetry::SessionLink;
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentProfile {
     pub id: &'static str,
     pub binary: &'static str,
@@ -13,52 +13,43 @@ pub struct AgentProfile {
     /// Switches a worker launch to a single non-interactive turn; appended after
     /// `worker_args` because codex's subcommand must follow its root flags.
     pub headless: &'static [&'static str],
-    pub worker_brief: BriefDelivery,
-    pub lead_brief: BriefDelivery,
+    pub opening_turn: BriefDelivery,
+    pub system_prompt: SystemPromptArg,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
     pub composer: Option<&'static str>,
 }
 
-/// How an agent receives its brief.
-///
-/// One dial, answered per role on every profile, so both launch paths — the worker's generated
-/// script and the lead's argv — read the same decision and a family spells its flags here once.
-/// A new spelling is a new variant, which both launchers are then forced to answer.
-#[derive(Debug, Clone, Copy)]
+/// How an agent receives its opening user turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BriefDelivery {
     /// The brief is one argument: the agent's opening turn.
     Arg,
-    /// The brief arrives on stdin.
-    Stdin,
-    /// The brief behind a flag — `value` where the launcher has the text, `path` where it can
-    /// point at the file. Handing over the path keeps the brief verbatim (nothing in it is
-    /// shell-interpreted) and, unlike a stdin redirect, leaves the pane a real TTY.
+    /// The brief behind a flag: `value` takes text, `path` takes a file.
+    /// Passing a path preserves the brief verbatim and leaves the pane's TTY available.
     Flag {
         value: &'static str,
         path: &'static str,
     },
-    /// The brief as standing context behind a flag, with the opening turn following it as an
-    /// argument.
-    SystemPrompt(&'static str),
 }
 
-impl From<PromptMode> for BriefDelivery {
-    fn from(prompt: PromptMode) -> Self {
-        match prompt {
-            PromptMode::Arg => Self::Arg,
-            PromptMode::Stdin => Self::Stdin,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemPromptArg {
+    Flag(&'static str),
+    Config {
+        flag: &'static str,
+        key: &'static str,
+    },
+    Env(&'static str),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TierArgs {
     model_flag: &'static str,
     effort: EffortArg,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffortArg {
     Flag(&'static str),
     Config {
@@ -99,8 +90,11 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &["--no-daemon"],
         worker_args: &["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"],
         headless: &["exec", "--skip-git-repo-check"],
-        worker_brief: BriefDelivery::Arg,
-        lead_brief: BriefDelivery::Arg,
+        opening_turn: BriefDelivery::Arg,
+        system_prompt: SystemPromptArg::Config {
+            flag: "--config",
+            key: "developer_instructions",
+        },
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Config {
@@ -118,8 +112,8 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
-        worker_brief: BriefDelivery::Arg,
-        lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
+        opening_turn: BriefDelivery::Arg,
+        system_prompt: SystemPromptArg::Flag("--append-system-prompt"),
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--effort"),
@@ -138,9 +132,8 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &["chat"],
         worker_args: &["chat", "--yolo"],
         headless: &["--oneshot"],
-        worker_brief: HERMES_QUERY,
-        // The lead's turn has no single file, so it goes by value.
-        lead_brief: HERMES_QUERY,
+        opening_turn: HERMES_QUERY,
+        system_prompt: SystemPromptArg::Env("HERMES_EPHEMERAL_SYSTEM_PROMPT"),
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--reasoning"),
@@ -155,8 +148,8 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &[],
         worker_args: &[],
         headless: &["-p"],
-        worker_brief: BriefDelivery::Arg,
-        lead_brief: BriefDelivery::SystemPrompt("--append-system-prompt"),
+        opening_turn: BriefDelivery::Arg,
+        system_prompt: SystemPromptArg::Flag("--append-system-prompt"),
         tier_args: TierArgs {
             model_flag: "--model",
             effort: EffortArg::Flag("--thinking"),
@@ -166,18 +159,19 @@ const PROFILES: &[AgentProfile] = &[
     },
 ];
 
+pub fn profiles() -> impl Iterator<Item = &'static AgentProfile> {
+    PROFILES.iter()
+}
+
 pub fn known_agent_ids() -> impl Iterator<Item = &'static str> {
-    PROFILES.iter().map(|profile| profile.id)
+    profiles().map(|profile| profile.id)
 }
 
-pub fn profile_for(agent: &str) -> Option<AgentProfile> {
-    PROFILES
-        .iter()
-        .find(|profile| profile.id.eq_ignore_ascii_case(agent))
-        .copied()
+pub fn profile_for(agent: &str) -> Option<&'static AgentProfile> {
+    profiles().find(|profile| profile.id.eq_ignore_ascii_case(agent))
 }
 
-pub fn tier_args(profile: AgentProfile, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
+pub fn tier_args(profile: &AgentProfile, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(model) = model {
         args.extend([profile.tier_args.model_flag.to_owned(), model.to_owned()]);

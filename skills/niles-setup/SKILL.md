@@ -223,9 +223,7 @@ All six roles and their standard tier are required; no-effort models omit the ef
 
 ## 4. Check with niles doctor
 
-Before running doctor, inspect `niles.yaml` and `.niles.yaml`. If either has an `agents:` block
-you did not write, show it to the user and get a yes first: doctor executes configured binaries
-with `--version`. Run `niles doctor` in the repository root, then triage its output:
+Run `niles doctor` in the repository root, then triage its output:
 
 - Non-zero exit: fix the manifest/config problem named in the error and rerun. Get permission
   before changing an existing manifest; have the user correct project configuration.

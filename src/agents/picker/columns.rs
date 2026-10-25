@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use ratatui::crossterm::event::KeyCode;
 
 use crate::{
-    agents::{self, AgentSpec, InvocationDefaults},
+    agents::{self, AgentSpec},
     config::spec::ProjectConfig,
     util::find_on_path,
 };
@@ -21,35 +21,26 @@ pub(super) struct Model {
 }
 
 pub(super) fn families(config: &ProjectConfig) -> Result<Vec<Family>> {
-    let names = agents::known_agent_ids()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    names
-        .into_iter()
-        .map(|name| {
-            let invocation = agents::invocation(
-                &name,
-                agents::config_for(&config.agents, &name, &config.models)?,
-                InvocationDefaults::Worker,
-                &config.models,
-            )?;
+    agents::profiles()
+        .map(|profile| {
+            let name = profile.id;
             let models = config
                 .models
-                .model_names(&name)
+                .model_names(name)
                 .map(|model| {
                     Ok(Model {
                         name: model.to_owned(),
                         efforts: config
                             .models
-                            .supported_efforts(&name, model)
+                            .supported_efforts(name, model)
                             .context("listed model has no roster entry")?
                             .to_vec(),
                     })
                 })
                 .collect::<Result<_>>()?;
             Ok(Family {
-                name,
-                installed: find_on_path(&invocation.binary).is_some(),
+                name: name.to_owned(),
+                installed: find_on_path(profile.binary).is_some(),
                 models,
             })
         })

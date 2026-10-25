@@ -1,6 +1,6 @@
-use std::{collections::BTreeMap, fs};
+use std::fs;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::Deserialize;
 
@@ -8,37 +8,14 @@ use crate::{agents::ModelRoster, store};
 
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
-    pub agents: BTreeMap<String, AgentConfig>,
     pub models: ModelRoster,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawProjectConfig {
     #[serde(default)]
-    agents: BTreeMap<String, AgentConfig>,
-    #[serde(default)]
     models: crate::agents::roster::RawRoster,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AgentConfig {
-    pub binary: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub prompt: PromptMode,
-}
-
-/// What a `niles.yaml` agent may say about how it takes its brief.
-///
-/// Deliberately narrower than `agents::BriefDelivery`: the by-path and system-prompt deliveries
-/// need a flag spelling, and an agent configured here has no way to give one.
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PromptMode {
-    #[default]
-    Arg,
-    Stdin,
 }
 
 pub(crate) const PROJECT_CONFIG_FILES: [&str; 2] = ["niles.yaml", ".niles.yaml"];
@@ -70,11 +47,7 @@ pub fn load_project_config_from(root: &Utf8Path) -> Result<ProjectConfig> {
 }
 
 fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectConfig> {
-    if raw.agents.contains_key("lead") {
-        bail!("custom agent name `lead` is reserved for the reviewer binding");
-    }
     Ok(ProjectConfig {
-        agents: raw.agents,
         models: models.with_overrides(raw.models)?,
     })
 }
@@ -82,6 +55,11 @@ fn project_config(raw: RawProjectConfig, models: ModelRoster) -> Result<ProjectC
 #[cfg(test)]
 mod tests {
     use crate::test_support::project_config as load;
+
+    #[test]
+    fn executable_overrides_are_rejected() {
+        assert!(load("agents: {claude: {binary: other}}\n").is_err());
+    }
 
     #[test]
     fn model_overrides_add_replace_and_allow_empty_efforts() {

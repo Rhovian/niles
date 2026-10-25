@@ -3,27 +3,29 @@ use super::support::*;
 #[test]
 fn missing_agent_binary_leaves_no_worker_state() {
     let env = TestEnv::new("niles-worker-missing-binary");
-    fs::write(
-        env.root.join("niles.yaml"),
-        "agents:\n  claude:\n    binary: absent-agent-cli\n",
-    )
-    .unwrap();
-
-    let output = env.run(&[
-        "spawn",
-        "--role",
-        "research",
-        "missing-cli",
-        "--agent",
-        "claude",
-        "Check",
-        "setup",
-    ]);
+    fs::remove_file(env.bin.join("claude")).unwrap();
+    let output = env
+        .niles(
+            &env.root,
+            &[
+                "spawn",
+                "--role",
+                "research",
+                "missing-cli",
+                "--agent",
+                "claude",
+                "Check",
+                "setup",
+            ],
+        )
+        .env("PATH", &env.bin)
+        .output()
+        .unwrap();
 
     assert_failure_contains(
         "missing agent binary",
         &output,
-        "agent binary absent-agent-cli not found on PATH",
+        "agent binary claude not found on PATH",
     );
     assert!(!state_dir(&env.root).join("worker/missing-cli").exists());
 }

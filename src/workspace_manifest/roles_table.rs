@@ -78,7 +78,7 @@ fn role_row(role: &'static str, value: &str, config: &ProjectConfig) -> RoleRow 
     // Validate through the same contract the picker writes with, so a binding
     // niles would refuse to launch is flagged here, where it can be fixed.
     let spec = agents::AgentSpec::parse(value, &config.models)
-        .and_then(|spec| agents::canonical_manifest_agent(&spec, config).map(|_| spec));
+        .and_then(|spec| agents::validate_model(&spec, &config.models).map(|()| spec));
 
     match spec {
         Ok(spec) => RoleRow {
@@ -141,7 +141,6 @@ mod tests {
     fn render(manifest: &WorkspaceManifest) -> String {
         let mut output = Vec::new();
         let config = ProjectConfig {
-            agents: Default::default(),
             models: agents::ModelRoster::builtin().unwrap(),
         };
         print_manifest_roles(&mut output, manifest, &config).unwrap();

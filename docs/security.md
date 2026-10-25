@@ -59,7 +59,7 @@ treats them as data, never executable instructions. Updates require operator app
 an operator to launch Niles from the clone.
 
 **Attacker-controlled input.** Niles reads the first present project configuration file,
-`niles.yaml` or `.niles.yaml`. An agent entry can replace its executable and argument list. The
+`niles.yaml` or `.niles.yaml`, which can extend model and effort choices for the built-in families. The
 global per-project `manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
 design, and research), and its per-role tiers and ordered secondaries can influence which
 listed agent the lead picks. New manifests live in operator state; legacy manifests migrated
@@ -80,12 +80,11 @@ separate `Command` arguments; these measures prevent incidental shell parsing. S
 [`src/agents/mod.rs`](../src/agents/mod.rs).
 
 **Known gaps.** Niles has no repository-trust gate of its own. Once the operator launches it, Niles
-may intentionally execute the configured binary with the configured arguments, so quoting is not
-a trust mechanism for a deliberately selected executable. Role bindings select what is launched,
+executes built-in family binaries found on the operator's PATH. Project configuration cannot
+replace their executable names or launch arguments. Role bindings select what is launched,
 and planning text is instruction input to the lead. The manifest can also configure a
 `worktree.setup` shell command and `worktree.env`; see the execution boundary below.
-`niles doctor` also executes repository-chosen agent binaries with `--version`; the `niles-setup`
-skill has the agent show a project `agents:` block to the user and get approval before running it.
+`niles doctor` executes the selected built-in family binaries from PATH with `--version`.
 
 ### Global project state, migration, symlinks, and locks
 
@@ -228,7 +227,7 @@ length; worker status append does not take that lock, so a racing report can int
 
 `niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
 are clamped and stripped of control characters before terminal rendering. The shared roles picker
-also clamps repository-authored family names and role values. It probes configured executables
+also clamps repository-authored family names and role values. It probes built-in executables
 with the same PATH lookup as doctor; it does not execute them.
 When a manifest cannot deserialize, the interactive roles picker displays a clamped, control-stripped
 parse error and starts from built-in defaults. Only an explicit save replaces the invalid manifest;
@@ -248,6 +247,15 @@ advertisement is not checked. Composer recognition depends on the CLIs' current 
 styling. A keystroke between capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
+
+Primary role instructions reach the agent at system/developer privilege, above repository
+`AGENTS.md` text: Claude/pi use `--append-system-prompt`, Codex uses TOML-escaped
+`--config developer_instructions`, and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`.
+NUL-bearing primary text is rejected. Task text and worker/session paths stay in the opening
+user turn. These primary instructions are currently compiled-in; workspace skill resolution is
+a separate change. The argument is passed before any CLI trust prompt; declining a prompt
+cannot retract it. Whether a provider receives text before a declined prompt is unverified.
+Niles has no repository-trust gate and never accepts a CLI's trust prompt itself.
 
 With `--tree`, the worker agent runs in a directory chosen by the lead; Niles validates only that it
 exists and is a directory.
@@ -286,7 +294,7 @@ operator's permissions.
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.
 
-**Attacker-controlled input.** The selected executable, its configured arguments, role selection,
+**Attacker-controlled input.** Model/effort and role selection,
 planning guidance, briefs, and repository content all affect the process Niles launches and the
 work it is asked to perform.
 
