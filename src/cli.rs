@@ -360,23 +360,29 @@ mod tests {
             panic!("expected spawn or send command");
         }
 
-        for command in ["spawn", "--skill", "worker", "send"] {
-            let conflict = ["niles", command, "job", "-m", "one", "two"];
+        for command in [
+            vec!["niles", "spawn", "--skill", "worker", "job"],
+            vec!["niles", "send", "job"],
+        ] {
+            let conflict = [command.as_slice(), &["-m", "one", "two"]].concat();
             let error = Cli::try_parse_from(conflict).unwrap_err();
             assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
 
             for (args, expected) in [
                 (
-                    vec!["niles", command, "job", "-", "two"],
+                    vec!["-", "two"],
                     "'-' cannot be combined with other message words",
                 ),
-                (vec!["niles", command, "job"], "a message is required"),
-                (
-                    vec!["niles", command, "job", "-m", " \t"],
-                    "a message is required",
-                ),
+                (vec![], "a message is required"),
+                (vec!["-m", " \t"], "a message is required"),
             ] {
-                assert_eq!(message(&args).resolve().unwrap_err().to_string(), expected);
+                assert_eq!(
+                    message(&[command.as_slice(), &args].concat())
+                        .resolve()
+                        .unwrap_err()
+                        .to_string(),
+                    expected
+                );
             }
         }
 
