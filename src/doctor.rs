@@ -39,13 +39,9 @@ fn print_setup(workspace: &Utf8Path) -> Result<()> {
     };
     let config = load_project_config_from(workspace)?;
     let bindings = manifest
-        .lead
-        .agents()
-        .chain(manifest.worker.agents())
-        .chain(manifest.reviewer.agents())
-        .chain(manifest.design.agents())
-        .chain(manifest.security.agents())
-        .chain(manifest.research.agents());
+        .bindings
+        .values()
+        .flat_map(|binding| binding.agents());
     let mut binaries = BTreeMap::new();
     for agent in bindings {
         let spec = AgentSpec::parse(agent, &config.models)?;

@@ -1,12 +1,10 @@
-use std::{cmp::Reverse, collections::BTreeMap, iter};
-
-use clap::ValueEnum;
+use std::{cmp::Reverse, collections::BTreeMap};
 
 use super::{
     Window,
     collect::{EventKind, Project, Session},
 };
-use crate::worker::WorkerRole;
+use crate::skills::SkillName;
 
 /// The newest events the panel lists.
 const EVENTS: usize = 8;
@@ -29,8 +27,8 @@ pub(super) struct Dashboard<'a> {
 
 pub(super) struct ModelRow<'a> {
     pub(super) agent: &'a str,
-    /// Counts by recorded role, leads first. A role with no session is absent.
-    pub(super) roles: Vec<(&'static str, usize)>,
+    /// Counts by skill, alphabetically. A skill with no session is absent.
+    pub(super) skills: BTreeMap<&'a SkillName, usize>,
     pub(super) tokens: u64,
 }
 
@@ -76,29 +74,15 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
             sessions += 1;
             let row = models.entry(&session.agent).or_insert_with(|| ModelRow {
                 agent: &session.agent,
-                roles: Vec::new(),
+                skills: BTreeMap::new(),
                 tokens: 0,
             });
             row.tokens += tokens;
-            match row.roles.iter_mut().find(|(role, _)| *role == session.role) {
-                Some((_, count)) => *count += 1,
-                None => row.roles.push((session.role, 1)),
-            }
+            *row.skills.entry(&session.skill).or_insert(0) += 1;
         }
         project_tokens.push((project.name.as_str(), spent));
     }
     let mut models = models.into_values().collect::<Vec<_>>();
-    for row in &mut models {
-        row.roles.sort_by_key(|(role, _)| {
-            iter::once("lead")
-                .chain(
-                    WorkerRole::value_variants()
-                        .iter()
-                        .map(|role| role.as_str()),
-                )
-                .position(|known| known == *role)
-        });
-    }
     models.sort_by_key(|row| Reverse(row.tokens));
     context.sort_by_key(|row| Reverse((row.percent, row.prompt_tokens)));
     let mut events = projects

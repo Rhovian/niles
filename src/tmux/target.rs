@@ -139,10 +139,6 @@ pub(crate) enum TargetState {
         actual: WindowTarget,
     },
     OrphanGone,
-    OrphanLegacyCandidate {
-        #[serde(rename = "target")]
-        candidate: WindowTarget,
-    },
     Unknown {
         error: String,
     },
@@ -153,19 +149,15 @@ impl TargetState {
         match self {
             Self::Live | Self::OrphanRecovered { .. } => Some(true),
             Self::PaneExited | Self::WindowDead | Self::OrphanGone => Some(false),
-            Self::OrphanLegacyCandidate { .. } | Self::Unknown { .. } => None,
+            Self::Unknown { .. } => None,
         }
     }
 
-    /// Only a confirmed absence counts: a transient tmux failure, an ambiguous legacy candidate,
-    /// and a window found alive under a new name are not gone.
+    /// Only a confirmed absence counts; a window recovered under a new name is still live.
     pub(crate) fn is_gone(&self) -> bool {
         match self {
             Self::PaneExited | Self::WindowDead | Self::OrphanGone => true,
-            Self::Live
-            | Self::OrphanRecovered { .. }
-            | Self::OrphanLegacyCandidate { .. }
-            | Self::Unknown { .. } => false,
+            Self::Live | Self::OrphanRecovered { .. } | Self::Unknown { .. } => false,
         }
     }
 }
@@ -178,9 +170,6 @@ impl fmt::Display for TargetState {
             Self::WindowDead => f.write_str("window-dead"),
             Self::OrphanRecovered { actual } => write!(f, "orphan-recovered:{actual}"),
             Self::OrphanGone => f.write_str("orphan-gone"),
-            Self::OrphanLegacyCandidate { candidate } => {
-                write!(f, "orphan-legacy-candidate:{candidate}")
-            }
             Self::Unknown { error } => write!(f, "unknown:{error}"),
         }
     }
@@ -200,8 +189,8 @@ pub(crate) fn target_state(recorded: &WindowTarget, project: &Utf8Path, id: &str
         RecordedWindowState::PaneExited => TargetState::PaneExited,
         // A missing window in a live session still runs tag-based recovery; a
         // matching project/id tag is a positive identity match and safe to kill.
-        RecordedWindowState::WindowMissing => recover_missing_target(recorded, project, id, false),
-        RecordedWindowState::SessionMissing => recover_missing_target(recorded, project, id, true),
+        RecordedWindowState::WindowMissing => recover_missing_target(project, id, false),
+        RecordedWindowState::SessionMissing => recover_missing_target(project, id, true),
         RecordedWindowState::Unknown { error } => TargetState::Unknown { error },
     }
 }
@@ -243,12 +232,7 @@ fn recorded_window_state(recorded: &WindowTarget) -> RecordedWindowState {
     }
 }
 
-fn recover_missing_target(
-    recorded: &WindowTarget,
-    project: &Utf8Path,
-    id: &str,
-    session_missing: bool,
-) -> TargetState {
+fn recover_missing_target(project: &Utf8Path, id: &str, session_missing: bool) -> TargetState {
     let windows = match list_tagged_windows() {
         Ok(windows) => windows,
         Err(err) => {
@@ -286,30 +270,10 @@ fn recover_missing_target(
         }
     }
 
-    let legacy_candidates = windows
-        .iter()
-        .filter(|window| {
-            window.target.window() == recorded.window()
-                && window.project.is_none()
-                && window.worker_id.is_none()
-        })
-        .map(|window| window.target.clone())
-        .collect::<Vec<_>>();
-    match legacy_candidates.as_slice() {
-        [candidate] => TargetState::OrphanLegacyCandidate {
-            candidate: candidate.clone(),
-        },
-        [] if session_missing => TargetState::OrphanGone,
-        [] => TargetState::WindowDead,
-        many => TargetState::Unknown {
-            error: format!(
-                "multiple untagged tmux windows match recorded name: {}",
-                many.iter()
-                    .map(WindowTarget::render)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        },
+    if session_missing {
+        TargetState::OrphanGone
+    } else {
+        TargetState::WindowDead
     }
 }
 

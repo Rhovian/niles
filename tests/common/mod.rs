@@ -83,6 +83,12 @@ pub struct TestEnv {
 }
 
 impl TestEnv {
+    pub fn with_manifest(prefix: &str, agent: &str) -> Self {
+        let env = Self::new(prefix);
+        write_spawn_manifest(&env.root, agent);
+        env
+    }
+
     pub fn new(prefix: &str) -> Self {
         Self::with_tmux(prefix, STUB_TMUX)
     }
@@ -121,6 +127,16 @@ impl TestEnv {
 
     pub fn run(&self, args: &[&str]) -> Output {
         self.niles(&self.root, args).output().unwrap()
+    }
+
+    pub fn spawn_command(&self, skill: &str, args: &[&str]) -> Command {
+        let mut command = self.niles(&self.root, &["spawn", "--skill", skill]);
+        command.args(args);
+        command
+    }
+
+    pub fn spawn(&self, skill: &str, args: &[&str]) -> Output {
+        self.spawn_command(skill, args).output().unwrap()
     }
 
     pub fn tmux_log(&self) -> String {
@@ -204,6 +220,10 @@ pub fn write_executable(path: &Path, body: &str) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+const SKILLS: [&str; 6] = [
+    "lead", "worker", "reviewer", "security", "design", "research",
+];
+
 pub fn write_workspace_manifest(
     workspace: &Path,
     lead: &str,
@@ -211,30 +231,31 @@ pub fn write_workspace_manifest(
     reviewer: &str,
     security: &str,
 ) {
+    write_manifest(
+        workspace,
+        SKILLS
+            .into_iter()
+            .zip([lead, worker, reviewer, security, "claude", "claude"]),
+    );
+}
+
+pub fn write_spawn_manifest(workspace: &Path, agent: &str) {
+    write_manifest(workspace, SKILLS.map(|skill| (skill, agent)));
+}
+
+fn write_manifest<'a>(workspace: &Path, bindings: impl IntoIterator<Item = (&'a str, &'a str)>) {
     fs::create_dir_all(state_dir(workspace)).unwrap();
-    let exact = |agent: &str| {
-        match agent {
-            "claude" => "claude:sonnet:high",
-            "codex" => "codex:gpt-6.1-sol:medium",
-            _ => agent,
-        }
-        .to_owned()
-    };
-    let body = [
-        ("lead", lead),
-        ("worker", worker),
-        ("reviewer", reviewer),
-        ("security", security),
-        ("design", "claude"),
-        ("research", "claude"),
-    ]
-    .map(|(role, agent)| {
-        format!(
-            "{role}:\n  standard: {{primary: {}, secondaries: []}}\n",
-            exact(agent)
-        )
-    })
-    .join("");
+    let body = bindings
+        .into_iter()
+        .map(|(skill, agent)| {
+            let exact = match agent {
+                "claude" => "claude:sonnet:high",
+                "codex" => "codex:gpt-6.1-sol:medium",
+                _ => agent,
+            };
+            format!("{skill}:\n  standard: {{primary: {exact}, secondaries: []}}\n")
+        })
+        .collect::<String>();
     fs::write(state_dir(workspace).join("manifest.yaml"), body).unwrap();
 }
 
@@ -261,7 +282,7 @@ pub fn write_worker(
         format!(
             r#"{{
   "id": "{id}",
-  "role": "worker",
+  "skill": "worker",
   "agent": "codex",
   "created_at": "2026-01-02T03:04:05Z",
   "project": "{}",

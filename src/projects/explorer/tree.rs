@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::Duration;
 
 use crate::theme::Theme;
@@ -6,39 +6,39 @@ use chrono::{DateTime, Utc};
 
 use crate::projects::{
     panels::{Panel, Range},
-    windows::{AgentWindow, Role},
+    windows::{AgentWindow, WindowKind},
 };
-use crate::worker::WorkerRole;
+use crate::skills::SkillName;
 
 pub(super) use crate::projects::snapshot::Project;
 
 impl Project {
-    fn members(&self, role: WorkerRole) -> impl Iterator<Item = Item<'_>> {
+    fn members<'a>(&'a self, skill: &'a SkillName) -> impl Iterator<Item = Item<'a>> {
         self.agents.iter().flat_map(move |agents| {
             let windows = agents
                 .windows
                 .iter()
-                .filter(move |w| matches!(w.role, Role::Worker(_, r) if r == role))
-                .map(move |w| Item::Member(self, role, Member::Window(w)));
+                .filter(move |w| matches!(&w.kind, WindowKind::Worker(_, r) if r == skill))
+                .map(move |w| Item::Member(self, skill, Member::Window(w)));
             let lost = agents
                 .lost
                 .iter()
-                .filter(move |(_, r)| *r == role)
-                .map(|(id, r)| Item::Member(self, *r, Member::Lost(id)));
+                .filter(move |(_, r)| r == skill)
+                .map(|(id, r)| Item::Member(self, r, Member::Lost(id)));
             windows.chain(lost)
         })
     }
 
-    fn roles(&self) -> impl DoubleEndedIterator<Item = WorkerRole> + '_ {
-        [
-            WorkerRole::Worker,
-            WorkerRole::Reviewer,
-            WorkerRole::Security,
-            WorkerRole::Research,
-            WorkerRole::Design,
-        ]
-        .into_iter()
-        .filter(|role| self.members(*role).next().is_some())
+    fn skills(&self) -> impl DoubleEndedIterator<Item = &SkillName> {
+        let mut skills = BTreeSet::new();
+        if let Some(agents) = &self.agents {
+            skills.extend(agents.windows.iter().filter_map(|w| match &w.kind {
+                WindowKind::Worker(_, skill) => Some(skill),
+                WindowKind::Lead | WindowKind::Plain => None,
+            }));
+            skills.extend(agents.lost.iter().map(|(_, skill)| skill));
+        }
+        skills.into_iter()
     }
 }
 
@@ -80,8 +80,8 @@ pub(super) enum Item<'a> {
     /// A child of TELEMETRY, which is never collapsed.
     Range(Range),
     Project(&'a Project),
-    Folder(&'a Project, WorkerRole),
-    Member(&'a Project, WorkerRole, Member<'a>),
+    Folder(&'a Project, &'a SkillName),
+    Member(&'a Project, &'a SkillName, Member<'a>),
 }
 
 #[derive(Clone, Copy)]
@@ -99,7 +99,7 @@ enum Key<'a> {
     ProjectScopes,
     Range(Range),
     Project(&'a str),
-    Folder(&'a str, WorkerRole),
+    Folder(&'a str, &'a SkillName),
     Window(&'a str, &'a str),
     Lost(&'a str, &'a str),
 }
@@ -128,7 +128,7 @@ impl<'a> Item<'a> {
             Item::ProjectScopes => Key::ProjectScopes,
             Item::Range(range) => Key::Range(range),
             Item::Project(project) => Key::Project(project.row.entry.name.as_str()),
-            Item::Folder(project, role) => Key::Folder(project.row.entry.name.as_str(), role),
+            Item::Folder(project, skill) => Key::Folder(project.row.entry.name.as_str(), skill),
             Item::Member(project, _, Member::Window(window)) => {
                 Key::Window(project.row.entry.name.as_str(), &window.name)
             }
@@ -143,7 +143,7 @@ impl<'a> Item<'a> {
 pub(super) struct Tree {
     projects: Vec<Project>,
     collapsed: HashSet<String>,
-    collapsed_folders: HashSet<(String, WorkerRole)>,
+    collapsed_folders: HashSet<(String, SkillName)>,
     project_scopes_expanded: bool,
     cursor: usize,
 }
@@ -171,13 +171,13 @@ impl Tree {
             items.push(Item::Project(project));
             if project.agents.is_some() && !self.collapsed.contains(project.row.entry.name.as_str())
             {
-                for role in project.roles() {
-                    items.push(Item::Folder(project, role));
+                for skill in project.skills() {
+                    items.push(Item::Folder(project, skill));
                     if !self
                         .collapsed_folders
-                        .contains(&(project.row.entry.name.as_str().to_owned(), role))
+                        .contains(&(project.row.entry.name.as_str().to_owned(), skill.clone()))
                     {
-                        items.extend(project.members(role));
+                        items.extend(project.members(skill));
                     }
                 }
             }
@@ -220,9 +220,9 @@ impl Tree {
                 let name = project.row.entry.name.as_str().to_owned();
                 self.collapsed.remove(&name);
             }
-            Some(Item::Folder(project, role)) => {
-                self.collapsed_folders
-                    .remove(&(project.row.entry.name.as_str().to_owned(), role));
+            Some(Item::Folder(project, skill)) => {
+                let key = (project.row.entry.name.as_str().to_owned(), skill.clone());
+                self.collapsed_folders.remove(&key);
             }
             Some(Item::ProjectScopes) => self.project_scopes_expanded = true,
             Some(
@@ -271,9 +271,9 @@ impl Tree {
             agents
                 .windows
                 .iter()
-                .filter_map(|window| match window.role {
-                    Role::Worker(_, role) => Some(Some((window.name.as_str(), role))),
-                    Role::Lead | Role::Plain => None,
+                .filter_map(|window| match &window.kind {
+                    WindowKind::Worker(_, skill) => Some(Some((window.name.as_str(), skill))),
+                    WindowKind::Lead | WindowKind::Plain => None,
                 }),
         );
         let current = self.selected().map(Item::key);
@@ -284,11 +284,12 @@ impl Tree {
             return false;
         };
         let project = name.to_owned();
-        let window = window.map(|(w, role)| (w.to_owned(), role));
+        let window = window.map(|(w, skill)| (w.to_owned(), skill.clone()));
         match window {
-            Some((window, role)) => {
+            Some((window, skill)) => {
                 self.collapsed.remove(&project);
-                self.collapsed_folders.remove(&(project.clone(), role));
+                self.collapsed_folders
+                    .remove(&(project.clone(), skill.clone()));
                 self.select(Key::Window(&project, &window));
             }
             None => self.select(Key::Project(&project)),
@@ -320,9 +321,10 @@ impl Tree {
         };
         let name = project.row.entry.name.as_str().to_owned();
         match item {
-            Item::Member(_, role, _) => {
-                self.collapsed_folders.insert((name.clone(), role));
-                self.select(Key::Folder(&name, role));
+            Item::Member(_, skill, _) => {
+                let skill = skill.clone();
+                self.collapsed_folders.insert((name.clone(), skill.clone()));
+                self.select(Key::Folder(&name, &skill));
             }
             Item::Project(_) | Item::Folder(..) => {
                 self.collapsed.insert(name.clone());

@@ -16,15 +16,8 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum StatusLine {
     Home,
-    Projects {
-        /// Accepted for compatibility; tmux evaluates selection at redraw time.
-        session_name: Option<String>,
-    },
-    Sessions {
-        session_name: String,
-        /// Accepted for compatibility; tmux evaluates selection at redraw time.
-        window_index: Option<u32>,
-    },
+    Projects,
+    Sessions { session_name: String },
 }
 
 #[derive(Debug, Args)]
@@ -94,7 +87,7 @@ pub enum CommandName {
     #[command(hide = true)]
     Lead {
         #[arg(long)]
-        keep_roles: bool,
+        keep_skills: bool,
     },
     /// Run the project explorer in the home session.
     #[command(hide = true)]
@@ -121,10 +114,8 @@ pub enum CommandName {
     },
     /// Spawn a worker agent in a tmux window
     ///
-    /// The worker's brief is the shared reporting contract plus one role fragment. Only `worker`
-    /// is told to run the project's checks; `reviewer` covers correctness, idiom and economy,
-    /// `security` is the adversarial pass, `design` writes the design record, and `research`
-    /// answers one question with cited evidence. Workers may use --design for a record or --mechanical to log mechanical work.
+    /// Launch a bound primary skill. Use --from to build on a completed worker's report,
+    /// or --mechanical to log the reason for mechanical work in the lead session.
     ///
     /// `--wait` starts the workspace wait after spawning, so the turn does not need a
     /// separate `niles wait`.
@@ -140,7 +131,7 @@ pub enum CommandName {
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,
-        /// Agent id to launch; defaults to this role's workspace manifest binding.
+        /// Agent id to launch; defaults to this skill's workspace manifest binding.
         #[arg(short, long)]
         agent: Option<String>,
         /// Run the agent in this directory while Niles tracks it from this workspace.
@@ -369,23 +360,29 @@ mod tests {
             panic!("expected spawn or send command");
         }
 
-        for command in ["spawn", "send"] {
-            let conflict = ["niles", command, "job", "-m", "one", "two"];
+        for command in [
+            vec!["niles", "spawn", "--skill", "worker", "job"],
+            vec!["niles", "send", "job"],
+        ] {
+            let conflict = [command.as_slice(), &["-m", "one", "two"]].concat();
             let error = Cli::try_parse_from(conflict).unwrap_err();
             assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
 
             for (args, expected) in [
                 (
-                    vec!["niles", command, "job", "-", "two"],
+                    vec!["-", "two"],
                     "'-' cannot be combined with other message words",
                 ),
-                (vec!["niles", command, "job"], "a message is required"),
-                (
-                    vec!["niles", command, "job", "-m", " \t"],
-                    "a message is required",
-                ),
+                (vec![], "a message is required"),
+                (vec!["-m", " \t"], "a message is required"),
             ] {
-                assert_eq!(message(&args).resolve().unwrap_err().to_string(), expected);
+                assert_eq!(
+                    message(&[command.as_slice(), &args].concat())
+                        .resolve()
+                        .unwrap_err()
+                        .to_string(),
+                    expected
+                );
             }
         }
 

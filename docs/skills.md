@@ -1,13 +1,15 @@
-# Role workflows
+# Skill workflows
 
 ## Design and implementation
 
-`niles spawn --role` accepts `worker`, `design`, `reviewer`, `security`, and `research`.
-Workers can spawn directly without either design flag. `--design <id>` uses a live designer's
-report as the design record; name the record author, whose latest status must be `done:`.
-`--mechanical <reason>` optionally logs mechanical work to `decisions.log` in the latest lead
-session. The flags conflict. Reviewers and security agents may use `--design`; only workers
-accept `--mechanical`. Design and research accept neither flag.
+`niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill
+(default `lead`, selected with `entry:`) cannot be spawned. Only the entry must be bound when
+the manifest loads; other skills are optional. Primary text is currently supplied by the compiled built-in prompts.
+
+`--from <id>` passes a live worker's report path as `from_report:`; its latest status must be
+`done:`. Any skill can build on a finished report. `--mechanical <reason>` optionally logs
+mechanical work in the latest lead session. It accepts any skill and requires a nonempty
+reason without control characters. The flags conflict.
 
 The lead runs design when the operator asks for it. Otherwise, it judges from what the operator
 has said, not from the issue: when that settles the way forward, it sends the work to a worker
@@ -24,7 +26,7 @@ a disputed scope correction goes to the operator.
 
 ## Primary instructions
 
-The role's primary instructions reach every worker and lead through the family's system-prompt
+The skill's primary instructions reach every worker and lead through the family's system-prompt
 argument: Claude and pi use `--append-system-prompt`, Codex uses `--config developer_instructions`,
 and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`. The opening user turn carries the task and paths.
 Codex and Hermes leads now receive their standing brief at launch; its startup context is frozen,

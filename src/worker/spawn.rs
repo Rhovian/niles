@@ -7,7 +7,12 @@ use chrono::Utc;
 use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
-    session, store,
+    session,
+    skills::{
+        SkillName,
+        builtin::{self, BOOTSTRAP},
+    },
+    store,
     tmux::{self, WindowTarget},
     util::{
         append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
@@ -17,9 +22,8 @@ use crate::{
 
 use super::{
     archive::archive_worker_dir,
-    meta::{WorkerMeta, read_meta, report_path, write_meta},
+    meta::{WorkerMeta, report_path, write_meta},
     resolve::resolve_live_worker_if_exists,
-    role::{BOOTSTRAP, WorkerRole},
     snapshot::{WorkerSnapshot, status_log, status_log_len},
     validation::{validate_id, validate_task_label},
     worktree::{self, SpawnTree},
@@ -29,15 +33,15 @@ const UNLABELED_TASK_LABEL: &str = "-";
 
 #[derive(Debug, clap::Args)]
 pub struct Assignment {
-    /// Which brief the worker gets.
-    #[arg(long, value_enum, default_value_t = WorkerRole::Worker)]
-    pub role: WorkerRole,
+    /// Primary skill to launch from the workspace bindings.
+    #[arg(long)]
+    pub skill: SkillName,
     /// Manifest tier whose primary to launch (standard by default).
     #[arg(long, value_enum, default_value_t = agents::roster::Tier::Standard, conflicts_with = "agent")]
     pub tier: agents::roster::Tier,
-    /// Use the report of this completed design worker as the design record.
+    /// Build on the report of this completed worker.
     #[arg(long, value_name = "ID", conflicts_with = "mechanical")]
-    design: Option<String>,
+    from: Option<String>,
     /// Optionally record mechanical work in the lead session log.
     #[arg(long, value_name = "REASON")]
     mechanical: Option<String>,
@@ -52,7 +56,7 @@ pub fn spawn(
     checkin: Option<String>,
     tree: Option<SpawnTree>,
 ) -> Result<()> {
-    let role = assignment.role;
+    let skill = assignment.skill.clone();
     let tier = assignment.tier;
     validate_id(&id)?;
     if let Some(label) = &task_label {
@@ -64,14 +68,14 @@ pub fn spawn(
     let manifest_path = workspace_manifest::manifest_path(&project)?;
     let manifest = workspace_manifest::load(&project).with_context(|| {
         format!(
-            "cannot resolve agent for role '{}' from {manifest_path}",
-            role.as_str()
+            "cannot resolve agent for skill '{}' from {manifest_path}",
+            skill.as_str()
         )
     })?;
     let agent = resolve_agent(
         &manifest_path,
         manifest.as_ref(),
-        role,
+        &skill,
         tier,
         agent,
         &config,
@@ -83,7 +87,7 @@ pub fn spawn(
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let mut invocation =
         agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
-    invocation.pass_primary(&role.primary())?;
+    invocation.pass_primary(&builtin::primary(&skill)?)?;
     if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
@@ -139,7 +143,7 @@ pub fn spawn(
     let brief_path = write_brief(
         &dir,
         &id,
-        role,
+        &skill,
         task_label.as_deref(),
         agent_dir,
         &task,
@@ -184,7 +188,7 @@ pub fn spawn(
 
     let meta = WorkerMeta {
         id: id.clone(),
-        role,
+        skill,
         agent,
         agent_family: agent_spec.tiered_family(),
         model: agent_spec.model().map(str::to_owned),
@@ -249,22 +253,25 @@ pub fn spawn(
 fn resolve_agent(
     path: &Utf8Path,
     manifest: Option<&workspace_manifest::WorkspaceManifest>,
-    role: WorkerRole,
+    skill: &SkillName,
     tier: agents::roster::Tier,
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
-    let role_name = role.as_str();
-    let Some(manifest) = manifest else {
-        return agent.with_context(|| format!("cannot resolve agent for role '{role_name}': manifest {path} does not exist; specify --agent or configure the manifest. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"));
-    };
-    let binding = role.binding(manifest);
+    let manifest = manifest.with_context(|| format!("cannot resolve skill '{skill}': manifest {path} does not exist. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"))?;
+    if *skill == manifest.entry {
+        bail!("entry skill {skill} cannot be spawned");
+    }
+    let binding = manifest
+        .binding(skill)
+        .with_context(|| format!("in {path}"))?;
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
+        agents::validate_model(&requested, &config.models)?;
         if !binding.allows(&requested, &config.models)? {
             bail!(
-                "agent {agent} is not allowed for role '{role_name}' in manifest {path}; allowed agents: {}",
-                binding.allowed_agents()
+                "agent {agent} is not allowed for skill '{skill}' in manifest {path}; allowed agents: {}",
+                binding.agents().collect::<Vec<_>>().join(", ")
             );
         }
         return Ok(agent);
@@ -299,11 +306,11 @@ fn print_worker_tier(meta: &WorkerMeta) {
 fn write_brief(
     dir: &Utf8Path,
     id: &str,
-    role: WorkerRole,
+    skill: &SkillName,
     task_label: Option<&str>,
     project: &Utf8Path,
     task: &str,
-    basis: &DesignBasis,
+    basis: &TaskBasis,
 ) -> Result<Utf8PathBuf> {
     let path = dir.join("brief.md");
     let report_file = report_path(dir);
@@ -315,16 +322,16 @@ fn write_brief(
         BOOTSTRAP,
         &[
             ("{id}", id),
-            ("{role}", role.as_str()),
+            ("{skill}", skill.as_str()),
             ("{task_label}", task_label),
             ("{project}", project.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
             (
-                "{design_record}",
+                "{from_report}",
                 &match basis {
-                    DesignBasis::Record(path) => format!("\ndesign_record: {path}"),
-                    DesignBasis::Mechanical { .. } | DesignBasis::None => String::new(),
+                    TaskBasis::FromReport(path) => format!("\nfrom_report: {path}"),
+                    TaskBasis::Mechanical { .. } | TaskBasis::None => String::new(),
                 },
             ),
         ],
@@ -374,8 +381,8 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
 }
 
 #[derive(Debug)]
-enum DesignBasis {
-    Record(Utf8PathBuf),
+enum TaskBasis {
+    FromReport(Utf8PathBuf),
     Mechanical { log: Utf8PathBuf, reason: String },
     None,
 }
@@ -385,37 +392,21 @@ impl Assignment {
         self,
         project: &Utf8Path,
         live_worker: impl FnOnce(&str) -> Result<Option<Utf8PathBuf>>,
-    ) -> Result<DesignBasis> {
-        match (
-            self.role,
-            self.design.as_deref(),
-            self.mechanical.as_deref(),
-        ) {
-            (WorkerRole::Reviewer | WorkerRole::Security, _, Some(_)) => {
-                bail!("--mechanical is only accepted for role worker")
-            }
-            (WorkerRole::Design | WorkerRole::Research, Some(_), _)
-            | (WorkerRole::Design | WorkerRole::Research, _, Some(_)) => bail!(
-                "role {} refuses --design and --mechanical",
-                self.role.as_str()
-            ),
-            (WorkerRole::Worker | WorkerRole::Reviewer | WorkerRole::Security, Some(id), _) => {
-                let dir = live_worker(id)?
-                    .with_context(|| format!("no such live design worker '{id}'"))?;
-                let meta = read_meta(&dir)?;
-                if meta.role != WorkerRole::Design {
-                    bail!("worker '{id}' is not a design worker");
-                }
+    ) -> Result<TaskBasis> {
+        match (self.from.as_deref(), self.mechanical.as_deref()) {
+            (Some(id), _) => {
+                let dir =
+                    live_worker(id)?.with_context(|| format!("no such live worker '{id}'"))?;
                 let snapshot = WorkerSnapshot::new(id.to_owned(), dir.clone(), status_log(&dir)?);
                 if !snapshot
                     .last_status_line()
                     .is_some_and(|line| line.starts_with("done:"))
                 {
-                    bail!("design worker '{id}' latest status is not done:");
+                    bail!("worker '{id}' latest status is not done:");
                 }
-                Ok(DesignBasis::Record(report_path(&dir)))
+                Ok(TaskBasis::FromReport(report_path(&dir)))
             }
-            (WorkerRole::Worker, None, Some(reason)) => {
+            (None, Some(reason)) => {
                 if reason.trim().is_empty() || reason.chars().any(char::is_control) {
                     bail!(
                         "--mechanical reason must be non-empty and contain no control characters"
@@ -423,27 +414,19 @@ impl Assignment {
                 }
                 let lead = session::latest_lead(project)?
                     .context("--mechanical requires a lead session")?;
-                Ok(DesignBasis::Mechanical {
+                Ok(TaskBasis::Mechanical {
                     log: session::sessions_dir(project)?
                         .join(lead.id)
                         .join("decisions.log"),
                     reason: reason.to_owned(),
                 })
             }
-            (
-                WorkerRole::Worker
-                | WorkerRole::Reviewer
-                | WorkerRole::Security
-                | WorkerRole::Design
-                | WorkerRole::Research,
-                None,
-                None,
-            ) => Ok(DesignBasis::None),
+            (None, None) => Ok(TaskBasis::None),
         }
     }
 }
 
-impl DesignBasis {
+impl TaskBasis {
     fn record_mechanical(&self, id: &str) -> Result<()> {
         if let Self::Mechanical { log, reason } = self {
             append_line(

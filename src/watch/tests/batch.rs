@@ -110,10 +110,10 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
 }
 
 #[test]
-fn watch_log_batches_feed_one_telemetry_report_per_worker_and_read_old_lines() {
+fn watch_log_batches_feed_one_telemetry_report_per_worker() {
     let root = workspace("log-batch");
     fs::write(root.join("watch.log"), concat!(
-        "2026-01-02T03:04:05Z nudged old: niles: old reported (done) — check workers\n",
+        "2026-01-02T03:04:05Z nudged single: niles: single reported (done) — check workers\n",
         "2026-01-02T03:04:06Z nudged a,b,c: niles: a reported (blocked), no report from b, c reported (failed) — check workers\n",
         "not a report\n",
     )).unwrap();
@@ -124,7 +124,7 @@ fn watch_log_batches_feed_one_telemetry_report_per_worker_and_read_old_lines() {
             .map(|(_, id, kind)| (id.as_str(), *kind))
             .collect::<Vec<_>>(),
         [
-            ("old", crate::wake::WakeKind::Done),
+            ("single", crate::wake::WakeKind::Done),
             ("a", crate::wake::WakeKind::Blocked),
             ("c", crate::wake::WakeKind::Failed)
         ]

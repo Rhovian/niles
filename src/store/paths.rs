@@ -5,12 +5,6 @@ pub(crate) const WORKERS_DIR: &str = "worker";
 pub(crate) const ARCHIVE_DIR: &str = "archive";
 
 pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
-    let destination = project_path(workspace)?;
-    super::migrate::legacy(&workspace.join(".niles"), &destination)?;
-    Ok(destination)
-}
-
-pub(crate) fn project_path(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     if !workspace.is_absolute() {
         bail!("workspace path is not absolute: {workspace}");
     }

@@ -8,7 +8,7 @@
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
 An opinionated orchestration harness across your agent CLIs, featuring research, design, and security
-roles; small diffs, telemetry, and options to make it your own. See the [roadmap](ROADMAP.md) for
+skills; small diffs, telemetry, and options to make it your own. See the [roadmap](ROADMAP.md) for
 what's next and the [releases](https://github.com/Rhovian/niles/releases) for what changed.
 
 ![Niles demo](docs/assets/niles-demo.gif)
@@ -17,7 +17,7 @@ what's next and the [releases](https://github.com/Rhovian/niles/releases) for wh
 
 - `tmux`. Rust 1.89+ is required when installing with Cargo or building from source.
 - The agent CLIs you select must already be installed, on `PATH`, and authenticated.
-  One CLI is enough: bind every role to `claude` or to `codex`. Mixing families adds independent
+  One CLI is enough: bind every skill to `claude` or to `codex`. Mixing families adds independent
   review.
 - Unix only.
 
@@ -74,9 +74,9 @@ cargo install niles
 2. Run `niles` from your repository. In the home view, select your project with the arrow
 keys and press Enter. If it isn't listed, press `r`, enter the repository's absolute path,
 then accept or choose a project name. Select the registered project and press Enter.
-Choose and save your agent roles when prompted, then type to the lead in the right pane.
+Choose and save your agent skills when prompted, then type to the lead in the right pane.
 
-3. Check with `niles doctor` in another terminal in the repository after saving the roles.
+3. Check with `niles doctor` in another terminal in the repository after saving the skills.
 It reports tmux and each bound agent CLI with its tested version; it does not check logins.
 Without the global project `manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
 
@@ -84,18 +84,18 @@ See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
 
 ## What niles changes on your machine
 
-- `~/.niles/state/<mangled absolute workspace path>/`: the role manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback. On first access, legacy workspace `.niles/` contents are copied here completely before the source is removed. Stop running agents before upgrading; copying does not synchronize live writers.
+- `~/.niles/state/<mangled absolute workspace path>/`: the skill manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback.
 - `~/.niles/projects`: the list of registered projects.
 - One tmux session per project, with its status bar options set on that session only.
 - `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
 
 Niles does not edit your agent CLIs' configuration or your tmux config.
 
-## Roles
+## Skills
 
 The lead is the agent you talk to. It owns the outcome: it reads the code, settles the plan, and
 decides who does what. Anything cheaper to do than to delegate, it does itself, including reviewing
-a diff. The rest it hands to other roles, commissioning as much review as the risk warrants,
+a diff. The rest it hands to other skills, commissioning as much review as the risk warrants,
 which may be none.
 
 - **Worker** implements the change and owns the gate: it runs the project's checks before reporting
@@ -109,7 +109,7 @@ which may be none.
 
 ## Configuration
 
-The workspace manifest binds roles. This is the minimal valid global project `manifest.yaml`:
+The workspace manifest binds skills. Here is a global project `manifest.yaml`:
 
 ```yaml
 lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
@@ -120,9 +120,9 @@ design: {standard: {primary: claude:sonnet:high, secondaries: []}}
 research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 ```
 
-For ready-made setups with all shipped role tiers, see [examples/](examples/):
+For ready-made setups with all shipped skill tiers, see [examples/](examples/):
 [Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
-From the project root, run `niles workers` to migrate any legacy state, then copy a template to
+From the project root, copy a template to
 `"$HOME/.niles/state/$(pwd -P | tr '/' '-')/manifest.yaml"` (create its parent directory first).
 Run `niles doctor` to check the required CLIs.
 
@@ -160,16 +160,17 @@ Tiers are `frontier`, `standard`, `economy`, and `mechanical`. Omit `effort` for
 no effort flag. Cost ranks run from 1 (cheapest) to 4 (most expensive); speed ranks from 1
 (fastest) to 4 (slowest). Ranks are model-level proxies; `null` represents unverified metadata.
 `niles models` displays unverified ranks as `unknown` and lists only pairs allowed by at least
-one workspace role. Without a workspace manifest it lists all effective pairs. User overrides
+one workspace skill. Without a workspace manifest it lists all effective pairs. User overrides
 load before project `models:` overrides; new workspace pairs need user-registry metadata to be
 listed. Invalid registry overrides error.
 
-Each role, including lead, requires a `standard` tier and may list `frontier`, `economy`,
+Only the entry skill must be bound. `entry:` defaults to `lead`; other bindings are optional.
+Each binding requires a `standard` tier and may list `frontier`, `economy`,
 or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
 `family:model:effort` entries. Models without effort support, such as `claude:haiku`, omit
-that suffix. Scalar bindings and `when:` groups are rejected; no migration is performed.
+that suffix. Scalar bindings and `when:` groups are rejected.
 
-`niles spawn --role <role>` uses its standard primary; `--tier <tier>` selects another listed
+`niles spawn <id> --skill <name>` uses its standard primary; `--tier <tier>` selects another listed
 tier's primary. An unlisted tier errors. `--agent family:model:effort` selects an exact listed
 primary or secondary and conflicts with `--tier`. The lead starts at its standard primary,
 looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
@@ -216,8 +217,8 @@ followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable
 fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
 `--checkin` overrides the manifest.
 
-See [role workflows](docs/roles.md#design-and-implementation) for design, implementation,
-and the `--design` and `--mechanical` spawn flags.
+See [skill workflows](docs/skills.md#design-and-implementation) for design, implementation,
+and the `--from` and `--mechanical` spawn flags.
 
 ## Remote access (opt-in)
 

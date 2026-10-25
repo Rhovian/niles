@@ -75,7 +75,7 @@ esac
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join("session.json"),
-        json!({"id":"session", "agent":"claude:opus:high",
+        json!({"id":"session", "entry_skill":"lead", "agent":"claude:opus:high",
         "created_at":"2026-01-02T03:04:05Z", "workspace":env.root,"brief":dir.join("agent.md")})
         .to_string(),
     )

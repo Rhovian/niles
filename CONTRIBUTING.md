@@ -68,7 +68,7 @@ change. `gh` must be installed and authenticated. Nothing runs in CI.
 5. Run `niles compat` (or `niles compat <family>...` for changed families). It makes one real
    model call per used family with the shipped worker arguments, approval-bypass flags and
    operator logins. A workspace manifest is required. It uses the first exact binding for each
-   family in role order (lead, worker, reviewer, security, design, research), then tier order
+   family in binding order (entry first, then alphabetical), then tier order
    (standard, frontier, economy, mechanical), primary before secondaries. Model and effort come
    from that binding, validated against the effective registry; unused families are skipped.
    A pass requires tool execution writing a random nonce, exit 0 and an unchanged version.
@@ -86,7 +86,7 @@ change. `gh` must be installed and authenticated. Nothing runs in CI.
 ## Model tier research
 
 Run this agent procedure when asked to refresh tier placements or registry metadata. The lead
-commissions `niles spawn <id> --role research`, giving this section, the requested models (all
+commissions `niles spawn <id> --skill research`, giving this section, the requested models (all
 if unspecified), and the output target: shipped PR or local refresh. Placements remain judgments
 that later evidence can change; the same research serves both targets.
 
@@ -121,7 +121,7 @@ that later evidence can change; the same research serves both targets.
 8. For a requested local refresh, the lead applies the candidate to `~/.niles/roster.yaml` as
    a registry operation, preserving a backup of an existing file. Run `niles models` from the
    user's workspace to check parsing and inspect manifest-filtered rows; report errors and the diff.
-   Shipped changes need a rebuilt Niles to inspect them. Neither output changes role primaries
+   Shipped changes need a rebuilt Niles to inspect them. Neither output changes skill primaries
    or switches live agents; those follow the separate operator-approved routing procedure.
 
 ## Legal and security

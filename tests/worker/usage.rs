@@ -6,6 +6,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     let worker = write_worker(&env.root, "impl", "niles:niles-impl", None, b"");
     let path = worker.join("meta.json");
     let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    meta["skill"] = "lead".into();
     meta["session_link"] = serde_json::json!({"family":"claude","session_id":"worker-session"});
     fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
     let lead = state_dir(&env.root).join("sessions/lead-one");
@@ -13,7 +14,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     fs::write(
         lead.join("session.json"),
         serde_json::to_vec(&serde_json::json!({
-            "id":"lead-one","agent":"claude","agent_family":null,"model":null,"effort":null,
+            "id":"lead-one","entry_skill":"coordinator","agent":"claude","agent_family":null,"model":null,"effort":null,
             "created_at":"2026-01-02T03:04:05Z","workspace":env.root,"brief":lead.join("lead.md"),
             "lead_pane":"%9","session_link":{"family":"claude","session_id":"lead-session"}
         }))
@@ -38,10 +39,12 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     let rows = json["sessions"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["id"], "impl");
-    assert_eq!(rows[0]["role"], "worker");
+    assert_eq!(rows[0]["skill"], "lead");
+    assert_eq!(rows[0]["entry"], false);
     assert_eq!(rows[0]["agent"], "codex");
     assert_eq!(rows[0]["usage"]["input_tokens"], 7);
-    assert_eq!(rows[1]["role"], "lead");
+    assert_eq!(rows[1]["skill"], "coordinator");
+    assert_eq!(rows[1]["entry"], true);
     assert_eq!(rows[1]["id"], "lead-one");
     assert_eq!(rows[1]["agent"], "claude");
     assert_eq!(rows[1]["usage"]["input_tokens"], 11);

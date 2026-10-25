@@ -13,6 +13,7 @@ mod projects;
 #[cfg(feature = "remote")]
 mod remote;
 mod session;
+mod skills;
 mod store;
 mod telemetry;
 mod theme;
@@ -52,7 +53,7 @@ fn run() -> Result<ExitCode> {
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Lead { keep_roles }) => session::run(if keep_roles {
+        Some(CommandName::Lead { keep_skills }) => session::run(if keep_skills {
             tmux::LeadStart::Unattended
         } else {
             tmux::LeadStart::Attended

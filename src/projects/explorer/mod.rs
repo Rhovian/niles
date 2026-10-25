@@ -34,7 +34,7 @@ use super::{
     register,
     registry::ProjectName,
     rows::State,
-    windows::{LEAD_WINDOW, Role},
+    windows::{LEAD_WINDOW, WindowKind},
 };
 use crate::{
     theme::{StyleKey, Theme},
@@ -301,9 +301,9 @@ impl Explorer {
 
     fn selected_worker(&self) -> Option<(String, Utf8PathBuf)> {
         let (project, id) = match self.tree.selected()? {
-            Item::Member(project, _, Member::Window(window)) => match &window.role {
-                Role::Worker(id, _) => (project, id.as_str()),
-                Role::Lead | Role::Plain => return None,
+            Item::Member(project, _, Member::Window(window)) => match &window.kind {
+                WindowKind::Worker(id, _) => (project, id.as_str()),
+                WindowKind::Lead | WindowKind::Plain => return None,
             },
             Item::Member(project, _, Member::Lost(id)) => (project, id),
             Item::Project(_)
@@ -326,9 +326,9 @@ impl Explorer {
         let workers = agents
             .windows
             .iter()
-            .filter_map(|window| match &window.role {
-                Role::Worker(id, _) => Some(id.clone()),
-                Role::Lead | Role::Plain => None,
+            .filter_map(|window| match &window.kind {
+                WindowKind::Worker(id, _) => Some(id.clone()),
+                WindowKind::Lead | WindowKind::Plain => None,
             })
             .chain(agents.lost.iter().map(|(id, _)| id.clone()))
             .collect();

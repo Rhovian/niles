@@ -2,22 +2,10 @@ use super::support::*;
 
 #[test]
 fn missing_agent_binary_leaves_no_worker_state() {
-    let env = TestEnv::new("niles-worker-missing-binary");
+    let env = TestEnv::with_manifest("niles-worker-missing-binary", "claude");
     fs::remove_file(env.bin.join("claude")).unwrap();
     let output = env
-        .niles(
-            &env.root,
-            &[
-                "spawn",
-                "--role",
-                "research",
-                "missing-cli",
-                "--agent",
-                "claude",
-                "Check",
-                "setup",
-            ],
-        )
+        .spawn_command("research", &["missing-cli", "Check", "setup"])
         .env("PATH", &env.bin)
         .output()
         .unwrap();
@@ -77,14 +65,10 @@ case "$1" in
 esac
 "#,
     );
+    write_spawn_manifest(&env.root, "claude");
 
     let failed = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
-            ],
-        )
+        .spawn_command("research", &["auth-fix", "Fix", "auth"])
         .env("TMUX_FAIL_NEW_WINDOW", "1")
         .output()
         .unwrap();
@@ -100,12 +84,7 @@ esac
     assert_failure_contains("peek failed spawn", &peek, "unknown worker id 'auth-fix'");
 
     let respawn = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
-            ],
-        )
+        .spawn_command("research", &["auth-fix", "Fix", "auth"])
         .output()
         .unwrap();
     assert_command_success("respawn", &respawn);
@@ -136,14 +115,10 @@ case "$1" in
 esac
 "#,
     );
+    write_spawn_manifest(&env.root, "claude");
 
     let failed = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "auth-fix", "--agent", "claude", "Fix", "auth",
-            ],
-        )
+        .spawn_command("research", &["auth-fix", "Fix", "auth"])
         .env(
             "META_PATH",
             state_dir(&env.root).join("worker/auth-fix/meta.json"),

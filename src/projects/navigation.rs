@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use super::{rows::State, snapshot, windows::Role};
-use crate::worker::WorkerRole;
+use super::{rows::State, snapshot, windows::WindowKind};
+use crate::skills::SkillName;
 
 #[derive(Clone, Serialize)]
 pub(crate) struct Project {
@@ -27,7 +27,7 @@ struct Worker {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     id: String,
-    role: WorkerRole,
+    skill: SkillName,
     lost: bool,
 }
 
@@ -63,19 +63,19 @@ fn project(project: snapshot::Project) -> Project {
     let mut workers = Vec::new();
     if let Some(agents) = project.agents {
         for window in agents.windows {
-            if let Role::Worker(id, role) = window.role {
+            if let WindowKind::Worker(id, skill) = window.kind {
                 workers.push(Worker {
                     model: None,
                     id,
-                    role,
+                    skill,
                     lost: false,
                 });
             }
         }
-        workers.extend(agents.lost.into_iter().map(|(id, role)| Worker {
+        workers.extend(agents.lost.into_iter().map(|(id, skill)| Worker {
             model: None,
             id,
-            role,
+            skill,
             lost: true,
         }));
     }
@@ -98,7 +98,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn projects_expose_all_states_and_only_worker_identity_role_and_loss() {
+    fn projects_expose_all_states_and_only_worker_identity_skill_and_loss() {
         for (state, label) in [
             (State::Missing, "missing"),
             (State::NotRunning, "not running"),
@@ -106,9 +106,9 @@ mod tests {
             (State::Starting, "starting"),
             (State::Waiting(None), "waiting"),
         ] {
-            let window = |role| AgentWindow {
+            let window = |kind| AgentWindow {
                 name: "private-window".into(),
-                role,
+                kind,
                 segment: Segment {
                     label: "private-label".into(),
                     state: None,
@@ -126,19 +126,19 @@ mod tests {
                 },
                 agents: Some(SessionAgents {
                     windows: vec![
-                        window(Role::Lead),
-                        window(Role::Plain),
-                        window(Role::Worker("nav".into(), WorkerRole::Worker)),
+                        window(WindowKind::Lead),
+                        window(WindowKind::Plain),
+                        window(WindowKind::Worker("nav".into(), "worker".parse().unwrap())),
                     ],
-                    lost: vec![("review".into(), WorkerRole::Reviewer)],
+                    lost: vec![("review".into(), "reviewer".parse().unwrap())],
                 }),
             });
             assert_eq!(
                 serde_json::to_value(project).unwrap(),
                 json!({
                     "name": "demo", "state": label, "workers": [
-                        {"id": "nav", "role": "worker", "lost": false},
-                        {"id": "review", "role": "reviewer", "lost": true},
+                        {"id": "nav", "skill": "worker", "lost": false},
+                        {"id": "review", "skill": "reviewer", "lost": true},
                     ]
                 })
             );

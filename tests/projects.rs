@@ -22,9 +22,9 @@ if [ "$1" = display ]; then printf '%s\n' "$TMUX_PROJECT_TAG"; fi
     fs::create_dir_all(&registry).unwrap();
     std::os::unix::fs::symlink(&env.root, registry.join("race")).unwrap();
     for (query, args) in [
-        ("display", vec!["status", "projects", "race"]),
-        ("list-windows", vec!["status", "projects", "race"]),
-        ("list-windows", vec!["status", "sessions", "race", "0"]),
+        ("display", vec!["status", "projects"]),
+        ("list-windows", vec!["status", "projects"]),
+        ("list-windows", vec!["status", "sessions", "race"]),
     ] {
         let result = env
             .niles(&env.root, &args)

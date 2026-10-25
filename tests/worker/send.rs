@@ -3,17 +3,11 @@ use std::{io::Write, process::Stdio};
 
 #[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
-    let env = TestEnv::new("niles-worker-test");
+    let env = TestEnv::with_manifest("niles-worker-test", "claude");
     let pane_file = env.root.join("pane.txt");
 
     let spawn = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "auth-fix", "--task", "auth", "--agent", "claude",
-                "Fix", "auth",
-            ],
-        )
+        .spawn_command("research", &["auth-fix", "--task", "auth", "Fix", "auth"])
         .env("TMUX_PANE_FILE", &pane_file)
         .output()
         .unwrap();
@@ -29,7 +23,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(spawn_stdout.contains("workers: niles workers"));
 
     let meta = fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/meta.json")).unwrap();
-    assert!(meta.contains("\"agent\": \"claude\""));
+    assert!(meta.contains("\"agent\": \"claude:sonnet:high\""));
     assert!(meta.contains("\"task_label\": \"auth\""));
     assert!(meta.contains("\"created_at\":"));
     assert!(meta.contains("\"window\": \"niles-test-session:niles-auth-fix\""));
@@ -107,11 +101,9 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 
 #[test]
 fn send_accepts_stdin_and_literal_flag_text() {
-    let env = TestEnv::new("niles-worker-send message'input");
+    let env = TestEnv::with_manifest("niles-worker-send message'input", "claude");
     let pane_file = env.root.join("pane.txt");
-    let spawn = env.run(&[
-        "spawn", "--role", "research", "worker", "--agent", "claude", "task",
-    ]);
+    let spawn = env.spawn("research", &["worker", "task"]);
     assert_command_success("fixture spawn", &spawn);
 
     let mut child = env

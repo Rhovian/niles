@@ -1,8 +1,7 @@
 use super::{Item, Member, Tree, spinner};
 use crate::{
-    projects::{panels::Range, rows::State, windows::Role},
+    projects::{panels::Range, rows::State, windows::WindowKind},
     theme::{self, State as ThemeState, StyleKey, Theme},
-    worker::WorkerRole,
 };
 use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
@@ -65,7 +64,7 @@ impl Tree {
             ]),
             Item::Project(project) => {
                 let name = project.row.entry.name.as_str();
-                let marker = if project.roles().next().is_none() {
+                let marker = if project.skills().next().is_none() {
                     " "
                 } else if self.collapsed.contains(name) {
                     theme::COLLAPSED
@@ -94,7 +93,7 @@ impl Tree {
                     .agents
                     .iter()
                     .flat_map(|agents| &agents.windows)
-                    .find(|window| matches!(window.role, Role::Lead))
+                    .find(|window| matches!(window.kind, WindowKind::Lead))
                     .and_then(|lead| lead.segment.age.as_deref());
                 if let Some(runtime) = runtime {
                     let padding = usize::from(width).saturating_sub(line.width() + runtime.len());
@@ -105,43 +104,36 @@ impl Tree {
                 }
                 line
             }
-            Item::Folder(project, role) => {
-                let branch = if project.roles().next_back() == Some(role) {
+            Item::Folder(project, skill) => {
+                let branch = if project.skills().next_back() == Some(skill) {
                     theme::LAST
                 } else {
                     theme::BRANCH
                 };
                 let name = project.row.entry.name.as_str().to_owned();
-                let marker = if self.collapsed_folders.contains(&(name, role)) {
+                let marker = if self.collapsed_folders.contains(&(name, skill.clone())) {
                     theme::COLLAPSED
                 } else {
                     theme::EXPANDED
                 };
-                let plural = match role {
-                    WorkerRole::Worker => "workers",
-                    WorkerRole::Reviewer => "reviewers",
-                    WorkerRole::Security => "security",
-                    WorkerRole::Research => "research",
-                    WorkerRole::Design => "designers",
-                };
-                let count = project.members(role).count();
+                let count = project.members(skill).count();
                 Line::from(vec![
                     guide(stem),
                     Span::raw("  "),
                     guide(branch),
                     Span::raw(" "),
                     guide(marker),
-                    Span::raw(format!(" {plural} ")),
+                    Span::raw(format!(" {skill} ")),
                     Span::styled(count.to_string(), theme.style(StyleKey::Muted)),
                 ])
             }
-            Item::Member(project, role, member) => {
-                let folder_stem = if project.roles().next_back() == Some(role) {
+            Item::Member(project, skill, member) => {
+                let folder_stem = if project.skills().next_back() == Some(skill) {
                     " "
                 } else {
                     theme::STEM
                 };
-                let branch = if project.members(role).last().map(Item::key) == Some(item.key()) {
+                let branch = if project.members(skill).last().map(Item::key) == Some(item.key()) {
                     theme::LAST
                 } else {
                     theme::BRANCH

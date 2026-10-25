@@ -14,9 +14,9 @@ use crate::{
 /// The lead's window in every project session.
 pub(super) const LEAD_WINDOW: &str = "niles";
 
-pub(super) enum Role {
+pub(super) enum WindowKind {
     Lead,
-    Worker(String, worker::WorkerRole),
+    Worker(String, crate::skills::SkillName),
     Plain,
 }
 
@@ -24,15 +24,15 @@ pub(super) enum Role {
 /// windows through this, so they can't disagree about what a window is.
 pub(super) struct AgentWindow {
     pub name: String,
-    pub role: Role,
-    /// Labelled by role alone; each reader adds its own context.
+    pub kind: WindowKind,
+    /// Labelled by skill alone; each reader adds its own context.
     pub segment: Segment,
 }
 
 pub(super) struct SessionAgents {
     pub windows: Vec<AgentWindow>,
     /// Ids of live workers whose recorded window is not in the session.
-    pub lost: Vec<(String, worker::WorkerRole)>,
+    pub lost: Vec<(String, crate::skills::SkillName)>,
 }
 
 pub(super) fn session_agents(
@@ -55,12 +55,12 @@ pub(super) fn session_agents(
                 .iter()
                 .any(|window| worker.window == recorded(&window.name))
         })
-        .map(|worker| (worker.id.clone(), worker.role))
+        .map(|worker| (worker.id.clone(), worker.skill.clone()))
         .collect();
     let windows = windows
         .into_iter()
         .map(|window| {
-            let (role, state, tokens, age) = if project.is_some() && window.name == LEAD_WINDOW {
+            let (kind, state, tokens, age) = if project.is_some() && window.name == LEAD_WINDOW {
                 let record = lead
                     .as_ref()
                     .map(|meta| worker::lead_session(meta, now))
@@ -71,29 +71,29 @@ pub(super) fn session_agents(
                 let usage = record.and_then(|record| record.usage);
                 let (state, tokens) = usage_fields(state, usage.as_ref());
                 let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
-                (Role::Lead, state, tokens, runtime)
+                (WindowKind::Lead, state, tokens, runtime)
             } else if let Some(worker) = workers
                 .iter()
                 .find(|worker| worker.window == recorded(&window.name))
             {
                 let (state, tokens) = usage_fields(worker.state, worker.usage.as_ref());
                 (
-                    Role::Worker(worker.id.clone(), worker.role),
+                    WindowKind::Worker(worker.id.clone(), worker.skill.clone()),
                     state,
                     tokens,
                     Some(age(now, worker.created_at)),
                 )
             } else {
-                (Role::Plain, None, None, None)
+                (WindowKind::Plain, None, None, None)
             };
-            let worker_id = match &role {
-                Role::Worker(id, _) => Some(id.as_str()),
-                Role::Lead | Role::Plain => None,
+            let worker_id = match &kind {
+                WindowKind::Worker(id, _) => Some(id.as_str()),
+                WindowKind::Lead | WindowKind::Plain => None,
             };
             let label = window_label(&window.name, project.is_some(), worker_id);
             Ok(AgentWindow {
                 name: window.name,
-                role,
+                kind,
                 segment: Segment {
                     label,
                     state,

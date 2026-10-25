@@ -1,3 +1,4 @@
+use crate::test_support::skill;
 use std::fs;
 
 use super::*;
@@ -17,17 +18,21 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
     let root = root("picker-preserve-tiers", MANIFEST);
     let before = load(&root).unwrap().unwrap();
     let saved = ensure(&root, true, &mut Vec::new(), |_, mut draft, _, _| {
-        draft.lead = "codex:gpt-6.1-sol:high".to_owned().into();
+        *draft.bindings.get_mut(&skill("lead")).unwrap() =
+            "codex:gpt-6.1-sol:high".to_owned().into();
         Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap()
     .unwrap();
     let after = load(&root).unwrap().unwrap();
-    assert_eq!(after.lead.standard.primary, "codex:gpt-6.1-sol:high");
-    assert_eq!(after.worker, before.worker);
-    assert_eq!(after.design, before.design);
-    assert_eq!(after.checkin, before.checkin);
-    assert_eq!(after.recheck, before.recheck);
+    let mut expected = before;
+    expected
+        .bindings
+        .get_mut(&skill("lead"))
+        .unwrap()
+        .standard
+        .primary = "codex:gpt-6.1-sol:high".into();
+    assert_eq!(after, expected);
     assert_eq!(after, saved);
     crate::test_support::remove_workspace(&root).unwrap();
 }
@@ -113,22 +118,25 @@ fn changes_are_applied_to_latest_manifest() {
     let before = load(&root).unwrap().unwrap();
     let mut latest = before.clone();
     latest.checkin = Some("1h".to_owned());
-    latest.security.standard.primary = "hermes:z-ai/glm-5.3-flash:high".into();
+    latest
+        .set_primary(&skill("security"), "hermes:z-ai/glm-5.3-flash:high".into())
+        .unwrap();
     save(&root, &latest).unwrap();
     let mut draft = before.clone();
-    draft.lead.standard.primary = "codex:gpt-6.1-sol:medium".into();
-    draft.design.standard.secondaries.reverse();
-    draft.research.standard.primary = "claude:sonnet:high".into();
+    draft
+        .set_primary(&skill("lead"), "codex:gpt-6.1-sol:medium".into())
+        .unwrap();
+    draft
+        .set_primary(&skill("research"), "claude:sonnet:high".into())
+        .unwrap();
     let result = save_changes(&root, Some(&before), &draft).unwrap();
-    assert_eq!(
-        result,
-        WorkspaceManifest {
-            lead: draft.lead,
-            design: draft.design,
-            research: draft.research,
-            ..latest
-        }
-    );
+    for name in ["lead", "research"] {
+        latest
+            .bindings
+            .insert(name.parse().unwrap(), draft.bindings[&skill(name)].clone());
+    }
+    assert_eq!(result, latest);
+
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
@@ -209,6 +217,6 @@ fn replacement_write_failure_stops_launch() {
         Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap_err();
-    assert!(error.to_string().contains("failed to write"), "{error:#}");
+    assert!(error.to_string().contains("manifest.yaml"), "{error:#}");
     crate::test_support::remove_workspace(&root).unwrap();
 }

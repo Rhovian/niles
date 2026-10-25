@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{store, telemetry::SessionLink};
 
-use super::role::WorkerRole;
+use crate::skills::SkillName;
 
 const REPORT_FILE: &str = "report.md";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct WorkerMeta {
     pub(super) id: String,
-    pub(super) role: WorkerRole,
+    pub(super) skill: SkillName,
     pub(super) agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) agent_family: Option<String>,
@@ -58,13 +58,7 @@ pub(super) fn read_meta(worker_dir: &Utf8Path) -> Result<WorkerMeta> {
 
 pub(super) fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    let mut meta: Option<WorkerMeta> = store::read_optional_json(&path)?;
-    if let Some(meta) = &mut meta
-        && let Some(link) = &mut meta.session_link
-    {
-        link.relocate(&meta.project)?;
-    }
-    Ok(meta)
+    store::read_optional_json(&path)
 }
 
 pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {

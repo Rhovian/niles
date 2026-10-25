@@ -38,14 +38,7 @@ fn allowed_rows(
             return Ok(true);
         };
         let requested = AgentSpec::from_parts(family, Some(model), effort, models)?;
-        for binding in [
-            &manifest.lead,
-            &manifest.worker,
-            &manifest.reviewer,
-            &manifest.security,
-            &manifest.design,
-            &manifest.research,
-        ] {
+        for binding in manifest.bindings.values() {
             if binding.allows(&requested, models)? {
                 return Ok(true);
             }
@@ -58,32 +51,29 @@ fn allowed_rows(
 mod tests {
     use super::*;
     use crate::agents::roster::{FIXTURE_REGISTRY, parse};
+    use crate::test_support::skill;
 
     #[test]
     fn registry_fixture_models_filters_manifest_union_and_efforts() {
         let models = parse(FIXTURE_REGISTRY).unwrap();
         assert_eq!(allowed_rows(&models, None).unwrap().len(), 4);
         let mut manifest = WorkspaceManifest::default();
-        for role in [
-            &mut manifest.lead,
-            &mut manifest.worker,
-            &mut manifest.reviewer,
-            &mut manifest.security,
-            &mut manifest.design,
-            &mut manifest.research,
-        ] {
-            *role = "claude:haiku".to_owned().into();
+        for binding in manifest.bindings.values_mut() {
+            *binding = "claude:haiku".to_owned().into();
         }
-        manifest.worker = "codex:fixture:medium".to_owned().into();
+        *manifest.bindings.get_mut(&skill("worker")).unwrap() =
+            "codex:fixture:medium".to_owned().into();
         let rows = allowed_rows(&models, Some(&manifest)).unwrap();
         let pairs = rows
             .iter()
             .map(|row| (row[1].as_str(), row[2].as_str()))
             .collect::<Vec<_>>();
         assert_eq!(pairs, [("fixture", "medium"), ("haiku", "")]);
-        manifest.research = "codex:fixture:high".to_owned().into();
+        *manifest.bindings.get_mut(&skill("research")).unwrap() =
+            "codex:fixture:high".to_owned().into();
         assert_eq!(allowed_rows(&models, Some(&manifest)).unwrap().len(), 3);
-        manifest.worker = "codex:fixture:invalid".to_owned().into();
+        *manifest.bindings.get_mut(&skill("worker")).unwrap() =
+            "codex:fixture:invalid".to_owned().into();
         assert!(allowed_rows(&models, Some(&manifest)).is_err());
     }
 }

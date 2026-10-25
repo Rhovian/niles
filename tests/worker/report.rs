@@ -61,14 +61,13 @@ fn report_falls_back_to_most_recent_local_archive() {
     let env = TestEnv::new("niles-worker-report-archive");
     let workspace = env.root.join("workspace");
     fs::create_dir_all(&workspace).unwrap();
+    write_spawn_manifest(&workspace, "claude");
 
     for (task, report_body) in [("FIRST", "first report\n"), ("SECOND", "second report\n")] {
         let spawn = env
             .niles(
                 &workspace,
-                &[
-                    "spawn", "--role", "research", "reviewer", "--agent", "claude", task,
-                ],
+                &["spawn", "--skill", "research", "reviewer", task],
             )
             .output()
             .unwrap();

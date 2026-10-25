@@ -12,12 +12,11 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     let workspace_b = env.root.join("workspace-b");
     fs::create_dir_all(&workspace_a).unwrap();
     fs::create_dir_all(&workspace_b).unwrap();
+    write_spawn_manifest(&workspace_b, "claude");
     let spawn = env
         .niles(
             &workspace_b,
-            &[
-                "spawn", "--role", "research", "shared", "--agent", "claude", "Fix",
-            ],
+            &["spawn", "--skill", "research", "shared", "Fix"],
         )
         .output()
         .unwrap();
@@ -96,12 +95,11 @@ fn archived_reports_are_workspace_local() {
     let workspace_b = env.root.join("workspace-b");
     fs::create_dir_all(&workspace_a).unwrap();
     fs::create_dir_all(&workspace_b).unwrap();
+    write_spawn_manifest(&workspace_b, "claude");
     let spawn = env
         .niles(
             &workspace_b,
-            &[
-                "spawn", "--role", "research", "closed", "--agent", "claude", "Fix",
-            ],
+            &["spawn", "--skill", "research", "closed", "Fix"],
         )
         .output()
         .unwrap();

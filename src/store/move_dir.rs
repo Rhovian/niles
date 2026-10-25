@@ -1,48 +1,9 @@
-use std::{fs, io::ErrorKind, os::unix::fs::symlink};
+use std::{fs, os::unix::fs::symlink};
 
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
 use crate::util::read_dir_utf8_paths;
-
-pub(super) fn legacy(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
-    let metadata = match fs::symlink_metadata(source) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).with_context(|| format!("failed to inspect {source}")),
-    };
-    if !metadata.is_dir() {
-        bail!("cannot migrate {source}: expected a directory, not a file or symlink");
-    }
-    let parent = destination
-        .parent()
-        .context("state directory has no parent")?;
-    fs::create_dir_all(parent)?;
-    let key = destination
-        .file_name()
-        .context("state directory has no name")?;
-    let lock = crate::wait::cursor::open_lock_file(&parent.join(format!(".{key}.lock")))?;
-    lock.lock().context("failed to lock state migration")?;
-    // Another Niles process may have completed the move while we waited.
-    match fs::symlink_metadata(source) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).with_context(|| format!("failed to inspect {source}")),
-        Ok(metadata) if !metadata.is_dir() => {
-            bail!("cannot migrate {source}: expected a directory")
-        }
-        Ok(_) => {}
-    }
-    match fs::symlink_metadata(destination) {
-        Ok(_) => bail!(
-            "cannot migrate {source}: {destination} already exists; reconcile the directories first"
-        ),
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to inspect {destination}"));
-        }
-    }
-    copy_then_remove(source, destination)
-}
 
 pub(crate) fn move_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
     move_dir_with_rename(source, destination, |source, destination| {
@@ -94,7 +55,7 @@ fn copy_dir(source: &Utf8Path, destination: &Utf8Path) -> Result<()> {
             fs::copy(&path, &target)
                 .with_context(|| format!("failed to copy {path} to {target}"))?;
         } else {
-            bail!("cannot migrate special file {path}");
+            bail!("cannot copy special file {path}");
         }
     }
     fs::set_permissions(destination, fs::metadata(source)?.permissions())?;
@@ -108,7 +69,7 @@ mod tests {
 
     #[test]
     fn staged_copy_preserves_files_and_symlinks_without_following_them() {
-        let root = temp_test_path("migration-copy");
+        let root = temp_test_path("move-copy");
         let source = root.join("source");
         let target = root.join("target");
         fs::create_dir_all(source.join("nested")).unwrap();
@@ -132,17 +93,14 @@ mod tests {
 
     #[test]
     fn cross_filesystem_move_publishes_the_copy_and_removes_the_source() {
-        let root = temp_test_path("migration-exdev");
+        let root = temp_test_path("move-exdev");
         let source = root.join("source");
         let target = root.join("target");
         fs::create_dir_all(source.join("nested")).unwrap();
         fs::write(source.join("nested/report"), b"report\0bytes").unwrap();
         symlink("missing", source.join("link")).unwrap();
         force_exdev(&source, &target).unwrap();
-        assert!(
-            !source.exists(),
-            "publishing must remove the old state tree"
-        );
+        assert!(!source.exists(), "publishing must remove the source tree");
         assert_eq!(
             fs::read(target.join("nested/report")).unwrap(),
             b"report\0bytes"
@@ -157,7 +115,7 @@ mod tests {
 
     #[test]
     fn failed_copies_remove_staging_and_preserve_the_source_and_original_error() {
-        let root = temp_test_path("migration-retry");
+        let root = temp_test_path("move-retry");
         let source = root.join("source");
         let target = root.join("target");
         fs::create_dir_all(&source).unwrap();
@@ -168,23 +126,19 @@ mod tests {
             assert_eq!(libc::mkfifo(fifo_c.as_ptr(), 0o600), 0);
         }
         for _ in 0..3 {
-            for migrate in [force_exdev, legacy] {
-                let error = migrate(&source, &target).unwrap_err();
-                assert!(
-                    format!("{error:#}").contains(&format!("cannot migrate special file {fifo}"))
-                );
-                assert!(!target.exists());
-                assert!(
-                    read_dir_utf8_paths(&root)
-                        .unwrap()
-                        .iter()
-                        .all(|path| !path.file_name().unwrap().starts_with(".target.moving-"))
-                );
-                assert_eq!(
-                    fs::read_to_string(source.join("report")).unwrap(),
-                    "retained"
-                );
-            }
+            let error = force_exdev(&source, &target).unwrap_err();
+            assert!(format!("{error:#}").contains(&format!("cannot copy special file {fifo}")));
+            assert!(!target.exists());
+            assert!(
+                read_dir_utf8_paths(&root)
+                    .unwrap()
+                    .iter()
+                    .all(|path| !path.file_name().unwrap().starts_with(".target.moving-"))
+            );
+            assert_eq!(
+                fs::read_to_string(source.join("report")).unwrap(),
+                "retained"
+            );
         }
         fs::remove_file(fifo).unwrap();
         force_exdev(&source, &target).unwrap();
@@ -192,27 +146,6 @@ mod tests {
         assert_eq!(
             fs::read_to_string(target.join("report")).unwrap(),
             "retained"
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn legacy_migration_copies_before_removal_even_on_the_same_filesystem() {
-        use std::os::unix::fs::MetadataExt;
-        let root = temp_test_path("migration-copy-first");
-        let source = root.join("source");
-        let target = root.join("target");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("report"), "complete").unwrap();
-        let original = fs::File::open(source.join("report")).unwrap();
-        legacy(&source, &target).unwrap();
-        assert!(!source.exists());
-        assert_eq!(
-            fs::read_to_string(target.join("report")).unwrap(),
-            "complete"
-        );
-        assert_ne!(
-            original.metadata().unwrap().ino(),
-            fs::metadata(target.join("report")).unwrap().ino()
         );
         fs::remove_dir_all(root).unwrap();
     }

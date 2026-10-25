@@ -1,5 +1,5 @@
-//! The CONFIG panel: one scope's settings as key / value / from. ↵ runs the role picker on a
-//! single-model role; ←/→ steps simple values in place. Other settings are read-only.
+//! The CONFIG panel: one scope's settings as key / value / from. ↵ runs the skill picker on a
+//! single-model skill; ←/→ steps simple values in place. Other settings are read-only.
 
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -12,7 +12,7 @@ use ratatui::{
 };
 use ratatui_themes::ThemeName;
 
-use self::items::{Edit, Item, Note, Role, Step};
+use self::items::{Edit, Item, Note, SkillName, Step};
 use super::registry::{self, ProjectName};
 use crate::{
     agents::picker,
@@ -99,8 +99,8 @@ impl ConfigPanel<'_> {
                 "r in the explorer registers; rm ~/.niles/projects/{} unregisters",
                 setting.key
             )),
-            (Some(Edit::Role { root, role }), KeyCode::Enter) => {
-                pick_role(terminal, root, *role, theme).err().map(shown)
+            (Some(Edit::Skill { root, skill }), KeyCode::Enter) => {
+                pick_skill(terminal, root, skill, theme).err().map(shown)
             }
             (Some(Edit::Step(step)), KeyCode::Enter | KeyCode::Left | KeyCode::Right) => step
                 .save(cycle(&step.options(), &setting.value, key == KeyCode::Left))
@@ -263,18 +263,20 @@ fn cycle<'a>(options: &[&'a str], current: &str, previous: bool) -> &'a str {
     options[next]
 }
 
-fn pick_role(
+fn pick_skill(
     terminal: &mut DefaultTerminal,
     root: &Utf8Path,
-    role: Role,
+    skill: &SkillName,
     theme: &Theme,
 ) -> Result<()> {
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;
-    if let Some(value) = picker::role(terminal, role, &manifest, &config, theme)?
-        && value != role.value(&manifest)
+    if let Some(value) = picker::skill(terminal, skill, &manifest, &config, theme)?
+        && value != manifest.binding(skill)?.standard.primary
     {
-        save_manifest(root, |manifest| role.set(manifest, value))?;
+        let mut latest = load_manifest(root)?;
+        latest.set_primary(skill, value)?;
+        workspace_manifest::save(root, &latest)?;
     }
     Ok(())
 }

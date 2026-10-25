@@ -63,9 +63,9 @@ fn apply_retier(id: &str, agent: &str, dir: &Utf8Path, meta: &mut WorkerMeta) ->
     let manifest =
         workspace_manifest::load(&meta.project)?.context("retier requires a workspace manifest")?;
     ensure!(
-        meta.role.binding(&manifest).allows(&target, &models)?,
-        "agent {agent} is not allowed for role '{}' in the manifest",
-        meta.role.as_str()
+        manifest.binding(&meta.skill)?.allows(&target, &models)?,
+        "agent {agent} is not allowed for skill '{}' in the manifest",
+        meta.skill.as_str()
     );
     let target_window = models
         .entry(target.family(), model, Some(effort))?

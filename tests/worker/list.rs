@@ -33,14 +33,14 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
     assert_command_success("workers", &output);
     let metadata_path = state_dir(&env.root).join("worker/z-unreadable/meta.json");
     let error = format!(
-        "failed to parse {}: missing field `role` at line 4 column 1",
+        "failed to parse {}: missing field `skill` at line 4 column 1",
         metadata_path.display()
     );
     let error = serde_json::to_string(&error).unwrap();
     assert_eq!(
         stdout_of(&output),
         format!(
-            "{{\"workers\":[{{\"id\":\"a-readable\",\"role\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":\"json\",\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"live\"}},\"wake\":\"pending\",\"last_status\":\"done: complete\",\"state\":\"waiting\",\"checkin\":{{\"deadline\":\"2026-02-03T04:05:06Z\"}},\"error\":null}},{{\"id\":\"b-clear\",\"role\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":null,\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"orphan-recovered\",\"target\":\"recovered:niles-renamed\"}},\"wake\":\"clear\",\"last_status\":null,\"state\":\"waiting\",\"checkin\":null,\"error\":null}},{{\"id\":\"z-unreadable\",\"role\":null,\"agent\":null,\"tree\":null,\"task_label\":null,\"started_at\":null,\"window\":null,\"wake\":null,\"last_status\":null,\"state\":null,\"checkin\":null,\"error\":{error}}}]}}\n"
+            "{{\"workers\":[{{\"id\":\"a-readable\",\"skill\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":\"json\",\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"live\"}},\"wake\":\"pending\",\"last_status\":\"done: complete\",\"state\":\"waiting\",\"checkin\":{{\"deadline\":\"2026-02-03T04:05:06Z\"}},\"error\":null}},{{\"id\":\"b-clear\",\"skill\":\"worker\",\"agent\":\"codex\",\"tree\":null,\"task_label\":null,\"started_at\":\"2026-01-02T03:04:05Z\",\"window\":{{\"state\":\"orphan-recovered\",\"target\":\"recovered:niles-renamed\"}},\"wake\":\"clear\",\"last_status\":null,\"state\":\"waiting\",\"checkin\":null,\"error\":null}},{{\"id\":\"z-unreadable\",\"skill\":null,\"agent\":null,\"tree\":null,\"task_label\":null,\"started_at\":null,\"window\":null,\"wake\":null,\"last_status\":null,\"state\":null,\"checkin\":null,\"error\":{error}}}]}}\n"
         )
     );
 }

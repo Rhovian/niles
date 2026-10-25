@@ -148,7 +148,9 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
     let workspace_a = env.root.join("workspace-a");
     let workspace_b = env.root.join("workspace-b");
     fs::create_dir_all(&workspace_a).unwrap();
+    write_spawn_manifest(&workspace_a, "claude");
     fs::create_dir_all(&workspace_b).unwrap();
+    write_spawn_manifest(&workspace_b, "claude");
     for (workspace, id, label) in [
         (&workspace_a, "alpha", "task-a"),
         (&workspace_b, "bravo", "task-b"),
@@ -156,9 +158,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         let spawn = env
             .niles(
                 workspace,
-                &[
-                    "spawn", "--role", "research", id, "--task", label, "--agent", "claude", "Fix",
-                ],
+                &["spawn", "--skill", "research", id, "--task", label, "Fix"],
             )
             .output()
             .unwrap();

@@ -6,9 +6,9 @@ import { projects, type Project, type Session } from './api';
 
 const registered: Project[] = [
   { name: 'demo', state: 'waiting', workers: [
-    { id: 'nav', role: 'worker', lost: false, model: 'gpt-6.1' }, { id: 'review', role: 'reviewer', lost: true },
-    { id: 'audit', role: 'security', lost: false }, { id: 'lookup', role: 'research', lost: false },
-    { id: 'plan', role: 'design', lost: false },
+    { id: 'nav', skill: 'worker', lost: false, model: 'gpt-6.1' }, { id: 'review', skill: 'reviewer', lost: true },
+    { id: 'audit', skill: 'security', lost: false }, { id: 'lookup', skill: 'research', lost: false },
+    { id: 'plan', skill: 'custom-style', lost: false },
   ] },
   { name: 'offline', state: 'not running', workers: [] },
   { name: 'missing', state: 'missing', workers: [] },
@@ -47,7 +47,7 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(menu.querySelectorAll('details')).toHaveLength(0);
   expandProject('demo');
   for (const text of ['demo', 'offline', 'waiting', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
-  expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['worker', 'reviewer', 'security', 'research', 'design']);
+  expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['custom-style', 'research', 'reviewer', 'security', 'worker']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
   expect(screen.queryByText('Config')).toBeNull(); expect(screen.queryByText('Telemetry')).toBeNull();
   expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
@@ -173,7 +173,7 @@ it.each(['running', 'starting', 'waiting', 'not running', 'missing'] as const)('
   expect(button.textContent?.includes('Live')).toBe(!live);
 });
 
-it('nests worker actions one at a time, labels roles and loss, and resets on project changes', async () => {
+it('nests worker actions one at a time, labels skills and loss, and resets on project changes', async () => {
   render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu(); expandProject('demo');
   const nav = screen.getByRole('button', { name: 'nav', description: 'worker', expanded: false });
   const review = screen.getByRole('button', { name: 'review', description: 'reviewer · Lost', expanded: false });

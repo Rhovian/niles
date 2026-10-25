@@ -20,7 +20,8 @@ pub(super) struct Project {
 
 pub(super) struct Session {
     pub(super) id: String,
-    pub(super) role: &'static str,
+    pub(super) skill: crate::skills::SkillName,
+    pub(super) entry: bool,
     pub(super) agent: String,
     pub(super) buckets: Buckets,
     /// Present for live workers and the running lead.
@@ -61,7 +62,7 @@ pub(super) fn project(
     let mut events = Vec::new();
     // The latest lead is read live whether or not it runs; only a running one has context.
     for open in usage::collect(&entry.path, session::latest_lead(&entry.path)?)? {
-        let lead = open.role == "lead";
+        let lead = open.entry;
         if !lead {
             events.push(event(open.created_at, &open.id, EventKind::Spawned));
         }
@@ -79,7 +80,8 @@ pub(super) fn project(
         };
         sessions.push(Session {
             id: open.id,
-            role: open.role,
+            skill: open.skill,
+            entry: open.entry,
             agent: open.agent,
             buckets,
             live,
@@ -118,7 +120,8 @@ fn event(at: DateTime<Utc>, id: &str, kind: EventKind) -> Event {
 fn closed_session(closed: ClosedSession) -> Session {
     Session {
         id: closed.id,
-        role: closed.role,
+        skill: closed.skill,
+        entry: closed.entry,
         agent: closed.agent,
         buckets: closed.buckets,
         live: None,

@@ -6,19 +6,19 @@ use ratatui::{
 };
 
 use super::{
-    Role,
     columns::{Column, Columns},
     form::{Form, Screen},
 };
 use crate::{
+    skills::SkillName,
     theme::{StyleKey, Theme},
     workspace_manifest::clamp,
 };
 
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
-        Screen::Editing { role, .. } => format!("NILES / ROLES / {}", role.name()),
-        Screen::Roles | Screen::Review => "NILES / ROLES".to_owned(),
+        Screen::Editing { skill, .. } => format!("NILES / SKILLS / {}", skill.as_str()),
+        Screen::Skills | Screen::Review => "NILES / SKILLS".to_owned(),
     };
     let (mut body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
     if let Some(reason) = &form.save_reason {
@@ -34,16 +34,16 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     }
     let mut warning = None;
     let hints = match &form.screen {
-        Screen::Roles => {
-            roles(frame, body, form, theme, false);
+        Screen::Skills => {
+            skills(frame, body, form, theme, false);
             if form.can_save() {
-                "↑↓ role · ↵ edit standard primary · s save"
+                "↑↓ skill · ↵ edit standard primary · s save"
             } else {
-                "↑↓ role · ↵ edit standard primary"
+                "↑↓ skill · ↵ edit standard primary"
             }
         }
         Screen::Review => {
-            roles(frame, body, form, theme, true);
+            skills(frame, body, form, theme, true);
             "↵ save · esc back"
         }
         Screen::Editing { columns, .. } => {
@@ -69,8 +69,8 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     footer_text(frame, footer, theme, warning, hints);
 }
 
-pub(super) fn single(frame: &mut Frame, columns: &Columns, role: Role, theme: &Theme) {
-    let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", role.name()));
+pub(super) fn single(frame: &mut Frame, columns: &Columns, skill: &SkillName, theme: &Theme) {
+    let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", skill.as_str()));
     columns.draw(frame, body, theme);
     let hints = Line::styled(COLUMN_KEYS, theme.style(StyleKey::Muted));
     footer_text(frame, footer, theme, None, hints);
@@ -110,13 +110,13 @@ fn footer_text(
     frame.render_widget(Paragraph::new(Text::from(lines)).block(rule), area);
 }
 
-fn roles(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
+fn skills(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
     let mut rows = Vec::new();
-    for role in Role::ALL {
-        let changed = role.changed(&form.original, &form.draft);
-        let value = clamp(&role.value(&form.draft), 120);
+    for (skill, binding) in form.draft.ordered_bindings() {
+        let changed = form.original.bindings.get(skill) != Some(binding);
+        let value = clamp(&binding.standard.primary, 120);
         let status = if changed { "changed" } else { "kept" };
-        let row = Row::new([role.name().to_owned(), value, status.to_owned()]);
+        let row = Row::new([skill.as_str().to_owned(), value, status.to_owned()]);
         rows.push(if changed {
             row.style(theme.style(StyleKey::Accent))
         } else {
@@ -132,7 +132,7 @@ fn roles(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool
         ],
     )
     .header(
-        Row::new([if review { "REVIEW" } else { "ROLE" }, "AGENT", ""])
+        Row::new([if review { "REVIEW" } else { "SKILL" }, "AGENT", ""])
             .style(theme.style(StyleKey::Heading)),
     )
     .row_highlight_style(theme.style(StyleKey::Selection));

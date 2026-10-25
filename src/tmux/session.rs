@@ -123,7 +123,7 @@ pub(crate) fn open_session(session: &SessionName, path: &Utf8Path, start: LeadSt
     let executable = executable()?;
     let command = match start {
         LeadStart::Attended => vec![executable.as_str(), "lead"],
-        LeadStart::Unattended => vec![executable.as_str(), "lead", "--keep-roles"],
+        LeadStart::Unattended => vec![executable.as_str(), "lead", "--keep-skills"],
     };
     let launch = |before: &[&str], after: &[&str]| run(&[before, &command, after].concat());
     let name = session.as_str();

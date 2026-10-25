@@ -84,7 +84,7 @@ impl Fixture {
     fn spawn(&self, id: &str) -> Output {
         self.niles(&[
             "spawn",
-            "--role",
+            "--skill",
             "research",
             id,
             "--agent",
@@ -99,7 +99,7 @@ impl Fixture {
     fn spawn_with_checkin(&self, id: &str, delay: &str) -> Output {
         self.niles(&[
             "spawn",
-            "--role",
+            "--skill",
             "research",
             id,
             "--agent",

@@ -52,7 +52,7 @@ pub(super) fn text(items: &[Item]) -> String {
     format!("niles: {} — check workers", phrases.join(", "))
 }
 
-/// Accept both old single-report lines and current mixed batches in watch.log.
+/// Extract reported workers from a watch.log batch.
 pub(super) fn parse_reports(text: &str) -> impl Iterator<Item = (&str, WakeKind)> {
     text.strip_prefix("niles: ")
         .and_then(|text| text.strip_suffix(" — check workers"))
@@ -68,7 +68,7 @@ pub(super) fn parse_reports(text: &str) -> impl Iterator<Item = (&str, WakeKind)
 mod tests {
     use super::*;
     #[test]
-    fn mixed_batches_and_old_reports_parse() {
+    fn single_and_mixed_batches_parse() {
         for kind in WakeKind::ALL {
             let item = Item::Reported {
                 id: "w1".to_owned(),

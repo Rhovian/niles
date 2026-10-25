@@ -16,10 +16,13 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let manifest: Option<WorkspaceManifest> = store::read_optional_yaml(&path)?;
     if let Some(manifest) = &manifest {
         let config = crate::config::spec::load_project_config_from(root)?;
-        for role in crate::agents::picker::Role::ALL {
-            for agent in role.binding(manifest).agents() {
+        manifest
+            .binding(&manifest.entry)
+            .with_context(|| format!("invalid entry in {path}"))?;
+        for (skill, binding) in &manifest.bindings {
+            for agent in binding.agents() {
                 super::types::exact_spec(agent, &config.models)
-                    .with_context(|| format!("invalid {} agent in {path}", role.name()))?;
+                    .with_context(|| format!("invalid {skill} agent in {path}"))?;
             }
         }
     }
@@ -36,7 +39,8 @@ pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agents::picker::Role, test_support::temp_test_path};
+    use crate::test_support::skill;
+    use crate::test_support::temp_test_path;
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
         let root = temp_test_path(label);
@@ -45,6 +49,47 @@ mod tests {
         let result = load(&root);
         crate::test_support::remove_workspace(&root)?;
         result
+    }
+
+    #[test]
+    fn only_entry_must_be_bound() {
+        let body =
+            "entry: custom\ncustom: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+        let manifest = load_body("manifest-entry", body).unwrap().unwrap();
+        assert_eq!(manifest.entry.as_str(), "custom");
+        assert_eq!(manifest.bindings.len(), 1);
+        let error = format!(
+            "{:#}",
+            load_body(
+                "manifest-entry",
+                &body.replace("entry: custom", "entry: missing")
+            )
+            .unwrap_err()
+        );
+        assert!(
+            error.contains("missing") && error.contains("manifest.yaml"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn reserved_settings_cannot_be_binding_keys() {
+        for (name, cause) in [
+            ("entry", "expected string scalar"),
+            ("checkin", "expected string scalar"),
+            ("recheck", "expected string scalar"),
+            ("worktree", "unknown field `standard`"),
+        ] {
+            let body = format!(
+                "{name}: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n{}",
+                include_str!("../../examples/claude-lead.yaml")
+            );
+            let error = format!("{:#}", load_body("manifest-reserved", &body).unwrap_err());
+            assert!(
+                error.contains("manifest.yaml") && error.contains(cause),
+                "{name}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -73,15 +118,15 @@ mod tests {
     fn default_roles_ship_only_their_configured_tiers() {
         use crate::agents::roster::Tier;
         let manifest = WorkspaceManifest::default();
-        for (role, frontier, economy, mechanical) in [
-            (Role::Lead, true, false, false),
-            (Role::Worker, true, true, true),
-            (Role::Design, true, false, false),
-            (Role::Reviewer, true, true, false),
-            (Role::Security, false, true, true),
-            (Role::Research, false, true, false),
+        for (skill, frontier, economy, mechanical) in [
+            ("lead", true, false, false),
+            ("worker", true, true, true),
+            ("design", true, false, false),
+            ("reviewer", true, true, false),
+            ("security", false, true, true),
+            ("research", false, true, false),
         ] {
-            let binding = role.binding(&manifest);
+            let binding = manifest.binding(&skill.parse().unwrap()).unwrap();
             assert!(binding.tier(Tier::Standard).is_ok());
             assert_eq!(binding.tier(Tier::Frontier).is_ok(), frontier);
             assert_eq!(binding.tier(Tier::Economy).is_ok(), economy);
@@ -96,7 +141,6 @@ mod tests {
         let body = include_str!("../../examples/claude-lead.yaml");
         for invalid in [
             body.replacen("standard:", "unknown:", 1),
-            body.replacen("primary:", "when:", 1),
             body.replacen("claude:sonnet:high", "claude:sonnet", 1),
             body.replacen("claude:sonnet:high", "claude:sonnet:invalid", 1),
             body.replacen("claude:sonnet:high", "claude", 1),
@@ -107,43 +151,17 @@ mod tests {
             assert!(error.contains("manifest.yaml"), "{error}");
         }
         let mut manifest = WorkspaceManifest::default();
-        manifest.worker.standard.secondaries =
-            vec!["claude:haiku".into(), "claude:sonnet:high".into()];
+        manifest
+            .bindings
+            .get_mut(&skill("worker"))
+            .unwrap()
+            .standard
+            .secondaries = vec!["claude:haiku".into(), "claude:sonnet:high".into()];
         manifest.checkin = Some("15m".into());
         manifest.recheck = Some("backoff".into());
         save(&root, &manifest).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest));
         crate::test_support::remove_workspace(&root).unwrap();
-    }
-    #[test]
-    fn pre_lead_manifest_is_rejected_and_names_the_offending_field() {
-        let err = format!(
-            "{:#}",
-            load_body(
-                "manifest-pre-lead",
-                r#"
-manager: claude
-planner: claude
-worker: codex
-reviewer: claude
-validation_command: test
-flow:
-  - planner
-  - worker
-  - reviewer
-"#,
-            )
-            .unwrap_err()
-        );
-
-        // Names the offending field and the fields that replaced it.
-        assert!(err.contains("unknown field `manager`"), "{err}");
-        assert!(
-            err.contains(
-                "unknown field `manager`, expected one of lead, worker, reviewer, security, design, research, checkin, recheck, worktree"
-            ),
-            "{err}"
-        );
     }
     #[test]
     fn malformed_manifest_keeps_saphyr_line_and_column() {
@@ -167,23 +185,24 @@ flow:
         );
     }
     #[test]
-    fn saving_manifest_preserves_cadence_and_omits_absent_keys() {
+    fn save_sorts_bindings_preserves_cadence_and_omits_absent_keys() {
         let root = temp_test_path("manifest-save-cadence");
         let manifest = WorkspaceManifest::default();
+        let path = manifest_path(&root).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, include_str!("../../examples/claude-lead.yaml")).unwrap();
         save(&root, &manifest).unwrap();
-        let body = fs::read_to_string(manifest_path(&root).unwrap()).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest.clone()));
-        for gone in [
-            "manager:",
-            "planner:",
-            "validation_command:",
-            "flow:",
-            "checkin:",
-            "recheck:",
-            "worktree:",
-            "worker_planning:",
-            "when:",
-        ] {
+        assert!(body.lines().any(|line| line == "entry: lead"));
+        assert!(
+            body.lines()
+                .filter(|line| !line.starts_with(' '))
+                .map(|line| line.split_once(':').unwrap().0)
+                .filter(|key| *key != "entry")
+                .is_sorted()
+        );
+        for gone in ["checkin:", "recheck:", "worktree:"] {
             assert!(!body.contains(gone), "{body}");
         }
         let configured = WorkspaceManifest {
@@ -214,10 +233,6 @@ flow:
             (
                 body.replacen("    secondaries: [codex:gpt-6.1-sol:medium]\n", "", 1),
                 "missing field `secondaries`",
-            ),
-            (
-                body.split_once("research:").unwrap().0.to_owned(),
-                "missing field `research`",
             ),
         ] {
             let error = format!(

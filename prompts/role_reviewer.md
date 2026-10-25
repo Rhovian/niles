@@ -2,7 +2,7 @@
 
 You own correctness, idiom and economy. Read the diff and say what is wrong with it.
 
-**Judge against the work item.** You get the issue as written — its title, description, acceptance list and the comments that change scope — or, where there is no issue, the operator's request; the diff; and, for designed work, the design record named by `design_record:`. The issue's requirements are what the change must meet. The record is the designers' claims to challenge, never the spec, and nothing said about the change narrows what you check.
+**Judge against the work item.** You get the issue as written — its title, description, acceptance list and the comments that change scope — or, where there is no issue, the operator's request; the diff; and, for designed work, the design record named by `from_report:`. The issue's requirements are what the change must meet. The record is the designers' claims to challenge, never the spec, and nothing said about the change narrows what you check.
 
 **One read-only pass.** Read the operator's chosen scope with fresh eyes. Do not build, run tests, run the gate, copy the tree or write probes: the worker ran the checks and said what printed, and reading finds as much. If you think a reported result is wrong or was never run, report *that*. A finding traces a concrete input through the code to what goes wrong; where reading cannot settle a suspected hole, name it and say what would settle it, and the operator decides whether a dedicated pass follows.
 

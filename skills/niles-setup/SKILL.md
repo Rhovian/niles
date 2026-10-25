@@ -25,10 +25,8 @@ this shell's PATH. Verify `niles --version` before continuing.
 
 ## 3. Write the manifest
 
-Run `niles workers` from the project directory to migrate any legacy `.niles/` directory;
-stop and triage an error before writing a manifest. Migration copies to staging, publishes the
-complete copy, then removes the legacy source; stop running agents before upgrading because
-copying cannot synchronize live writers. Set
+Set the project state directory:
+
 `niles_project_dir="$HOME/.niles/state/$(pwd -P | tr '/' '-')"`.
 This plain Claude-style key replaces slashes with hyphens and accepts separator/hyphen collisions.
 If `"$niles_project_dir/manifest.yaml"` exists, keep it; edit only when the user requests it. Otherwise ask in
@@ -218,8 +216,8 @@ research:
 
 For Hermes, pi, or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
-Each role lists tiers with one exact `family:model:effort` primary and ordered secondaries.
-All six roles and their standard tier are required; no-effort models omit the effort suffix. The only file you write is `"$niles_project_dir/manifest.yaml"`.
+Each skill lists tiers with one exact `family:model:effort` primary and ordered secondaries.
+Only the entry skill (default `lead`) must be bound; each binding needs a standard tier; no-effort models omit the effort suffix. The only file you write is `"$niles_project_dir/manifest.yaml"`.
 
 ## 4. Check with niles doctor
 
@@ -229,7 +227,7 @@ Run `niles doctor` in the repository root, then triage its output:
   before changing an existing manifest; have the user correct project configuration.
 - `tmux: not found on PATH`: return to step 1.
 - `agents: no workspace manifest`: return to step 3.
-- `agent <x>: not found on PATH`: install that CLI or agree with the user to rebind its roles; rerun.
+- `agent <x>: not found on PATH`: install that CLI or agree with the user to rebind its skills; rerun.
 - A version older than `tested`: tell the user; this is not a blocker.
 
 Doctor does not check logins. Ask the user to confirm each bound CLI is logged in.
@@ -243,7 +241,7 @@ use the arrow keys to select it and press Enter. Otherwise press `r`, type
 `<absolute-repo-path>` in the directory prompt and press Enter, then Enter to accept the name
 (or enter an unused name if it is taken). Use the arrow keys to select the registered project
 and press Enter. If registration says 'already registered as <name>', press Esc, select that
-project with the arrow keys and press Enter. When the roles picker appears, press `c` to keep
+project with the arrow keys and press Enter. When the skills picker appears, press `c` to keep
 the manifest." Never rely on the directory prompt's default: an existing home session may
 have started in another directory.
 

@@ -1,3 +1,4 @@
+use crate::test_support::skill;
 use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyCode};
 
 use super::*;
@@ -87,7 +88,11 @@ fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
 fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.selected = 1;
+    form.selected = form
+        .draft
+        .ordered_bindings()
+        .position(|(skill, _)| skill.as_str() == "worker")
+        .unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Esc, &config).unwrap();
     assert_eq!(form.draft, form.original);
@@ -96,26 +101,20 @@ fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    let mut expected = form.original.worker.clone();
+    let mut expected = form.original.bindings[&skill("worker")].clone();
     expected.standard.primary = "codex:gpt-6.1-sol:low".into();
-    assert_eq!(form.draft.worker, expected);
-    assert_eq!(form.draft.lead, form.original.lead);
-}
-
-#[test]
-fn research_is_edited_in_its_own_binding() {
-    let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    for _ in 0..5 {
-        form.key(KeyCode::Down, &config).unwrap();
-    }
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert!(render(&form).contains("ROLES / research"));
-    for _ in 0..3 {
-        form.key(KeyCode::Enter, &config).unwrap();
-    }
-    assert_eq!(form.draft.research, form.original.research);
-    assert_eq!(form.draft.worker, form.original.worker);
+    assert_eq!(form.draft.bindings[&skill("worker")], expected);
+    assert_eq!(
+        form.draft.bindings[&skill("lead")],
+        form.original.bindings[&skill("lead")]
+    );
+    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
+    form.key(KeyCode::Char('s'), &config).unwrap();
+    assert!(matches!(form.screen, Screen::Review));
+    let Some(Choice::Save(saved)) = form.key(KeyCode::Enter, &config).unwrap() else {
+        panic!("save the reviewed draft")
+    };
+    assert_eq!(*saved, form.draft);
 }
 
 #[test]
@@ -124,7 +123,7 @@ fn unchanged_draft_hides_and_ignores_save() {
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
     assert!(!render(&form).contains("s save"));
     assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Roles));
+    assert!(matches!(form.screen, Screen::Skills));
     assert!(render(&form).contains("c continue"));
     assert!(matches!(
         form.key(KeyCode::Char('c'), &config).unwrap(),
@@ -136,7 +135,9 @@ fn unchanged_draft_hides_and_ignores_save() {
 fn restoring_original_draft_hides_and_ignores_save() {
     let config = config();
     let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.draft.lead.standard.primary = "claude:sonnet:medium".into();
+    form.draft
+        .set_primary(&skill("lead"), "claude:sonnet:medium".into())
+        .unwrap();
     assert!(render(&form).contains("s save"));
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(form.screen, Screen::Review));
@@ -144,26 +145,7 @@ fn restoring_original_draft_hides_and_ignores_save() {
     form.draft = form.original.clone();
     assert!(!render(&form).contains("s save"));
     assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Roles));
-}
-
-#[test]
-fn edited_role_is_reviewed_and_saved() {
-    let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Up, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    assert_eq!(form.draft.lead.standard.primary, "claude:sonnet:medium");
-    assert!(render(&form).contains("s save"));
-    form.key(KeyCode::Char('s'), &config).unwrap();
-    assert!(matches!(form.screen, Screen::Review));
-    assert!(matches!(
-        form.key(KeyCode::Enter, &config).unwrap(),
-        Some(Choice::Save(_))
-    ));
+    assert!(matches!(form.screen, Screen::Skills));
 }
 
 #[test]
@@ -221,28 +203,35 @@ fn replacement_explains_why_and_requires_save_or_quit() {
 }
 
 #[test]
-fn pending_first_save_or_edits_cannot_continue_without_saving() {
+fn pending_first_save_cannot_continue_without_saving() {
     let config = config();
-    for fresh in [false, true] {
-        let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-        if fresh {
-            form.save_reason = Some("No manifest exists yet; save to continue.".into());
-        } else {
-            form.draft.lead.standard.primary = "claude:opus:medium".into();
-        }
-        let draft = form.draft.clone();
-        assert!(render(&form).contains("s save"));
-        assert!(!render(&form).contains("c continue"));
-        assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
-        assert!(matches!(form.screen, Screen::Roles));
-        form.key(KeyCode::Char('s'), &config).unwrap();
-        assert!(matches!(form.screen, Screen::Review));
-        assert!(!render(&form).contains("c continue"));
-        assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
-        assert_eq!(form.draft, draft);
-        let Some(Choice::Save(saved)) = form.key(KeyCode::Enter, &config).unwrap() else {
-            panic!("review must save the shown draft");
-        };
-        assert_eq!(*saved, draft);
+    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    form.save_reason = Some("No manifest exists yet; save to continue.".into());
+    assert!(render(&form).contains("s save"));
+    assert!(!render(&form).contains("c continue"));
+    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
+    form.key(KeyCode::Char('s'), &config).unwrap();
+    let Some(Choice::Save(saved)) = form.key(KeyCode::Enter, &config).unwrap() else {
+        panic!("save first draft")
+    };
+    assert_eq!(*saved, form.original);
+}
+
+#[test]
+fn arbitrary_binding_names_are_entry_first_then_alphabetical() {
+    let mut manifest = WorkspaceManifest::default();
+    let binding = manifest.bindings.values().next().unwrap().clone();
+    manifest.bindings = ["zeta", "beta", "alpha"]
+        .into_iter()
+        .map(|name| (name.parse().unwrap(), binding.clone()))
+        .collect();
+    manifest.entry = "zeta".parse().unwrap();
+    let mut form = Form::new(manifest, &config()).unwrap();
+    form.key(KeyCode::Down, &config()).unwrap();
+    form.key(KeyCode::Enter, &config()).unwrap();
+    assert!(matches!(&form.screen, Screen::Editing { skill, .. } if skill.as_str() == "alpha"));
+    for _ in 0..3 {
+        form.key(KeyCode::Enter, &config()).unwrap();
     }
+    assert_eq!(form.draft, form.original);
 }
