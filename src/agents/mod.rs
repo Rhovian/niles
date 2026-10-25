@@ -30,7 +30,7 @@ pub struct AgentInvocation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSpec {
-    profile: families::AgentProfile,
+    profile: &'static families::AgentProfile,
     model: Option<String>,
     effort: Option<String>,
 }
@@ -130,7 +130,7 @@ impl AgentSpec {
         })
     }
 
-    pub fn profile(&self) -> families::AgentProfile {
+    pub fn profile(&self) -> &'static families::AgentProfile {
         self.profile
     }
 

@@ -159,19 +159,19 @@ const PROFILES: &[AgentProfile] = &[
     },
 ];
 
-pub fn profiles() -> impl Iterator<Item = AgentProfile> {
-    PROFILES.iter().copied()
+pub fn profiles() -> impl Iterator<Item = &'static AgentProfile> {
+    PROFILES.iter()
 }
 
 pub fn known_agent_ids() -> impl Iterator<Item = &'static str> {
     profiles().map(|profile| profile.id)
 }
 
-pub fn profile_for(agent: &str) -> Option<AgentProfile> {
+pub fn profile_for(agent: &str) -> Option<&'static AgentProfile> {
     profiles().find(|profile| profile.id.eq_ignore_ascii_case(agent))
 }
 
-pub fn tier_args(profile: AgentProfile, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
+pub fn tier_args(profile: &AgentProfile, model: Option<&str>, effort: Option<&str>) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(model) = model {
         args.extend([profile.tier_args.model_flag.to_owned(), model.to_owned()]);
