@@ -2,15 +2,10 @@ use super::support::*;
 
 #[test]
 fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
-    let env = TestEnv::new("niles-worker-respawn-same-cwd");
+    let env = TestEnv::with_manifest("niles-worker-respawn-same-cwd", "claude");
 
     let first = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "reviewer", "--agent", "claude", "FIRST",
-            ],
-        )
+        .spawn_command("research", &["reviewer", "FIRST"])
         .output()
         .unwrap();
     assert_command_success("first spawn", &first);
@@ -34,12 +29,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     );
 
     let second = env
-        .niles(
-            &env.root,
-            &[
-                "spawn", "--role", "research", "reviewer", "--agent", "claude", "SECOND",
-            ],
-        )
+        .spawn_command("research", &["reviewer", "SECOND"])
         .output()
         .unwrap();
     assert_command_success("respawn after close", &second);
@@ -108,7 +98,7 @@ fn worker_close_does_not_write_or_advertise_empty_final_pane() {
 
 #[test]
 fn worker_close_malformed_metadata_names_path_and_cause() {
-    let workspace = temp_workspace("niles-worker-old-meta");
+    let workspace = temp_workspace("niles-worker-invalid-meta");
     let worker_dir = state_dir(&workspace).join("worker/auth-fix");
     fs::create_dir_all(&worker_dir).unwrap();
     fs::write(
@@ -129,7 +119,7 @@ fn worker_close_malformed_metadata_names_path_and_cause() {
         .output()
         .unwrap();
 
-    assert_failure_contains("close with old metadata", &output, "failed to parse");
+    assert_failure_contains("close with malformed metadata", &output, "failed to parse");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("meta.json"));
     assert!(stderr.contains("missing field"), "{stderr}");

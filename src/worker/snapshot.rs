@@ -31,7 +31,7 @@ pub(crate) struct WorkerSnapshot {
     pub(crate) worker_dir: Utf8PathBuf,
     /// `None` when `meta.json` is missing or unreadable; `read_error` then says which of the two.
     pub(super) meta: Option<WorkerMeta>,
-    pub(super) read_error: Option<String>,
+    pub(crate) read_error: Option<String>,
     /// The status log's bytes, or `None` while there is no log to read.
     pub(super) log: Option<Vec<u8>>,
     /// Byte length of `log`. Report detection keys on the length rather than the state word, so

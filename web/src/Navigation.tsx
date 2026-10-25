@@ -2,7 +2,6 @@ import { type Project, startProject, stopProject, closeWorker } from './api';
 import { useState } from 'preact/hooks';
 
 const liveStates = new Set<Project['state']>(['running', 'starting', 'waiting']);
-const roles = ['worker', 'reviewer', 'security', 'research', 'design'] as const;
 export function Navigation({ projects, selected, openProject, openWorker, refresh, help }: {
   projects: Project[]; selected?: string; openProject: (name: string) => void; openWorker: (project: string, id: string) => void; refresh: () => void; help: () => void;
 }) {
@@ -34,18 +33,18 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
           if (project.state === 'not running') void act(() => startProject(project.name));
           else if (window.confirm(`Stop ${project.name}?`)) void act(() => stopProject(project.name));
         }}>{project.state === 'not running' ? 'Start' : 'Stop'} {project.name}</button>}
-        {roles.map(role => {
-          const workers = project.workers.filter(worker => worker.role === role);
-          return workers.length > 0 && <details key={role} open>
-            <summary>{role}</summary><ul class="workers">{workers.map(worker => {
+        {[...new Set(project.workers.map(worker => worker.skill))].sort().map(skill => {
+          const workers = project.workers.filter(worker => worker.skill === skill);
+          return workers.length > 0 && <details key={skill} open>
+            <summary>{skill}</summary><ul class="workers">{workers.map(worker => {
               const workerExpanded = expandedWorker === worker.id;
               const panelId = `worker-${encodeURIComponent(worker.id)}`;
               return <li key={worker.id}>
-                <button class="session" aria-label={worker.id} aria-describedby={`${panelId}-role`}
+                <button class="session" aria-label={worker.id} aria-describedby={`${panelId}-skill`}
                   aria-expanded={workerExpanded} aria-controls={panelId}
                   onClick={() => setExpandedWorker(workerExpanded ? undefined : worker.id)}>
                   <span aria-hidden="true">{workerExpanded ? '▾' : '▸'}</span>{worker.id}
-                  <span class="badge" id={`${panelId}-role`}>{role}{worker.lost ? ' · Lost' : ''}</span>
+                  <span class="badge" id={`${panelId}-skill`}>{skill}{worker.lost ? ' · Lost' : ''}</span>
                 </button>
                 {workerExpanded && <div class="worker-actions" id={panelId}>
                   <button onClick={() => openWorker(project.name, worker.id)}>Open {worker.id} chat</button>

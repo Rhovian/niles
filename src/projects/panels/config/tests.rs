@@ -1,10 +1,11 @@
+use crate::test_support::skill;
 use std::fs;
 
 use camino::Utf8PathBuf;
 
 use super::*;
 use crate::test_support::temp_test_path;
-use crate::workspace_manifest::RoleBinding;
+use crate::workspace_manifest::Binding;
 
 /// Each row as `key | value | from | note`, so a whole scope reads as one table.
 fn table(items: &[Item]) -> Vec<String> {
@@ -103,9 +104,9 @@ fn project_rows_show_tiers_and_standard_primary_is_editable() {
     }));
     assert_eq!(
         items[1].edit(),
-        Some(&Edit::Role {
+        Some(&Edit::Skill {
             root: root.clone(),
-            role: Role::Lead
+            skill: "lead".parse().unwrap()
         })
     );
     crate::test_support::remove_workspace(&root).unwrap();
@@ -151,7 +152,8 @@ fn saving_a_role_and_checkin_keeps_the_other_fields() {
     let root = project("config-save", Some(&text), None);
     let before = workspace_manifest::load(&root).unwrap().unwrap();
     save_manifest(&root, |manifest| {
-        manifest.security = RoleBinding::from("codex:gpt-5.5:high".to_owned());
+        *manifest.bindings.get_mut(&skill("security")).unwrap() =
+            Binding::from("codex:gpt-5.5:high".to_owned());
     })
     .unwrap();
     let rows = items::project(&root).unwrap();
@@ -168,10 +170,14 @@ fn saving_a_role_and_checkin_keeps_the_other_fields() {
     step.save(cycle(&step.options(), &setting.value, false))
         .unwrap();
     let after = workspace_manifest::load(&root).unwrap().unwrap();
+    let mut before = before;
+    before.bindings.insert(
+        "security".parse().unwrap(),
+        Binding::from("codex:gpt-5.5:high".to_owned()),
+    );
     assert_eq!(
         after,
         WorkspaceManifest {
-            security: RoleBinding::from("codex:gpt-5.5:high".to_owned()),
             checkin: Some("off".to_owned()),
             ..before
         }

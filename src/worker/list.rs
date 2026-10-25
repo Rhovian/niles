@@ -46,7 +46,7 @@ struct WorkersOutput {
 #[derive(Serialize)]
 struct WorkerOutput {
     id: String,
-    role: Option<super::WorkerRole>,
+    skill: Option<crate::skills::SkillName>,
     agent: Option<String>,
     tree: Option<Utf8PathBuf>,
     task_label: Option<String>,
@@ -80,7 +80,7 @@ impl WorkerOutput {
         };
         Ok(Self {
             id: worker.id.clone(),
-            role: meta.map(|meta| meta.role),
+            skill: meta.map(|meta| meta.skill.clone()),
             agent: meta.map(|meta| meta.agent.clone()),
             tree: meta.and_then(|meta| meta.tree.clone()),
             task_label: meta.and_then(|meta| meta.task_label.clone()),

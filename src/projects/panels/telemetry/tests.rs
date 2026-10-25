@@ -68,7 +68,7 @@ fn totals(project: &Project) -> Vec<(&str, &str, u64)> {
         .iter()
         .map(|session| {
             let tokens = session.buckets.iter().map(|(_, tokens)| tokens).sum();
-            (session.id.as_str(), session.role, tokens)
+            (session.id.as_str(), session.skill.as_str(), tokens)
         })
         .collect()
 }
@@ -86,17 +86,12 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
             "worker/archive/{id}-{}",
             timestamp_id(&utc(closed))
         ));
-        let unlinked = link.is_none();
-        let mut meta = json!({
-            "id": id, "role": "worker", "agent": "pi:tencent/hy3:high",
+        let meta = json!({
+            "id": id, "skill": "worker", "agent": "pi:tencent/hy3:high",
             "created_at": "2026-10-01T07:00:00Z", "project": entry.path,
             "window": format!("demo:{id}"), "launch": niles.join(format!("worker/{id}/launch.sh")),
             "brief": niles.join(format!("worker/{id}/brief.md")), "session_link": link,
         });
-        // Archives from before `session_link` also predate `role`.
-        if unlinked {
-            meta.as_object_mut().unwrap().remove("role");
-        }
         write(&dir.join("meta.json"), &meta.to_string());
         dir
     };
@@ -104,7 +99,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         let id = timestamp_id(&utc(started));
         let dir = niles.join("sessions").join(&id);
         let meta = json!({
-            "id": id, "agent": "pi:tencent/hy3:high", "created_at": started,
+            "id": id, "entry_skill": "coordinator", "agent": "pi:tencent/hy3:high", "created_at": started,
             "workspace": entry.path, "brief": dir.join("lead.md"), "session_link": link,
         });
         write(&dir.join("session.json"), &meta.to_string());
@@ -116,7 +111,6 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         "2026-10-01T17:00:00Z",
         Some(pi_link(&transcripts.join("impl"))),
     );
-    let unlinked = archive("nolink", "2026-10-01T18:00:00Z", None);
     let stale = archive(
         "old",
         "2026-09-01T00:00:00Z",
@@ -138,9 +132,9 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
     assert_eq!(
         totals(&first),
         [
-            (latest_id, "lead", pi_total),
+            (latest_id, "coordinator", pi_total),
             ("impl", "worker", pi_total),
-            (superseded_id, "lead", pi_total),
+            (superseded_id, "coordinator", pi_total),
         ]
     );
     assert!(first.sessions.iter().all(|session| session.live.is_none()));
@@ -166,7 +160,6 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         (&closed, true),
         (&superseded, true),
         (&latest, false),
-        (&unlinked, false),
         (&stale, false),
     ] {
         assert_eq!(dir.join("usage.json").exists(), cached, "{dir}");
@@ -177,9 +170,9 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
     assert_eq!(
         totals(&second),
         [
-            (latest_id, "lead", 0),
+            (latest_id, "coordinator", 0),
             ("impl", "worker", pi_total),
-            (superseded_id, "lead", pi_total),
+            (superseded_id, "coordinator", pi_total),
         ]
     );
     // Losing a live transcript does not erase the registry's context capacity.
@@ -203,10 +196,11 @@ fn the_roster_window_is_for_the_launched_model() {
     assert_eq!(collect::roster_window("claude", &models).unwrap(), None);
 }
 
-fn session(id: &str, role: &'static str, agent: &str, usage: Usage, live: bool) -> Session {
+fn session(id: &str, skill: &'static str, agent: &str, usage: Usage, live: bool) -> Session {
     Session {
         id: id.into(),
-        role,
+        skill: skill.parse().unwrap(),
+        entry: skill == "lead",
         agent: agent.into(),
         live: live.then_some(Live {
             prompt_tokens: usage.prompt_tokens,
@@ -314,12 +308,21 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
     let models = board
         .models
         .iter()
-        .map(|row| (row.agent, row.roles.clone(), row.tokens))
+        .map(|row| {
+            (
+                row.agent,
+                row.skills
+                    .iter()
+                    .map(|(skill, n)| (skill.as_str(), *n))
+                    .collect::<Vec<_>>(),
+                row.tokens,
+            )
+        })
         .collect::<Vec<_>>();
     let mut expected = vec![
         (
             "pi:tencent/hy3:high",
-            vec![("worker", 4), ("reviewer", 1)],
+            vec![("reviewer", 1), ("worker", 4)],
             5 * pi,
         ),
         ("claude:opus:high", vec![("lead", 1)], claude),
@@ -385,7 +388,7 @@ fn render_lays_out_pairs_by_width_and_warns_on_full_context() {
     let warn = theme.style(StyleKey::Waiting).paint("|");
     let warn = warn.split('|').next().unwrap();
     for text in [&narrow, &wide] {
-        assert!(text.contains("4 workers · 1 reviewer"));
+        assert!(text.contains("1 reviewer · 4 worker"));
         assert!(
             text.lines()
                 .any(|line| line.contains("95%") && line.contains(warn))

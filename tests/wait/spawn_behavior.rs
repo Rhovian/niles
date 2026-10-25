@@ -4,12 +4,12 @@ use super::support::*;
 #[test]
 fn spawn_wait_blocks_for_the_workers_first_report() {
     let lab = Lab::start("niles-spawn-wait");
+    write_spawn_manifest(&lab.workspace, "codex");
 
     // Dispatch flags remain options even when they follow every task word.
     let child = lab
         .niles(&[
-            "spawn", "--role", "research", "w1", "--agent", "codex", "fix", "the", "login", "bug",
-            "--wait",
+            "spawn", "--skill", "research", "w1", "fix", "the", "login", "bug", "--wait",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -45,11 +45,10 @@ fn spawn_wait_blocks_for_the_workers_first_report() {
 #[test]
 fn spawn_wait_collects_other_workers_pending_reports() {
     let lab = Lab::start("niles-spawn-workspace");
+    write_spawn_manifest(&lab.workspace, "codex");
     lab.worker("other", None, b"done: already pending\n");
     let output = lab
-        .niles(&[
-            "spawn", "--role", "research", "w1", "--agent", "codex", "research", "--wait",
-        ])
+        .niles(&["spawn", "--skill", "research", "w1", "research", "--wait"])
         .output()
         .unwrap();
     assert_command_success("spawn workspace wait", &output);

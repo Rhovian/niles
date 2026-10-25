@@ -185,15 +185,15 @@ window. The lead is not notified and its worker wait is not re-armed. Lost worke
 remain readable but sending returns 503. Close works for live and lost workers.
 
 Start appears for registered projects that are not running. It requires a saved,
-parsing manifest: start once at the desk to choose roles. Phone starts always use
-that manifest's default lead and skip the picker (`niles lead --keep-roles`); desk
+parsing manifest: start once at the desk to choose skills. Phone starts always use
+that manifest's default lead and skip the picker (`niles lead --keep-skills`); desk
 starts still show it. Stop and Close require confirmation. The API routes are:
 
 - `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the
   lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
   Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
 - `PUT /api/projects/:project/session` starts the saved manifest's default lead,
-  bypassing the role picker. Already running returns 200. Start returns 409 with one
+  bypassing the skill picker. Already running returns 200. Start returns 409 with one
   fixed plain-text body: `Project directory missing`, `No saved manifest; start once
   at the desk`, or `Tmux session name held by a foreign session`.
 - `DELETE /api/projects/:project/session` closes workers then stops the tagged project

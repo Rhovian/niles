@@ -41,8 +41,8 @@ the client percent-encodes session IDs in URL path segments.
 - `GET /api/projects` → `200 {"api_version":1,"projects":[Project]}`. Additive v1
   endpoint using the explorer's registered-project snapshot. `Project` contains
   `name`, `state` (`missing`, `not running`, `running`, `starting`, `waiting`), and
-  `workers: [{id, role, lost, model?}]`. Roles are worker, reviewer, security, research,
-  design. Filesystem paths, window targets, and agent prompts are excluded.
+  `workers: [{id, skill, lost, model?}]`. Skill names are nonempty ASCII letters, digits,
+  hyphens and underscores; groups are alphabetical. Filesystem paths, window targets, and agent prompts are excluded.
 - `GET /api/sessions` → `200 {"api_version":1,"sessions":[Session]}`.
   `Session = {id, project, agent:{family, entry_skill, model?}, waiting, worker_count}`.
   `id`, `project`, `family`, `entry_skill` are strings; `id` is nonempty;
@@ -89,7 +89,7 @@ the client percent-encodes session IDs in URL path segments.
   lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
   Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
 - `PUT /api/projects/:project/session` starts the saved manifest's default lead,
-  bypassing the role picker. Already running returns 200. Start returns 409 with one
+  bypassing the skill picker. Already running returns 200. Start returns 409 with one
   fixed plain-text body: `Project directory missing`, `No saved manifest; start once
   at the desk`, or `Tmux session name held by a foreign session`.
 - `DELETE /api/projects/:project/session` closes workers then stops the tagged project
@@ -122,7 +122,7 @@ An ended session link reports that it has ended. No transcript is stored by push
 in offline caches. Notification clicks navigate the app, so finish any draft first.
 Dismiss any notifications left by the older, untagged app version once after upgrading.
 
-The hamburger menu lists all registered projects and workers grouped by role,
+The hamburger menu lists all registered projects and workers grouped by skill,
 including lost workers. Selecting a project opens its live lead chat; the project
 name is remembered in local storage across visits and lead restarts. Notification
 session links still open the corresponding project. With no selection, the main
@@ -130,7 +130,7 @@ screen shows the Niles logo and invites opening projects on the sidebar. Worker
 rows open direct chat; Start launches the default lead and Stop/Close end sessions/workers.
 The local mock refuses control and worker chat with 501.
 
-Chat panes share the top toolbar: hamburger, pane role/name, recorded model label,
+Chat panes share the top toolbar: hamburger, pane skill/name, recorded model label,
 connection status, and the Niles logo at the right. Older leads without recorded
 models use their agent family; legacy workers use their saved agent label. Model
 fields are additive optional API v1 metadata. The chat follows the latest content

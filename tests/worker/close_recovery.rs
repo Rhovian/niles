@@ -146,33 +146,6 @@ fn worker_close_window_missing_without_tag_is_window_dead() {
 }
 
 #[test]
-fn worker_close_reports_legacy_candidate_without_auto_kill() {
-    let env = TestEnv::new("niles-close-legacy-candidate");
-    write_worker(
-        &env.root,
-        "auth-fix",
-        "old:niles-auth-fix",
-        None,
-        b"working: close requested",
-    );
-
-    let close = env
-        .niles(&env.root, &["close", "auth-fix"])
-        .env("TMUX_MISSING_SESSION", "old")
-        .env("TMUX_TAGGED_WINDOWS", "other:niles-auth-fix\t\t\t0")
-        .output()
-        .unwrap();
-    assert_command_success("legacy candidate close", &close);
-    let stdout = String::from_utf8_lossy(&close.stdout);
-    assert!(stdout.contains("window state: orphan-legacy-candidate:other:niles-auth-fix"));
-    assert!(stdout.contains("manual_close: tmux kill-window -t other:niles-auth-fix"));
-
-    let log = env.tmux_log();
-    assert!(!log.contains("kill-window"));
-    assert_archived_with_closed_sentinel(&env.root, "auth-fix");
-}
-
-#[test]
 fn worker_close_reaps_unparseable_meta_window_as_unknown() {
     let env = TestEnv::new("niles-close-invalid-window");
     write_worker(

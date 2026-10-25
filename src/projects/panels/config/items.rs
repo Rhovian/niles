@@ -13,7 +13,7 @@ use crate::{
     },
     projects::registry,
     watch,
-    workspace_manifest::{self, MISSING, WorkspaceManifest, clamp, manifest_roles},
+    workspace_manifest::{self, MISSING, WorkspaceManifest, clamp, manifest_skills},
 };
 
 const BUILTIN: &str = "builtin";
@@ -59,10 +59,10 @@ pub(super) enum Note {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Edit {
-    /// Runs the role's picker, then saves only that role into the manifest at `root`.
-    Role {
+    /// Runs the skill's picker, then saves only that skill into the manifest at `root`.
+    Skill {
         root: Utf8PathBuf,
-        role: Role,
+        skill: SkillName,
     },
     Step(Step),
     /// The registry is a directory of links, changed from the explorer rather than a file.
@@ -77,7 +77,7 @@ pub(super) enum Step {
     Recheck(Utf8PathBuf),
 }
 
-pub(super) use crate::agents::picker::Role;
+pub(super) use crate::skills::SkillName;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
@@ -126,8 +126,8 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
     match workspace_manifest::load(root) {
         Ok(Some(manifest)) => {
             match &config {
-                Ok(config) => items.extend(roles(root, &manifest, config)),
-                Err(error) => items.extend([Item::Section("roles".to_owned()), broken(error)]),
+                Ok(config) => items.extend(skills(root, &manifest, config)),
+                Err(error) => items.extend([Item::Section("skills".to_owned()), broken(error)]),
             }
             items.extend(watch(root, &manifest));
         }
@@ -144,14 +144,17 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<Item> {
+fn skills(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<Item> {
     let mut items = Vec::new();
-    for (role, row) in Role::ALL.into_iter().zip(manifest_roles(manifest, config)) {
-        items.push(Item::Section(format!("roles.{}", row.role)));
+    for ((skill, bound), row) in manifest
+        .ordered_bindings()
+        .zip(manifest_skills(manifest, config))
+    {
+        items.push(Item::Section(format!("skills.{}", row.skill)));
         let mut invalid = row.invalid_reason.map(Note::Invalid);
-        let edit = Some(Edit::Role {
+        let edit = Some(Edit::Skill {
             root: root.to_owned(),
-            role,
+            skill: skill.clone(),
         });
         items.extend(
             [
@@ -169,7 +172,7 @@ fn roles(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) 
                 Item::Setting(setting)
             }),
         );
-        for (tier, binding) in role.binding(manifest).tiers() {
+        for (tier, binding) in bound.tiers() {
             items.push(Item::Setting(plain(
                 tier.as_str(),
                 &format!(

@@ -9,7 +9,7 @@ fn fixture(label: &str, log: &str) -> (Utf8PathBuf, Utf8PathBuf) {
     fs::write(
         dir.join("meta.json"),
         serde_json::json!({
-            "id": "worker", "role": "worker", "agent": "codex",
+            "id": "worker", "skill": "worker", "agent": "codex",
             "created_at": "2026-01-02T03:04:05Z", "project": workspace,
             "window": "unresolved", "brief": dir.join("brief.md"), "launch": dir.join("launch.sh"),
         })

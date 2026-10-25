@@ -1,25 +1,19 @@
-use anyhow::{Result, bail};
+use std::collections::BTreeMap;
+
+use crate::skills::SkillName;
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{AgentSpec, ModelRoster, roster::Tier};
 
-/// Which agent plays each role, plus check-in settings.
-///
-/// Every role that has its own brief has its own binding, `security` included: it is
-/// commissioned rarely, but when it is, the tier it runs at is a workspace decision rather
-/// than something the lead should have to remember per spawn.
-///
-/// The check-in keys are workspace-wide rather than per role: they say how often the lead is
-/// nudged about a worker that has gone quiet, which is a property of the workspace's pace.
+/// Skill bindings and workspace-wide dispatch settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct WorkspaceManifest {
-    pub lead: RoleBinding,
-    pub worker: RoleBinding,
-    pub reviewer: RoleBinding,
-    pub security: RoleBinding,
-    pub design: RoleBinding,
-    pub research: RoleBinding,
+    // Flatten accepts skill keys; nested Binding and TierBinding remain strict.
+    #[serde(flatten)]
+    pub bindings: BTreeMap<SkillName, Binding>,
+    #[serde(default)]
+    pub entry: SkillName,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
     /// default.
@@ -39,7 +33,7 @@ pub struct WorkspaceManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoleBinding {
+pub struct Binding {
     pub standard: TierBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontier: Option<TierBinding>,
@@ -56,7 +50,39 @@ pub struct TierBinding {
     pub secondaries: Vec<String>,
 }
 
-impl RoleBinding {
+impl WorkspaceManifest {
+    pub fn binding(&self, skill: &SkillName) -> Result<&Binding> {
+        self.bindings.get(skill).ok_or_else(|| {
+            anyhow::anyhow!(
+                "skill {skill} is not bound; bound skills: {}",
+                self.bindings
+                    .keys()
+                    .map(SkillName::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    }
+
+    pub(crate) fn set_primary(&mut self, skill: &SkillName, primary: String) -> Result<()> {
+        self.bindings
+            .get_mut(skill)
+            .with_context(|| format!("skill {skill} is no longer bound"))?
+            .standard
+            .primary = primary;
+        Ok(())
+    }
+
+    pub(crate) fn ordered_bindings(&self) -> impl Iterator<Item = (&SkillName, &Binding)> {
+        self.bindings.get_key_value(&self.entry).into_iter().chain(
+            self.bindings
+                .iter()
+                .filter(|(skill, _)| **skill != self.entry),
+        )
+    }
+}
+
+impl Binding {
     pub fn tier(&self, tier: Tier) -> Result<&TierBinding> {
         match tier {
             Tier::Standard => Some(&self.standard),
@@ -64,15 +90,7 @@ impl RoleBinding {
             Tier::Economy => self.economy.as_ref(),
             Tier::Mechanical => self.mechanical.as_ref(),
         }
-        .ok_or_else(|| anyhow::anyhow!("role does not list tier {}", tier.as_str()))
-    }
-
-    pub fn default_model(&self) -> &str {
-        &self.standard.primary
-    }
-
-    pub fn default_agent(&self, models: &ModelRoster) -> Result<String> {
-        Ok(exact_spec(self.default_model(), models)?.canonical())
+        .ok_or_else(|| anyhow::anyhow!("skill does not list tier {}", tier.as_str()))
     }
 
     pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {
@@ -107,10 +125,6 @@ impl RoleBinding {
                 .chain(tier.secondaries.iter().map(String::as_str))
         })
     }
-
-    pub fn allowed_agents(&self) -> String {
-        self.agents().collect::<Vec<_>>().join(", ")
-    }
 }
 
 pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec> {
@@ -141,7 +155,7 @@ impl Default for WorkspaceManifest {
 }
 
 #[cfg(test)]
-impl From<String> for RoleBinding {
+impl From<String> for Binding {
     fn from(primary: String) -> Self {
         Self {
             standard: TierBinding {

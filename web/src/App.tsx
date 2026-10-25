@@ -94,9 +94,9 @@ export function App() {
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
     {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
-    {help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by role; Lost means their recorded window is gone.</p>
+    {help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by skill; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
-      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${member?.role ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :
+      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${member?.skill ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :
       compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} pane={current.agent.entry_skill} subtitle={current.agent.model ?? current.agent.family} headerTarget={headerTarget} working={!current.waiting} onStatus={onStatus} /> :
       <main class="empty welcome"><img src="/icon-192.png" alt="Niles logo" width="192" height="192" />
         <p>{version !== undefined && !compatible ? 'Install the matching web release to continue.' :

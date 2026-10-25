@@ -89,7 +89,7 @@ impl Session {
             agent: Agent {
                 model: record.meta.model.clone(),
                 family,
-                entry_skill: record.meta.entry_skill.clone(),
+                entry_skill: record.meta.entry_skill.to_string(),
             },
             waiting: record.waiting,
             worker_count: record.worker_count,

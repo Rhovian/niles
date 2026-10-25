@@ -217,7 +217,7 @@ pub(crate) fn start(
 ///
 /// Read here rather than at the arming edge because the two moments differ: this is resolved
 /// before anything is dispatched, and armed after. A workspace without a manifest has no
-/// defaults to apply, which is not an error — `niles spawn --agent` works without one.
+/// defaults to apply; sending to an existing worker still works without one.
 pub(crate) fn checkin_cadence(project: &Utf8Path, flag: Option<&str>) -> Result<Cadence> {
     let path = workspace_manifest::manifest_path(project)?;
     let manifest = workspace_manifest::load(project)
@@ -308,6 +308,14 @@ fn tick(
             return;
         }
     };
+    for worker in &snapshot {
+        if let Some(error) = &worker.read_error {
+            sink.note(&format!(
+                "worker {} metadata is unreadable: {error}",
+                worker.id
+            ));
+        }
+    }
     trust::inspect_starting_workers(&snapshot, now, sink);
     let mut checkins = read_checkins(&snapshot, sink);
     due::check_due(&mut snapshot, &mut checkins, now, memory, sink);

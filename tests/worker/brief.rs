@@ -2,12 +2,12 @@ use super::support::*;
 use std::{io::Write, process::Stdio};
 
 #[test]
-fn worker_spawn_records_mechanical_decisions_and_design_headers() {
-    let env = TestEnv::new("niles-worker-design-record");
+fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
+    let env = TestEnv::with_manifest("niles-worker-design-record", "claude");
     let session = state_dir(&env.root).join("sessions/lead");
     fs::create_dir_all(&session).unwrap();
     let meta = serde_json::json!({
-        "id": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
+        "id": "lead", "entry_skill": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
         "workspace": env.root, "brief": session.join("lead.md")
     });
     fs::write(
@@ -19,10 +19,8 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     let mechanical = [
         "spawn",
         "mechanical",
-        "--role",
-        "worker",
-        "--agent",
-        "claude",
+        "--skill",
+        "reviewer",
         "--mechanical",
         "rename",
         "task",
@@ -46,64 +44,38 @@ fn worker_spawn_records_mechanical_decisions_and_design_headers() {
     let workers = state_dir(&env.root).join("worker");
     let body = fs::read_to_string(workers.join("mechanical/brief.md")).unwrap();
     let (header, _) = body.split_once("\n\n## Task").unwrap();
-    assert!(!header.contains("design_record:"));
+    assert!(!header.contains("from_report:"));
 
-    let designer = env.run(&[
-        "spawn", "designer", "--role", "design", "--agent", "claude", "design",
-    ]);
+    let designer = env.spawn("research", &["designer", "design"]);
     assert_command_success("designer", &designer);
     fs::write(workers.join("designer/status.log"), "done: agreed record\n").unwrap();
-    let spawned = env.run(&[
-        "spawn",
-        "implementation",
-        "--role",
-        "worker",
-        "--agent",
-        "claude",
-        "--design",
-        "designer",
-        "task",
-    ]);
+    let spawned = env.spawn("design", &["implementation", "--from", "designer", "task"]);
     assert_command_success("worker with design", &spawned);
     let body = fs::read_to_string(workers.join("implementation/brief.md")).unwrap();
     assert!(body.contains(&format!(
-        "report_file: {}\ndesign_record: {}\n",
+        "report_file: {}\nfrom_report: {}\n",
         workers.join("implementation/report.md").display(),
         workers.join("designer/report.md").display()
     )));
 }
 
-/// Role behavior travels in the system prompt while the task remains in the opening turn.
 #[test]
-fn role_selects_primary_instructions_outside_the_opening_turn() {
-    let env = TestEnv::new("niles-worker-roles");
+fn skill_selects_primary_instructions_outside_the_opening_turn() {
+    let env = TestEnv::with_manifest("niles-worker-roles", "claude");
 
-    let mut briefs = Vec::new();
-    for role in ["design", "reviewer", "security", "research", "worker"] {
-        let spawn = env
-            .niles(
-                &env.root,
-                &[
-                    "spawn", role, "--role", role, "--agent", "claude", "Do", "it",
-                ],
-            )
-            .output()
-            .unwrap();
-        assert_command_success(&format!("spawn --role {role}"), &spawn);
+    for skill in ["design", "reviewer", "security", "research", "worker"] {
+        let spawn = env.spawn(skill, &[skill, "Do", "it"]);
+        assert_command_success(&format!("spawn --skill {skill}"), &spawn);
 
-        let brief = fs::read_to_string(
-            state_dir(&env.root)
-                .join("worker")
-                .join(role)
-                .join("brief.md"),
-        )
-        .unwrap();
-        assert!(!brief.contains(&format!("You are the {role}")), "{brief}");
-        let launch = state_dir(&env.root).join(format!("worker/{role}/launch.sh"));
-        let script = fs::read_to_string(launch).unwrap();
+        let dir = state_dir(&env.root).join(format!("worker/{skill}"));
+        let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
+        assert!(
+            brief.starts_with(&format!("# Niles {skill} brief\n")),
+            "{brief}"
+        );
+        let script = fs::read_to_string(dir.join("launch.sh")).unwrap();
         assert!(script.contains("'--append-system-prompt'"), "{script}");
-        assert!(script.contains(&format!("You are the {role}")), "{script}");
-        assert!(brief.contains("niles agent status --help"), "{brief}");
+        assert!(script.contains(&format!("You are the {skill}")), "{script}");
         assert!(script.contains("Work from this brief and the code."));
         assert!(
             script.contains(
@@ -111,39 +83,14 @@ fn role_selects_primary_instructions_outside_the_opening_turn() {
             )
         );
         assert!(script.contains("Report uncertainty as uncertainty."));
-        if role == "worker" {
-            let (header, _) = brief.split_once("\n\n## Task").unwrap();
-            assert!(!header.contains("design_record:"));
-            assert!(script.contains("Without a design record, implement the issue directly"));
-            assert!(!state_dir(&env.root).join("sessions").exists());
-        }
-        briefs.push(brief);
-    }
-
-    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
-        assert_ne!(
-            briefs[left], briefs[right],
-            "each role must get a different brief"
-        );
     }
 }
 
 #[test]
 fn stdin_task_preserves_multiline_text() {
-    let env = TestEnv::new("niles-worker-stdin-task");
+    let env = TestEnv::with_manifest("niles-worker-stdin-task", "claude");
     let mut child = env
-        .niles(
-            &env.root,
-            &[
-                "spawn",
-                "review-file",
-                "--role",
-                "reviewer",
-                "--agent",
-                "claude",
-                "-",
-            ],
-        )
+        .spawn_command("reviewer", &["review-file", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -170,11 +117,9 @@ fn stdin_task_preserves_multiline_text() {
 
 #[test]
 fn spawn_accepts_literal_flag_text() {
-    let env = TestEnv::new("niles-worker-spawn-message-options");
+    let env = TestEnv::with_manifest("niles-worker-spawn-message-options", "claude");
 
-    let literal = env.run(&[
-        "spawn", "literal", "--role", "research", "--agent", "claude", "--", "--wait",
-    ]);
+    let literal = env.spawn("research", &["literal", "--", "--wait"]);
     assert_command_success("spawn literal --wait", &literal);
     let literal_brief =
         fs::read_to_string(state_dir(&env.root).join("worker/literal/brief.md")).unwrap();

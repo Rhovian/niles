@@ -21,7 +21,7 @@ projects, live and lost agents, and their tokens, with the poll interval and tim
 | Key | Action |
 | --- | --- |
 | ↑ ↓ | Move |
-| → ← | Expand or collapse a running project or role folder |
+| → ← | Expand or collapse a running project or skill folder |
 | Enter | Show the project's lead, or the selected window, in the view pane |
 | `[` `]` | Show the previous or next running project |
 | `;` `'` | Show the previous or next window of the shown project |

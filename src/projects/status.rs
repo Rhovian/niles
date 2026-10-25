@@ -28,8 +28,8 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
             }
             Ok(home(entries.len(), &sessions, &theme))
         }
-        StatusLine::Projects { .. } => project_line(&theme),
-        StatusLine::Sessions { session_name, .. } => session_line(&session_name, &theme),
+        StatusLine::Projects => project_line(&theme),
+        StatusLine::Sessions { session_name } => session_line(&session_name, &theme),
     }
 }
 
@@ -176,7 +176,8 @@ mod tests {
         .map(|key| theme.style(key).tmux());
         let session = |tokens: Option<u64>, window_gone| SessionUsage {
             id: "w".into(),
-            role: "worker",
+            skill: "worker".parse().unwrap(),
+            entry: false,
             agent: "codex".into(),
             state: crate::telemetry::SessionState::Unknown,
             usage: tokens.map(|input_tokens| Usage {

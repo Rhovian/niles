@@ -16,7 +16,7 @@ outside the boundary Niles can provide.
 
 Niles keeps only operator-added projects as symlinks in `~/.niles/projects/`. Opening a
 registered project creates its named tmux session and starts the lead in that path; workers run
-in the same session. Niles writes orchestration state, including role manifests, beneath
+in the same session. Niles writes orchestration state, including skill manifests, beneath
 `~/.niles/state/<mangled-absolute-workspace-path>/`, outside the repository tree.
 It never accepts an agent CLI workspace-trust prompt. Niles does not create an isolation boundary
 between the operator, agents, and workspace. Agent permissions ultimately depend on the selected
@@ -60,19 +60,17 @@ an operator to launch Niles from the clone.
 
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`, which can extend model and effort choices for the built-in families. The
-global per-project `manifest.yaml` file selects the agent for each role (lead, worker, reviewer, security,
-design, and research), and its per-role tiers and ordered secondaries can influence which
-listed agent the lead picks. New manifests live in operator state; legacy manifests migrated
-from a clone can still carry repository-authored bindings. See
+global per-project `manifest.yaml` file selects an entry skill and agents for skill-keyed bindings, and its per-skill tiers and ordered secondaries can influence which
+listed agent the lead picks. Manifests live in operator state. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`prompts/lead_brief.md`](../prompts/lead_brief.md).
 
-**Existing mitigations.** Spawn defaults to the role's standard primary and rejects unlisted
+**Existing mitigations.** Spawn defaults to the skill's standard primary and rejects unlisted
 tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
 secondary changes; the CLI does not enforce that conversational approval. Deserializing YAML
-does not itself execute shell commands. Unknown
-manifest fields are rejected, and built-in agent families reject unsupported model names. Worker
+does not itself execute shell commands. Unknown binding and tier fields are rejected;
+top-level skill keys are open, and built-in agent families reject unsupported model names. Worker
 launch scripts quote the selected binary and arguments, while foreground launches pass them as
 separate `Command` arguments; these measures prevent incidental shell parsing. See
 [`src/agent_window.rs`](../src/agent_window.rs),
@@ -81,38 +79,26 @@ separate `Command` arguments; these measures prevent incidental shell parsing. S
 
 **Known gaps.** Niles has no repository-trust gate of its own. Once the operator launches it, Niles
 executes built-in family binaries found on the operator's PATH. Project configuration cannot
-replace their executable names or launch arguments. Role bindings select what is launched,
+replace their executable names or launch arguments. Skill bindings select what is launched,
 and planning text is instruction input to the lead. The manifest can also configure a
 `worktree.setup` shell command and `worktree.env`; see the execution boundary below.
 `niles doctor` executes the selected built-in family binaries from PATH with `--version`.
 
-### Global project state, migration, symlinks, and locks
+### Global project state, symlinks, and locks
 
 **Attacker.** A malicious repository author who supplies tracked `.niles` paths or symlinks before
 the operator launches Niles. Tampering after launch by another process with the operator's account
 is outside the isolation guarantees described here.
 
-**Attacker-controlled input.** New project state is outside the clone, so tracked repository
-paths cannot prepopulate it. On first state access, Niles copies an existing `<workspace>/.niles/`
-to staging in the global state directory, publishes the complete copy, then removes the source,
-including its manifest and artifacts. Migrated content remains
-untrusted repository input: migration does not authenticate it. A top-level legacy symlink or
-file is rejected, and an existing destination causes an error rather than merging or overwriting
-state. The key uses plain slash-to-hyphen replacement: `/Users/j/code/my-app` becomes
+**Attacker-controlled input.** Project state is outside the clone, so tracked repository
+paths cannot prepopulate it. The key uses plain slash-to-hyphen replacement: `/Users/j/code/my-app` becomes
 `-Users-j-code-my-app`. Separator/hyphen collisions are accepted and can share project state.
 There is no escaping or hash fallback; filesystem component length limits apply. The registry remains `~/.niles/projects/`.
 Niles subsequently creates and reads manifests, session artifacts, worker directories, metadata,
 briefs, launch scripts, reports, status logs, and cursors in the global tree. See
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
-**Existing mitigations.** Migration holds a per-project advisory lock under `~/.niles/state/`.
-Legacy migration always copies to staging while preserving symlinks without following them.
-It publishes the completed copy before removing the source. A failed copy
-leaves the source intact and attempts to remove partial staging without replacing the original
-copy error if cleanup also fails. Retries use a fresh staging directory. Stop agents before upgrading:
-migration cannot update paths already held by running agents or their shell scripts, or
-synchronize writes made during the copy.
-`niles log` appends timestamped decisions via
+**Existing mitigations.** `niles log` appends timestamped decisions via
 Niles, so the lead needs no extra filesystem sandbox grant. It requires the latest lead session's
 recorded pane to match `TMUX_PANE`, validates the worker label and rejects control-bearing decision
 text; this is session routing, not authentication against same-user processes.
@@ -174,7 +160,7 @@ Name-only project and window status jobs emit tmux conditionals so selection is 
 redraw. Only validated project names and numeric window indexes enter expressions; worker and
 plain-window labels stay outside them with `#` escaped, and style commas are escaped inside
 conditional branches. Each project's window-list command uses a shell-quoted literal session
-name, giving it a separate tmux job cache. These bars read membership and role metadata; the home
+name, giving it a separate tmux job cache. These bars read membership and skill metadata; the home
 header and explorer still resolve telemetry.
 
 Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
@@ -225,11 +211,11 @@ stripped of controls and capped at 1,024 characters, the label at 256; nudges ca
 ID and status kind. Appends use `O_NOFOLLOW` and recheck the check-in under its lock and the log
 length; worker status append does not take that lock, so a racing report can interleave (accepted, #348).
 
-`niles panel config` no longer prints raw file bytes: parsed role cells, model names, and load errors
-are clamped and stripped of control characters before terminal rendering. The shared roles picker
-also clamps repository-authored family names and role values. It probes built-in executables
+`niles panel config` no longer prints raw file bytes: parsed skill cells, model names, and load errors
+are clamped and stripped of control characters before terminal rendering. The shared skills picker
+also clamps repository-authored family names and skill values. It probes built-in executables
 with the same PATH lookup as doctor; it does not execute them.
-When a manifest cannot deserialize, the interactive roles picker displays a clamped, control-stripped
+When a manifest cannot deserialize, the interactive skills picker displays a clamped, control-stripped
 parse error and starts from built-in defaults. Only an explicit save replaces the invalid manifest;
 quitting leaves it unchanged, and non-interactive launches still fail.
 
@@ -248,7 +234,7 @@ styling. A keystroke between capture and submit can still merge with a nudge.
 
 ### Agent CLI execution
 
-Primary role instructions reach the agent at system/developer privilege, above repository
+Primary skill instructions reach the agent at system/developer privilege, above repository
 `AGENTS.md` text: Claude/pi use `--append-system-prompt`, Codex uses TOML-escaped
 `--config developer_instructions`, and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`.
 NUL-bearing primary text is rejected. Task text and worker/session paths stay in the opening
@@ -256,6 +242,12 @@ user turn. These primary instructions are currently compiled-in; workspace skill
 a separate change. The argument is passed before any CLI trust prompt; declining a prompt
 cannot retract it. Whether a provider receives text before a declined prompt is unverified.
 Niles has no repository-trust gate and never accepts a CLI's trust prompt itself.
+
+Skill names are validated as nonempty ASCII letters, digits, hyphens and underscores at parse
+time; workspace setting keys are reserved. Binding and tier schemas remain strict. Spawn requires
+a bound non-entry skill even with an agent override. `--from` can name any live worker whose
+latest status is done; it passes a report path, without executing report contents. Mechanical
+reasons reject control characters before being appended to the lead's decisions log.
 
 With `--tree`, the worker agent runs in a directory chosen by the lead; Niles validates only that it
 exists and is a directory.
@@ -271,8 +263,7 @@ environment. Setup receives EOF on stdin; stdout and stderr both go to Niles's s
 cannot consume caller input or mix output into spawn results. Setup is arbitrary code with the
 operator's permissions, credentials, and network access; it is not sandboxed and runs before any
 agent CLI trust prompt. Commands may themselves execute repository content (for example package
-install scripts). Review setup and environment entries before spawning, including in migrated
-legacy manifests: migration does not confer trust. Niles validates environment names as shell
+install scripts). Review setup and environment entries before spawning. Niles validates environment names as shell
 identifiers and rejects NUL-bearing values; worker exports quote values to prevent incidental
 shell evaluation. Setup text is deliberately shell code. Setup never runs when joining an
 existing tree or using `--tree`. Failure aborts spawn; Niles forcibly removes the newly created
@@ -294,7 +285,7 @@ operator's permissions.
 **Attacker.** A malicious repository author who can influence selected configuration, manifest
 bindings, briefs, or workspace content and induce the operator to launch an agent.
 
-**Attacker-controlled input.** Model/effort and role selection,
+**Attacker-controlled input.** Model/effort and skill selection,
 planning guidance, briefs, and repository content all affect the process Niles launches and the
 work it is asked to perform.
 
@@ -368,7 +359,7 @@ included, carry `Cache-Control: no-store`.
 
 `GET /api/projects` shares the explorer's registered-project collection and the
 same authorization and no-store boundary. It exposes project names/states and
-worker IDs/roles/loss/model labels, including inactive projects; it excludes filesystem paths,
+worker IDs/skills/loss/model labels, including inactive projects; it excludes filesystem paths,
 window targets, briefs, and telemetry. The PWA stores only the last opened project
 name in origin-local storage. Worker rows open transcripts and expose a close action.
 
@@ -413,11 +404,11 @@ allowed tailnet user can instruct an agent with the host user's execution privil
 
 Remote control can start only a saved manifest's default lead for a registered project,
 stop a session tagged with that registry path, and close enumerated live/lost workers.
-No request chooses an agent, command, args, role or filesystem path. Registration and
+No request chooses an agent, command, args, skill or filesystem path. Registration and
 manifest creation remain desk-only. Start checks the directory, parses the manifest,
 and refuses foreign session names. Its fixed 409 texts distinguish those three
 operator-fixable conflicts; other errors expose only status codes. Phone starts bypass
-the role picker with `niles lead --keep-roles`. Agents run with the host user's privileges
+the skill picker with `niles lead --keep-skills`. Agents run with the host user's privileges
 and the service/tmux server environment; registration already trusts project configuration.
 Shell-rc-only credentials may be unavailable. Worker close runs `current_exe` with a
 registry cwd and enumerated ID as argv, without a shell. Stop closes workers before

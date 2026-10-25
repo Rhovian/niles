@@ -60,7 +60,7 @@ pub(super) enum Pick {
     Selected(String),
 }
 
-/// Selections are tentative until the last column completes. Back navigation never edits a role.
+/// Selections are tentative until the last column completes. Back navigation never edits a binding.
 pub(crate) struct Columns {
     pub(super) families: Vec<Family>,
     pub(super) family: usize,

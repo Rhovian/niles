@@ -10,13 +10,12 @@ use crate::{config::spec::ProjectConfig, theme::Theme, workspace_manifest::Works
 mod columns;
 mod draw;
 mod form;
-mod role;
 #[cfg(test)]
 mod tests;
 
+use crate::skills::SkillName;
 use columns::{Columns, Pick};
 use form::Form;
-pub(crate) use role::Role;
 
 pub(crate) enum Choice {
     Save(Box<WorkspaceManifest>),
@@ -26,7 +25,7 @@ pub(crate) enum Choice {
     Quit,
 }
 
-pub(crate) fn roles(
+pub(crate) fn skills(
     root: &Utf8Path,
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
@@ -60,17 +59,21 @@ fn run_form(
 }
 
 /// Uses the caller's terminal, including CONFIG's existing raw mode and alternate screen.
-pub(crate) fn role(
+pub(crate) fn skill(
     terminal: &mut DefaultTerminal,
-    role: Role,
+    skill: &SkillName,
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
     theme: &Theme,
 ) -> Result<Option<String>> {
     let families = columns::families(config)?;
-    let mut columns = Columns::new(&families, &role.value(manifest), config)?;
+    let mut columns = Columns::new(
+        &families,
+        &manifest.binding(skill)?.standard.primary,
+        config,
+    )?;
     loop {
-        terminal.draw(|frame| draw::single(frame, &columns, role, theme))?;
+        terminal.draw(|frame| draw::single(frame, &columns, skill, theme))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {

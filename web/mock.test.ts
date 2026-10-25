@@ -17,7 +17,7 @@ it('serves the mock JSON/SSE contract and keeps script execution external', asyn
     expect(await list.json()).toMatchObject({ api_version: 1, sessions: [{ agent: { entry_skill: 'lead' } }, { agent: { entry_skill: 'solo' } }] });
     const projects = await fetch(`${base}api/projects`);
     expect(projects.headers.get('cache-control')).toBe('no-store');
-    expect(await projects.json()).toMatchObject({ api_version: 1, projects: [{ name: 'niles', state: 'waiting', workers: [{ role: 'worker', lost: false }, { role: 'reviewer', lost: true }] }, { name: 'notes' }, { name: 'offline', state: 'not running' }] });
+    expect(await projects.json()).toMatchObject({ api_version: 1, projects: [{ name: 'niles', state: 'waiting', workers: [{ skill: 'worker', lost: false }, { skill: 'reviewer', lost: true }] }, { name: 'notes' }, { name: 'offline', state: 'not running' }] });
     const events = await fetch(`${base}api/sessions/solo/events`, { signal: controller.signal });
     expect(events.headers.get('content-type')).toBe('text/event-stream');
     const reader = events.body!.getReader();

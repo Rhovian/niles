@@ -24,7 +24,7 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
         (
             "claude:opus:high",
             "claude:opus:low",
-            "not allowed for role",
+            "not allowed for skill",
         ),
         (
             "codex:gpt-6.1-sol:high",
@@ -62,5 +62,13 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
         assert_eq!(entry["outcome"], "failed");
         assert!(entry["error"].as_str().unwrap().contains(error));
     }
+    meta["agent"] = "claude:sonnet:high".into();
+    meta["skill"] = "removed".into();
+    fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    assert_failure_contains(
+        "removed skill",
+        &env.run(&["retier", "worker", "claude:sonnet:high"]),
+        "skill removed is not bound",
+    );
     assert!(!env.tmux_log().contains("send-keys"));
 }

@@ -10,7 +10,7 @@ fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
     let dir = state_dir(&env.root).join("sessions").join(id);
     fs::create_dir_all(&dir).unwrap();
     let meta = serde_json::json!({
-        "id": id, "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
+        "id": id, "entry_skill": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
         "workspace": env.root, "brief": dir.join("lead.md"), "lead_pane": pane,
     });
     fs::write(dir.join("session.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
@@ -24,73 +24,12 @@ fn new_state_and_manifest_stay_outside_the_repository() {
     assert_eq!(dir, state_dir(&env.root));
     assert!(!env.root.join(".niles").exists());
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    let output = env.run(&["spawn", "research", "--role", "research", "investigate"]);
+    let output = env.spawn("research", &["research", "investigate"]);
     assert_command_success("spawn", &output);
     assert!(dir.join("manifest.yaml").is_file());
     assert!(dir.join("worker/research/brief.md").is_file());
     assert!(stdout_of(&output).contains(dir.to_str().unwrap()));
     assert!(!env.root.join(".niles").exists());
-}
-
-#[test]
-fn migration_moves_the_entire_directory_and_is_idempotent() {
-    let env = TestEnv::new("niles-global-move");
-    let legacy = env.root.join(".niles");
-    fs::create_dir_all(legacy.join("worker/old")).unwrap();
-    fs::write(legacy.join("worker/old/report.md"), b"report\0bytes").unwrap();
-    fs::write(
-        legacy.join("manifest.yaml"),
-        include_str!("../examples/claude-lead.yaml"),
-    )
-    .unwrap();
-    let output = env.run(&["doctor"]);
-    assert_command_success("migrated manifest", &output);
-    let dir = state_dir(&env.root);
-    assert!(!legacy.exists());
-    assert_eq!(
-        fs::read(dir.join("worker/old/report.md")).unwrap(),
-        b"report\0bytes"
-    );
-    assert!(dir.join("manifest.yaml").is_file());
-    assert_eq!(state_dir(&env.root), dir);
-}
-
-#[test]
-fn migration_refuses_conflicting_state_without_losing_either_copy() {
-    let env = TestEnv::new("niles-global-conflict");
-    let legacy = env.root.join(".niles");
-    let global = state_dir(&env.root);
-    for dir in [&legacy, &global] {
-        fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("manifest.yaml"), dir.to_str().unwrap()).unwrap();
-    }
-    assert_failure_contains(
-        "conflict",
-        &env.run(&["workers"]),
-        "reconcile the directories",
-    );
-    for dir in [&legacy, &global] {
-        assert_eq!(
-            fs::read_to_string(dir.join("manifest.yaml")).unwrap(),
-            dir.to_str().unwrap()
-        );
-    }
-}
-
-#[test]
-fn migration_rejects_a_repository_supplied_state_symlink() {
-    let env = TestEnv::new("niles-global-symlink");
-    let global = state_dir(&env.root);
-    let target = env.root.join("target");
-    fs::create_dir(&target).unwrap();
-    fs::write(target.join("secret"), "untouched").unwrap();
-    symlink(&target, env.root.join(".niles")).unwrap();
-    assert_failure_contains("symlink", &env.run(&["workers"]), "not a file or symlink");
-    assert_eq!(
-        fs::read_to_string(target.join("secret")).unwrap(),
-        "untouched"
-    );
-    assert!(!global.exists());
 }
 
 #[test]
@@ -205,27 +144,6 @@ fn log_rejects_a_session_id_that_escapes_its_directory() {
         "session id does not match directory",
     );
     assert!(!env.root.join("decisions.log").exists());
-}
-
-#[test]
-fn migrated_pi_transcripts_remain_readable() {
-    let env = TestEnv::new("niles-global-pi");
-    let worker = write_worker(&env.root, "pi", "niles-test-session:pi", None, b"");
-    let legacy = env.root.join(".niles");
-    let transcript = legacy.join("worker/pi/pi-sessions");
-    let path = worker.join("meta.json");
-    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    meta["session_link"] = serde_json::json!({ "family": "pi", "session_dir": transcript });
-    meta["brief"] = serde_json::json!(legacy.join("worker/pi/brief.md"));
-    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    fs::rename(state_dir(&env.root), &legacy).unwrap();
-    fs::create_dir_all(&transcript).unwrap();
-    fs::write(transcript.join("session.jsonl"), concat!(r#"{"type":"message","timestamp":"2026-10-01T16:00:00Z","message":{"role":"assistant","stopReason":"stop","usage":{"input":20,"output":30,"cacheRead":40,"cacheWrite":50}}}"#, "\n")).unwrap();
-    let output = env.run(&["usage"]);
-    assert_command_success("migrated usage", &output);
-    let usage: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(usage["sessions"][0]["usage"]["input_tokens"], 20);
-    assert!(!legacy.exists());
 }
 
 #[test]

@@ -19,14 +19,15 @@ pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
-    let agent = manifest.lead.default_model();
+    let agent = &manifest.binding(&manifest.entry)?.standard.primary;
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
-    let ManagerSession { meta, brief, dir } = write_manager_session(workspace, &invocation.spec)?;
+    let ManagerSession { meta, brief, dir } =
+        write_manager_session(workspace, &invocation.spec, &manifest.entry)?;
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
     }
     invocation.pass_primary(&brief)?;
-    let prompt = entry_prompt_args(invocation.brief, &meta.entry_skill, &dir);
+    let prompt = entry_prompt_args(invocation.brief, meta.entry_skill.as_str(), &dir);
     invocation.args.extend(prompt);
 
     // The watcher is held for exactly as long as the foreground agent runs, on the failing path

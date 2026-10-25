@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     session, store,
-    telemetry::{self, Buckets, SessionLink, SessionState},
+    telemetry::{self, Buckets, SessionState},
     util::{current_dir_utf8, parse_timestamp_id},
 };
 
@@ -20,7 +20,8 @@ use super::{
 #[derive(Serialize)]
 pub(crate) struct SessionUsage {
     pub(crate) id: String,
-    pub(crate) role: &'static str,
+    pub(crate) skill: crate::skills::SkillName,
+    pub(crate) entry: bool,
     pub(crate) agent: String,
     pub(crate) state: SessionState,
     pub(crate) usage: Option<telemetry::Usage>,
@@ -35,7 +36,8 @@ pub(crate) struct SessionUsage {
 /// their buckets are cached.
 pub(crate) struct ClosedSession {
     pub(crate) id: String,
-    pub(crate) role: &'static str,
+    pub(crate) skill: crate::skills::SkillName,
+    pub(crate) entry: bool,
     pub(crate) agent: String,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) closed_at: DateTime<Utc>,
@@ -70,7 +72,8 @@ pub(crate) fn collect(
         let record = worker_session(&worker, Utc::now())?;
         sessions.push(SessionUsage {
             id: worker.id,
-            role: meta.role.as_str(),
+            skill: meta.skill.clone(),
+            entry: false,
             agent: meta.agent.clone(),
             state: record.state.displayed(),
             usage: record.usage,
@@ -82,7 +85,8 @@ pub(crate) fn collect(
         let record = lead_session(&meta, Utc::now())?;
         sessions.push(SessionUsage {
             id: meta.id,
-            role: "lead",
+            skill: meta.entry_skill,
+            entry: true,
             agent: meta.agent,
             state: record.state.displayed(),
             usage: record.usage,
@@ -124,8 +128,7 @@ pub(crate) fn lead_usage(meta: &session::SessionMeta) -> Result<Option<telemetry
     }
 }
 
-/// Archived workers closed at or after `since` that recorded a `session_link`. Older archives
-/// have no transcript to read, and also predate `role`, so they are skipped unparsed.
+/// Archived workers closed at or after `since` that recorded a `session_link`.
 pub(crate) fn closed_workers(
     workspace: &Utf8Path,
     since: DateTime<Utc>,
@@ -136,28 +139,25 @@ pub(crate) fn closed_workers(
             continue;
         }
         let path = meta_path(&dir);
-        let Some(body) = store::read_optional_json::<serde_json::Value>(&path)? else {
+        let Some(meta) = store::read_optional_json::<WorkerMeta>(&path)? else {
             continue;
         };
-        let context = || format!("failed to parse {path}");
-        let mut link: SessionLink = match body.get("session_link") {
-            None | Some(serde_json::Value::Null) => continue,
-            Some(link) => serde_json::from_value(link.clone()).with_context(context)?,
-        };
-        let meta: WorkerMeta = serde_json::from_value(body).with_context(context)?;
-        link.relocate(workspace)?;
-        // Legacy Codex sessions match the live report path named in their brief.
+        let link = meta
+            .session_link
+            .as_ref()
+            .with_context(|| format!("missing session_link in {path}"))?;
         let buckets = telemetry::closed_buckets(&dir, || {
             let worker_dir = meta.brief.parent().context("worker brief has no parent")?;
             telemetry::read(
-                &link,
+                link,
                 meta.agent_dir(),
                 &report_path(worker_dir),
                 meta.created_at,
             )
         })?;
         closed.push(ClosedSession {
-            role: meta.role.as_str(),
+            skill: meta.skill.clone(),
+            entry: false,
             id: meta.id,
             agent: meta.agent,
             created_at: meta.created_at,
@@ -187,7 +187,7 @@ pub(crate) fn superseded_leads(
         if *closed_at < since {
             continue;
         }
-        let Some(meta) = session::read_session_meta(workspace, dir)? else {
+        let Some(meta) = session::read_session_meta(dir)? else {
             continue;
         };
         let buckets = match &meta.session_link {
@@ -196,7 +196,8 @@ pub(crate) fn superseded_leads(
         };
         closed.push(ClosedSession {
             id: meta.id,
-            role: "lead",
+            skill: meta.entry_skill,
+            entry: true,
             agent: meta.agent,
             created_at: meta.created_at,
             closed_at: *closed_at,
@@ -232,7 +233,6 @@ pub(crate) fn worker_session(
                 crate::tmux::TargetState::PaneExited
                 | crate::tmux::TargetState::WindowDead
                 | crate::tmux::TargetState::OrphanGone
-                | crate::tmux::TargetState::OrphanLegacyCandidate { .. }
                 | crate::tmux::TargetState::Unknown { .. } => return Ok(state.liveness()),
             };
             telemetry::process_activity(&crate::tmux::TmuxTarget::window(&target), since)

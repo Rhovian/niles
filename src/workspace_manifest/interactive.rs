@@ -3,9 +3,9 @@ use std::io::{self, IsTerminal, Write};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 
-use super::{WorkspaceManifest, load, manifest_path, roles_table::print_manifest_roles, save};
+use super::{WorkspaceManifest, load, manifest_path, save, skills_table::print_manifest_skills};
 use crate::{
-    agents::picker::{self, Choice, Role},
+    agents::picker::{self, Choice},
     config::spec::load_project_config_from,
 };
 
@@ -18,7 +18,7 @@ pub(crate) fn ensure_interactive(
         root,
         start == crate::tmux::LeadStart::Attended && io::stdin().is_terminal(),
         &mut io::stdout(),
-        picker::roles,
+        picker::skills,
     )
 }
 
@@ -41,7 +41,7 @@ fn ensure(
         Err(error) if interactive && error.is::<serde_saphyr::Error>() => (
             None,
             Some(format!(
-                "Cannot parse manifest: {error:#}. Pick roles and save to replace it with defaults; q leaves it unchanged."
+                "Cannot parse manifest: {error:#}. Pick skills and save to replace it with defaults; q leaves it unchanged."
             )),
         ),
         Err(error) => return Err(error),
@@ -53,7 +53,7 @@ fn ensure(
                 manifest_path(root)?
             );
         };
-        print_manifest_roles(output, &manifest, &config)?;
+        print_manifest_skills(output, &manifest, &config)?;
         return Ok(Some(manifest));
     }
     let defaults = match &existing {
@@ -62,7 +62,7 @@ fn ensure(
     };
     let save_reason = replacement_reason.as_deref().or_else(|| {
         existing.is_none().then_some(
-            "No workspace manifest exists yet. Save the shown roles to continue; q quits.",
+            "No workspace manifest exists yet. Save the shown skills to continue; q quits.",
         )
     });
     match pick(root, defaults, &config, save_reason)? {
@@ -76,7 +76,7 @@ fn ensure(
     }
 }
 
-/// Re-read before setting roles. Race accepted: a concurrent edit of the same role inside the
+/// Re-read before setting skills. Race accepted: a concurrent edit of the same skill inside the
 /// save window is lost, last writer wins.
 fn save_changes(
     root: &Utf8Path,
@@ -97,16 +97,9 @@ fn save_changes(
         None => &defaults,
     };
     let mut changed = false;
-    for role in Role::ALL {
-        if role.changed(before, draft) {
-            match role {
-                Role::Lead => latest.lead = draft.lead.clone(),
-                Role::Worker => latest.worker = draft.worker.clone(),
-                Role::Reviewer => latest.reviewer = draft.reviewer.clone(),
-                Role::Security => latest.security = draft.security.clone(),
-                Role::Design => latest.design = draft.design.clone(),
-                Role::Research => latest.research = draft.research.clone(),
-            }
+    for (skill, binding) in &draft.bindings {
+        if before.bindings.get(skill) != Some(binding) {
+            latest.set_primary(skill, binding.standard.primary.clone())?;
             changed = true;
         }
     }

@@ -196,7 +196,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
     fs::remove_file(marker(&env, "running")).unwrap();
     server.status("PUT", "/api/projects/api/session", "", 200);
     let log = env.tmux_log();
-    assert!(log.contains("lead --keep-roles"), "{log}");
+    assert!(log.contains("lead --keep-skills"), "{log}");
     server.status("PUT", "/api/projects/api/session", "", 200);
     assert_eq!(env.tmux_log().matches("new-session").count(), 1);
     fs::remove_file(marker(&env, "running")).unwrap();
@@ -214,7 +214,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
         assert!(
             env.tmux_log()
                 .lines()
-                .any(|line| line.starts_with(command) && line.contains("lead --keep-roles"))
+                .any(|line| line.starts_with(command) && line.contains("lead --keep-skills"))
         );
         fs::remove_file(marker(&env, state)).unwrap();
     }

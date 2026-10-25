@@ -8,6 +8,10 @@ use std::{
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 
+pub(crate) fn skill(name: &str) -> crate::skills::SkillName {
+    name.parse().unwrap()
+}
+
 pub(crate) fn at(seconds: i64) -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(seconds, 0).unwrap()
 }
@@ -39,7 +43,7 @@ pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::
 
 /// Remove both the workspace fixture and its global orchestration state.
 pub(crate) fn remove_workspace(workspace: &camino::Utf8Path) -> anyhow::Result<()> {
-    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_path(workspace)?)?;
+    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_dir(workspace)?)?;
     crate::util::remove_dir_all_if_exists(workspace)
 }
 
@@ -58,7 +62,7 @@ fn orchestration_state_uses_the_private_unit_test_home() {
     let workspace = temp_test_path("isolated-state");
     let home = home_dir();
     assert!(home.is_absolute());
-    let state = crate::store::paths::project_path(&workspace).unwrap();
+    let state = crate::store::paths::project_dir(&workspace).unwrap();
     assert_eq!(
         state,
         home.join(".niles/state")

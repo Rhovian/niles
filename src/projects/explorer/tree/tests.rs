@@ -3,7 +3,7 @@ use crate::projects::{
     registry::{Entry, ProjectName},
     rows::{Row, State},
     status::Segment,
-    windows::{Role, SessionAgents},
+    windows::{SessionAgents, WindowKind},
 };
 use crate::theme::{State as ThemeState, StyleKey};
 
@@ -27,7 +27,7 @@ fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
     Project { row, agents }
 }
 
-fn window(name: &str, role: Role, label: &str) -> AgentWindow {
+fn window(name: &str, kind: WindowKind, label: &str) -> AgentWindow {
     let segment = Segment {
         label: label.into(),
         state: Some(ThemeState::Running),
@@ -36,7 +36,7 @@ fn window(name: &str, role: Role, label: &str) -> AgentWindow {
     };
     AgentWindow {
         name: name.into(),
-        role,
+        kind,
         segment,
     }
 }
@@ -44,14 +44,14 @@ fn window(name: &str, role: Role, label: &str) -> AgentWindow {
 fn projects() -> Vec<Project> {
     let agents = SessionAgents {
         windows: vec![
-            window("niles", Role::Lead, "lead"),
+            window("niles", WindowKind::Lead, "lead"),
             window(
                 "parse",
-                Role::Worker("parse".into(), WorkerRole::Worker),
+                WindowKind::Worker("parse".into(), "worker".parse().unwrap()),
                 "parse",
             ),
         ],
-        lost: vec![("gone".into(), WorkerRole::Worker)],
+        lost: vec![("gone".into(), "worker".parse().unwrap())],
     };
     vec![
         project("api", State::Running, Some(agents)),
@@ -84,7 +84,7 @@ fn running_projects_and_role_folders_start_open() {
         [
             "PROJECTS",
             "├─ ▾ ⣾ api",
-            "│  └─ ▾ workers 2",
+            "│  └─ ▾ worker 2",
             "│     ├─ ● parse",
             "│     └─ gone window lost",
             "└─     old",
@@ -119,7 +119,7 @@ fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
 fn cycling_projects_wraps_over_running_project_rows() {
     let mut tree = tree();
     let lead = SessionAgents {
-        windows: vec![window("niles", Role::Lead, "lead")],
+        windows: vec![window("niles", WindowKind::Lead, "lead")],
         lost: Vec::new(),
     };
     let mut projects = projects();
@@ -141,7 +141,7 @@ fn cycling_windows_wraps_within_the_selected_project() {
     assert!(
         !tree
             .collapsed_folders
-            .contains(&("api".into(), WorkerRole::Worker))
+            .contains(&("api".into(), "worker".parse().unwrap()))
     );
     assert!(tree.cycle_windows(1));
     assert!(tree.selected().map(Item::key) == Some(Key::Project("api")));
@@ -248,7 +248,7 @@ fn panels_keep_selection_and_cycle_only_to_windows() {
 #[test]
 fn waiting_project_shows_warning_and_spinner() {
     let agents = SessionAgents {
-        windows: vec![window("niles", Role::Lead, "lead")],
+        windows: vec![window("niles", WindowKind::Lead, "lead")],
         lost: Vec::new(),
     };
     let waiting_none = project("wait", State::Waiting(None), Some(agents));
@@ -274,11 +274,13 @@ fn waiting_project_shows_warning_and_spinner() {
 fn exact_labels_with_two_folders_and_a_lost_reviewer() {
     let mut projects = projects();
     let agents = projects[0].agents.as_mut().unwrap();
-    let reviewer = Role::Worker("review-parse".into(), WorkerRole::Reviewer);
+    let reviewer = WindowKind::Worker("review-parse".into(), "reviewer".parse().unwrap());
     agents
         .windows
         .push(window("review-parse", reviewer, "review-parse"));
-    agents.lost.push(("gone".into(), WorkerRole::Reviewer));
+    agents
+        .lost
+        .push(("gone".into(), "reviewer".parse().unwrap()));
     agents.windows[0].segment.age = Some("3m".into());
     let web = SessionAgents {
         windows: Vec::new(),
@@ -296,16 +298,16 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
     tree.replace(projects);
     tree.select(Key::Window("api", "parse"));
     tree.collapse();
-    tree.down();
+    tree.select(Key::Folder("api", &"reviewer".parse().unwrap()));
     assert_eq!(
         labels(&tree),
         [
             "PROJECTS",
             "├─ ▾ ⣾ api                        3m",
-            "│  ├─ ▸ workers 2",
-            "│  └─ ▾ reviewers 2",
-            "│     ├─ ● review-parse",
-            "│     └─ gone window lost",
+            "│  ├─ ▾ reviewer 2",
+            "│  │  ├─ ● review-parse",
+            "│  │  └─ gone window lost",
+            "│  └─ ▸ worker 2",
             "├─   ⚠ web",
             "└─     old",
         ]
@@ -315,9 +317,13 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
     );
     let mut refreshed = self::projects();
     let agents = refreshed[0].agents.as_mut().unwrap();
-    agents.lost.push(("gone".into(), WorkerRole::Reviewer));
+    agents
+        .lost
+        .push(("gone".into(), "reviewer".parse().unwrap()));
     tree.replace(refreshed);
-    assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", WorkerRole::Reviewer)));
+    assert!(
+        tree.selected().map(Item::key) == Some(Key::Folder("api", &"reviewer".parse().unwrap()))
+    );
 }
 
 #[test]
@@ -325,10 +331,10 @@ fn collapsing_a_member_moves_to_its_folder() {
     let mut tree = tree();
     assert!(tree.cycle_windows(1));
     tree.collapse();
-    assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", WorkerRole::Worker)));
+    assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", &"worker".parse().unwrap())));
     assert!(
         tree.collapsed_folders
-            .contains(&("api".into(), WorkerRole::Worker))
+            .contains(&("api".into(), "worker".parse().unwrap()))
     );
 }
 
@@ -341,7 +347,11 @@ fn state_glyphs_and_lost_suffixes_carry_theme_styles() {
     let line = tree.label(Item::Project(&tree.projects[0]), now, &theme, 36);
     assert_eq!(line.spans[2].style, theme.state(ThemeState::Waiting).1);
     let line = tree.label(
-        Item::Member(&tree.projects[0], WorkerRole::Worker, Member::Lost("gone")),
+        Item::Member(
+            &tree.projects[0],
+            &"worker".parse().unwrap(),
+            Member::Lost("gone"),
+        ),
         now,
         &theme,
         36,
@@ -385,7 +395,7 @@ fn worker_rows_show_activity_and_right_aligned_tokens() {
         worker.segment.tokens = Some(12_000);
         let project = &tree.projects[0];
         let worker = &project.agents.as_ref().unwrap().windows[1];
-        let item = Item::Member(project, WorkerRole::Worker, Member::Window(worker));
+        let item = Item::Member(project, &"worker".parse().unwrap(), Member::Window(worker));
         let line = tree.label(item, now, &theme, 36);
         let prefix = format!("│     ├─ {glyph} parse");
         let expected = if state.is_some() {

@@ -40,7 +40,7 @@ fn window_labels_need_metadata_but_never_logs_or_telemetry() {
 fn cached_bar_output_selects_at_tmux_expansion_time() {
     let env = TestEnv::new("niles-bar-selection");
     let output = env
-        .niles(&env.root, &["status", "sessions", "api", "99"])
+        .niles(&env.root, &["status", "sessions", "api"])
         .env("HOME", &env.home)
         .env("TMUX_WINDOWS", "0\tfirst\n1\t#{pane_id},#[fg=red]")
         .output()
@@ -53,7 +53,7 @@ fn cached_bar_output_selects_at_tmux_expansion_time() {
         std::os::unix::fs::symlink(&env.root, registry.join(name)).unwrap();
     }
     let projects = env
-        .niles(&env.root, &["status", "projects", "stale"])
+        .niles(&env.root, &["status", "projects"])
         .env("HOME", &env.home)
         .env("TMUX_SESSION_EXISTS", "1")
         .env("TMUX_PROJECT_TAG", &env.root)

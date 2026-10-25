@@ -7,19 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agents,
+    skills::{SkillName, builtin},
     telemetry::SessionLink,
     util::{read_dir_utf8_paths, render_template, timestamp_id},
     workspace_manifest,
 };
 
 use super::{sessions_dir, startup::startup_context};
-
-const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
-
-const DEFAULT_ENTRY_SKILL: &str = "lead";
-fn default_entry_skill() -> String {
-    DEFAULT_ENTRY_SKILL.to_owned()
-}
 
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
@@ -28,8 +22,7 @@ const LEAD_PANE_ENV: &str = "TMUX_PANE";
 pub(crate) struct SessionMeta {
     pub id: String,
     pub agent: String,
-    #[serde(default = "default_entry_skill")]
-    pub entry_skill: String,
+    pub entry_skill: SkillName,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,19 +48,20 @@ pub(super) struct ManagerSession {
 pub(super) fn write_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
+    skill: &SkillName,
 ) -> Result<ManagerSession> {
     let now = Utc::now();
     let id = timestamp_id(&now);
     let dir = sessions_dir(workspace)?.join(&id);
-    fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_lead_brief(agent, workspace, &dir, &startup_context)?;
+    let body = render_entry_brief(agent, workspace, &dir, &startup_context, skill)?;
+    fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
     fs::write(&path, &body).with_context(|| format!("failed to write {path}"))?;
     let meta = SessionMeta {
         id: id.clone(),
         agent: agent.canonical(),
-        entry_skill: default_entry_skill(),
+        entry_skill: skill.clone(),
         agent_family: agent.tiered_family(),
         model: agent.model().map(str::to_owned),
         effort: agent.effort().map(str::to_owned),
@@ -90,15 +84,16 @@ pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Re
     crate::store::write_json(&meta_path, meta)
 }
 
-fn render_lead_brief(
+fn render_entry_brief(
     agent: &agents::AgentSpec,
     workspace: &Utf8Path,
     dir: &Utf8Path,
     startup_context: &str,
+    skill: &SkillName,
 ) -> Result<String> {
     let manifest_path = workspace_manifest::manifest_path(workspace)?;
     Ok(render_template(
-        LEAD_BRIEF_TEMPLATE,
+        &builtin::primary(skill)?,
         &[
             ("{workspace}", workspace.as_str()),
             ("{agent}", &agent.canonical()),
@@ -126,7 +121,7 @@ pub(crate) fn latest_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
         .rev()
     {
         if dir.is_dir()
-            && let Some(meta) = read_session_meta(workspace, &dir)?
+            && let Some(meta) = read_session_meta(&dir)?
         {
             return Ok(Some(meta));
         }
@@ -134,20 +129,13 @@ pub(crate) fn latest_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
     Ok(None)
 }
 
-pub(crate) fn read_session_meta(
-    workspace: &Utf8Path,
-    dir: &Utf8Path,
-) -> Result<Option<SessionMeta>> {
-    let mut meta: Option<SessionMeta> =
-        crate::store::read_optional_json(&dir.join("session.json"))?;
-    if let Some(meta) = &mut meta {
+pub(crate) fn read_session_meta(dir: &Utf8Path) -> Result<Option<SessionMeta>> {
+    let meta: Option<SessionMeta> = crate::store::read_optional_json(&dir.join("session.json"))?;
+    if let Some(meta) = &meta {
         ensure!(
             Some(meta.id.as_str()) == dir.file_name(),
             "session id does not match directory {dir}"
         );
-        if let Some(link) = &mut meta.session_link {
-            link.relocate(workspace)?;
-        }
     }
     Ok(meta)
 }
@@ -166,6 +154,7 @@ fn recorded_lead_pane() -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_support::temp_test_path;
+    const LEAD_BRIEF_TEMPLATE: &str = include_str!("../../prompts/lead_brief.md");
 
     #[test]
     fn lead_brief_bounds_the_lead_to_the_request() {
@@ -237,7 +226,7 @@ mod tests {
         let workspace = temp_test_path("session-lead-pane");
         fs::create_dir_all(&workspace).unwrap();
         let mut meta = SessionMeta {
-            entry_skill: default_entry_skill(),
+            entry_skill: SkillName::default(),
             id: "session".to_owned(),
             agent: "claude".to_owned(),
             agent_family: None,
@@ -256,22 +245,6 @@ mod tests {
         let body = fs::read_to_string(&file).unwrap();
         assert!(body.contains("\"lead_pane\": \"%7\""), "{body}");
 
-        let mut value: serde_json::Value = serde_json::from_str(&body).unwrap();
-        value.as_object_mut().unwrap().remove("entry_skill");
-        assert_eq!(
-            serde_json::from_value::<SessionMeta>(value.clone())
-                .unwrap()
-                .entry_skill,
-            "lead"
-        );
-        value["entry_skill"] = "solo".into();
-        assert_eq!(
-            serde_json::from_value::<SessionMeta>(value)
-                .unwrap()
-                .entry_skill,
-            "solo"
-        );
-
         // A session with no pane omits the field rather than writing a null nobody records.
         meta.lead_pane = None;
         write_session_meta(&workspace, &meta).unwrap();
@@ -282,13 +255,37 @@ mod tests {
     }
 
     #[test]
+    fn missing_compiled_entry_leaves_no_session_directory() {
+        let workspace = temp_test_path("missing-entry");
+        let agent =
+            agents::AgentSpec::parse("claude", &agents::ModelRoster::builtin().unwrap()).unwrap();
+        let error = write_manager_session(&workspace, &agent, &"custom".parse().unwrap())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("no compiled primary skill custom"),
+            "{error}"
+        );
+        assert!(!sessions_dir(&workspace).unwrap().exists());
+        crate::test_support::remove_workspace(&workspace).unwrap();
+    }
+
+    #[test]
     fn lead_brief_render_fills_every_placeholder() {
         let workspace = temp_test_path("brief-{dir}-render");
         let dir = workspace.join(".niles/sessions/test-session");
         let models = agents::ModelRoster::builtin().unwrap();
         let agent = agents::AgentSpec::parse("codex:gpt-5.5:xhigh", &models).unwrap();
 
-        let body = render_lead_brief(&agent, &workspace, &dir, "worker: none").unwrap();
+        let body = render_entry_brief(
+            &agent,
+            &workspace,
+            &dir,
+            "worker: none",
+            &SkillName::default(),
+        )
+        .unwrap();
 
         assert!(body.contains(&format!(
             "manifest: {}",

@@ -158,18 +158,15 @@ fn models(dashboard: &Dashboard<'_>, theme: &Theme) -> Block {
         .models
         .iter()
         .map(|row| {
-            let roles = row
-                .roles
+            let skills = row
+                .skills
                 .iter()
-                .map(|(role, count)| match (*role, count) {
-                    (_, 1) | ("security" | "research", _) => format!("{count} {role}"),
-                    _ => format!("{count} {role}s"),
-                })
+                .map(|(skill, count)| format!("{count} {skill}"))
                 .collect::<Vec<_>>()
                 .join(" · ");
             vec![
                 Cell::left(row.agent, Style::new()),
-                Cell::left(roles, theme.style(StyleKey::Muted)),
+                Cell::left(skills, theme.style(StyleKey::Muted)),
                 Cell::right(abbreviate(row.tokens), theme.style(StyleKey::Heading)),
             ]
         })
@@ -253,11 +250,7 @@ fn context_row(row: &ContextRow<'_>, theme: &Theme) -> Vec<Cell> {
     vec![
         Cell::left(row.project, style(StyleKey::Muted)),
         Cell::left(
-            if session.role == "lead" {
-                "lead"
-            } else {
-                &session.id
-            },
+            if session.entry { "lead" } else { &session.id },
             style(StyleKey::Accent),
         ),
         Cell::left(&session.agent, style(StyleKey::Muted)),

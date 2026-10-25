@@ -34,7 +34,7 @@ impl Fixture {
                 id: "session".into(),
                 agent: "pi:model:high".into(),
                 agent_family: None,
-                entry_skill: "solo".into(),
+                entry_skill: "solo".parse().unwrap(),
                 model: Some("test-model".into()),
                 effort: None,
                 created_at: chrono::Utc::now(),

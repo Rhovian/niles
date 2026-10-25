@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_window::shell_quote,
-    agents::{self, AgentSpec, BriefDelivery, InvocationDefaults, picker::Role},
+    agents::{self, AgentSpec, BriefDelivery, InvocationDefaults},
     config::spec::load_project_config_from,
     doctor::version_line,
     util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path},
@@ -35,9 +35,9 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
     let models = load_project_config_from(&root)?.models;
     let manifest =
         workspace_manifest::load(&root)?.context("compat requires a workspace manifest")?;
-    let specs = Role::ALL
-        .into_iter()
-        .flat_map(|role| role.binding(&manifest).agents())
+    let specs = manifest
+        .ordered_bindings()
+        .flat_map(|(_, binding)| binding.agents())
         .map(|agent| AgentSpec::parse(agent, &models))
         .collect::<Result<Vec<_>>>()?;
     let mut passed = true;

@@ -9,7 +9,6 @@ mod pane;
 mod report;
 mod resolve;
 mod retier;
-mod role;
 mod snapshot;
 mod spawn;
 pub(crate) mod usage;
@@ -21,7 +20,6 @@ pub use list::workers;
 pub use pane::{peek, send};
 pub use report::report;
 pub use retier::retier;
-pub use role::WorkerRole;
 pub use spawn::{Assignment, spawn};
 pub use usage::usage;
 pub use worktree::SpawnTree;
@@ -35,7 +33,7 @@ pub(crate) use validation::validate_task_label;
 
 pub(crate) struct StatusWorker {
     pub id: String,
-    pub role: WorkerRole,
+    pub skill: crate::skills::SkillName,
     pub window: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub usage: Option<crate::telemetry::Usage>,
@@ -55,7 +53,7 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
             })?;
             Ok(StatusWorker {
                 id: worker.id.clone(),
-                role: meta.role,
+                skill: meta.skill.clone(),
                 window: meta.window.clone(),
                 created_at: meta.created_at,
                 usage: record.usage,
@@ -157,7 +155,6 @@ pub(crate) fn chat_target(
         crate::tmux::TargetState::PaneExited
         | crate::tmux::TargetState::WindowDead
         | crate::tmux::TargetState::OrphanGone
-        | crate::tmux::TargetState::OrphanLegacyCandidate { .. }
         | crate::tmux::TargetState::Unknown { .. } => None,
     };
     Ok(Some(ChatTarget {

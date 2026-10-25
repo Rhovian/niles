@@ -39,9 +39,6 @@ enum WindowCloseOutcome {
     },
     WindowDead,
     OrphanGone,
-    OrphanLegacyCandidate {
-        candidate: WindowTarget,
-    },
     Unknown {
         error: String,
     },
@@ -199,9 +196,6 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
             },
             TargetState::WindowDead => WindowCloseOutcome::WindowDead,
             TargetState::OrphanGone => WindowCloseOutcome::OrphanGone,
-            TargetState::OrphanLegacyCandidate { candidate } => {
-                WindowCloseOutcome::OrphanLegacyCandidate { candidate }
-            }
             TargetState::Unknown { error } => WindowCloseOutcome::Unknown { error },
         },
         Err(err) => WindowCloseOutcome::Unknown {
@@ -261,10 +255,6 @@ fn print_window_close_detail(outcome: &WorkerCloseOutcome) {
                 actual.target
             );
         }
-        WindowCloseOutcome::OrphanLegacyCandidate { candidate } => {
-            println!("window state: orphan-legacy-candidate:{candidate}");
-            println!("manual_close: tmux kill-window -t {candidate}");
-        }
         WindowCloseOutcome::WindowDead => println!("window state: window-dead"),
         WindowCloseOutcome::OrphanGone => println!("window state: orphan-gone"),
         WindowCloseOutcome::Unknown { error } => {
@@ -278,10 +268,7 @@ impl WindowCloseOutcome {
         match self {
             Self::Recorded(killed) => Some(&killed.target),
             Self::Recovered { actual, .. } => Some(&actual.target),
-            Self::WindowDead
-            | Self::OrphanGone
-            | Self::OrphanLegacyCandidate { .. }
-            | Self::Unknown { .. } => None,
+            Self::WindowDead | Self::OrphanGone | Self::Unknown { .. } => None,
         }
     }
 
@@ -297,10 +284,7 @@ impl WindowCloseOutcome {
                     .err()
                     .map(|err| err.to_string())
             }
-            Self::WindowDead
-            | Self::OrphanGone
-            | Self::OrphanLegacyCandidate { .. }
-            | Self::Unknown { .. } => {}
+            Self::WindowDead | Self::OrphanGone | Self::Unknown { .. } => {}
         }
         self
     }
@@ -309,10 +293,7 @@ impl WindowCloseOutcome {
         match self {
             Self::Recorded(killed) => killed.error.as_deref(),
             Self::Recovered { actual, .. } => actual.error.as_deref(),
-            Self::WindowDead
-            | Self::OrphanGone
-            | Self::OrphanLegacyCandidate { .. }
-            | Self::Unknown { .. } => None,
+            Self::WindowDead | Self::OrphanGone | Self::Unknown { .. } => None,
         }
     }
 
@@ -322,10 +303,7 @@ impl WindowCloseOutcome {
             Self::Recovered { actual, .. } => {
                 actual.error.as_deref().map(|err| (&actual.target, err))
             }
-            Self::WindowDead
-            | Self::OrphanGone
-            | Self::OrphanLegacyCandidate { .. }
-            | Self::Unknown { .. } => None,
+            Self::WindowDead | Self::OrphanGone | Self::Unknown { .. } => None,
         }
     }
 
@@ -335,9 +313,6 @@ impl WindowCloseOutcome {
             Self::Recovered { actual, .. } => Some(format!("orphan-recovered:{}", actual.target)),
             Self::WindowDead => Some("window-dead".to_owned()),
             Self::OrphanGone => Some("orphan-gone".to_owned()),
-            Self::OrphanLegacyCandidate { candidate } => {
-                Some(format!("orphan-legacy-candidate:{candidate}"))
-            }
             Self::Unknown { error } => Some(format!("unknown:{error}")),
         }
     }
