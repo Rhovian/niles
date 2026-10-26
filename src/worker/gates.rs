@@ -1,0 +1,182 @@
+use std::{
+    fs::File,
+    io::{ErrorKind, Read, Write},
+    os::{
+        fd::OwnedFd,
+        unix::{net::UnixStream, process::CommandExt},
+    },
+    process::{Child, Command},
+    time::{Duration, Instant},
+};
+
+use crate::workspace_manifest::RunGate;
+use anyhow::{Context, Result};
+use camino::Utf8Path;
+
+const LOG_CAP: usize = 1_048_576;
+const TAIL_CAP: usize = 4096;
+const POLL: Duration = Duration::from_millis(10);
+
+pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) -> Result<bool> {
+    let path = dir.join(format!("gate-{round}-{}.log", gate.name));
+    let log = File::create(&path)?;
+    let (reader, writer) = UnixStream::pair()?;
+    reader.set_nonblocking(true)?;
+    let stderr = writer.try_clone()?;
+    let mut child = match Command::new(&gate.run[0])
+        .args(&gate.run[1..])
+        .current_dir(cwd)
+        .stdout(OwnedFd::from(writer))
+        .stderr(OwnedFd::from(stderr))
+        .process_group(0)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            println!("{} fail (could not start: {error})\nlog: {path}", gate.name);
+            return Ok(false);
+        }
+    };
+    let (reason, tail) = collect(&mut child, reader, log, gate.timeout)?;
+    let passed = reason.is_none();
+    let outcome = reason.map_or_else(|| "pass".to_owned(), |reason| format!("fail ({reason})"));
+    println!("{} {outcome}\nlog: {path}", gate.name);
+    if !passed {
+        // Lossy decoding can expand bytes. Reserve a byte for the printed newline.
+        let text = String::from_utf8_lossy(&tail);
+        let mut start = text.len().saturating_sub(TAIL_CAP - 1);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let mut lines: Vec<_> = text[start..].lines().rev().take(40).collect();
+        lines.reverse();
+        println!("{}", lines.join("\n"));
+    }
+    Ok(passed)
+}
+
+fn collect(
+    child: &mut Child,
+    mut reader: impl Read,
+    mut log: impl Write,
+    timeout: Duration,
+) -> Result<(Option<String>, Vec<u8>)> {
+    let started = Instant::now();
+    let mut tail = Vec::new();
+    let mut written = 0;
+    let mut buffer = [0; 8192];
+    // std 1.89 Child has no timed wait or capped output collector:
+    // https://doc.rust-lang.org/1.89.0/std/process/struct.Child.html
+    // Reap only after draining, or at the deadline; never kill a reaped child's group.
+    let status = (|| {
+        loop {
+            let n = match reader.read(&mut buffer) {
+                Ok(n) => n,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => 0,
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let keep = n.min(LOG_CAP - written);
+            log.write_all(&buffer[..keep])?;
+            written += keep;
+            tail.extend_from_slice(&buffer[..n]);
+            tail.drain(..tail.len().saturating_sub(TAIL_CAP));
+            let expired = started.elapsed() >= timeout;
+            if n == 0 || expired {
+                if let Some(status) = child.try_wait()? {
+                    return Ok(Some(status));
+                }
+                if expired {
+                    return Ok(None);
+                }
+                std::thread::sleep(POLL);
+            }
+        }
+    })();
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            terminate(child).with_context(|| format!("gate cleanup after {error:#}"))?;
+            return Err(error);
+        }
+    };
+    let reason = match status {
+        Some(status) => (!status.success()).then(|| {
+            status
+                .code()
+                .map_or_else(|| status.to_string(), |code| format!("exit {code}"))
+        }),
+        None => {
+            terminate(child)?;
+            Some(format!("timeout after {}ms", timeout.as_millis()))
+        }
+    };
+    Ok((reason, tail))
+}
+
+fn terminate(child: &mut Child) -> Result<()> {
+    let group = child.id() as libc::pid_t;
+    debug_assert!(group > 0);
+    // SAFETY: kill takes an integer group id, no pointers. libc 0.2.189
+    // src/unix/mod.rs provides only the unsafe extern, no safe group wrapper.
+    if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(error.into());
+        }
+    }
+    child.wait()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn read_and_log_write_errors_kill_and_reap_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let readers: [Box<dyn Read>; 2] = [
+            Box::new(File::open(dir.path()).unwrap()),
+            Box::new(&b"x"[..]),
+        ];
+        for reader in readers {
+            let mut child = Command::new("sleep")
+                .arg("2")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            assert!(collect(&mut child, reader, &mut [][..], Duration::from_secs(1)).is_err());
+            assert_eq!(
+                child.try_wait().unwrap().unwrap().signal(),
+                Some(libc::SIGKILL)
+            );
+        }
+    }
+    #[test]
+    fn exited_gate_does_not_wait_for_output_held_outside_its_group() {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut holder = Command::new("sleep")
+            .arg("2")
+            .stdout(OwnedFd::from(writer.try_clone().unwrap()))
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut child = Command::new("true")
+            .stdout(OwnedFd::from(writer))
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let result = collect(
+            &mut child,
+            reader,
+            std::io::sink(),
+            Duration::from_millis(100),
+        );
+        holder.kill().unwrap();
+        holder.wait().unwrap();
+        assert!(result.unwrap().0.is_none());
+    }
+}

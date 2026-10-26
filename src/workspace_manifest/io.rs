@@ -247,7 +247,7 @@ mod tests {
         for gone in ["checkin:", "recheck:", "worktree:"] {
             assert!(!body.contains(gone), "{body}");
         }
-        let configured = WorkspaceManifest {
+        let mut configured = WorkspaceManifest {
             checkin: Some("15m".into()),
             recheck: Some("backoff".into()),
             worktree: Some(
@@ -255,6 +255,8 @@ mod tests {
             ),
             ..manifest
         };
+        configured.bindings.get_mut(&skill("worker")).unwrap().gates =
+            Some(crate::store::parse_yaml("post: [{run: [true], timeout: 1500ms}]").unwrap());
         save(&root, &configured).unwrap();
         assert_eq!(load(&root).unwrap(), Some(configured));
         crate::test_support::remove_workspace(&root).unwrap();
