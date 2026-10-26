@@ -2,7 +2,7 @@ macro_rules! skills {
     ($($name:literal),*) => { &[$(($name, include_str!(concat!("../../prompts/skills/", $name, "/SKILL.md")))),*] };
 }
 pub(super) const SKILLS: &[(&str, &str)] = skills!(
-    "worker", "reviewer", "security", "design", "research", "lead"
+    "worker", "reviewer", "security", "design", "research", "lead", "solo"
 );
 
 pub(crate) const BOOTSTRAP: &str = r#"# Niles {skill} brief

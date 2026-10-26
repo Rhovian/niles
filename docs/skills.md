@@ -1,5 +1,24 @@
 # Skill workflows
 
+## Entry sessions
+
+The default `lead` coordinates the cross-family pipeline, discovering workers with `niles skills`.
+Built-in `solo` edits the tree directly and can use native sub-agents; it spawns Niles workers
+only when the operator asks. Native sub-agents have no Niles status line, wake or usage rollup.
+Select solo in the workspace manifest; its binding supplies the agent and tiers:
+
+```yaml
+entry: solo
+solo:
+  standard:
+    primary: claude:sonnet:high
+    secondaries: []
+```
+
+Shipped templates do not bind `solo`; entry selection has no global default. Entry bodies render
+`{workspace}`, `{agent}`, `{dir}`, `{manifest}` and `{startup_context}` (the same startup context
+for either skill); unknown placeholders stay literal.
+
 ## Design and implementation
 
 `niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill
