@@ -115,16 +115,10 @@ impl Target {
                 self.liveness.reset();
             }
             if let Some(kind) = WakeKind::parse_line(&line) {
-                match kind {
-                    WakeKind::Working => self.unreported = true,
-                    WakeKind::Closed => {}
-                    WakeKind::Done
-                    | WakeKind::Failed
-                    | WakeKind::Blocked
-                    | WakeKind::NeedsDecision
-                    | WakeKind::Gone => self.unreported = false,
+                if kind != WakeKind::Closed {
+                    self.unreported = !kind.wakes();
                 }
-                if kind != WakeKind::Working {
+                if kind.wakes() {
                     return Ok(Some((kind, render(&line), self.scanned + end as u64)));
                 }
             }

@@ -44,6 +44,8 @@ pub struct Binding {
     pub on_from: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_stage: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gates: Option<Gates>,
     pub standard: TierBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontier: Option<TierBinding>,
@@ -51,6 +53,47 @@ pub struct Binding {
     pub economy: Option<TierBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mechanical: Option<TierBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Gates {
+    #[serde(default)]
+    pub rounds: Rounds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct Rounds(u8);
+
+impl Rounds {
+    const MIN: u8 = 1;
+    const MAX: u8 = 10;
+}
+
+impl Default for Rounds {
+    fn default() -> Self {
+        Self(Self::MIN)
+    }
+}
+
+impl TryFrom<u8> for Rounds {
+    type Error = anyhow::Error;
+    fn try_from(value: u8) -> Result<Self> {
+        anyhow::ensure!(
+            (Self::MIN..=Self::MAX).contains(&value),
+            "gates.rounds must be {}..={}",
+            Self::MIN,
+            Self::MAX
+        );
+        Ok(Self(value))
+    }
+}
+
+impl From<Rounds> for u8 {
+    fn from(rounds: Rounds) -> Self {
+        rounds.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +215,7 @@ impl From<String> for Binding {
             always: Vec::new(),
             on_from: Vec::new(),
             on_stage: Vec::new(),
+            gates: None,
             standard: TierBinding {
                 primary,
                 secondaries: Vec::new(),
@@ -180,5 +224,26 @@ impl From<String> for Binding {
             economy: None,
             mechanical: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rounds_are_bounded_at_yaml_and_json_parse_boundaries() {
+        for value in [0, 11, 256, -1] {
+            let body = format!("rounds: {value}");
+            assert!(crate::store::parse_yaml::<Gates>(&body).is_err(), "{body}");
+            assert!(serde_json::from_value::<Gates>(serde_json::json!({"rounds": value})).is_err());
+        }
+        for value in [1, 10] {
+            let gates: Gates = crate::store::parse_yaml(&format!("rounds: {value}")).unwrap();
+            assert_eq!(u8::from(gates.rounds), value);
+        }
+        let gates: Gates = crate::store::parse_yaml("{}").unwrap();
+        assert_eq!(u8::from(gates.rounds), 1);
+        assert!(crate::store::parse_yaml::<Gates>("typo: 1").is_err());
     }
 }
