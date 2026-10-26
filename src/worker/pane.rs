@@ -1,3 +1,4 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use chrono::Utc;
@@ -39,11 +40,17 @@ pub fn peek(id: String, lines: usize, quiet: bool) -> Result<()> {
 ///
 /// The wake cursor is advanced first, so the wait that follows this send cannot be satisfied by a
 /// status line the worker wrote before the message arrived.
-pub fn send(wait: bool, checkin: Option<String>, id: String, message: String) -> Result<()> {
+pub fn send(
+    wait: bool,
+    checkin: Option<String>,
+    id: String,
+    message: String,
+    selection: Option<&SetupSelection>,
+) -> Result<()> {
     let target = worker_target(id)?;
     // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
     // fails a dispatch that has not happened yet rather than one already typed into the pane.
-    let cadence = watch::checkin_cadence(&target.project, checkin.as_deref())?;
+    let cadence = watch::checkin_cadence(&target.project, checkin.as_deref(), selection)?;
     let id = target.id;
 
     for line in wait::advance_cursor(&id)? {

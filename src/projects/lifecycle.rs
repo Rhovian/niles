@@ -38,7 +38,7 @@ pub(crate) fn start(name: &str) -> Result<Start> {
     if !entry.path.is_dir() {
         return Ok(Start::DirectoryMissing);
     }
-    if workspace_manifest::load(&entry.path)?.is_none() {
+    if workspace_manifest::load(&entry.path, None)?.is_none() {
         return Ok(Start::NoManifest);
     }
     let session = entry.name.session()?;

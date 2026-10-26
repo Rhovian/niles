@@ -19,6 +19,20 @@ Shipped templates do not bind `solo`; entry selection has no global default. Ent
 `{workspace}`, `{agent}`, `{dir}`, `{manifest}` and `{startup_context}` (the same startup context
 for either skill); unknown placeholders stay literal.
 
+## Named setups
+
+Select a complete manifest for a workspace command with `--setup tdd` or `NILES_SETUP=tdd` (the flag wins).
+`<workspace>/.niles/setups/tdd.yaml` overrides `~/.niles/setups/tdd.yaml`;
+`--setup global:tdd` or `--setup workspace:tdd` pins one root. Names contain ASCII letters,
+digits, `-` and `_`. Without selection, the per-workspace global-state manifest remains active.
+Files are never merged. Picker saves write back to the selected file, including global files.
+Launches print name/origin/path and record name/origin in session and worker metadata.
+The entry environment carries the qualified selection, so its `niles spawn` calls inherit it
+and a new workspace shadow cannot redirect them. Multi-project services use each project's
+default manifest; selection is not forwarded to home, panels or explorer child processes.
+Switch by starting a new lead; live sessions are unchanged. Workspace setup symlinks are rejected; global links are allowed
+([security](security.md#named-setups)).
+
 ## Design and implementation
 
 `niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill

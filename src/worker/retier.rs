@@ -2,6 +2,7 @@ use super::{
     meta::{WorkerMeta, read_meta, write_meta},
     worker_dir,
 };
+use crate::workspace_manifest::setup::SetupSelection;
 use crate::{agents, config, tmux, util, workspace_manifest};
 use anyhow::{Context, Result, bail, ensure};
 use camino::Utf8Path;
@@ -12,12 +13,12 @@ const CONFIRM_INTERVAL: Duration = Duration::from_millis(50);
 
 mod codex;
 
-pub fn retier(id: String, agent: String) -> Result<()> {
+pub fn retier(id: String, agent: String, selection: Option<&SetupSelection>) -> Result<()> {
     let dir = worker_dir(&id)?;
     let mut meta = read_meta(&dir)?;
     let from = meta.agent.clone();
     record_retier(&dir, &id, &from, &agent, || {
-        apply_retier(&id, &agent, &dir, &mut meta)
+        apply_retier(&id, &agent, &dir, &mut meta, selection)
     })?;
     println!("retiered: {id} {}", meta.agent);
     Ok(())
@@ -51,7 +52,13 @@ fn record_retier(
     result
 }
 
-fn apply_retier(id: &str, agent: &str, dir: &Utf8Path, meta: &mut WorkerMeta) -> Result<()> {
+fn apply_retier(
+    id: &str,
+    agent: &str,
+    dir: &Utf8Path,
+    meta: &mut WorkerMeta,
+    selection: Option<&SetupSelection>,
+) -> Result<()> {
     let models = config::spec::load_project_config_from(&meta.project)?.models;
     let current = agents::AgentSpec::parse(&meta.agent, &models)?;
     let target = agents::AgentSpec::parse(agent, &models)?;
@@ -60,8 +67,8 @@ fn apply_retier(id: &str, agent: &str, dir: &Utf8Path, meta: &mut WorkerMeta) ->
     let model = target.model().context("expected family:model:effort")?;
     let effort = target.effort().context("expected family:model:effort")?;
     let steps = agents::switch_steps(target.family(), model, effort)?;
-    let manifest =
-        workspace_manifest::load(&meta.project)?.context("retier requires a workspace manifest")?;
+    let manifest = workspace_manifest::load(&meta.project, selection)?
+        .context("retier requires a workspace manifest")?;
     ensure!(
         manifest.binding(&meta.skill)?.allows(&target, &models)?,
         "agent {agent} is not allowed for skill '{}' in the manifest",

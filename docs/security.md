@@ -131,6 +131,20 @@ unverified per family. A `git pull` can change skill text without a prompt, as i
 `AGENTS.md`. Project registration does not establish trust. Repository configuration and skill
 text share the no-trust-gate policy described above.
 
+### Named setups
+
+Explicitly selected `.niles/setups/<name>.yaml` files are repo-controlled dispatch data,
+including existing worktree setup commands. Global `~/.niles/setups/` files are operator-owned.
+Workspace shadows global; `--setup global:<name>` pins the global file. There is no trust gate.
+Names share the skill identifier grammar and origins are only `global`/`workspace`.
+Workspace setup directories/files reject symlinks; opens use `O_NOFOLLOW`. Global links are
+allowed. The shared skill reader enforces nonblocking regular-file reads capped at 131,072 bytes.
+The `.niles` parent and same-user directory-swap gaps above apply. Qualified selection goes
+only to the entry environment; its spawn commands inherit it. Multi-project services use each
+project's default. The picker pins the selected origin for rereads/saves (last writer wins).
+Editing that file still changes later dispatches. Printed provenance and recorded name/origin
+provide visibility, not authorization.
+
 ### Global project state, symlinks, and locks
 
 **Attacker.** A malicious repository author who supplies tracked `.niles` paths or symlinks before

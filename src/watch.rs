@@ -16,6 +16,7 @@
 //! `watch.log` in the session directory, and the only thing that leaves the process is the nudge
 //! itself, through the same `send_line` that `niles send` uses.
 
+use crate::workspace_manifest::setup::SetupSelection;
 use std::{
     fs,
     io::Write,
@@ -218,9 +219,13 @@ pub(crate) fn start(
 /// Read here rather than at the arming edge because the two moments differ: this is resolved
 /// before anything is dispatched, and armed after. A workspace without a manifest has no
 /// defaults to apply; sending to an existing worker still works without one.
-pub(crate) fn checkin_cadence(project: &Utf8Path, flag: Option<&str>) -> Result<Cadence> {
-    let path = workspace_manifest::manifest_path(project)?;
-    let manifest = workspace_manifest::load(project)
+pub(crate) fn checkin_cadence(
+    project: &Utf8Path,
+    flag: Option<&str>,
+    selection: Option<&SetupSelection>,
+) -> Result<Cadence> {
+    let path = workspace_manifest::manifest_path(project, selection)?;
+    let manifest = workspace_manifest::load(project, selection)
         .with_context(|| format!("cannot resolve the check-in from {path}"))?;
     cadence::resolve_cadence(flag, manifest.as_ref(), &path)
 }

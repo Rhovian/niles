@@ -1,3 +1,4 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use std::{
     fs,
     process::{Command, ExitCode, Stdio},
@@ -20,7 +21,7 @@ use crate::{
 const COMPAT_TURN_TIMEOUT: Duration = Duration::from_secs(300);
 const COMPAT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
+pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) -> Result<ExitCode> {
     let profiles = if families.is_empty() {
         agents::known_agent_ids().map(str::to_owned).collect()
     } else {
@@ -33,8 +34,8 @@ pub(crate) fn compat(families: &[String]) -> Result<ExitCode> {
     .collect::<Result<Vec<_>>>()?;
     let root = current_dir_utf8()?;
     let models = load_project_config_from(&root)?.models;
-    let manifest =
-        workspace_manifest::load(&root)?.context("compat requires a workspace manifest")?;
+    let manifest = workspace_manifest::load(&root, selection)?
+        .context("compat requires a workspace manifest")?;
     let specs = manifest
         .ordered_bindings()
         .flat_map(|(_, binding)| binding.agents())

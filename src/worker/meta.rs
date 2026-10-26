@@ -11,6 +11,8 @@ const REPORT_FILE: &str = "report.md";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct WorkerMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) setup: Option<crate::workspace_manifest::setup::Setup>,
     pub(super) id: String,
     pub(super) skill: SkillName,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

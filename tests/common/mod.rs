@@ -120,6 +120,7 @@ impl TestEnv {
             .current_dir(cwd)
             .env("PATH", path_with_bin(&self.bin))
             .env("HOME", &self.home)
+            .env_remove("NILES_SETUP")
             .env("TMUX_LOG", &self.tmux_log)
             .env("TMUX", "/tmp/niles-test-tmux,0,0");
         command
@@ -211,6 +212,10 @@ pub fn temp_workspace(prefix: &str) -> PathBuf {
         .unwrap()
         .keep();
     fs::canonicalize(workspace).unwrap()
+}
+
+pub fn read_json(path: impl AsRef<Path>) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
 pub fn write_executable(path: &Path, body: &str) {

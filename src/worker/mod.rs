@@ -21,7 +21,7 @@ pub use list::workers;
 pub use pane::{peek, send};
 pub use report::report;
 pub use retier::retier;
-pub use spawn::{Assignment, spawn};
+pub use spawn::{Assignment, SpawnTask, spawn};
 pub use usage::usage;
 pub use worktree::SpawnTree;
 

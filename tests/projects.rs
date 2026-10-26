@@ -75,6 +75,12 @@ esac
     ];
     let positions = steps.map(|step| log.find(&step).unwrap_or_else(|| panic!("{step}\n{log}")));
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{log}");
+    assert_ok(
+        "home ignores workspace selection",
+        &env.run(&["--setup", "workspace:missing"]),
+    );
+    assert!(!env.tmux_log().contains("NILES_SETUP"));
+    assert!(!env.tmux_log().contains("--setup"));
 }
 
 #[test]

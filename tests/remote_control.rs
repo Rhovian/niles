@@ -45,8 +45,11 @@ impl Server {
             "remote: { allowed_users: ['alice'] }",
         )
         .unwrap();
+        // Workspace selection must not affect this multi-project service or its close children.
         let mut child = env
             .niles(&env.root, &["remote", "--port", "0"])
+            .args(["--setup", "workspace:tdd"])
+            .env("NILES_SETUP", "invalid:selection")
             .env("TMUX_PROJECT_TAG", &env.root)
             .stderr(Stdio::piped())
             .spawn()
@@ -197,6 +200,8 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
     server.status("PUT", "/api/projects/api/session", "", 200);
     let log = env.tmux_log();
     assert!(log.contains("lead --keep-skills"), "{log}");
+    assert!(log.contains("env -u NILES_SETUP"));
+    assert!(!log.contains("--setup"));
     server.status("PUT", "/api/projects/api/session", "", 200);
     assert_eq!(env.tmux_log().matches("new-session").count(), 1);
     fs::remove_file(marker(&env, "running")).unwrap();
@@ -253,4 +258,29 @@ fn close_and_stop_archive_workers_before_killing_the_session() {
             >= 2
     );
     server.status("DELETE", "/api/projects/api/session", "", 404);
+}
+
+#[test]
+fn phone_server_uses_each_project_default_despite_workspace_selection() {
+    let env = TestEnv::with_tmux("remote-project-setups", TMUX);
+    let other = env.root.join("other");
+    fs::create_dir_all(&other).unwrap();
+    for root in [&env.root, &other] {
+        write_workspace_manifest(root, "claude", "codex", "claude", "claude");
+    }
+    let named = env.root.join(".niles/setups/tdd.yaml");
+    fs::create_dir_all(named.parent().unwrap()).unwrap();
+    fs::write(named, "invalid selected setup").unwrap();
+    let server = Server::new(&env);
+    std::os::unix::fs::symlink(&other, env.home.join(".niles/projects/other")).unwrap();
+    for project in ["api", "other"] {
+        server.status("PUT", &format!("/api/projects/{project}/session"), "", 200);
+        fs::remove_file(marker(&env, "running")).unwrap();
+    }
+    let log = env.tmux_log();
+    assert_eq!(log.matches("new-session").count(), 2);
+    assert!(!log.contains("NILES_SETUP="));
+    assert!(!log.contains("--setup"));
+    write_worker(&other, "worker", "other:w", None, b"");
+    server.status("DELETE", "/api/projects/other/workers/worker", "", 200);
 }

@@ -9,6 +9,8 @@ use crate::agents::{AgentSpec, ModelRoster, roster::Tier};
 /// Skill bindings and workspace-wide dispatch settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceManifest {
+    #[serde(skip)]
+    pub(crate) source: Option<super::setup::SetupFile>,
     // Flatten accepts skill keys; nested Binding and TierBinding remain strict.
     #[serde(flatten)]
     pub bindings: BTreeMap<SkillName, Binding>,

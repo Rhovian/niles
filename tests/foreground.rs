@@ -36,7 +36,7 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     }
     write_executable(
         &env.bin.join("claude"),
-        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$NILES_TEST_ARGS\"\n",
+        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$NILES_TEST_ARGS\"\nprintf '%s' \"${NILES_SETUP-unset}\" > \"$NILES_TEST_ARGS.setup\"\n",
     );
     let args_log = env.root.join("args");
     let output = env
@@ -55,6 +55,10 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
         stderr_of(&output).contains(&format!("skill: {entry} ({source})")),
         "{entry}"
     );
+    assert_eq!(
+        fs::read_to_string(env.root.join("args.setup")).expect(entry),
+        "unset"
+    );
     let args = fs::read_to_string(args_log).expect(entry);
     let args = args
         .strip_suffix('\0')
@@ -72,6 +76,7 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let meta: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("session.json")).expect(entry)).expect(entry);
     assert_eq!(meta["entry_skill"], entry, "{entry}");
+    assert!(meta.get("setup").is_none(), "{entry}");
     let primary = fs::read_to_string(dir.join("lead.md")).expect(entry);
     if entry == "reviewer" {
         assert_eq!(

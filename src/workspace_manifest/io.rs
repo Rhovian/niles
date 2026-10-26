@@ -5,16 +5,35 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::store;
 
-use super::WorkspaceManifest;
+use super::{
+    WorkspaceManifest,
+    setup::{ManifestFile, SetupSelection},
+};
 
-pub fn manifest_path(root: &Utf8Path) -> Result<Utf8PathBuf> {
-    Ok(store::paths::project_dir(root)?.join("manifest.yaml"))
+pub fn manifest_path(root: &Utf8Path, selection: Option<&SetupSelection>) -> Result<Utf8PathBuf> {
+    Ok(super::setup::active(root, selection)?.path().to_owned())
 }
 
-pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
-    let path = manifest_path(root)?;
-    let manifest: Option<WorkspaceManifest> = store::read_optional_yaml(&path)?;
-    if let Some(manifest) = &manifest {
+pub fn load(
+    root: &Utf8Path,
+    selection: Option<&SetupSelection>,
+) -> Result<Option<WorkspaceManifest>> {
+    let file = super::setup::active(root, selection)?;
+    let path = file.path();
+    let mut manifest: Option<WorkspaceManifest> = match &file {
+        ManifestFile::Default(_) => store::read_optional_yaml(path)?,
+        ManifestFile::Named(source) => Some(
+            store::parse_yaml(
+                &crate::skills::files::read(path, source.setup.origin)
+                    .with_context(|| format!("failed to read setup {source}"))?,
+            )
+            .with_context(|| format!("failed to parse setup {source}"))?,
+        ),
+    };
+    if let Some(manifest) = &mut manifest {
+        if let ManifestFile::Named(source) = &file {
+            manifest.source = Some(source.clone());
+        }
         let config = crate::config::spec::load_project_config_from(root)?;
         manifest
             .binding(&manifest.entry)
@@ -47,16 +66,22 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     Ok(manifest)
 }
 
-pub fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
-    let path = manifest_path(root)?;
-    let parent = store::paths::project_dir(root)?;
-    fs::create_dir_all(&parent).with_context(|| format!("failed to create {parent}"))?;
-    store::write_yaml(&path, manifest)
+pub fn save(
+    root: &Utf8Path,
+    manifest: &WorkspaceManifest,
+    selection: Option<&SetupSelection>,
+) -> Result<()> {
+    let file = super::setup::active(root, selection)?;
+    let path = file.path();
+    let parent = path.parent().context("manifest has no parent")?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {parent}"))?;
+    store::write_yaml(path, manifest)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::default_manifest::{load, manifest_path, save};
     use crate::test_support::skill;
     use crate::test_support::temp_test_path;
 
