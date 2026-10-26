@@ -67,15 +67,12 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
         .windows(2)
         .find(|pair| pair[0] == "--append-system-prompt")
         .unwrap()[1];
-    let preface = primary
-        .strip_suffix(body)
-        .expect("primary body bytes changed");
-    assert!(preface.starts_with("Work from this brief and the code. Do not read other agents' briefs, reports or notes in Niles state unless this brief or a message from the lead names one."));
+    assert!(primary.starts_with(&format!("## Skill: triage\n{body}\n")));
     assert!(
-        preface
+        primary
             .contains("Deliverables go in the report file; the lead reads it, not your terminal.")
     );
-    assert!(preface.ends_with("Report uncertainty as uncertainty.\n\n"));
+    assert!(primary.ends_with("Skills beyond this prompt: `niles agent skills` lists them, `niles agent skill <name>` prints one.\n"));
 }
 
 #[test]
@@ -131,4 +128,230 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         "skill `reveiwer` has no SKILL.md",
     );
     assert!(!state_dir(&env.root).join("worker/job").exists());
+}
+
+fn bind_extras(env: &TestEnv, extra: &str) {
+    let path = state_dir(&env.root).join("manifest.yaml");
+    let body = fs::read_to_string(&path).unwrap();
+    let body = body.replace("worker:\n", &format!("worker:\n{extra}"));
+    fs::write(path, body).unwrap();
+}
+
+fn discovery(env: &TestEnv, args: &[&str]) -> std::process::Output {
+    env.niles(&env.home, &[])
+        .env("NILES_AGENT_DIR", state_dir(&env.root).join("worker/job"))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn menu_union_snapshot_discovery_and_explicit_injection() {
+    let env = TestEnv::with_manifest("menu-discovery", "claude");
+    let root = &env.root.join(".niles");
+    let description = format!(
+        "Use WHEN this\n task applies\u{1b}\u{202e}\u{2066}\u{200b} {}",
+        "é".repeat(250)
+    );
+    for name in ["alpha", "beta", "forced"] {
+        skill(root, name, &description, &format!("{name} body"));
+    }
+    bind_extras(
+        &env,
+        "  skills: [alpha, alpha]\n  always: [worker, research, research]\n  on_from: [research, design, design]\n  on_stage: [reviewer]\n",
+    );
+    let output = env.spawn(
+        "worker",
+        &[
+            "job", "--menu", "beta", "--menu", "alpha", "--with", "research", "--with", "forced",
+            "--with", "forced", "--with", "worker", "task",
+        ],
+    );
+    assert_command_success("spawn", &output);
+    assert!(!stderr_of(&output).contains("warning:"));
+    for prefix in [
+        "menu_skill: alpha",
+        "always_skill: research",
+        "on_from_skill: design",
+        "on_stage_skill: reviewer",
+        "with_skill: forced",
+    ] {
+        assert!(stdout_of(&output).contains(prefix));
+    }
+    let dir = state_dir(&env.root).join("worker/job");
+    let meta: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+    for (key, names) in [
+        ("menu", vec!["alpha", "beta"]),
+        ("always", vec!["worker", "research", "research"]),
+        ("on_from", vec!["research", "design", "design"]),
+        ("on_stage", vec!["reviewer"]),
+        ("with", vec!["research", "forced", "forced", "worker"]),
+    ] {
+        assert_eq!(meta[key], serde_json::json!(names), "{key}");
+    }
+    let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
+    assert_eq!(brief.matches("- alpha:").count(), 1);
+    assert!(brief.contains("- beta: Use WHEN this task applies "));
+    let launch = fs::read_to_string(dir.join("launch.sh")).unwrap();
+    assert!(launch.contains("## Skill: research"));
+    assert!(launch.contains("## Skill: forced\nforced body"));
+    assert!(!launch.contains("## Skill: design"));
+    fs::write(dir.join("status.log"), "done: ready\n").unwrap();
+    let args = [
+        "followup", "--from", "job", "--with", "research", "--with", "forced", "--with", "forced",
+        "--with", "worker", "task",
+    ];
+    assert_command_success("from spawn", &env.spawn("worker", &args));
+    let launch =
+        fs::read_to_string(state_dir(&env.root).join("worker/followup/launch.sh")).unwrap();
+    let positions = ["worker", "research", "design", "forced"]
+        .map(|name| launch.find(&format!("## Skill: {name}\n")).unwrap());
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    for name in ["worker", "research", "design", "forced"] {
+        assert_eq!(
+            launch.matches(&format!("## Skill: {name}\n")).count(),
+            1,
+            "{name}"
+        );
+    }
+    // Editing the binding cannot add permission to the running worker's discovery lists.
+    let manifest = state_dir(&env.root).join("manifest.yaml");
+    let body = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("skills: [alpha, alpha]", "skills: [forced]");
+    fs::write(manifest, body).unwrap();
+    let output = discovery(&env, &["agent", "skills"]);
+    assert_command_success("menu discovery", &output);
+    assert!(stdout_of(&output).starts_with("alpha:"));
+    assert!(!stdout_of(&output).contains("forced:"));
+    for text in [&brief, &stdout_of(&output)] {
+        assert!(!text.contains(['\u{1b}', '\u{202e}', '\u{2066}', '\u{200b}']));
+        let row = text.lines().find(|line| line.contains("alpha: ")).unwrap();
+        let description = row
+            .split_once(": ")
+            .unwrap()
+            .1
+            .rsplit_once(" (workspace ")
+            .unwrap()
+            .0;
+        assert_eq!(description.chars().count(), 200);
+    }
+    for name in ["alpha", "research", "design", "reviewer", "forced"] {
+        let output = discovery(&env, &["agent", "skill", name]);
+        assert_command_success("skill discovery", &output);
+        assert!(stdout_of(&output).starts_with(&format!("skill: {name} (")));
+        assert!(!stdout_of(&output).contains("---\nname:"));
+    }
+    assert_failure_contains(
+        "unlisted skill",
+        &discovery(&env, &["agent", "skill", "security"]),
+        "valid skills: alpha, beta, worker, research, research, research, design, design, reviewer, research, forced, forced, worker",
+    );
+}
+
+#[test]
+fn menu_errors_caps_and_warning_precede_state_creation() {
+    let env = TestEnv::with_manifest("menu-errors", "claude");
+    let root = &env.root.join(".niles");
+    let dir = state_dir(&env.root).join("worker/job");
+    let reject = |args: &[&str], message| {
+        let output = env.spawn("worker", args);
+        assert_failure_contains("rejected spawn", &output, message);
+        assert!(!stderr_of(&output).contains("warning:"));
+        assert!(!dir.exists());
+    };
+    for (description, warning) in [
+        ("Whenever useful", true),
+        ("Use when useful", false),
+        ("Use WHEN useful", false),
+        ("some_when text", true),
+        ("somewhen text", true),
+    ] {
+        skill(root, "guide", description, "body");
+        let output = env.spawn("worker", &["job", "--menu", "guide", "task"]);
+        assert_command_success("description warning", &output);
+        assert_eq!(
+            stderr_of(&output).contains("warning: menu skill guide"),
+            warning
+        );
+        fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
+    }
+    for (name, message) in [
+        ("absent", "has no SKILL.md"),
+        ("research", "needs a disk SKILL.md"),
+        ("../x", "invalid skill name"),
+    ] {
+        reject(&["job", "--menu", name, "task"], message);
+    }
+    for description in ["".to_owned(), "x".repeat(1025)] {
+        skill(root, "guide", &description, "body");
+        reject(
+            &["job", "--menu", "guide", "task"],
+            "description must be nonempty",
+        );
+    }
+    let names = (0..17).map(|n| format!("s{n}")).collect::<Vec<_>>();
+    for name in &names {
+        skill(root, name, "Use when needed", "body");
+    }
+    let mut args = vec!["job"];
+    for name in &names[..16] {
+        args.extend(["--menu", name]);
+    }
+    args.extend(["--menu", &names[0], "task"]);
+    assert_command_success(
+        "seventeen names, sixteen unique skills",
+        &env.spawn("worker", &args),
+    );
+    fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
+    args.pop();
+    args.extend(["--menu", &names[16], "task"]);
+    reject(&args, "maximum is 16");
+    skill(root, "guide", "Whenever useful", "body");
+    reject(
+        &["job", "--menu", "guide", "--menu", "research", "task"],
+        "needs a disk SKILL.md",
+    );
+    let path = state_dir(&env.root).join("manifest.yaml");
+    let original = fs::read_to_string(&path).unwrap();
+    bind_extras(&env, "  skills: [research]\n");
+    assert_failure_contains(
+        "builtin menu rejected at load",
+        &env.run(&["models"]),
+        "needs a disk SKILL.md",
+    );
+    fs::write(&path, &original).unwrap();
+    for name in ["large0", "large1", "large2", "large3"] {
+        skill(root, name, "Use when needed", &"x".repeat(16384));
+    }
+    assert_command_success(
+        "duplicate bodies share one budget slot",
+        &env.spawn(
+            "worker",
+            &[
+                "job", "--with", "large0", "--with", "large0", "--with", "large0", "--with",
+                "large0", "task",
+            ],
+        ),
+    );
+    fs::remove_dir_all(&dir).unwrap();
+    bind_extras(&env, "  on_stage: [large0, large1]\n");
+    assert_command_success("exact stage cap", &env.spawn("worker", &["job", "task"]));
+    fs::remove_dir_all(&dir).unwrap();
+    skill(root, "large1", "Use when needed", &"x".repeat(16385));
+    reject(
+        &["job", "--menu", "guide", "task"],
+        "on_stage bodies exceed 32768",
+    );
+    let body = fs::read_to_string(&path).unwrap().replace(
+        "on_stage: [large0, large1]",
+        "always: [large0, large1, large2, large3]",
+    );
+    fs::write(&path, body).unwrap();
+    reject(&["job", "--menu", "guide", "task"], "maximum is 65536");
+    reject(
+        &["job", "--on-send", "large", "task"],
+        "unexpected argument",
+    );
 }

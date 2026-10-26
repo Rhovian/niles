@@ -93,7 +93,7 @@ system/developer-prompt privilege, higher than `AGENTS.md`. The resolution chain
 built-in → `~/.niles/skills/` → workspace `.niles/skills/`; a repository can override built-in
 or global text with the same name. This is an accepted instruction boundary, with no Niles
 trust gate. Global skills are operator-owned.
-**Mitigations.** Only names explicitly bound in the manifest are looked up; directories are
+**Mitigations.** Only names explicitly named by a binding or spawn flag are looked up; directories are
 never scanned. Every launch prints `skill: <name> (<source> <path>)` (built-ins have no disk
 path), to stderr for an entry session, and `niles skills` shows the same provenance. Names
 have the shared ASCII grammar. Frontmatter requires a matching name and a nonempty description
@@ -105,8 +105,17 @@ over 65,536 bytes fail before worker/session state is written. Codex TOML escapi
 in a separate 131,071-byte argument bound; the terminating NUL stays within Linux's 128 KiB
 per-string limit. Hermes's env name/value overhead also fits that limit under the text cap.
 Shell quoting in a worker's `launch.sh` is file content, not an additional exec argument.
-Descriptions enter command output only: whitespace is collapsed, Unicode control and format characters stripped
-and output clamped to 200 characters. Semantic prompt injection remains possible.
+Descriptions in `niles skills`, opening-turn menus and worker discovery share the
+same sanitizer: whitespace collapsed, Unicode control and format characters stripped,
+and output clamped to 200 characters. Descriptions never enter the system prompt.
+Semantic prompt injection remains possible.
+
+`always`, active `on_from`, and explicit `--with` bodies share the primary skill's
+system-prompt privilege and assembled cap; spawn prints their sources. Menu and
+trigger names are snapshotted. `niles agent skill` serves only snapshotted names
+through the resolver and workspace symlink rules, never arbitrary paths. `--menu`
+requires validated disk skill names, capped at 16 after deduplication. `on_stage`
+bodies are resolved at spawn with a 32,768-byte total cap; staging delivers them.
 
 Workspace skill directories and files are checked with `symlink_metadata`; directories must
 be directories and files regular, without symlinks. The file is opened with `O_NOFOLLOW`.

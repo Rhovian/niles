@@ -33,6 +33,12 @@ pub struct Assignment {
     /// Primary skill to launch from the workspace bindings.
     #[arg(long)]
     pub skill: SkillName,
+    /// Add a skill to the discovery menu (repeatable).
+    #[arg(long)]
+    menu: Vec<SkillName>,
+    /// Inject an additional skill into the system prompt (repeatable).
+    #[arg(long = "with")]
+    with: Vec<SkillName>,
     /// Manifest tier whose primary to launch (standard by default).
     #[arg(long, value_enum, default_value_t = agents::roster::Tier::Standard, conflicts_with = "agent")]
     pub tier: agents::roster::Tier,
@@ -69,27 +75,26 @@ pub fn spawn(
             skill.as_str()
         )
     })?;
-    let agent = resolve_agent(
-        &manifest_path,
-        manifest.as_ref(),
-        &skill,
-        tier,
-        agent,
-        &config,
-    )?;
+    let manifest = manifest.with_context(|| format!("cannot resolve skill '{skill}': manifest {manifest_path} does not exist. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"))?;
+    let agent = resolve_agent(&manifest_path, &manifest, &skill, tier, agent, &config)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
-    let cadence = watch::resolve_cadence(checkin.as_deref(), manifest.as_ref(), &manifest_path)?;
+    let cadence = watch::resolve_cadence(checkin.as_deref(), Some(&manifest), &manifest_path)?;
     // The one launch decision, resolved before any worker state is written: unknown agent names
     // and models the family does not offer are rejected here, by the same resolver the lead uses.
     let mut invocation =
         agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
     let primary_skill = skills::resolve(&skill, &project, &skills::global_dir()?)?;
-    invocation.pass_primary(&format!(
-        "{}\n{}",
-        include_str!("../../prompts/skill_common.md"),
-        primary_skill.primary_body()?
-    ))?;
+    let binding = manifest.binding(&skill)?;
+    let resolved = super::skills::prepare(
+        &primary_skill,
+        binding,
+        &assignment.menu,
+        &assignment.with,
+        assignment.from.is_some(),
+        &project,
+    )?;
+    invocation.pass_primary(&resolved.prompt)?;
     if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
@@ -117,9 +122,7 @@ pub fn spawn(
             Some(canonical)
         }
         Some(SpawnTree::Worktree { branch, base }) => {
-            let config = manifest
-                .as_ref()
-                .and_then(|manifest| manifest.worktree.as_ref());
+            let config = manifest.worktree.as_ref();
             let path = worktree::create_or_join(&project, &branch, base.as_deref(), config)?;
             if let Some(config) = config {
                 invocation.env.extend(
@@ -139,6 +142,7 @@ pub fn spawn(
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
     println!("skill: {primary_skill}");
+    print!("{}", resolved.provenance);
     basis.record_mechanical(&id)?;
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
@@ -149,7 +153,7 @@ pub fn spawn(
         &skill,
         task_label.as_deref(),
         agent_dir,
-        &task,
+        &format!("{task}{}", resolved.menu),
         &basis,
     )?;
 
@@ -191,6 +195,11 @@ pub fn spawn(
 
     let meta = WorkerMeta {
         id: id.clone(),
+        menu: resolved.names,
+        always: binding.always.clone(),
+        on_from: binding.on_from.clone(),
+        on_stage: binding.on_stage.clone(),
+        with: assignment.with,
         skill,
         agent,
         agent_family: agent_spec.tiered_family(),
@@ -225,6 +234,7 @@ pub fn spawn(
     // this only writes it.
     let armed = watch::arm_checkin(&dir, cadence, armed_len, created_at)?;
 
+    eprint!("{}", resolved.warnings);
     println!("spawned: {id}");
     println!("window: {window_name}");
     println!("agent: {}", meta.agent);
@@ -255,13 +265,12 @@ pub fn spawn(
 
 fn resolve_agent(
     path: &Utf8Path,
-    manifest: Option<&workspace_manifest::WorkspaceManifest>,
+    manifest: &workspace_manifest::WorkspaceManifest,
     skill: &SkillName,
     tier: agents::roster::Tier,
     agent: Option<String>,
     config: &crate::config::spec::ProjectConfig,
 ) -> Result<String> {
-    let manifest = manifest.with_context(|| format!("cannot resolve skill '{skill}': manifest {path} does not exist. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"))?;
     if *skill == manifest.entry {
         bail!("entry skill {skill} cannot be spawned");
     }
@@ -392,7 +401,7 @@ enum TaskBasis {
 
 impl Assignment {
     fn resolve(
-        self,
+        &self,
         project: &Utf8Path,
         live_worker: impl FnOnce(&str) -> Result<Option<Utf8PathBuf>>,
     ) -> Result<TaskBasis> {
