@@ -122,3 +122,18 @@ Spawn prints every list's provenance.
 total; staging delivers them. There is no `on_send` or `done` trigger. Editing a
 binding does not change a running worker's lists. Discovery serves only its menu,
 trigger and explicit `--with` names.
+
+## Staging
+
+`on_stage: [reviewer]` enables post-work skills. `gates: {rounds: 2}` sets the stage
+limit (default 1, range 1–10) and enables staging even without post-work skills.
+Spawn snapshots these settings and adds a standing stage instruction.
+Write a nonempty report, run `niles agent status stage "summary"`, apply the printed
+skills, then report `done` without lead approval. Bodies are capped at 32,768 bytes
+at spawn and stage and printed on every round. No skills are injected at done;
+`blocked`, `failed`, `needs-decision` and `working` remain ungated.
+Stage wakes nobody and does not answer check-ins. Stage and configured done share
+`stage.lock`; `gates.json` records completed rounds before the non-waking status.
+Done starts a fresh round allowance for the next task. Stage/done require valid
+worker metadata; unconfigured done creates no stage lock. Command gates are a
+separate extension; this stage step delivers post-work skills without executing commands.

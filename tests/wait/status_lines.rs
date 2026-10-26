@@ -121,3 +121,12 @@ fn a_truncated_log_rescans_from_the_start() {
     assert_eq!(stdout_of(&output), "auth-fix done: new\n");
     assert_eq!(cursor(&worker_dir), "10\n");
 }
+
+#[test]
+fn stage_does_not_wake_wait() {
+    let workspace = temp_workspace("niles-wait-stage");
+    worker_with_status(&workspace, "staged", b"stage: ready; gates: none\n");
+    let output = run_wait(&workspace, &["--timeout", "0"]);
+    assert_eq!(output.status.code(), Some(22));
+    assert!(stdout_of(&output).is_empty());
+}

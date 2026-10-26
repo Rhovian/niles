@@ -12,6 +12,7 @@ mod retier;
 mod skills;
 mod snapshot;
 mod spawn;
+mod stage;
 pub(crate) mod usage;
 mod validation;
 mod worktree;

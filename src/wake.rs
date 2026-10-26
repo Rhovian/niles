@@ -13,10 +13,11 @@ pub(crate) enum WakeKind {
     Closed,
     Gone,
     Working,
+    Stage,
 }
 
 impl WakeKind {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Done,
         Self::Failed,
         Self::Blocked,
@@ -24,6 +25,7 @@ impl WakeKind {
         Self::Closed,
         Self::Gone,
         Self::Working,
+        Self::Stage,
     ];
 
     const fn as_str(self) -> &'static str {
@@ -35,6 +37,7 @@ impl WakeKind {
             Self::Closed => "closed",
             Self::Gone => "gone",
             Self::Working => "working",
+            Self::Stage => "stage",
         }
     }
 
@@ -46,8 +49,12 @@ impl WakeKind {
         Self::ALL.into_iter().find(|kind| kind.as_str() == state)
     }
 
+    pub(crate) fn wakes(self) -> bool {
+        !matches!(self, Self::Working | Self::Stage)
+    }
+
     pub(crate) fn actionable(line: &str) -> Option<Self> {
-        Self::parse_line(line).filter(|kind| *kind != Self::Working)
+        Self::parse_line(line).filter(|kind| kind.wakes())
     }
 }
 
@@ -108,6 +115,7 @@ mod tests {
         assert!(is_actionable_wake("done: shipped"));
         assert!(is_actionable_wake("closed: auth-fix"));
         assert!(!is_actionable_wake("working: launch"));
+        assert!(!is_actionable_wake("stage: ready"));
         assert!(!is_actionable_wake("note: launch"));
     }
 

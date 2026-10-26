@@ -195,6 +195,20 @@ mod tests {
     }
 
     #[test]
+    fn stage_does_not_answer_checkin_or_nudge() {
+        let now = at(1_000);
+        let checkins = armed_over(WINDOW, 300, now);
+        let mut memory = WatchMemory::at_start(&[worker("impl", WINDOW)]);
+        let plan = memory.plan(
+            &[worker("impl", &format!("{WINDOW}stage: ready\n"))],
+            &checkins,
+            at(1060),
+        );
+        assert!(plan.nudges.is_empty());
+        assert!(plan.disarms.is_empty());
+    }
+
+    #[test]
     fn a_report_right_after_dispatch_nudges_once() {
         let now = at(1_000);
         let checkins = armed_over(WINDOW, 300, now);

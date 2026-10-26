@@ -96,7 +96,7 @@ pub fn spawn(
         agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
     let primary_skill = skills::resolve(&skill, &project, &skills::global_dir()?)?;
     let binding = manifest.binding(&skill)?;
-    let resolved = super::skills::prepare(
+    let mut resolved = super::skills::prepare(
         &primary_skill,
         binding,
         &assignment.menu,
@@ -104,6 +104,11 @@ pub fn spawn(
         assignment.from.is_some(),
         &project,
     )?;
+    if !binding.on_stage.is_empty() || binding.gates.is_some() {
+        resolved
+            .prompt
+            .push_str(include_str!("../../prompts/stage_note.md"));
+    }
     invocation.pass_primary(&resolved.prompt)?;
     if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
@@ -214,6 +219,7 @@ pub fn spawn(
         always: binding.always.clone(),
         on_from: binding.on_from.clone(),
         on_stage: binding.on_stage.clone(),
+        gates: binding.gates.clone(),
         with: assignment.with,
         skill,
         agent,

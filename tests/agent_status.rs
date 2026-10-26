@@ -15,32 +15,41 @@ fn status(env: &TestEnv, kind: &str, detail: &[&str]) -> Output {
 #[test]
 fn kinds_details_reports_and_partial_lines() {
     let env = TestEnv::new("niles-agent-status");
-    let log = env.root.join("status.log");
+    let dir = write_worker(&env.root, "test", "@1", None, b"");
+    let status = |kind: &str, detail: &[&str]| {
+        env.niles(&env.root, &["agent", "status", kind])
+            .env("NILES_AGENT_DIR", &dir)
+            .args(detail)
+            .output()
+            .unwrap()
+    };
+    let log = dir.join("status.log");
     fs::write(&log, "working: partial").unwrap();
     for kind in ["working", "blocked", "needs-decision", "failed"] {
-        assert_command_success(kind, &status(&env, kind, &["  first", "second  "]));
+        assert_command_success(kind, &status(kind, &["  first", "second  "]));
     }
     for report in [None, Some("")] {
         if let Some(body) = report {
-            fs::write(env.root.join("report.md"), body).unwrap();
+            fs::write(dir.join("report.md"), body).unwrap();
         }
         let before = fs::read(&log).unwrap();
         assert_failure_contains(
             "done without report",
-            &status(&env, "done", &["ready"]),
-            env.root.join("report.md").to_str().unwrap(),
+            &status("done", &["ready"]),
+            dir.join("report.md").to_str().unwrap(),
         );
         assert_eq!(fs::read(&log).unwrap(), before);
     }
-    fs::write(env.root.join("report.md"), "deliverable").unwrap();
-    assert_command_success("done", &status(&env, "done", &["ready"]));
+    fs::write(dir.join("report.md"), "deliverable").unwrap();
+    assert_command_success("done", &status("done", &["ready"]));
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
         format!(
             "working: partial\nworking: first second\nblocked: first second\nneeds-decision: first second\nfailed: first second\ndone: ready; report: {}/report.md\n",
-            env.root.display()
+            dir.display()
         )
     );
+    assert!(!dir.join("stage.lock").exists());
 }
 
 #[test]

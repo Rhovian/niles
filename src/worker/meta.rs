@@ -15,6 +15,8 @@ pub(super) struct WorkerMeta {
     pub(super) setup: Option<crate::workspace_manifest::setup::Setup>,
     pub(super) id: String,
     pub(super) skill: SkillName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) gates: Option<crate::workspace_manifest::Gates>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) menu: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -529,3 +529,11 @@ session. A five-minute TTL limits stale delivery. Push requires outbound public
 internet even when API access is restricted to Tailscale; message access still uses
 the tailnet boundary. Directory ancestor replacement and same-user state tampering
 remain outside the existing threat model.
+
+### Stage state and post-work skills
+
+Stage prints snapshotted skill names through the existing resolver and workspace symlink
+rules at tool-output privilege, capped at 32,768 body bytes at spawn and stage. It spawns
+no agent and wakes nobody. The no-follow `stage.lock` serializes stage and done; atomic
+`gates.json` replacement records completed rounds before the status append. Workers can
+edit their own state, so staging coordinates work rather than authorizing it.

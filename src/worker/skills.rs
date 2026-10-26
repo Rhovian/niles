@@ -38,15 +38,12 @@ pub(super) fn prepare(
     );
     let global = skills::global_dir()?;
     let mut provenance = String::new();
-    let mut resolve = |kind, names: &[SkillName]| {
-        names
-            .iter()
-            .map(|name| {
-                let skill = skills::resolve(name, workspace, &global)?;
-                provenance.push_str(&format!("{kind}: {skill}\n"));
-                Ok(skill)
-            })
-            .collect::<Result<Vec<_>>>()
+    let mut resolve = |kind, names: &[SkillName]| -> Result<Vec<Skill>> {
+        let skills = resolve_names(names, workspace, &global)?;
+        for skill in &skills {
+            provenance.push_str(&format!("{kind}: {skill}\n"));
+        }
+        Ok(skills)
     };
     let menu_skills = resolve("menu_skill", &names)?;
     for skill in &menu_skills {
@@ -59,10 +56,7 @@ pub(super) fn prepare(
     let on_from = resolve("on_from_skill", &binding.on_from)?;
     let on_stage = resolve("on_stage_skill", &binding.on_stage)?;
     let with = resolve("with_skill", with)?;
-    ensure!(
-        on_stage.iter().map(|skill| skill.body.len()).sum::<usize>() <= MAX_STAGE_BYTES,
-        "on_stage bodies exceed {MAX_STAGE_BYTES} bytes"
-    );
+    check_stage_size(&on_stage)?;
     let mut menu = String::new();
     let mut warnings = String::new();
     if !menu_skills.is_empty() {
@@ -103,6 +97,31 @@ pub(super) fn prepare(
         provenance,
         warnings,
     })
+}
+
+fn resolve_names(
+    names: &[SkillName],
+    workspace: &Utf8Path,
+    global: &Utf8Path,
+) -> Result<Vec<Skill>> {
+    names
+        .iter()
+        .map(|name| skills::resolve(name, workspace, global))
+        .collect()
+}
+
+fn check_stage_size(skills: &[Skill]) -> Result<()> {
+    ensure!(
+        skills.iter().map(|skill| skill.body.len()).sum::<usize>() <= MAX_STAGE_BYTES,
+        "on_stage bodies exceed {MAX_STAGE_BYTES} bytes"
+    );
+    Ok(())
+}
+
+pub(super) fn stage_skills(names: &[SkillName], workspace: &Utf8Path) -> Result<Vec<Skill>> {
+    let skills = resolve_names(names, workspace, &skills::global_dir()?)?;
+    check_stage_size(&skills)?;
+    Ok(skills)
 }
 
 fn menu_row(skill: &Skill) -> String {

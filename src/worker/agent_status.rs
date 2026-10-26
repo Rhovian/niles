@@ -14,7 +14,7 @@ pub enum AgentCommand {
     Skill { name: crate::skills::SkillName },
     /// Report to the lead through the worker's status log.
     #[command(
-        after_help = "Only a status line wakes the lead. working wakes nobody.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log."
+        after_help = "Only a status line wakes the lead. working wakes nobody. stage wakes nobody.\nFor a skill with staging configured, write report.md and run stage first (use your longest tool timeout), apply its post-work skills, then report done. Stage rounds are limited per skill.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json."
     )]
     Status {
         kind: WorkerWake,
@@ -30,6 +30,7 @@ pub enum WorkerWake {
     Blocked,
     NeedsDecision,
     Working,
+    Stage,
 }
 
 impl From<WorkerWake> for WakeKind {
@@ -40,6 +41,7 @@ impl From<WorkerWake> for WakeKind {
             WorkerWake::Blocked => Self::Blocked,
             WorkerWake::NeedsDecision => Self::NeedsDecision,
             WorkerWake::Working => Self::Working,
+            WorkerWake::Stage => Self::Stage,
         }
     }
 }
@@ -59,20 +61,14 @@ pub(crate) fn run(command: AgentCommand) -> Result<()> {
             let dir = super::meta::worker_dir_from_env()?;
             let log = wake::status_log_path(&dir);
             std::fs::metadata(&log).with_context(|| format!("missing status log: {log}"))?;
-            let detail = if matches!(kind, WorkerWake::Done) {
-                let report = super::meta::report_path(&dir);
-                ensure!(
-                    std::fs::metadata(&report)
-                        .with_context(|| format!("missing report: {report}"))?
-                        .len()
-                        > 0,
-                    "report is empty: {report}"
-                );
-                format!("{detail}; report: {report}")
-            } else {
-                detail.to_owned()
-            };
-            append_line(&log, &wake::line(kind.into(), &detail))
+            match kind {
+                WorkerWake::Stage => super::stage::stage(&dir, detail),
+                WorkerWake::Done => super::stage::done(&dir, detail),
+                WorkerWake::Working
+                | WorkerWake::Blocked
+                | WorkerWake::Failed
+                | WorkerWake::NeedsDecision => append_line(&log, &wake::line(kind.into(), detail)),
+            }
         }
     }
 }
