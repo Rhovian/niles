@@ -114,7 +114,7 @@ fn run() -> Result<ExitCode> {
                 Some(branch) => Some(worker::SpawnTree::Worktree { branch, base }),
                 None => tree.map(worker::SpawnTree::Path),
             };
-            worker::spawn(id, assignment, task_label, agent, task, checkin, tree)?;
+            worker::spawn(id, *assignment, task_label, agent, task, checkin, tree)?;
             if wait {
                 return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
             }
