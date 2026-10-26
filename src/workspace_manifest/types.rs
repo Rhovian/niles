@@ -34,6 +34,14 @@ pub struct WorkspaceManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub always: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_from: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_stage: Vec<SkillName>,
     pub standard: TierBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontier: Option<TierBinding>,
@@ -158,6 +166,10 @@ impl Default for WorkspaceManifest {
 impl From<String> for Binding {
     fn from(primary: String) -> Self {
         Self {
+            skills: Vec::new(),
+            always: Vec::new(),
+            on_from: Vec::new(),
+            on_stage: Vec::new(),
             standard: TierBinding {
                 primary,
                 secondaries: Vec::new(),

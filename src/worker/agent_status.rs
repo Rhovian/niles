@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, ensure};
-use camino::Utf8PathBuf;
 use clap::{Subcommand, ValueEnum};
 
 use crate::{
@@ -9,6 +8,10 @@ use crate::{
 
 #[derive(Debug, Subcommand)]
 pub enum AgentCommand {
+    /// List this worker's menu skills and their sources.
+    Skills,
+    /// Print a skill from this worker's snapshotted skill lists.
+    Skill { name: crate::skills::SkillName },
     /// Report to the lead through the worker's status log.
     #[command(
         after_help = "Only a status line wakes the lead. working wakes nobody.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log."
@@ -43,6 +46,8 @@ impl From<WorkerWake> for WakeKind {
 
 pub(crate) fn run(command: AgentCommand) -> Result<()> {
     match command {
+        AgentCommand::Skills => super::skills::discover(None),
+        AgentCommand::Skill { name } => super::skills::discover(Some(&name)),
         AgentCommand::Status { kind, detail } => {
             let detail = detail.join(" ");
             ensure!(
@@ -51,14 +56,7 @@ pub(crate) fn run(command: AgentCommand) -> Result<()> {
             );
             let detail = detail.trim();
             ensure!(!detail.is_empty(), "detail must not be empty");
-            let dir = Utf8PathBuf::from(
-                std::env::var("NILES_AGENT_DIR")
-                    .context("NILES_AGENT_DIR is missing or invalid")?,
-            );
-            ensure!(
-                dir.is_absolute() && dir.is_dir(),
-                "NILES_AGENT_DIR must be an absolute worker directory: {dir}"
-            );
+            let dir = super::meta::worker_dir_from_env()?;
             let log = wake::status_log_path(&dir);
             std::fs::metadata(&log).with_context(|| format!("missing status log: {log}"))?;
             let detail = if matches!(kind, WorkerWake::Done) {

@@ -9,6 +9,7 @@ mod pane;
 mod report;
 mod resolve;
 mod retier;
+mod skills;
 mod snapshot;
 mod spawn;
 pub(crate) mod usage;
