@@ -57,6 +57,13 @@ pub(super) fn prepare(
     let on_stage = resolve("on_stage_skill", &binding.on_stage)?;
     let with = resolve("with_skill", with)?;
     check_stage_size(&on_stage)?;
+    for gate in binding.gates.iter().flat_map(|gates| &gates.0.post) {
+        provenance.push_str(&format!(
+            "gate: {} run {}\n",
+            gate.name,
+            serde_json::to_string(&gate.run)?
+        ));
+    }
     let mut menu = String::new();
     let mut warnings = String::new();
     if !menu_skills.is_empty() {

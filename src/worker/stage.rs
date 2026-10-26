@@ -5,8 +5,10 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
+use serde::{Deserialize, Serialize};
 
 use crate::{
+    skills::SkillName,
     store,
     util::append_line,
     wake::{self, WakeKind},
@@ -15,9 +17,27 @@ use crate::{
 
 struct LockedState {
     _lock: File,
-    rounds: Vec<usize>,
+    rounds: Vec<Round>,
     log_len: usize,
     count: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Round {
+    log_len: usize,
+    failed: Vec<SkillName>,
+}
+
+fn limit(meta: &super::meta::WorkerMeta) -> usize {
+    usize::from(u8::from(
+        meta.gates
+            .as_ref()
+            .map_or_else(Rounds::default, |gates| gates.rounds),
+    ))
+}
+
+fn retry(count: usize, limit: usize) -> String {
+    format!("gates failing; fix and stage again (round {count} of {limit}), or report `blocked`")
 }
 
 fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
@@ -35,12 +55,12 @@ fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
         clippy::disallowed_methods,
         reason = "an absent ledger means no completed rounds"
     )]
-    let rounds: Vec<usize> =
+    let rounds: Vec<Round> =
         store::read_optional_json(&dir.join("gates.json"))?.unwrap_or_default();
     // Equal offsets mean stage immediately followed done without another status.
     let count = rounds
         .iter()
-        .filter(|length| last_done.is_none_or(|end| **length >= end))
+        .filter(|round| last_done.is_none_or(|end| round.log_len >= end))
         .count();
     Ok(LockedState {
         _lock: lock,
@@ -70,15 +90,34 @@ pub(super) fn done(dir: &Utf8Path, detail: &str) -> Result<()> {
     } else {
         Some(locked_state(dir)?)
     };
+    let mut annotation = String::new();
     if let Some(state) = &state {
         ensure!(
             state.count > 0,
             "stage first: run niles agent status stage <summary>"
         );
+        debug_assert!(!state.rounds.is_empty());
+        let latest = &state.rounds[state.rounds.len() - 1];
+        if let Some(gates) = meta.gates.as_ref().filter(|gates| !gates.post.is_empty()) {
+            if latest.failed.is_empty() {
+                annotation = format!("; gates: passed ({})", gates.post.len());
+            } else {
+                ensure!(
+                    state.count >= limit(&meta),
+                    "{}",
+                    retry(state.count, limit(&meta))
+                );
+                let names: Vec<_> = latest.failed.iter().map(SkillName::as_str).collect();
+                annotation = format!("; gates: failed {} (round limit reached)", names.join(", "));
+            }
+        }
     }
     append_line(
         &wake::status_log_path(dir),
-        &wake::line(WakeKind::Done, &format!("{detail}; report: {report}")),
+        &wake::line(
+            WakeKind::Done,
+            &format!("{detail}{annotation}; report: {report}"),
+        ),
     )
 }
 
@@ -91,17 +130,32 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
         meta.skill
     );
     let mut state = locked_state(dir)?;
-    let limit = u8::from(
-        meta.gates
-            .as_ref()
-            .map_or_else(Rounds::default, |gates| gates.rounds),
-    );
+    let limit = limit(&meta);
     ensure!(
-        state.count < usize::from(limit),
-        "round limit {limit} reached; report done"
+        state.count < limit,
+        "round limit {limit} reached; report done, the lead will see the failed gates"
     );
     let skills = super::skills::stage_skills(&meta.on_stage, &meta.project)?;
-    state.rounds.push(state.log_len);
+    let mut round = Round {
+        log_len: state.log_len,
+        failed: Vec::new(),
+    };
+    let gates = meta
+        .gates
+        .as_ref()
+        .map_or(&[][..], |gates| gates.post.as_slice());
+    for gate in gates {
+        if !super::gates::run(gate, meta.agent_dir(), dir, state.rounds.len() + 1)? {
+            round.failed.push(gate.name.clone());
+        }
+    }
+    let passed = round.failed.is_empty();
+    let outcome = match (gates.is_empty(), passed) {
+        (true, _) => "none",
+        (false, true) => "pass",
+        (false, false) => "fail",
+    };
+    state.rounds.push(round);
     // Atomic replacement keeps an interrupted stage from truncating previous rounds.
     let temporary = dir.join("gates.tmp");
     let file = fs::OpenOptions::new()
@@ -117,12 +171,18 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
         &wake::status_log_path(dir),
         &wake::line(
             WakeKind::Stage,
-            &format!("{detail}; gates: none; report: {report}"),
+            &format!("{detail}; gates: {outcome}; report: {report}"),
         ),
     )?;
     for skill in skills {
         println!("on_stage_skill: {skill}\n{}", skill.body);
     }
-    println!("Apply the post-work skills, then report `done`.");
+    if passed {
+        println!("Apply the post-work skills, then report `done`.");
+    } else if state.count + 1 < limit {
+        println!("{}", retry(state.count + 1, limit));
+    } else {
+        println!("report `done`: the failed gates will be shown to the lead");
+    }
     Ok(())
 }

@@ -219,7 +219,7 @@ pub fn spawn(
         always: binding.always.clone(),
         on_from: binding.on_from.clone(),
         on_stage: binding.on_stage.clone(),
-        gates: binding.gates.clone(),
+        gates: binding.gates.as_ref().map(|config| config.0.clone()),
         with: assignment.with,
         skill,
         agent,

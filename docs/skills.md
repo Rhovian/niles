@@ -135,5 +135,6 @@ at spawn and stage and printed on every round. No skills are injected at done;
 Stage wakes nobody and does not answer check-ins. Stage and configured done share
 `stage.lock`; `gates.json` records completed rounds before the non-waking status.
 Done starts a fresh round allowance for the next task. Stage/done require valid
-worker metadata; unconfigured done creates no stage lock. Command gates are a
-separate extension; this stage step delivers post-work skills without executing commands.
+worker metadata; unconfigured done creates no stage lock. `gates.post` adds sequential
+`run:` argv gates; failures require another stage while rounds remain, or are annotated
+on done at the round limit.

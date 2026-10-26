@@ -174,7 +174,7 @@ fn spawn_snapshot_provenance_and_cap() {
     let text = fs::read_to_string(&manifest).unwrap();
     let configured = text.replace(
         "worker:",
-        "worker:\n  on_stage: [reviewer]\n  gates: {rounds: 2}",
+        "worker:\n  on_stage: [reviewer]\n  gates: {rounds: 2, post: [{name: check, timeout: 1500ms, run: [printf, \"literal; $(false)\"]}]}",
     );
     fs::write(&manifest, &configured).unwrap();
     let output = env.spawn("worker", &["job", "task"]);
@@ -185,23 +185,39 @@ fn spawn_snapshot_provenance_and_cap() {
         .map(str::to_owned)
         .collect();
     assert_eq!(provenance, ["on_stage_skill: reviewer (built-in)"]);
+    assert!(stdout_of(&output).contains("gate: check run [\"printf\",\"literal; $(false)\"]"));
     let workers = state_dir(&env.root).join("worker");
     let dir = workers.join("job");
     let meta = read_json(&dir.join("meta.json"));
     assert_eq!(meta["on_stage"], serde_json::json!(["reviewer"]));
     assert_eq!(meta["gates"]["rounds"], 2);
+    assert_eq!(
+        meta["gates"]["post"][0]["timeout"],
+        serde_json::json!({"secs": 1, "nanos": 500_000_000})
+    );
+    assert_eq!(
+        meta["gates"]["post"][0]["run"],
+        serde_json::json!(["printf", "literal; $(false)"])
+    );
     assert!(
         fs::read_to_string(dir.join("launch.sh"))
             .unwrap()
-            .contains("Your setup has a staging step")
+            .contains("longest tool timeout your harness allows")
     );
     fs::write(&manifest, text).unwrap();
     let worker = Worker { env, dir };
     worker.report();
-    worker.succeeds("stage");
+    assert!(worker.succeeds("stage").contains("check pass"));
+    assert_eq!(
+        fs::read_to_string(worker.dir.join("gate-1-check.log")).unwrap(),
+        "literal; $(false)"
+    );
     skill(&worker.env, "reviewer", 32_769);
     fs::write(&manifest, configured).unwrap();
     let output = worker.env.spawn("worker", &["oversized", "task"]);
     assert_failure_contains("spawn body cap", &output, "32768");
     assert!(!workers.join("oversized").exists());
 }
+
+#[path = "stage/gates.rs"]
+mod gates;

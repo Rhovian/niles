@@ -3,6 +3,7 @@ use anyhow::Context;
 pub(crate) mod agent_status;
 mod archive;
 mod close;
+mod gates;
 mod list;
 mod meta;
 mod pane;

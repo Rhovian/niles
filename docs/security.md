@@ -537,3 +537,17 @@ rules at tool-output privilege, capped at 32,768 body bytes at spawn and stage. 
 no agent and wakes nobody. The no-follow `stage.lock` serializes stage and done; atomic
 `gates.json` replacement records completed rounds before the status append. Workers can
 edit their own state, so staging coordinates work rather than authorizing it.
+
+### Stage command gates
+
+A manifest or selected workspace setup can execute repo-controlled `gates.post` argv
+when a worker stages, automatically with inherited permissions, credentials and environment.
+A malicious repository author can thereby obtain code execution. There is no trust gate
+(operator ruling); global setups are operator-owned. Spawn prints `gate:` argv and snapshots
+it in metadata. Commands run without an implicit shell in the worker’s directory, sequentially,
+with timeouts totaling at most ten minutes; timeout kills the process group. No worker detail
+enters argv. Logs cap output at 1 MiB; failed tails (forty lines, 4 KiB) reach only
+the worker’s tool result. Status annotations carry only counts and setup-defined identifiers.
+A harness killing stage first records no round and may leave a gate child running until it
+exits (accepted v1 limit). I/O-error cleanup kills the group and reaps the gate; processes
+that leave its group are outside that cleanup. Passing gates do not track subsequent edits.
