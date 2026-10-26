@@ -30,8 +30,7 @@ fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
     let last_done = wake::complete_lines(&bytes)
         .filter(|(_, line)| WakeKind::parse_line(line) == Some(WakeKind::Done))
         .map(|(end, _)| end)
-        .last()
-        .map_or(0, |end| end);
+        .last();
     #[expect(
         clippy::disallowed_methods,
         reason = "an absent ledger means no completed rounds"
@@ -39,7 +38,10 @@ fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
     let rounds: Vec<usize> =
         store::read_optional_json(&dir.join("gates.json"))?.unwrap_or_default();
     // Equal offsets mean stage immediately followed done without another status.
-    let count = rounds.iter().filter(|length| **length >= last_done).count();
+    let count = rounds
+        .iter()
+        .filter(|length| last_done.is_none_or(|end| **length >= end))
+        .count();
     Ok(LockedState {
         _lock: lock,
         rounds,
