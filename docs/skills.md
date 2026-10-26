@@ -75,3 +75,36 @@ These are source-backed claims, not live compaction observations. `niles compat`
 only: a secret present solely in primary instructions must be reported using `niles agent status`.
 Text is supplied at launch, not restored from saved history; Niles does not resume workers.
 Retention across `/clear` is documented or inferred for Claude and Codex and is not tested.
+
+Bindings can also name discovery and trigger skills:
+
+```yaml
+worker:
+  standard: {primary: claude:sonnet:high, secondaries: []}
+  skills: [style-guide]
+  always: [coding-rules]
+  on_from: [follow-design]
+  on_stage: [self-review]
+```
+
+`skills:` supplies the menu; repeatable `--menu <name>` appends unbound names,
+deduplicated in first-occurrence order, up to 16. Menus require disk `SKILL.md`.
+Descriptions must be nonempty and at most 1,024 characters; missing the whole word
+“when” warns after a successful spawn. Descriptions have control and format
+characters stripped and are clamped to 200 characters for display. The opening
+turn lists names, descriptions and sources.
+`niles agent skills` refreshes the menu; `niles agent skill <name>` prints a listed
+body without frontmatter, with its source. These use `NILES_AGENT_DIR`'s snapshot,
+resolving names at call time. Fetched bodies last until compaction; rerun to refresh.
+Copy a skill directory to share it.
+
+`always` bodies follow the primary in the system prompt, then `on_from` bodies
+when spawned with `--from`, then repeatable `--with <name>` injections. They accept
+built-ins and share the 65,536-byte assembled prompt cap, including Niles notes;
+they last as long as the system prompt. Injected names are deduplicated in
+primary → always → active on_from → --with order; the first occurrence wins.
+Spawn prints every list's provenance.
+`on_stage` names are resolved and snapshotted at spawn, capped at 32,768 body bytes
+total; staging delivers them. There is no `on_send` or `done` trigger. Editing a
+binding does not change a running worker's lists. Discovery serves only its menu,
+trigger and explicit `--with` names.

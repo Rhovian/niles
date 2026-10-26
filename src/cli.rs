@@ -127,7 +127,7 @@ pub enum CommandName {
         /// Worker task id used for window and metadata names.
         id: String,
         #[command(flatten)]
-        assignment: crate::worker::Assignment,
+        assignment: Box<crate::worker::Assignment>,
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,

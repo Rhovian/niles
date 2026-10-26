@@ -57,7 +57,22 @@ impl fmt::Display for SkillName {
 
 pub(crate) mod builtin;
 mod resolve;
-pub(crate) use resolve::{global_dir, locate, resolve};
+pub(crate) use resolve::{Skill, Source, global_dir, locate, resolve};
+
+pub(crate) fn display_description(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|ch| {
+            !matches!(
+                get_general_category(*ch),
+                GeneralCategory::Control | GeneralCategory::Format
+            )
+        })
+        .take(200)
+        .collect::<String>()
+}
 
 pub(crate) fn list() -> Result<()> {
     let workspace = crate::util::current_dir_utf8()?;
@@ -66,20 +81,7 @@ pub(crate) fn list() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("skills requires a workspace manifest"))?;
     for (name, binding) in manifest.ordered_bindings() {
         let skill = resolve(name, &workspace, &global)?;
-        let description = skill
-            .description
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .filter(|ch| {
-                !matches!(
-                    get_general_category(*ch),
-                    GeneralCategory::Control | GeneralCategory::Format
-                )
-            })
-            .take(200)
-            .collect::<String>();
+        let description = display_description(&skill.description);
         print!("skill: {skill}\t{description}");
         for (tier, agents) in binding.tiers() {
             print!("\t{}: {}", tier.as_str(), agents.primary);

@@ -1,6 +1,6 @@
 use std::fs;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::store;
@@ -23,6 +23,21 @@ pub fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         for (skill, binding) in &manifest.bindings {
             crate::skills::locate(skill, root, &global)
                 .with_context(|| format!("invalid skill in {path}"))?;
+            for name in binding
+                .skills
+                .iter()
+                .chain(&binding.always)
+                .chain(&binding.on_from)
+                .chain(&binding.on_stage)
+            {
+                let source = crate::skills::locate(name, root, &global)
+                    .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
+                ensure!(
+                    !binding.skills.contains(name)
+                        || !matches!(source, crate::skills::Source::Builtin(_)),
+                    "menu skill {name} ({source}) in {path} needs a disk SKILL.md"
+                );
+            }
             for agent in binding.agents() {
                 super::types::exact_spec(agent, &config.models)
                     .with_context(|| format!("invalid {skill} agent in {path}"))?;

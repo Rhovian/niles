@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,16 @@ const REPORT_FILE: &str = "report.md";
 pub(super) struct WorkerMeta {
     pub(super) id: String,
     pub(super) skill: SkillName,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) menu: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) always: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) on_from: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) on_stage: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) with: Vec<SkillName>,
     pub(super) agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) agent_family: Option<String>,
@@ -67,4 +77,15 @@ pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
 
 pub(super) fn report_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
     worker_dir.join(REPORT_FILE)
+}
+
+pub(super) fn worker_dir_from_env() -> Result<Utf8PathBuf> {
+    let dir = Utf8PathBuf::from(
+        std::env::var("NILES_AGENT_DIR").context("NILES_AGENT_DIR is missing or invalid")?,
+    );
+    ensure!(
+        dir.is_absolute() && dir.is_dir(),
+        "NILES_AGENT_DIR must be an absolute worker directory: {dir}"
+    );
+    Ok(dir)
 }

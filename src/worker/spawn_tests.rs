@@ -31,6 +31,8 @@ fn assert_error<T: std::fmt::Debug>(result: Result<T>, message: &str) {
 
 fn assignment(from: Option<&str>, mechanical: Option<&str>) -> Assignment {
     Assignment {
+        menu: Vec::new(),
+        with: Vec::new(),
         tier: agents::roster::Tier::Standard,
         skill: "custom".parse().unwrap(),
         from: from.map(str::to_owned),
