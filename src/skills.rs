@@ -1,10 +1,12 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use std::{fmt, str::FromStr};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub(crate) enum Origin {
     Global,
     Workspace,
@@ -55,7 +57,42 @@ impl fmt::Display for SkillName {
     }
 }
 
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Workspace => "workspace",
+        }
+    }
+}
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl FromStr for Origin {
+    type Err = anyhow::Error;
+    fn from_str(value: &str) -> Result<Self> {
+        [Self::Global, Self::Workspace]
+            .into_iter()
+            .find(|origin| origin.as_str() == value)
+            .with_context(|| format!("invalid origin {value:?}: expected global or workspace"))
+    }
+}
+impl TryFrom<String> for Origin {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self> {
+        value.parse()
+    }
+}
+impl From<Origin> for String {
+    fn from(value: Origin) -> Self {
+        value.as_str().to_owned()
+    }
+}
+
 pub(crate) mod builtin;
+pub(crate) mod files;
 mod resolve;
 pub(crate) use resolve::{Skill, Source, global_dir, locate, resolve};
 
@@ -74,10 +111,10 @@ pub(crate) fn display_description(text: &str) -> String {
         .collect::<String>()
 }
 
-pub(crate) fn list() -> Result<()> {
+pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
     let workspace = crate::util::current_dir_utf8()?;
     let global = global_dir()?;
-    let manifest = crate::workspace_manifest::load(&workspace)?
+    let manifest = crate::workspace_manifest::load(&workspace, selection)?
         .ok_or_else(|| anyhow::anyhow!("skills requires a workspace manifest"))?;
     for (name, binding) in manifest.ordered_bindings() {
         let skill = resolve(name, &workspace, &global)?;
@@ -94,6 +131,21 @@ pub(crate) fn list() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn origin_spelling_round_trips_through_serde_and_selection_parsing() {
+        for origin in [Origin::Global, Origin::Workspace] {
+            let text = origin.as_str();
+            assert_eq!(text.parse::<Origin>().unwrap(), origin);
+            let json = serde_json::to_string(&origin).unwrap();
+            assert_eq!(json, format!("\"{text}\""));
+            assert_eq!(serde_json::from_str::<Origin>(&json).unwrap(), origin);
+        }
+        for invalid in ["builtin", "Global", ""] {
+            assert!(invalid.parse::<Origin>().is_err());
+            assert!(serde_json::from_value::<Origin>(serde_json::json!(invalid)).is_err());
+        }
+    }
 
     #[test]
     fn names_validate_at_cli_and_serde_boundaries() {

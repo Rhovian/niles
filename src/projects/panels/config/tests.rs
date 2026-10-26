@@ -1,3 +1,4 @@
+use crate::test_support::default_manifest as workspace_manifest;
 use crate::test_support::skill;
 use std::fs;
 
@@ -211,4 +212,48 @@ fn cycle_wraps_and_starts_at_an_end_when_unmatched() {
     assert_eq!(cycle(&options, "one", true), "three");
     assert_eq!(cycle(&options, "unknown", false), "one");
     assert_eq!(cycle(&options, "unknown", true), "three");
+}
+
+#[test]
+fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() {
+    let first = project(
+        "config-setup-first",
+        Some(&format!("{MANIFEST}checkin: 2m\n")),
+        None,
+    );
+    let second = project(
+        "config-setup-second",
+        Some(&format!("{MANIFEST}checkin: 5m\n")),
+        None,
+    );
+    let named = first.join(".niles/setups/tdd.yaml");
+    fs::create_dir_all(named.parent().unwrap()).unwrap();
+    let named_body = format!("{MANIFEST}checkin: 15m\n");
+    fs::write(&named, &named_body).unwrap();
+    let selection = "workspace:tdd".parse().unwrap();
+    let selected = crate::workspace_manifest::load(&first, Some(&selection))
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.checkin.as_deref(), Some("15m"));
+    for (root, cadence) in [(&first, "2m"), (&second, "5m")] {
+        let rows = table(&items::project(root).unwrap());
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with(&format!("checkin | {cadence} |"))),
+            "{rows:?}"
+        );
+    }
+    save_manifest(&first, |manifest| manifest.checkin = Some("10m".into())).unwrap();
+    assert_eq!(fs::read_to_string(named).unwrap(), named_body);
+    assert_eq!(
+        workspace_manifest::load(&second)
+            .unwrap()
+            .unwrap()
+            .checkin
+            .as_deref(),
+        Some("5m")
+    );
+    for root in [first, second] {
+        crate::test_support::remove_workspace(&root).unwrap();
+    }
 }

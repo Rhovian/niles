@@ -1,5 +1,6 @@
 mod interactive;
 mod io;
+pub(crate) mod setup;
 mod skills_table;
 mod types;
 mod worktree;

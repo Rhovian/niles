@@ -20,6 +20,8 @@ const LEAD_PANE_ENV: &str = "TMUX_PANE";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<crate::workspace_manifest::setup::Setup>,
     pub id: String,
     pub agent: String,
     pub entry_skill: SkillName,
@@ -49,6 +51,7 @@ pub(super) fn prepare_manager_session(
     workspace: &Utf8Path,
     agent: &agents::AgentSpec,
     skill: &SkillName,
+    source: Option<&workspace_manifest::setup::SetupFile>,
     template: &str,
 ) -> Result<ManagerSession> {
     let now = Utc::now();
@@ -56,8 +59,9 @@ pub(super) fn prepare_manager_session(
     let dir = sessions_dir(workspace)?.join(&id);
     let path = dir.join("lead.md");
     let startup_context = startup_context(workspace)?;
-    let body = render_entry_brief(agent, workspace, &dir, &startup_context, template)?;
+    let body = render_entry_brief(agent, workspace, &dir, &startup_context, template, source)?;
     let meta = SessionMeta {
+        setup: source.map(|file| file.setup.clone()),
         id: id.clone(),
         agent: agent.canonical(),
         entry_skill: skill.clone(),
@@ -97,8 +101,12 @@ fn render_entry_brief(
     dir: &Utf8Path,
     startup_context: &str,
     template: &str,
+    source: Option<&workspace_manifest::setup::SetupFile>,
 ) -> Result<String> {
-    let manifest_path = workspace_manifest::manifest_path(workspace)?;
+    let manifest_path = match source {
+        Some(file) => file.path().to_owned(),
+        None => workspace_manifest::manifest_path(workspace, None)?,
+    };
     Ok(render_template(
         template,
         &[
@@ -247,6 +255,7 @@ mod tests {
         let workspace = temp_test_path("session-lead-pane");
         fs::create_dir_all(&workspace).unwrap();
         let mut meta = SessionMeta {
+            setup: None,
             entry_skill: SkillName::default(),
             id: "session".to_owned(),
             agent: "claude".to_owned(),
@@ -288,12 +297,13 @@ mod tests {
             &dir,
             "worker: none",
             &LEAD_BRIEF_TEMPLATE,
+            None,
         )
         .unwrap();
 
         assert!(body.contains(&format!(
             "manifest: {}",
-            workspace_manifest::manifest_path(&workspace).unwrap()
+            workspace_manifest::manifest_path(&workspace, None).unwrap()
         )));
         assert!(body.contains("lead_agent: codex:gpt-5.5:xhigh"));
         assert!(body.contains("worker: none"));

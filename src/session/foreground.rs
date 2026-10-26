@@ -27,9 +27,17 @@ pub(super) fn launch_foreground_agent(
         workspace,
         &invocation.spec,
         &manifest.entry,
+        manifest.source.as_ref(),
         primary.primary_body()?,
     )?;
     invocation.pass_primary(&prepared.brief)?;
+    if let Some(file) = &manifest.source {
+        invocation.env.push((
+            "NILES_SETUP".into(),
+            format!("{}:{}", file.setup.origin, file.setup.name),
+        ));
+        eprintln!("setup: {file}");
+    }
     eprintln!("skill: {primary}");
     prepared.write()?;
     let ManagerSession { meta, dir, .. } = prepared;

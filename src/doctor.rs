@@ -1,3 +1,4 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use std::{collections::BTreeMap, fs, process::Command};
 
 use anyhow::{Context, Result};
@@ -15,7 +16,7 @@ use crate::{
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
 const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
 
-pub(crate) fn doctor() -> Result<()> {
+pub(crate) fn doctor(selection: Option<&SetupSelection>) -> Result<()> {
     let workspace = current_dir_utf8()?;
     println!("binary: niles {}", build_info::CLAP_VERSION);
     println!("version: {}", build_info::VERSION);
@@ -23,17 +24,17 @@ pub(crate) fn doctor() -> Result<()> {
     println!("built_at: {}", build_info::BUILD_TIMESTAMP);
     println!("workspace: {workspace}");
     print_dev_mode(&workspace)?;
-    print_setup(&workspace)?;
+    print_setup(&workspace, selection)?;
     Ok(())
 }
 
-fn print_setup(workspace: &Utf8Path) -> Result<()> {
+fn print_setup(workspace: &Utf8Path, selection: Option<&SetupSelection>) -> Result<()> {
     match find_on_path("tmux") {
         Some(path) => println!("tmux: {}", version_line(&path, "-V")),
         None => println!("tmux: not found on PATH"),
     }
 
-    let Some(manifest) = workspace_manifest::load(workspace)? else {
+    let Some(manifest) = workspace_manifest::load(workspace, selection)? else {
         println!("agents: no workspace manifest");
         return Ok(());
     };

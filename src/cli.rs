@@ -9,6 +9,10 @@ use std::{io, time::Duration};
     infer_subcommands = true
 )]
 pub struct Cli {
+    /// Select a setup for workspace-local commands; an origin prefix pins the root.
+    #[arg(long, global = true, env = "NILES_SETUP", value_name = "[ORIGIN:]NAME")]
+    // Parse the winner only when used, so unused env cannot defeat a flag or affect services.
+    pub setup: Option<String>,
     #[command(subcommand)]
     pub command: Option<CommandName>,
 }

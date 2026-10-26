@@ -2,14 +2,7 @@ use super::{Origin, SkillName, builtin::SKILLS};
 use anyhow::{Context, Result, bail, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
-use std::{
-    fmt, fs,
-    io::{ErrorKind, Read},
-    os::unix::fs::OpenOptionsExt,
-};
-
-// Includes frontmatter headroom beyond the 64 KiB assembled-primary budget.
-const MAX_SKILL_BYTES: usize = 131_072;
+use std::fmt;
 
 #[derive(Debug)]
 pub(crate) enum Source {
@@ -29,13 +22,7 @@ impl fmt::Display for Source {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Builtin(_) => f.write_str("built-in"),
-            Self::Disk(origin, dir) => {
-                let origin = match origin {
-                    Origin::Global => "global",
-                    Origin::Workspace => "workspace",
-                };
-                write!(f, "{origin} {}", dir.join("SKILL.md"))
-            }
+            Self::Disk(origin, dir) => write!(f, "{origin} {}", dir.join("SKILL.md")),
         }
     }
 }
@@ -76,28 +63,11 @@ pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) 
         )),
     ];
     for source in roots.into_iter().flatten().rev() {
-        if let Source::Disk(origin, dir) = &source {
-            let path = dir.join("SKILL.md");
-            if *origin == Origin::Workspace {
-                match fs::symlink_metadata(dir) {
-                    Ok(meta) => ensure!(
-                        meta.is_dir(),
-                        "skill directory must be a directory without symlinks: {dir}"
-                    ),
-                    Err(err) if err.kind() == ErrorKind::NotFound => continue,
-                    Err(err) => {
-                        return Err(err).with_context(|| format!("failed to inspect {dir}"));
-                    }
-                }
-            }
-            match fs::symlink_metadata(&path) {
-                Ok(meta) => ensure!(
-                    *origin != Origin::Workspace || meta.is_file(),
-                    "skill must be a regular file without symlinks: {path}"
-                ),
-                Err(err) if err.kind() == ErrorKind::NotFound => continue,
-                Err(err) => return Err(err).with_context(|| format!("failed to inspect {path}")),
-            }
+        if let Source::Disk(origin, dir) = &source
+            && !super::files::exists(&dir.join("SKILL.md"), *origin)
+                .with_context(|| format!("invalid skill {name} ({source})"))?
+        {
+            continue;
         }
         return Ok(source);
     }
@@ -115,34 +85,7 @@ pub(crate) fn resolve(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path)
     let source = locate(name, workspace, global)?;
     let text = match &source {
         Source::Builtin(text) => (*text).to_owned(),
-        Source::Disk(origin, dir) => {
-            let path = dir.join("SKILL.md");
-            let flags = if *origin == Origin::Workspace {
-                libc::O_NOFOLLOW
-            } else {
-                0
-            };
-            let file = fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK | flags)
-                .open(&path)
-                .with_context(|| format!("failed to open {path}"))?;
-            let metadata = file
-                .metadata()
-                .with_context(|| format!("failed to inspect {path}"))?;
-            ensure!(metadata.is_file(), "skill must be a regular file: {path}");
-            let mut bytes = Vec::new();
-            file.take((MAX_SKILL_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .with_context(|| format!("failed to read {path}"))?;
-            ensure!(
-                bytes.len() <= MAX_SKILL_BYTES,
-                "skill file {path} read {} bytes (file size {} bytes); maximum is {MAX_SKILL_BYTES} bytes",
-                bytes.len(),
-                metadata.len()
-            );
-            String::from_utf8(bytes).with_context(|| format!("skill file is not UTF-8: {path}"))?
-        }
+        Source::Disk(origin, dir) => super::files::read(&dir.join("SKILL.md"), *origin)?,
     };
     let (description, body) =
         parse(name, &text).with_context(|| format!("invalid skill {name} ({source})"))?;

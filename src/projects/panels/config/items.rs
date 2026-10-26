@@ -123,7 +123,7 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
     };
     let config = load_project_config_from(root);
     let mut items = Vec::new();
-    match workspace_manifest::load(root) {
+    match workspace_manifest::load(root, None) {
         Ok(Some(manifest)) => {
             match &config {
                 Ok(config) => items.extend(skills(root, &manifest, config)),

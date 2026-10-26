@@ -1,3 +1,4 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use std::{fs, os::unix::fs::OpenOptionsExt};
 
 use anyhow::{Context, Result, bail};
@@ -50,15 +51,24 @@ pub struct Assignment {
     mechanical: Option<String>,
 }
 
+pub struct SpawnTask {
+    pub label: Option<String>,
+    pub text: String,
+}
+
 pub fn spawn(
     id: String,
     assignment: Assignment,
-    task_label: Option<String>,
     agent: Option<String>,
-    task: String,
+    task: SpawnTask,
     checkin: Option<String>,
     tree: Option<SpawnTree>,
+    selection: Option<&SetupSelection>,
 ) -> Result<()> {
+    let SpawnTask {
+        label: task_label,
+        text: task,
+    } = task;
     let skill = assignment.skill.clone();
     let tier = assignment.tier;
     validate_id(&id)?;
@@ -68,8 +78,8 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
-    let manifest_path = workspace_manifest::manifest_path(&project)?;
-    let manifest = workspace_manifest::load(&project).with_context(|| {
+    let manifest_path = workspace_manifest::manifest_path(&project, selection)?;
+    let manifest = workspace_manifest::load(&project, selection).with_context(|| {
         format!(
             "cannot resolve agent for skill '{}' from {manifest_path}",
             skill.as_str()
@@ -141,6 +151,10 @@ pub fn spawn(
     let agent_spec = &invocation.spec;
     let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
 
+    let setup = manifest.source.as_ref();
+    if let Some(setup) = setup {
+        println!("setup: {setup}");
+    }
     println!("skill: {primary_skill}");
     print!("{}", resolved.provenance);
     basis.record_mechanical(&id)?;
@@ -194,6 +208,7 @@ pub fn spawn(
     };
 
     let meta = WorkerMeta {
+        setup: setup.map(|file| file.setup.clone()),
         id: id.clone(),
         menu: resolved.names,
         always: binding.always.clone(),

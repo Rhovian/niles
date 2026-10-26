@@ -47,17 +47,26 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+    let selection = || {
+        cli.setup
+            .as_deref()
+            .map(str::parse::<workspace_manifest::setup::SetupSelection>)
+            .transpose()
+    };
 
     match cli.command {
         Some(CommandName::Agent { command }) => worker::agent_status::run(command)?,
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Lead { keep_skills }) => session::run(if keep_skills {
-            tmux::LeadStart::Unattended
-        } else {
-            tmux::LeadStart::Attended
-        })?,
+        Some(CommandName::Lead { keep_skills }) => session::run(
+            if keep_skills {
+                tmux::LeadStart::Unattended
+            } else {
+                tmux::LeadStart::Attended
+            },
+            selection()?,
+        )?,
         Some(CommandName::Status { line }) => {
             return Ok(match projects::status::run(line) {
                 Ok(text) => {
@@ -93,9 +102,11 @@ fn run() -> Result<ExitCode> {
                 anyhow::bail!("built without remote; reinstall with --features remote");
             }
         }
-        Some(CommandName::Skills) => skills::list()?,
-        Some(CommandName::Doctor) => doctor::doctor()?,
-        Some(CommandName::Compat { families }) => return compat::compat(&families),
+        Some(CommandName::Skills) => skills::list(selection()?.as_ref())?,
+        Some(CommandName::Doctor) => doctor::doctor(selection()?.as_ref())?,
+        Some(CommandName::Compat { families }) => {
+            return compat::compat(&families, selection()?.as_ref());
+        }
         Some(CommandName::Prune { older_than, apply }) => projects::prune::run(older_than, apply)?,
         Some(CommandName::Spawn {
             wait,
@@ -109,12 +120,24 @@ fn run() -> Result<ExitCode> {
             checkin,
             message,
         }) => {
-            let task = message.resolve()?;
+            let selection = selection()?;
+            let task = worker::SpawnTask {
+                label: task_label,
+                text: message.resolve()?,
+            };
             let tree = match worktree {
                 Some(branch) => Some(worker::SpawnTree::Worktree { branch, base }),
                 None => tree.map(worker::SpawnTree::Path),
             };
-            worker::spawn(id, *assignment, task_label, agent, task, checkin, tree)?;
+            worker::spawn(
+                id,
+                *assignment,
+                agent,
+                task,
+                checkin,
+                tree,
+                selection.as_ref(),
+            )?;
             if wait {
                 return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
             }
@@ -124,11 +147,13 @@ fn run() -> Result<ExitCode> {
             task_label,
             all,
         }) => worker::worker_close(id, task_label, all)?,
-        Some(CommandName::Retier { id, agent }) => worker::retier(id, agent)?,
+        Some(CommandName::Retier { id, agent }) => {
+            worker::retier(id, agent, selection()?.as_ref())?
+        }
         Some(CommandName::Log { id, decision }) => session::log::run(&id, &decision.join(" "))?,
         Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Usage) => worker::usage()?,
-        Some(CommandName::Models) => models::models()?,
+        Some(CommandName::Models) => models::models(selection()?.as_ref())?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines, quiet }) => worker::peek(id, lines, quiet)?,
         Some(CommandName::Send {
@@ -137,8 +162,9 @@ fn run() -> Result<ExitCode> {
             id,
             message,
         }) => {
+            let selection = selection()?;
             let message = message.resolve()?;
-            worker::send(wait, checkin, id, message)?;
+            worker::send(wait, checkin, id, message, selection.as_ref())?;
             if wait {
                 return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
             }

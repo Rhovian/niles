@@ -31,6 +31,7 @@ impl Fixture {
             waiting: true,
             worker_count: 2,
             meta: crate::session::SessionMeta {
+                setup: None,
                 id: "session".into(),
                 agent: "pi:model:high".into(),
                 agent_family: None,

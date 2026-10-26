@@ -24,6 +24,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
         let meta = fs::read_to_string(state_dir(&env.root).join(format!("worker/{id}/meta.json")))
             .unwrap();
         assert!(meta.contains(&format!("\"agent\": \"{agent}\"")), "{meta}");
+        assert!(!meta.contains("\"setup\""));
     }
     assert_failure_contains(
         "unconfigured tier",

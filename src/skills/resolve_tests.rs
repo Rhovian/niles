@@ -1,5 +1,5 @@
 use super::*;
-use std::os::unix::fs::symlink;
+use std::{fs, os::unix::fs::symlink};
 
 fn write(root: &Utf8Path, name: &str, text: &str) -> Utf8PathBuf {
     let path = root.join("skills").join(name).join("SKILL.md");

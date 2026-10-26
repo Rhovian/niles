@@ -276,7 +276,7 @@ fn pick_skill(
     {
         let mut latest = load_manifest(root)?;
         latest.set_primary(skill, value)?;
-        workspace_manifest::save(root, &latest)?;
+        workspace_manifest::save(root, &latest, None)?;
     }
     Ok(())
 }
@@ -286,10 +286,10 @@ fn pick_skill(
 fn save_manifest(root: &Utf8Path, set: impl FnOnce(&mut WorkspaceManifest)) -> Result<()> {
     let mut manifest = load_manifest(root)?;
     set(&mut manifest);
-    workspace_manifest::save(root, &manifest)
+    workspace_manifest::save(root, &manifest, None)
 }
 
 fn load_manifest(root: &Utf8Path) -> Result<WorkspaceManifest> {
-    let path = workspace_manifest::manifest_path(root)?;
-    workspace_manifest::load(root)?.with_context(|| format!("{path} is gone"))
+    let path = workspace_manifest::manifest_path(root, None)?;
+    workspace_manifest::load(root, None)?.with_context(|| format!("{path} is gone"))
 }

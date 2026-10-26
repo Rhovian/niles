@@ -1,3 +1,4 @@
+use crate::workspace_manifest::setup::SetupSelection;
 use anyhow::Result;
 
 use crate::{
@@ -7,10 +8,10 @@ use crate::{
     workspace_manifest::{self, WorkspaceManifest},
 };
 
-pub(crate) fn models() -> Result<()> {
+pub(crate) fn models(selection: Option<&SetupSelection>) -> Result<()> {
     let root = current_dir_utf8()?;
     let config = load_project_config_from(&root)?;
-    let manifest = workspace_manifest::load(&root)?;
+    let manifest = workspace_manifest::load(&root, selection)?;
     let rows = allowed_rows(&config.models, manifest.as_ref())?;
     print_structured_rows(
         "models",

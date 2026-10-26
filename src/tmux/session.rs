@@ -122,8 +122,15 @@ pub(crate) enum LeadStart {
 pub(crate) fn open_session(session: &SessionName, path: &Utf8Path, start: LeadStart) -> Result<()> {
     let executable = executable()?;
     let command = match start {
-        LeadStart::Attended => vec![executable.as_str(), "lead"],
-        LeadStart::Unattended => vec![executable.as_str(), "lead", "--keep-skills"],
+        LeadStart::Attended => vec!["env", "-u", "NILES_SETUP", executable.as_str(), "lead"],
+        LeadStart::Unattended => vec![
+            "env",
+            "-u",
+            "NILES_SETUP",
+            executable.as_str(),
+            "lead",
+            "--keep-skills",
+        ],
     };
     let launch = |before: &[&str], after: &[&str]| run(&[before, &command, after].concat());
     let name = session.as_str();

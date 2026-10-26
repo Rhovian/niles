@@ -73,3 +73,19 @@ fn orchestration_state_uses_the_private_unit_test_home() {
     remove_workspace(&workspace).unwrap();
     assert!(!state.exists());
 }
+
+pub(crate) mod default_manifest {
+    use crate::workspace_manifest::{self, WorkspaceManifest};
+    use anyhow::Result;
+    use camino::{Utf8Path, Utf8PathBuf};
+
+    pub(crate) fn load(root: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
+        workspace_manifest::load(root, None)
+    }
+    pub(crate) fn save(root: &Utf8Path, manifest: &WorkspaceManifest) -> Result<()> {
+        workspace_manifest::save(root, manifest, None)
+    }
+    pub(crate) fn manifest_path(root: &Utf8Path) -> Result<Utf8PathBuf> {
+        workspace_manifest::manifest_path(root, None)
+    }
+}
