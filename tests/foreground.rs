@@ -7,20 +7,33 @@ use std::fs;
 
 #[test]
 fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
-    let entry = "reviewer";
-    let model = "sonnet";
+    for (entry, model, agent_line) in [
+        ("reviewer", "sonnet", ""),
+        ("lead", "haiku", "lead_agent: claude:haiku"),
+        ("solo", "sonnet", "agent: claude:sonnet:high"),
+    ] {
+        assert_entry(entry, model, agent_line);
+    }
+}
+
+fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let env = TestEnv::new("niles-foreground-header");
     write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
     let manifest = state_dir(&env.root).join("manifest.yaml");
-    fs::write(
-        &manifest,
-        format!("entry: {entry}\n{}", fs::read_to_string(&manifest).unwrap()),
-    )
-    .unwrap();
+    let mut body = format!(
+        "entry: {entry}\n{}",
+        fs::read_to_string(&manifest).expect(entry)
+    );
+    if entry == "solo" {
+        body.push_str("\nsolo: {standard: {primary: claude:sonnet:high, secondaries: []}}\n");
+    }
+    fs::write(&manifest, body).expect(entry);
     let skill = env.root.join(format!(".niles/skills/{entry}/SKILL.md"));
-    fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    fs::write(&skill, format!("---\nname: {entry}\ndescription: Use when reviewing.\n---\nentry {{workspace}} {{unknown}}"))
-        .unwrap();
+    if entry == "reviewer" {
+        fs::create_dir_all(skill.parent().expect(entry)).expect(entry);
+        fs::write(&skill, format!("---\nname: {entry}\ndescription: Use when reviewing.\n---\nentry {{workspace}} {{unknown}}"))
+            .expect(entry);
+    }
     write_executable(
         &env.bin.join("claude"),
         "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$NILES_TEST_ARGS\"\n",
@@ -31,32 +44,68 @@ fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
         .env("NILES_TEST_ARGS", &args_log)
         .env_remove("TMUX_PANE")
         .output()
-        .unwrap();
-    assert_command_success("lead", &output);
+        .expect(entry);
+    assert_command_success(entry, &output);
+    let source = if entry == "reviewer" {
+        format!("workspace {}", skill.display())
+    } else {
+        "built-in".to_owned()
+    };
     assert!(
-        stderr_of(&output).contains(&format!("skill: {entry} (workspace {})", skill.display()))
+        stderr_of(&output).contains(&format!("skill: {entry} ({source})")),
+        "{entry}"
     );
-    let args = fs::read_to_string(args_log).unwrap();
+    let args = fs::read_to_string(args_log).expect(entry);
     let args = args
         .strip_suffix('\0')
-        .unwrap()
+        .expect(entry)
         .split('\0')
         .collect::<Vec<_>>();
-    let turn = args.last().unwrap();
-    let dir = turn
+    let dir = args
+        .last()
+        .expect(entry)
         .strip_prefix(&format!("# Niles {entry} session\nsession_dir: "))
-        .unwrap()
+        .expect(entry)
         .strip_suffix("\n\nStart the Niles manager session.")
-        .unwrap();
+        .expect(entry);
+    let dir = std::path::Path::new(dir);
     let meta: serde_json::Value =
-        serde_json::from_slice(&fs::read(std::path::Path::new(dir).join("session.json")).unwrap())
-            .unwrap();
-    assert_eq!(meta["entry_skill"], entry);
-    let primary = fs::read_to_string(std::path::Path::new(dir).join("lead.md")).unwrap();
-    assert_eq!(primary, format!("entry {} {{unknown}}", env.root.display()));
+        serde_json::from_slice(&fs::read(dir.join("session.json")).expect(entry)).expect(entry);
+    assert_eq!(meta["entry_skill"], entry, "{entry}");
+    let primary = fs::read_to_string(dir.join("lead.md")).expect(entry);
+    if entry == "reviewer" {
+        assert_eq!(
+            primary,
+            format!("entry {} {{unknown}}", env.root.display()),
+            "{entry}"
+        );
+    } else {
+        for rendered in [
+            format!("workspace: {}", env.root.display()),
+            format!("manifest: {}", manifest.display()),
+            format!("session_dir: {}", dir.display()),
+            agent_line.to_owned(),
+            "worker: none".to_owned(),
+        ] {
+            assert!(
+                primary.lines().any(|line| line == rendered),
+                "{entry}: missing {rendered:?} in {primary}"
+            );
+        }
+    }
     assert!(
         args.windows(2)
-            .any(|pair| pair == ["--append-system-prompt", primary.as_str()])
+            .any(|pair| pair == ["--append-system-prompt", primary.as_str()]),
+        "{entry}"
     );
-    assert!(args.windows(2).any(|pair| pair == ["--model", model]));
+    assert!(
+        args.windows(2).any(|pair| pair == ["--model", model]),
+        "{entry}"
+    );
+    assert_failure_contains(
+        entry,
+        &env.spawn(entry, &["job", "task"]),
+        &format!("entry skill {entry} cannot be spawned"),
+    );
+    assert!(!state_dir(&env.root).join("worker/job").exists(), "{entry}");
 }

@@ -219,7 +219,16 @@ mod tests {
     }
 
     #[test]
-    fn lead_brief_does_not_duplicate_fetched_commands() {
+    fn lead_brief_discovers_commands_without_duplicating_instructions() {
+        assert!(LEAD_BRIEF_TEMPLATE.contains("`niles skills`"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("`niles spawn --help`"));
+        assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --skill <name> -"));
+        for line in LEAD_BRIEF_TEMPLATE
+            .lines()
+            .filter(|line| line.contains("--skill "))
+        {
+            assert!(line.contains("--skill <name>"), "{line}");
+        }
         for command in [
             "niles peek <id>",
             "niles close <id>",

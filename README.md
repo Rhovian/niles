@@ -165,6 +165,7 @@ load before project `models:` overrides; new workspace pairs need user-registry 
 listed. Invalid registry overrides error.
 
 Only the entry skill must be bound. `entry:` defaults to `lead`; other bindings are optional.
+For direct editing with native sub-agents, [bind `solo` and set `entry: solo`](docs/skills.md#entry-sessions).
 Each binding requires a `standard` tier and may list `frontier`, `economy`,
 or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
 `family:model:effort` entries. Models without effort support, such as `claude:haiku`, omit

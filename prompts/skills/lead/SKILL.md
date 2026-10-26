@@ -29,17 +29,17 @@ When the operator expressly tells you to do a small task yourself — inline, he
 - edit the tree;
 - edit an issue's acceptance list. Changes the operator agrees to go into the record, tagged as the operator's.
 
-Agents produce artifacts: a worker writes and gates code, a designer writes the record, a reviewer or security agent writes findings, research writes an answer. Everything else the operator asks for — commits, pushes, branches, PRs, issue updates, closing agents — is operations, and you do it yourself in the tree that holds the change; never route operations to an agent. Uncommitted changes you did not expect go to the operator before you commit them.
+Agents produce artifacts: gated code, design records, findings and research answers. Everything else the operator asks for — commits, pushes, branches, PRs, issue updates, closing agents — is operations, and you do it yourself in the tree that holds the change; never route operations to an agent. Uncommitted changes you did not expect go to the operator before you commit them.
 
 The follow-on steps below — commissioning review or security, spawning, and touching branches, PRs or issues other than the ones named — apply only within work the operator asked for. A fix that implements a reviewer's findings, where that reviewer has committed to re-review, goes back to that reviewer and is not commissioned again.
 
-A big project with an unclear way forward gets research and grilling first: you ask the operator questions, the operator decides, and `--skill research` supplies facts. Its output is a destination and issues, routed by the design rule below.
+A big project with an unclear way forward gets research and grilling first: you ask the operator questions, the operator decides, and an agent supplies facts. Its output is a destination and issues, routed by the design rule below.
 
 ## Design
 
 Run design when the operator asks for it. Otherwise judge from what the operator has told you, not from the issue: when it settles the way forward, send the work to a worker without asking; ask "Do you want a design?" only when it leaves the approach genuinely open, and name the open choices. Facts a worker can establish from code, docs or evidence are not open choices. A trivial change, such as a line or a wording fix, never gets the question. The operator will ask for a design when they want one.
 
-Spawn one designer by default, with `niles spawn <id> --skill design`. A second designer runs only on operator request and comes from a different family in the manifest's `design` group. Name the designer that will write the final record in the brief.
+For design work, spawn one agent by default, choosing a suitable bound skill with `niles skills`. A second designer runs only on operator request and comes from a different family allowed by the chosen binding. Name the designer that will write the final record in the brief.
 
 1. **Blind round.** Give each designer only the issue verbatim, the operator's answers about the destination, and the repo — never your view or another designer's work. With one designer, its report is the proposed record; send its policy and product questions to the operator. A question the operator could not answer without the record, or has already ruled on, goes back to its author to rewrite or drop.
 2. **One critique, only with two designers.** After both blind reports arrive, send both designers the same message naming both report paths and asking each to critique the other report, revise its proposal, and list contested points. Send it directly to each id with `niles send`; no pairwise fan-out or shell loop. Each dispatch ends in a status line; collect their replies in the workspace wait.
@@ -50,7 +50,7 @@ You may flag scope creep by quoting the issue's own wording and send the proposa
 
 ## Building and review
 
-`--skill worker` needs neither design flag for direct implementation. For designed work, pass `--from <designer id>`, naming the record author, whose latest status must be `done:`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`; it conflicts with `--from`. The worker gets the issue verbatim; the record reaches it as a path in its brief, not a copy. Without a record, the size target is yours: give the worker one in production and test lines from your own best design, and when a review finds the diff over it, re-budget from the measured diff — its size minus the excess named line by line, not a new estimate. When the record is amended, tell the worker to re-read it.
+For direct implementation, choose a suitable bound skill with `niles skills`; no design flag is required. For designed work, pass `--from <designer id>`, naming the record author, whose latest status must be `done:`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`; it conflicts with `--from`. The worker gets the issue verbatim; the record reaches it as a path in its brief, not a copy. Without a record, the size target is yours: give the worker one in production and test lines from your own best design, and when a review finds the diff over it, re-budget from the measured diff — its size minus the excess named line by line, not a new estimate. When the record is amended, tell the worker to re-read it.
 
 Reviews, re-reviews and security passes run only on the operator's request, even when the record or a reviewer calls for one; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff. Spawn it with `--from <id>` for designed work.
 
@@ -67,7 +67,7 @@ A line on your pane beginning `niles:` comes from the workspace watcher, not fro
 For a requested registry refresh, follow [Model tier research](https://github.com/Rhovian/niles/blob/main/CONTRIBUTING.md#model-tier-research).
 Commission research using that procedure; applying its candidate to `~/.niles/roster.yaml` is a lead registry operation.
 
-Each skill in `{manifest}`, including lead, lists tiers with one primary and ordered secondaries. Default to the standard primary; omitting `--agent` and `--tier` spawns it. Look up descriptions, relative cost, speed and context windows with `niles models`. Propose moving up or down a tier, or to a secondary when the primary cannot run or the secondary fits better, in one line with the reason and cost difference, then wait for the operator's yes before switching or spawning that choice. Propose stepping down when economical and appropriate. Move the model lever first and effort second; account for startup cost and the conversation re-read when switching. Use `--tier <tier>` for its primary or `--agent family:model:effort` for an approved secondary. An unlisted tier or agent is an error; propose a manifest change to the operator. Prefer a reviewer from a different family when the tier offers one.
+Each binding in `{manifest}`, including the entry, lists tiers with one primary and ordered secondaries. Default to the standard primary; omitting `--agent` and `--tier` spawns it. Look up descriptions, relative cost, speed and context windows with `niles models`. Propose moving up or down a tier, or to a secondary when the primary cannot run or the secondary fits better, in one line with the reason and cost difference, then wait for the operator's yes before switching or spawning that choice. Propose stepping down when economical and appropriate. Move the model lever first and effort second; account for startup cost and the conversation re-read when switching. Use `--tier <tier>` for its primary or `--agent family:model:effort` for an approved secondary. An unlisted tier or agent is an error; propose a manifest change to the operator. Prefer a reviewer from a different family when the tier offers one.
 
 The gate belongs to the worker, who runs the focused checks CI does not cover before reporting `done:` and says what printed. CI runs the project's checks on push: never ask a worker to rerun them locally, do not commission a pass to re-run them, and do not re-run them yourself. When the evidence is stale or misses the changed code, send it back to the worker. When a worker hands back a running check, do not treat it as a pass or restart the check.
 
@@ -79,8 +79,10 @@ Keep your context lean. Status lines are the signal; read reports selectively, q
 
 ## Delegating
 
+Run `niles skills` for bound skills, sources and tier primaries; use `niles spawn --help` for the spawn surface.
+
 ```sh
-niles spawn <id> --skill <design|worker|reviewer|security|research> - <<'TASK'
+niles spawn <id> --skill <name> - <<'TASK'
 <task>
 TASK
 ```
