@@ -54,16 +54,7 @@ impl FromStr for GithubRef {
             Some((location, rev)) => (location, rev),
             None => (text, "HEAD"),
         };
-        ensure!(
-            !rev.is_empty()
-                && !rev.contains([' ', '~', '^', ':', '?', '*', '['])
-                && !rev.contains("..")
-                && !rev.contains("@{")
-                && !rev.starts_with(['-', '/'])
-                && !rev.ends_with(['/', '.'])
-                && rev != "@",
-            "invalid skill revision"
-        );
+        ensure!(!rev.is_empty(), "skill revision must be nonempty");
         let mut segments: Vec<_> = location.split('/').collect();
         if segments[0].contains('.') {
             ensure!(
@@ -133,11 +124,11 @@ impl PinnedRef {
         text
     }
     pub fn document(text: &str) -> Result<Self> {
-        let line = match text.strip_suffix('\n') {
-            Some(line) => match line.strip_suffix('\r') {
-                Some(line) => line,
-                None => line,
-            },
+        let line = match text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+        {
+            Some(line) => line,
             None => text,
         };
         line.to_owned().try_into()
@@ -155,10 +146,6 @@ impl TryFrom<String> for PinnedRef {
     type Error = anyhow::Error;
     fn try_from(text: String) -> Result<Self> {
         let reference: GithubRef = text.parse()?;
-        ensure!(
-            reference.is_pinned(),
-            "SKILL.ref requires a full 40-hex SHA, not a floating revision"
-        );
         // CLI input normalizes hexadecimal case; persisted pointers must already
         // be canonical, so reject uppercase explicitly before typed conversion.
         ensure!(

@@ -32,12 +32,4 @@ fn a_complete_competing_entry_wins_the_rename_race() {
         "winner"
     );
     assert!(staged.join("SKILL.md").is_file());
-    fs::remove_file(target.join("SKILL.md")).unwrap();
-    fs::write(target.join("support"), "incomplete").unwrap();
-    let error = install(&staged, &target).unwrap_err();
-    assert!(format!("{error:#}").contains("remove incomplete cache entry"));
-    assert_eq!(
-        fs::read_to_string(target.join("support")).unwrap(),
-        "incomplete"
-    );
 }

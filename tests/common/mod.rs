@@ -249,8 +249,13 @@ pub fn write_spawn_manifest(workspace: &Path, agent: &str) {
     write_manifest(workspace, SKILLS.map(|skill| (skill, agent)));
 }
 
-fn write_manifest<'a>(workspace: &Path, bindings: impl IntoIterator<Item = (&'a str, &'a str)>) {
-    fs::create_dir_all(state_dir(workspace)).unwrap();
+pub fn write_manifest<'a>(
+    workspace: &Path,
+    bindings: impl IntoIterator<Item = (&'a str, &'a str)>,
+) {
+    let state = state_dir(workspace);
+    copy_skills(state.parent().unwrap().parent().unwrap());
+    fs::create_dir_all(&state).unwrap();
     let body = bindings
         .into_iter()
         .map(|(skill, agent)| {
@@ -353,6 +358,9 @@ pub fn copy_skills(root: &Path) {
         let source = entry.path();
         let dest = root.join("skills").join(source.file_name().unwrap());
         fs::create_dir_all(&dest).unwrap();
-        fs::copy(source.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
+        let document = dest.join("SKILL.md");
+        if !document.try_exists().unwrap() && !dest.join("SKILL.ref").try_exists().unwrap() {
+            fs::copy(source.join("SKILL.md"), document).unwrap();
+        }
     }
 }

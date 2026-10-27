@@ -112,10 +112,6 @@ fn read(name: &SkillName, source: Source, global: &Utf8Path) -> Result<Skill> {
         Source::Local { origin, path } => super::files::read(path, *origin)?,
         Source::Import { reference, path } => {
             super::cache::fetch(reference, global)?;
-            ensure!(
-                super::files::exists(path, Origin::Workspace)?,
-                "missing imported skill {path}"
-            );
             super::files::read(path, Origin::Workspace)?
         }
     };

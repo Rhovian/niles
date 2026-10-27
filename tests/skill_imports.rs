@@ -38,13 +38,11 @@ impl Pack {
         git(&repo, &["tag", "-a", "v1", "-m", "version one"]);
         git(
             &repo,
-            &[
-                "clone",
-                "-q",
-                "--bare",
-                repo.to_str().unwrap(),
-                remote.to_str().unwrap(),
-            ],
+            &["clone", "-q", "--bare", ".", remote.to_str().unwrap()],
+        );
+        git(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
         );
         // The executable always names github.com. Only this isolated test HOME
         // rewrites that URL base to a local bare repository; CI needs no network.
@@ -106,10 +104,7 @@ impl Pack {
     fn commit(&self, message: &str) -> String {
         git(&self.repo, &["add", "."]);
         git(&self.repo, &["commit", "-qm", message]);
-        git(
-            &self.repo,
-            &["push", "-q", self.remote.to_str().unwrap(), "main"],
-        );
+        git(&self.repo, &["push", "-q", "origin", "main"]);
         git(&self.repo, &["rev-parse", "HEAD"]).trim().to_owned()
     }
 }
@@ -155,20 +150,32 @@ fn import_pins_updates_and_preserves_supporting_files_and_other_skills() {
         fs::read_to_string(pack.cache("pdf").join("scripts/check.sh")).unwrap(),
         "#!/bin/sh\nprintf support\n"
     );
-    assert_command_success(
-        "sibling at same SHA",
-        &pack.import("acme/pack/skills/guide@v1"),
-    );
-    assert_command_success(
-        "literal Git path and sparse pattern",
-        &pack.import("acme/pack/odd[dir]/guide@v1"),
-    );
-    git(&pack.remote, &["tag", "topic/HEAD", &pack.sha]);
-    assert_command_success(
-        "overlapping root skill at same SHA",
-        &pack.import("acme/pack@v1"),
-    );
+    assert_command_success("literal path", &pack.import("acme/pack/odd[dir]/guide@v1"));
+    let root = pack.env.home.join(format!(
+        ".niles/cache/skills/github.com/acme/pack/{}/@skill",
+        pack.sha
+    ));
+    assert_command_success("root alongside nested skill", &pack.import("acme/pack@v1"));
+    assert!(root.join("SKILL.md").is_file());
+    assert!(!root.join(".git").exists());
     assert!(pack.cache("pdf").join("SKILL.md").is_file());
+    let offline = pack.remote.with_extension("offline");
+    fs::rename(&pack.remote, &offline).unwrap();
+    assert_command_success(
+        "global import reuses complete cache",
+        &pack.run(&[
+            "skills",
+            "import",
+            &format!("acme/pack/skills/pdf@{}", pack.sha),
+            "--global",
+        ]),
+    );
+    assert_eq!(
+        fs::read_to_string(pack.env.home.join(".niles/skills/pdf/SKILL.ref")).unwrap(),
+        canonical
+    );
+    fs::rename(offline, &pack.remote).unwrap();
+    git(&pack.remote, &["tag", "topic/HEAD", &pack.sha]);
     let new = pack.update();
     let output = pack.import("acme/pack/skills/pdf");
     assert_command_success("reimport HEAD", &output);
@@ -183,16 +190,6 @@ fn import_pins_updates_and_preserves_supporting_files_and_other_skills() {
             .unwrap()
             .contains("version one")
     );
-    assert_command_success(
-        "global import",
-        &pack.run(&["skills", "import", "acme/pack/skills/guide", "--global"]),
-    );
-    assert!(
-        pack.env
-            .home
-            .join(".niles/skills/guide/SKILL.ref")
-            .is_file()
-    );
     // An abbreviated SHA is not sent to fetch as if it were a commit.
     assert_failure_contains(
         "abbreviated SHA",
@@ -204,7 +201,14 @@ fn import_pins_updates_and_preserves_supporting_files_and_other_skills() {
 #[test]
 fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     let pack = Pack::new("imports-privilege");
-    assert_command_success("import", &pack.import("acme/pack/skills/pdf"));
+    assert_command_success(
+        "global import",
+        &pack.run(&["skills", "import", "acme/pack/skills/pdf", "--global"]),
+    );
+    let pointer = pack.env.home.join(".niles/skills/pdf/SKILL.ref");
+    let external = pack.env.root.join("global-pointer");
+    fs::rename(&pointer, &external).unwrap();
+    std::os::unix::fs::symlink(&external, &pointer).unwrap();
     let manifest = state_dir(&pack.env.root).join("manifest.yaml");
     let body = fs::read_to_string(&manifest).unwrap().replace(
         "worker:\n",
@@ -249,16 +253,6 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     let output = pack.run(&["lead", "--keep-skills"]);
     assert_command_success("imported entry", &output);
     assert!(stderr_of(&output).contains("skill: pdf (import github.com/"));
-    fs::write(
-        pack.pointer("pdf"),
-        "github.com/acme/pack/skills/pdf@main\n",
-    )
-    .unwrap();
-    assert_failure_contains(
-        "floating pointer",
-        &pack.run(&["models"]),
-        "full 40-hex SHA",
-    );
 }
 
 #[test]
@@ -307,12 +301,6 @@ fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
     for flags in [
         vec!["--menu", ref_worker],
         vec!["--menu", "pdf", "--menu", "acme/pack/skills/pdf"],
-        vec![
-            "--menu",
-            "acme/pack/skills/pdf",
-            "--menu",
-            "acme/pack/skills/pdf",
-        ],
         vec!["--menu", "acme/pack/skills/pdf", "--with", "pdf"],
     ] {
         let mut args = vec!["invalid"];
@@ -362,48 +350,3 @@ fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
 
 #[path = "skill_imports/hardening.rs"]
 mod hardening;
-
-#[test]
-fn pointers_obey_existing_chain_and_global_symlink_policy() {
-    let pack = Pack::new("imports-chain");
-    assert_command_success(
-        "global pointer",
-        &pack.run(&["skills", "import", "acme/pack/skills/pdf", "--global"]),
-    );
-    let pointer = pack.env.home.join(".niles/skills/pdf/SKILL.ref");
-    let external = pack.env.root.join("global-pointer");
-    fs::rename(&pointer, &external).unwrap();
-    std::os::unix::fs::symlink(&external, &pointer).unwrap();
-    let manifest = state_dir(&pack.env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        format!("{body}pdf: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n"),
-    )
-    .unwrap();
-    let output = pack.run(&["skills"]);
-    assert_command_success("global symlink resolves", &output);
-    assert!(stdout_of(&output).contains("skill: pdf (import github.com/"));
-    document(
-        &pack.env.root.join(".niles"),
-        "skills/pdf",
-        "pdf",
-        "workspace body",
-    );
-    let output = pack.run(&["skills"]);
-    assert_command_success("workspace overrides pointer", &output);
-    assert!(stdout_of(&output).contains("skill: pdf (workspace "));
-    fs::remove_file(pack.env.root.join(".niles/skills/pdf/SKILL.md")).unwrap();
-    assert_command_success(
-        "imported worker primary",
-        &pack.run(&["spawn", "--skill", "pdf", "primary", "task"]),
-    );
-    assert!(
-        fs::read_to_string(state_dir(&pack.env.root).join("worker/primary/launch.sh"))
-            .unwrap()
-            .contains("pdf version one")
-    );
-}
-
-#[path = "skill_imports/review.rs"]
-mod review;

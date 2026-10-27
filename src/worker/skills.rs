@@ -142,17 +142,6 @@ fn resolve_available(
     }
 }
 
-fn resolve_names(
-    names: &[SkillName],
-    workspace: &Utf8Path,
-    global: &Utf8Path,
-) -> Result<Vec<Skill>> {
-    names
-        .iter()
-        .map(|name| skills::resolve(name, workspace, global))
-        .collect()
-}
-
 fn check_stage_size(skills: &[Skill]) -> Result<()> {
     ensure!(
         skills.iter().map(|skill| skill.body.len()).sum::<usize>() <= MAX_STAGE_BYTES,
@@ -162,7 +151,11 @@ fn check_stage_size(skills: &[Skill]) -> Result<()> {
 }
 
 pub(super) fn stage_skills(names: &[SkillName], workspace: &Utf8Path) -> Result<Vec<Skill>> {
-    let skills = resolve_names(names, workspace, &skills::global_dir()?)?;
+    let global = skills::global_dir()?;
+    let skills = names
+        .iter()
+        .map(|name| skills::resolve(name, workspace, &global))
+        .collect::<Result<Vec<_>>>()?;
     check_stage_size(&skills)?;
     Ok(skills)
 }
