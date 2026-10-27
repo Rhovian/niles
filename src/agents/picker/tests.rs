@@ -87,7 +87,7 @@ fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
 #[test]
 fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     form.selected = form
         .draft
         .ordered_bindings()
@@ -120,7 +120,7 @@ fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
 #[test]
 fn unchanged_draft_hides_and_ignores_save() {
     let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     assert!(!render(&form).contains("s save"));
     assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
     assert!(matches!(form.screen, Screen::Skills));
@@ -134,7 +134,7 @@ fn unchanged_draft_hides_and_ignores_save() {
 #[test]
 fn restoring_original_draft_hides_and_ignores_save() {
     let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     form.draft
         .set_primary(&skill("lead"), "claude:sonnet:medium".into())
         .unwrap();
@@ -151,7 +151,7 @@ fn restoring_original_draft_hides_and_ignores_save() {
 #[test]
 fn rendering_marks_uninstalled_families_and_shows_effort_hints() {
     let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
+    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     if let Screen::Editing { columns, .. } = &mut form.screen {
         columns.families[0].installed = false;
@@ -178,48 +178,8 @@ fn render(form: &Form) -> String {
 }
 
 #[test]
-fn replacement_explains_why_and_requires_save_or_quit() {
-    let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.save_reason = Some("Cannot parse manifest: missing field `design`\u{1b}".to_owned());
-    let text = render(&form);
-    assert!(
-        text.contains("Cannot parse manifest: missing field `design`"),
-        "{text}"
-    );
-    assert!(!text.contains('\u{1b}'), "{text}");
-    assert!(!text.contains("continue"), "{text}");
-    assert!(text.contains("s save"), "{text}");
-    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
-    form.key(KeyCode::Char('s'), &config).unwrap();
-    assert!(matches!(
-        form.key(KeyCode::Enter, &config).unwrap(),
-        Some(Choice::Save(_))
-    ));
-    assert!(matches!(
-        form.key(KeyCode::Char('q'), &config).unwrap(),
-        Some(Choice::Quit)
-    ));
-}
-
-#[test]
-fn pending_first_save_cannot_continue_without_saving() {
-    let config = config();
-    let mut form = Form::new(WorkspaceManifest::default(), &config).unwrap();
-    form.save_reason = Some("No manifest exists yet; save to continue.".into());
-    assert!(render(&form).contains("s save"));
-    assert!(!render(&form).contains("c continue"));
-    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
-    form.key(KeyCode::Char('s'), &config).unwrap();
-    let Some(Choice::Save(saved)) = form.key(KeyCode::Enter, &config).unwrap() else {
-        panic!("save first draft")
-    };
-    assert_eq!(*saved, form.original);
-}
-
-#[test]
 fn arbitrary_binding_names_are_entry_first_then_alphabetical() {
-    let mut manifest = WorkspaceManifest::default();
+    let mut manifest = crate::test_support::manifest();
     let binding = manifest.bindings.values().next().unwrap().clone();
     manifest.bindings = ["zeta", "beta", "alpha"]
         .into_iter()

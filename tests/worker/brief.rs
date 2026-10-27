@@ -61,7 +61,7 @@ fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
 
 #[test]
 fn skill_selects_primary_instructions_outside_the_opening_turn() {
-    let env = TestEnv::with_manifest("niles-worker-roles", "claude");
+    let env = TestEnv::with_manifest("niles-worker-skills", "claude");
 
     for skill in ["design", "reviewer", "security", "research", "worker"] {
         let spawn = env.spawn(skill, &[skill, "Do", "it"]);

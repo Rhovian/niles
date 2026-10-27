@@ -167,7 +167,7 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
         assert_command_success(family, &sent);
         let dir = fs::canonicalize(dir).unwrap();
         let report = dir.join("report.md");
-        let footer = include_str!("../../prompts/followup_reporting.md")
+        let footer = include_str!("../../skills/followup_reporting.md")
             .replace("{report_path}", report.to_str().unwrap());
         assert_eq!(
             fs::read_to_string(lab.workspace.join("delivered")).unwrap(),

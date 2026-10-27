@@ -107,7 +107,7 @@ pub fn spawn(
     if !binding.on_stage.is_empty() || binding.gates.is_some() {
         resolved
             .prompt
-            .push_str(include_str!("../../prompts/stage_note.md"));
+            .push_str(include_str!("../../skills/stage_note.md"));
     }
     invocation.pass_primary(&resolved.prompt)?;
     if find_on_path(invocation.binary).is_none() {

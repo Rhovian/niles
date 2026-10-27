@@ -58,7 +58,7 @@ mod tests {
     fn registry_fixture_models_filters_manifest_union_and_efforts() {
         let models = parse(FIXTURE_REGISTRY).unwrap();
         assert_eq!(allowed_rows(&models, None).unwrap().len(), 4);
-        let mut manifest = WorkspaceManifest::default();
+        let mut manifest = crate::test_support::manifest();
         for binding in manifest.bindings.values_mut() {
             *binding = "claude:haiku".to_owned().into();
         }

@@ -41,7 +41,7 @@ fn track_package_inputs(manifest_dir: &Path) {
         "Cargo.lock",
         "src",
         "tests",
-        "examples",
+        "skills",
         "docs",
         "README.md",
     ] {

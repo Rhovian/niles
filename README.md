@@ -93,17 +93,15 @@ Niles does not edit your agent CLIs' configuration or your tmux config.
 
 ## Skills
 
-The lead is the agent you talk to. It owns the outcome: it reads the code, settles the plan, and
-decides who does what. Anything cheaper to do than to delegate, it does itself, including reviewing
-a diff. The rest it hands to other skills, commissioning as much review as the risk warrants,
-which may be none.
+The lead is the agent you talk to. It coordinates agents and forwards their artifacts within
+operator-requested scope. Design and implementation go to the corresponding skills; reviews
+and security work require the operator's request. See the [lead workflow](skills/built-in/lead/SKILL.md).
 
-- **Worker** implements the change and owns the gate: it runs the project's checks before reporting
-  `done:` and says what printed, so nobody else re-runs them.
+- **Worker** implements the change and owns the gate: CI runs its checks on push; the worker
+  runs focused checks CI does not cover and reports what printed.
 - **Reviewer** gives an independent read on correctness, idiom, economy, and test quality. It never
   does security review; it flags anything security-relevant in one line.
-- **Security** asks what an attacker can do with the change. The lead commissions it only when the
-  change is itself a security boundary, so ordinary work is not hardened against an unnamed attacker.
+- **Security** asks what an attacker can do with the change, when requested by the operator.
 - **Research** answers one question with a source for every claim. It edits nothing and runs no
   checks, so the lead keeps the answer without spending its own context on the reading.
 
@@ -120,10 +118,8 @@ design: {standard: {primary: claude:sonnet:high, secondaries: []}}
 research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 ```
 
-For ready-made setups with all shipped skill tiers, see [examples/](examples/):
-[Claude lead](examples/claude-lead.yaml) and [Codex lead](examples/codex-lead.yaml).
-From the project root, copy a template to
-`"$HOME/.niles/state/$(pwd -P | tr '/' '-')/manifest.yaml"` (create its parent directory first).
+Use the [setup skill](skills/niles-setup/SKILL.md#3-write-the-manifest) to create the manifest
+with the operator. A missing manifest fails; Niles does not create a default.
 Run `niles doctor` to check the required CLIs.
 
 The first of `niles.yaml` or `.niles.yaml` extends the model roster for the built-in agent families:

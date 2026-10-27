@@ -1,5 +1,5 @@
 use crate::test_support::default_manifest as workspace_manifest;
-use crate::test_support::skill;
+use crate::test_support::{manifest_body, skill};
 use std::fs;
 
 use camino::Utf8PathBuf;
@@ -77,8 +77,6 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-const MANIFEST: &str = include_str!("../../../../examples/claude-lead.yaml");
-
 fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
     let root = temp_test_path(label);
     fs::create_dir_all(&root).unwrap();
@@ -94,7 +92,7 @@ fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathB
 
 #[test]
 fn project_rows_show_tiers_and_standard_primary_is_editable() {
-    let root = project("config-project-tiers", Some(MANIFEST), None);
+    let root = project("config-project-tiers", Some(manifest_body()), None);
     let items = items::project(&root).unwrap();
     let rows = table(&items);
     assert!(rows.iter().any(|row| {
@@ -133,7 +131,7 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
 
     let root = project(
         "config-invalid",
-        Some(MANIFEST),
+        Some(manifest_body()),
         Some("agents: {lead: {}}\n"),
     );
     let rows = table(&items::project(&root).unwrap());
@@ -148,8 +146,8 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
 }
 
 #[test]
-fn saving_a_role_and_checkin_keeps_the_other_fields() {
-    let text = format!("{MANIFEST}checkin: 300s\nrecheck: backoff\n");
+fn saving_a_skill_and_checkin_keeps_the_other_fields() {
+    let text = format!("{}checkin: 300s\nrecheck: backoff\n", manifest_body());
     let root = project("config-save", Some(&text), None);
     let before = workspace_manifest::load(&root).unwrap().unwrap();
     save_manifest(&root, |manifest| {
@@ -218,17 +216,17 @@ fn cycle_wraps_and_starts_at_an_end_when_unmatched() {
 fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() {
     let first = project(
         "config-setup-first",
-        Some(&format!("{MANIFEST}checkin: 2m\n")),
+        Some(&format!("{}checkin: 2m\n", manifest_body())),
         None,
     );
     let second = project(
         "config-setup-second",
-        Some(&format!("{MANIFEST}checkin: 5m\n")),
+        Some(&format!("{}checkin: 5m\n", manifest_body())),
         None,
     );
     let named = first.join(".niles/setups/tdd.yaml");
     fs::create_dir_all(named.parent().unwrap()).unwrap();
-    let named_body = format!("{MANIFEST}checkin: 15m\n");
+    let named_body = format!("{}checkin: 15m\n", manifest_body());
     fs::write(&named, &named_body).unwrap();
     let selection = "workspace:tdd".parse().unwrap();
     let selected = crate::workspace_manifest::load(&first, Some(&selection))

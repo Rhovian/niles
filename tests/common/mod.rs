@@ -328,3 +328,13 @@ pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
     home.join(".niles/state")
         .join(workspace.to_str().unwrap().replace('/', "-"))
 }
+
+pub fn setup_manifest_body() -> &'static str {
+    include_str!("../../skills/niles-setup/SKILL.md")
+        .split_once("```yaml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0
+}

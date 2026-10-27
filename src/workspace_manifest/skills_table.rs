@@ -117,7 +117,7 @@ mod tests {
     use crate::agents;
 
     fn manifest(reviewer: &str) -> WorkspaceManifest {
-        let mut manifest = WorkspaceManifest::default();
+        let mut manifest = crate::test_support::manifest();
         manifest
             .bindings
             .insert("reviewer".parse().unwrap(), reviewer.to_owned().into());

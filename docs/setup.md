@@ -81,7 +81,7 @@ installed bindings stay until tmux restarts.
 
 ## Pi with OpenRouter
 
-Install `@mariozechner/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
+Install `@earendil-works/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
 key in `~/.pi/agent/auth.json`. Pi never reads `.env` files. An exported `OPENROUTER_API_KEY`
 only reaches niles workers if the tmux server started after the export; `/login` avoids that
 requirement.

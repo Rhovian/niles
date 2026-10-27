@@ -1,6 +1,6 @@
 use std::io::{self, IsTerminal, Write};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use super::{
@@ -36,48 +36,20 @@ fn ensure(
         &Utf8Path,
         WorkspaceManifest,
         &crate::config::spec::ProjectConfig,
-        Option<&str>,
     ) -> Result<Choice>,
 ) -> Result<Option<WorkspaceManifest>> {
     let config = load_project_config_from(root)?;
-    // serde-saphyr 1.3.0's from_str_with_options returns its typed deserialization Error
-    // (src/de/api.rs); only that error opens replacement, never a filesystem failure.
-    let (existing, replacement_reason) = match load(root, selection) {
-        Ok(existing) => (existing, None),
-        Err(error) if interactive && error.is::<serde_saphyr::Error>() => (
-            None,
-            Some(format!(
-                "Cannot parse manifest: {error:#}. Pick skills and save to replace it with defaults; q leaves it unchanged."
-            )),
-        ),
-        Err(error) => return Err(error),
-    };
+    let path = manifest_path(root, selection)?;
+    let existing = load(root, selection)?.with_context(|| {
+        format!("workspace manifest {path} does not exist; create it with the niles-setup skill")
+    })?;
     if !interactive {
-        let Some(manifest) = existing else {
-            bail!(
-                "workspace manifest {} does not exist; run `niles` from an interactive terminal",
-                manifest_path(root, selection)?
-            );
-        };
-        print_manifest_skills(output, &manifest, &config)?;
-        return Ok(Some(manifest));
+        print_manifest_skills(output, &existing, &config)?;
+        return Ok(Some(existing));
     }
-    let defaults = match &existing {
-        Some(manifest) => manifest.clone(),
-        None => WorkspaceManifest::default(),
-    };
-    let save_reason = replacement_reason.as_deref().or_else(|| {
-        existing.is_none().then_some(
-            "No workspace manifest exists yet. Save the shown skills to continue; q quits.",
-        )
-    });
-    match pick(root, defaults, &config, save_reason)? {
-        Choice::Save(draft) if replacement_reason.is_some() => {
-            save(root, &draft, selection)?;
-            Ok(Some(*draft))
-        }
-        Choice::Save(draft) => save_changes(root, selection, existing.as_ref(), &draft).map(Some),
-        Choice::Keep => existing.context("no workspace manifest written").map(Some),
+    match pick(root, existing.clone(), &config)? {
+        Choice::Save(draft) => save_changes(root, selection, &existing, &draft).map(Some),
+        Choice::Keep => Ok(Some(existing)),
         Choice::Quit => Ok(None),
     }
 }
@@ -87,22 +59,11 @@ fn ensure(
 fn save_changes(
     root: &Utf8Path,
     selection: Option<&SetupSelection>,
-    before: Option<&WorkspaceManifest>,
+    before: &WorkspaceManifest,
     draft: &WorkspaceManifest,
 ) -> Result<WorkspaceManifest> {
-    let mut latest = match (load(root, selection)?, before) {
-        (Some(manifest), _) => manifest,
-        (None, None) => {
-            save(root, draft, selection)?;
-            return Ok(draft.clone());
-        }
-        (None, Some(_)) => bail!("{} is gone", manifest_path(root, selection)?),
-    };
-    let defaults = WorkspaceManifest::default();
-    let before = match before {
-        Some(before) => before,
-        None => &defaults,
-    };
+    let path = manifest_path(root, selection)?;
+    let mut latest = load(root, selection)?.with_context(|| format!("{path} is gone"))?;
     let mut changed = false;
     for (skill, binding) in &draft.bindings {
         if before.bindings.get(skill) != Some(binding) {

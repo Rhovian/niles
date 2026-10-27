@@ -45,9 +45,10 @@ entry first, with sources, paths, descriptions and tier primaries.
 A `SKILL.md` starts with YAML frontmatter between `---` lines: `name` must equal the directory
 name and `description` must be nonempty and at most 1,024 characters. Other frontmatter keys
 are allowed. Disk documents are limited to 131,072 bytes including frontmatter.
-The Markdown body follows unchanged. Workers receive `prompts/skill_common.md`
-followed by that body; entry sessions retain their template rendering. Primary text must be
-nonempty, contain no NUL and fit 65,536 bytes after assembly/rendering. Codex's encoded argument
+The Markdown body follows unchanged. Workers receive the primary body, then `always`,
+active `on_from` and `--with` bodies, then `skills/skill_common.md`; entry sessions retain
+their template rendering. Primary text must be nonempty, contain no NUL and fit 65,536 bytes
+after assembly/rendering. Codex's encoded argument
 must also fit 131,071 bytes. Invalid content fails before worker/session creation. Manifest load
 checks existence only; launch reads content. Workspace skill directories/files must not be
 symlinks; global skill symlinks are allowed. See [the threat model](security.md#skills-as-an-instruction-source).

@@ -14,7 +14,7 @@ pub enum AgentCommand {
     Skill { name: crate::skills::SkillName },
     /// Report to the lead through the worker's status log.
     #[command(
-        after_help = "Only a status line wakes the lead. working wakes nobody. stage wakes nobody.\nFor a skill with staging configured, write report.md and run stage first (use your longest tool timeout), apply its post-work skills, then report done. Stage rounds are limited per skill.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json."
+        after_help = "Only a status line wakes the lead. working wakes nobody. stage wakes nobody.\nFor a skill with staging configured, write report.md and run stage first (use your longest tool timeout), apply its post-work skills, then report done. Stage rounds are limited per worker task.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json."
     )]
     Status {
         kind: WorkerWake,

@@ -89,3 +89,17 @@ pub(crate) mod default_manifest {
         workspace_manifest::manifest_path(root, None)
     }
 }
+
+pub(crate) fn manifest_body() -> &'static str {
+    include_str!("../skills/niles-setup/SKILL.md")
+        .split_once("```yaml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0
+}
+
+pub(crate) fn manifest() -> crate::workspace_manifest::WorkspaceManifest {
+    crate::store::parse_yaml(manifest_body()).unwrap()
+}

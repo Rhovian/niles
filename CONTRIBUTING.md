@@ -2,11 +2,11 @@
 
 ## Checks
 
-The gate is whatever [CI](.github/workflows/ci.yml) runs. Run the same commands locally before
-submitting a change. Install `tmux` first; the integration tests start a private tmux server.
-
-Keep `--no-fail-fast`: plain `cargo test` stops at the first failing binary, so a failure in one
-test file hides every later one.
+[CI](.github/workflows/ci.yml) runs the gate on push; do not rerun its checks locally.
+Before reporting a change done, run focused checks CI does not cover and say what printed.
+Install `tmux` when running integration tests; they start a private tmux server.
+Use `--no-fail-fast` when an appropriate test run spans multiple test binaries, so one failure
+does not hide later results.
 
 The lints deny `unwrap`, `expect`, wildcard match arms on enums, and silent defaults such as
 `unwrap_or` and `Result::ok`. A default is a decision, so make it at the parse boundary or as a

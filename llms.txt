@@ -7,13 +7,13 @@ To set Niles up in a repository, load the `niles-setup` skill, or read it direct
 ## Set up
 
 - [Install](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#2-install): Homebrew, the shell installer, or Cargo.
-- [Write the manifest](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#3-write-the-manifest): `.niles/manifest.yaml`, chosen with the user.
+- [Write the manifest](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#3-write-the-manifest): `~/.niles/state/<workspace-key>/manifest.yaml`, chosen with the user.
 - [Check with niles doctor](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#4-check-with-niles-doctor)
 - [Start the workspace](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#5-hand-off-to-start): the user runs `niles`.
 
 ## Docs
 
-- [README](https://raw.githubusercontent.com/Rhovian/niles/main/README.md): requirements, configuration, roles.
+- [README](https://raw.githubusercontent.com/Rhovian/niles/main/README.md): requirements, configuration, skills.
 - [Suggested setup](https://raw.githubusercontent.com/Rhovian/niles/main/docs/setup.md): home view keys, status bar, theme.
-- [Role workflows](https://raw.githubusercontent.com/Rhovian/niles/main/docs/roles.md)
+- [Skill workflows](https://raw.githubusercontent.com/Rhovian/niles/main/docs/skills.md)
 - [Threat model](https://raw.githubusercontent.com/Rhovian/niles/main/docs/security.md)

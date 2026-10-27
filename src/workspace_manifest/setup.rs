@@ -217,7 +217,7 @@ mod tests {
                         .file(&fixture.root, &skills::global_dir().unwrap())
                         .unwrap(),
                 ),
-                ..Default::default()
+                ..crate::test_support::manifest()
             };
             manifest.bindings.insert(
                 "source".parse().unwrap(),

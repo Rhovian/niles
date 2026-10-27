@@ -11,7 +11,7 @@ export function mockApi(): Plugin {
   ];
   const transcripts = new Map(sessions.map(session => [session.id, [{
     id: `${session.id}-welcome`, role: 'agent' as const,
-    text: '## Ready when you are\nThis is the **local mock API**. Send a message to try the chat.\n\n```sh\nniles sessions\n```',
+    text: '## Ready when you are\nThis is the **local mock API**. Send a message to try the chat.\n\n```sh\nniles workers\n```',
   }] as Turn[]]));
   const streams = new Map<string, Set<ServerResponse>>(sessions.map(session => [session.id, new Set()]));
   const emit = (response: ServerResponse, name: string, data: unknown) => response.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);

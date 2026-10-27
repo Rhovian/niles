@@ -1,5 +1,5 @@
 macro_rules! skills {
-    ($($name:literal),*) => { &[$(($name, include_str!(concat!("../../prompts/skills/", $name, "/SKILL.md")))),*] };
+    ($($name:literal),*) => { &[$(($name, include_str!(concat!("../../skills/built-in/", $name, "/SKILL.md")))),*] };
 }
 pub(super) const SKILLS: &[(&str, &str)] = skills!(
     "worker", "reviewer", "security", "design", "research", "lead", "solo"

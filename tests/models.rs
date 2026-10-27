@@ -34,7 +34,7 @@ fn models_prints_the_effective_workspace_roster() {
         ("design", "claude:haiku"),
         ("research", "claude:haiku"),
     ]
-    .map(|(role, agent)| format!("{role}: {{standard: {{primary: {agent}, secondaries: []}}}}\n"))
+    .map(|(skill, agent)| format!("{skill}: {{standard: {{primary: {agent}, secondaries: []}}}}\n"))
     .join("");
     fs::write(state_dir_at(&home, &workspace).join("manifest.yaml"), body).unwrap();
 
