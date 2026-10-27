@@ -20,10 +20,9 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let env = TestEnv::new("niles-foreground-header");
     write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
     let manifest = state_dir(&env.root).join("manifest.yaml");
-    let mut body = format!(
-        "entry: {entry}\n{}",
-        fs::read_to_string(&manifest).expect(entry)
-    );
+    let mut body = fs::read_to_string(&manifest)
+        .expect(entry)
+        .replace("entry: lead", &format!("entry: {entry}"));
     if entry == "solo" {
         body.push_str("\nsolo: {standard: {primary: claude:sonnet:high, secondaries: []}}\n");
     }
@@ -49,7 +48,12 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let source = if entry == "reviewer" {
         format!("workspace {}", skill.display())
     } else {
-        "built-in".to_owned()
+        format!(
+            "global {}",
+            env.home
+                .join(format!(".niles/skills/{entry}/SKILL.md"))
+                .display()
+        )
     };
     assert!(
         stderr_of(&output).contains(&format!("skill: {entry} ({source})")),

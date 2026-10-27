@@ -18,6 +18,17 @@ fn skill(root: &Path, name: &str, description: &str, body: &str) -> std::path::P
 }
 
 #[test]
+fn a_fresh_home_has_no_skill_fallback_or_materialization() {
+    let env = TestEnv::with_manifest("skills-fresh-home", "claude");
+    fs::remove_dir_all(env.home.join(".niles/skills")).unwrap();
+    let output = env.run(&["skills"]);
+    assert_failure_contains("missing disk skill", &output, "has no SKILL.md");
+    assert!(stderr_of(&output).contains("niles skills import"));
+    assert!(!env.home.join(".niles/skills").exists());
+    assert!(!env.root.join(".niles/skills").exists());
+}
+
+#[test]
 fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
     let env = TestEnv::with_manifest("skills-delivery", "claude");
     let body = "literal {dir} 'quote' \"\r\nbody\n";
@@ -37,7 +48,7 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
     let output = env.run(&["skills"]);
     assert_command_success("skills", &output);
     let text = stdout_of(&output);
-    assert!(text.starts_with("skill: lead (built-in)"));
+    assert!(text.starts_with("skill: lead (global "));
     let row = text
         .lines()
         .find(|line| line.starts_with("skill: triage "))
@@ -277,11 +288,7 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
         );
         fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
     }
-    for (name, message) in [
-        ("absent", "has no SKILL.md"),
-        ("research", "needs a disk SKILL.md"),
-        ("../x", "invalid skill name"),
-    ] {
+    for (name, message) in [("absent", "has no SKILL.md"), ("../x", "only github.com")] {
         reject(&["job", "--menu", name, "task"], message);
     }
     for description in ["".to_owned(), "x".repeat(1025)] {
@@ -309,19 +316,14 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
     args.extend(["--menu", &names[16], "task"]);
     reject(&args, "maximum is 16");
     skill(root, "guide", "Whenever useful", "body");
-    reject(
-        &["job", "--menu", "guide", "--menu", "research", "task"],
-        "needs a disk SKILL.md",
+    assert_command_success(
+        "ordinary research menu at spawn",
+        &env.spawn("worker", &["job", "--menu", "research", "task"]),
     );
+    fs::remove_dir_all(&dir).unwrap();
     let path = state_dir(&env.root).join("manifest.yaml");
-    let original = fs::read_to_string(&path).unwrap();
     bind_extras(&env, "  skills: [research]\n");
-    assert_failure_contains(
-        "builtin menu rejected at load",
-        &env.run(&["models"]),
-        "needs a disk SKILL.md",
-    );
-    fs::write(&path, &original).unwrap();
+    assert_command_success("ordinary research menu at load", &env.run(&["models"]));
     for name in ["large0", "large1", "large2", "large3"] {
         skill(root, name, "Use when needed", &"x".repeat(16384));
     }

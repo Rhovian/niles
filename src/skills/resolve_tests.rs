@@ -19,9 +19,8 @@ fn roots_override_without_reading_shadowed_content() {
     let root = Utf8Path::from_path(tmp.path()).unwrap();
     let workspace = root.join("workspace");
     let name = "worker".parse().unwrap();
-    let builtin = resolve(&name, &workspace, root).unwrap();
-    assert!(matches!(builtin.source, Source::Builtin(_)));
-    assert!(builtin.body.contains("You are the worker"));
+    let error = resolve(&name, &workspace, root).unwrap_err();
+    assert!(error.to_string().contains("has no SKILL.md"));
     let path = write(
         root,
         "worker",

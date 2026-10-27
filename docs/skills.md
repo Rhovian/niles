@@ -2,9 +2,11 @@
 
 ## Entry sessions
 
-The default `lead` coordinates the cross-family pipeline, discovering workers with `niles skills`.
-Built-in `solo` edits the tree directly and can use native sub-agents; it spawns Niles workers
-only when the operator asks. Native sub-agents have no Niles status line, wake or usage rollup.
+Each setup must explicitly select its entry skill with `entry:`. Niles has no embedded skill
+bodies. This repository uses the skills in [`skills/`](../skills/); copy
+any directories you want to use into `.niles/skills/` or `~/.niles/skills/`, or import
+them from GitHub as described below. Its `lead`
+coordinates workers and its `solo` edits directly, spawning workers only on request. Native sub-agents have no Niles status line, wake or usage rollup.
 Select solo in the workspace manifest; its binding supplies the agent and tiers:
 
 ```yaml
@@ -15,7 +17,7 @@ solo:
     secondaries: []
 ```
 
-Shipped templates do not bind `solo`; entry selection has no global default. Entry bodies render
+The setup examples do not bind `solo`; set `entry: solo` to select it. Entry bodies render
 `{workspace}`, `{agent}`, `{dir}`, `{manifest}` and `{startup_context}` (the same startup context
 for either skill); unknown placeholders stay literal.
 
@@ -36,10 +38,9 @@ Switch by starting a new lead; live sessions are unchanged. Workspace setup syml
 ## Design and implementation
 
 `niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill
-(default `lead`, selected with `entry:`) cannot be spawned. Only the entry must be bound when
-the manifest loads; other skills are optional. Each binding must resolve to a skill. Lookup is by exact name, in order: compiled built-ins,
-`~/.niles/skills/<name>/SKILL.md`, then `<workspace>/.niles/skills/<name>/SKILL.md`; the last
-present source wins. Unbound directories are never scanned. `niles skills` lists bound skills,
+(selected with the required `entry:`) cannot be spawned. Only the entry must be bound when
+the manifest loads; other skills are optional. Each binding must resolve to a skill directory containing exactly one of `SKILL.md` or `SKILL.ref`. Lookup is by exact name: `<workspace>/.niles/skills/<name>/SKILL.md` overrides
+`~/.niles/skills/<name>/SKILL.md`. Missing skills fail; there is no fallback. Unbound directories are never scanned. `niles skills` lists bound skills,
 entry first, with sources, paths, descriptions and tier primaries.
 
 A `SKILL.md` starts with YAML frontmatter between `---` lines: `name` must equal the directory
@@ -114,8 +115,7 @@ resolving names at call time. Fetched bodies last until compaction; rerun to ref
 Copy a skill directory to share it.
 
 `always` bodies follow the primary in the system prompt, then `on_from` bodies
-when spawned with `--from`, then repeatable `--with <name>` injections. They accept
-built-ins and share the 65,536-byte assembled prompt cap, including Niles notes;
+when spawned with `--from`, then repeatable `--with <name>` injections. They share the 65,536-byte assembled prompt cap, including Niles notes;
 they last as long as the system prompt. Injected names are deduplicated in
 primary → always → active on_from → --with order; the first occurrence wins.
 Spawn prints every list's provenance.
@@ -123,6 +123,61 @@ Spawn prints every list's provenance.
 total; staging delivers them. There is no `on_send` or `done` trigger. Editing a
 binding does not change a running worker's lists. Discovery serves only its menu,
 trigger and explicit `--with` names.
+
+## Imports
+
+Skills are ordinary shareable directories. Pin one from any GitHub repository:
+
+```sh
+niles skills import anthropics/skills/skills/pdf@main
+niles skills import Rhovian/niles/skills/lead@<full-sha> --global
+```
+
+A ref is `[github.com/]<owner>/<repo>[/<path>][@<rev>]`. The revision can be a
+branch, tag or full 40-hex SHA; omission selects remote HEAD. Other hosts,
+empty/`.`/`..` path segments and invalid skill names fail. The last path segment
+(or repository name for a root-level skill) is the name, and must match frontmatter.
+Same-named branches and tags are ambiguous and fail; annotated tags use their peeled commit.
+
+Import validates the document and writes the canonical full-SHA ref as one line in
+`.niles/skills/<name>/SKILL.ref`, or `~/.niles/skills/<name>/SKILL.ref` with `--global`.
+An existing local `SKILL.md` blocks import; both files in one directory are an error.
+Reimport to update deliberately: it prints `old → new` SHAs. Remove the directory to
+uninstall. Floating refs at rest fail. An invalid existing pointer is left unchanged;
+delete it before reimporting rather than implicitly repairing invalid stored state.
+Manifest loads parse the pin offline; launches fetch on a cache miss. Workspace pointers override global pointers or local documents
+by the same name. Pinned skills can be primary, entry, menu, or injected through
+`always`, `on_from`, `on_stage` and `--with`, exactly like local documents.
+
+For one worker, use an inline ref in its menu:
+
+```sh
+niles spawn --skill worker task-id --menu anthropics/skills/skills/pdf@main "task"
+```
+
+This resolves once and snapshots the canonical pin in `WorkerMeta.imports`. It installs
+no skill pointer. Discovery serves that pin ahead of the lookup chain throughout the
+worker's lifetime, including after a branch moves or the cache is removed. Inline refs
+are menu-only: `--with`, manifest lists and triggers accept names. A ref's name cannot
+appear anywhere else in the spawn (including another inline ref), and counts toward
+the 16-skill cap. The lead uses inline refs only when the operator names them.
+
+Provenance shows `import github.com/owner/repo/path@<short-sha> <cache>/…/SKILL.md`.
+The complete directory, including supporting scripts and reference files, is cached at
+`~/.niles/cache/skills/github.com/<owner>/<repo>/<sha>/<path>/@skill/`. The reserved
+`@skill` leaf gives root, ancestor and nested directories distinct cache keys; refs
+cannot contain `@` in a path. Cache entries are complete directories installed by
+atomic rename, with no readiness markers or recursive merging. Deleting an entire
+entry is safe and triggers refetch. An incomplete populated entry must be removed
+before retrying. Cache contents are immutable at a commit.
+Git uses the operator's credentials for private repositories, with terminal prompting
+disabled. Supporting files remain readable; Niles does not run imported scripts.
+Git metadata is removed before caching. Each fetched skill directory is capped at
+8 MiB of checked-out content; this is a disk-content limit after checkout, not a
+network-transfer limit. A root-level skill includes the repository's content, so
+that content counts toward its cap. `SKILL.md` keeps the usual document and prompt
+limits. `compatibility` frontmatter is unchecked.
+There is no search, auto-update, namespace, or separate pack root.
 
 ## Staging
 

@@ -3,13 +3,13 @@
 mod common;
 
 use common::*;
-use std::{fs, process::Command};
+use std::fs;
 
 #[test]
 fn models_prints_the_effective_workspace_roster() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let workspace = temp_workspace("niles-models-test");
-    let home = workspace.join("home");
+    let env = TestEnv::new("niles-models-test");
+    let workspace = &env.root;
+    let home = &env.home;
     fs::create_dir_all(home.join(".niles")).unwrap();
     fs::write(
         home.join(".niles/roster.yaml"),
@@ -25,25 +25,18 @@ fn models_prints_the_effective_workspace_roster() {
         "models: {codex: {gpt-5.5: {efforts: [high]}}}",
     )
     .unwrap();
-    fs::create_dir_all(state_dir_at(&home, &workspace)).unwrap();
-    let body = [
-        ("lead", "claude:haiku"),
-        ("worker", "codex:gpt-5.5:high"),
-        ("reviewer", "codex:gpt-6-sol:high"),
-        ("security", "claude:haiku"),
-        ("design", "claude:haiku"),
-        ("research", "claude:haiku"),
-    ]
-    .map(|(skill, agent)| format!("{skill}: {{standard: {{primary: {agent}, secondaries: []}}}}\n"))
-    .join("");
-    fs::write(state_dir_at(&home, &workspace).join("manifest.yaml"), body).unwrap();
-
-    let output = Command::new(niles)
-        .arg("models")
-        .env("HOME", &home)
-        .current_dir(&workspace)
-        .output()
-        .unwrap();
+    write_manifest(
+        workspace,
+        [
+            ("lead", "claude:haiku"),
+            ("worker", "codex:gpt-5.5:high"),
+            ("reviewer", "codex:gpt-6-sol:high"),
+            ("security", "claude:haiku"),
+            ("design", "claude:haiku"),
+            ("research", "claude:haiku"),
+        ],
+    );
+    let output = env.run(&["models"]);
 
     assert_command_success("models", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -54,5 +47,4 @@ fn models_prints_the_effective_workspace_roster() {
     assert!(stdout.contains("  codex,gpt-6-sol,high,standard,"));
     assert!(stdout.contains("  claude,haiku,,mechanical,"));
     assert!(!stdout.contains("gpt-5.5,low,"));
-    fs::remove_dir_all(workspace).unwrap();
 }

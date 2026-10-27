@@ -9,7 +9,7 @@ use crate::{
     agent_window, agents,
     config::spec::load_project_config_from,
     session,
-    skills::{self, SkillName, builtin::BOOTSTRAP},
+    skills::{self, SkillName},
     store,
     tmux::{self, WindowTarget},
     util::{
@@ -27,6 +27,19 @@ use super::{
     worktree::{self, SpawnTree},
 };
 
+const BOOTSTRAP: &str = r#"# Niles {skill} brief
+You are niles worker `{id}`. Report with `niles agent status --help`.
+
+id: {id}
+task_label: {task_label}
+project: {project}
+report_file: {report_path}{from_report}
+
+## Task
+
+{task}
+"#;
+
 const UNLABELED_TASK_LABEL: &str = "-";
 
 #[derive(Debug, clap::Args)]
@@ -36,7 +49,7 @@ pub struct Assignment {
     pub skill: SkillName,
     /// Add a skill to the discovery menu (repeatable).
     #[arg(long)]
-    menu: Vec<SkillName>,
+    menu: Vec<skills::reference::MenuItem>,
     /// Inject an additional skill into the system prompt (repeatable).
     #[arg(long = "with")]
     with: Vec<SkillName>,
@@ -216,6 +229,7 @@ pub fn spawn(
         setup: setup.map(|file| file.setup.clone()),
         id: id.clone(),
         menu: resolved.names,
+        imports: resolved.imports,
         always: binding.always.clone(),
         on_from: binding.on_from.clone(),
         on_stage: binding.on_stage.clone(),

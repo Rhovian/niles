@@ -1,6 +1,6 @@
 use std::fs;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::store;
@@ -49,13 +49,8 @@ pub fn load(
                 .chain(&binding.on_from)
                 .chain(&binding.on_stage)
             {
-                let source = crate::skills::locate(name, root, &global)
+                crate::skills::locate(name, root, &global)
                     .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
-                ensure!(
-                    !binding.skills.contains(name)
-                        || !matches!(source, crate::skills::Source::Builtin(_)),
-                    "menu skill {name} ({source}) in {path} needs a disk SKILL.md"
-                );
             }
             for agent in binding.agents() {
                 super::types::exact_spec(agent, &config.models)
@@ -92,6 +87,16 @@ mod tests {
         let result = load(&root);
         crate::test_support::remove_workspace(&root)?;
         result
+    }
+
+    #[test]
+    fn entry_is_required_by_setup() {
+        let error = load_body(
+            "manifest-no-entry",
+            "lead: {standard: {primary: claude:sonnet:high, secondaries: []}}\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("missing field `entry`"));
     }
 
     #[test]

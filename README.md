@@ -40,7 +40,7 @@ Agents: if you are setting Niles up for someone, load the `niles-setup` skill an
 Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
 
 - [Install Niles](skills/niles-setup/SKILL.md#2-install).
-- [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
+- [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-choose-skills-and-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
 - [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
 
 Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
@@ -71,7 +71,8 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/
 cargo install niles
 ```
 
-2. Run `niles` from your repository. In the home view, select your project with the arrow
+2. Choose your workflow and create disk skills and their bindings with the
+[setup skill](skills/niles-setup/SKILL.md). Run `niles` from your repository. In the home view, select your project with the arrow
 keys and press Enter. If it isn't listed, press `r`, enter the repository's absolute path,
 then accept or choose a project name. Select the registered project and press Enter.
 Choose and save your agent skills when prompted, then type to the lead in the right pane.
@@ -93,9 +94,13 @@ Niles does not edit your agent CLIs' configuration or your tmux config.
 
 ## Skills
 
-The lead is the agent you talk to. It coordinates agents and forwards their artifacts within
+Niles loads ordinary `SKILL.md` files from workspace or global skills directories. It supplies
+no embedded skill bodies. The [skills](skills/) are shareable
+directories; copy them into `.niles/skills/` or `~/.niles/skills/`, or pin them with
+`niles skills import Rhovian/niles/skills/<name>@<rev>`. In this example workflow, the lead
+is the agent you talk to. It coordinates agents and forwards their artifacts within
 operator-requested scope. Design and implementation go to the corresponding skills; reviews
-and security work require the operator's request. See the [lead workflow](skills/built-in/lead/SKILL.md).
+and security work require the operator's request. See the [lead workflow](skills/lead/SKILL.md).
 
 - **Worker** implements the change and owns the gate: CI runs its checks on push; the worker
   runs focused checks CI does not cover and reports what printed.
@@ -110,6 +115,7 @@ and security work require the operator's request. See the [lead workflow](skills
 The workspace manifest binds skills. Here is a global project `manifest.yaml`:
 
 ```yaml
+entry: lead
 lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 worker: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 reviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}
@@ -118,7 +124,7 @@ design: {standard: {primary: claude:sonnet:high, secondaries: []}}
 research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 ```
 
-Use the [setup skill](skills/niles-setup/SKILL.md#3-write-the-manifest) to create the manifest
+Use the [setup skill](skills/niles-setup/SKILL.md#3-choose-skills-and-write-the-manifest) to create the manifest
 with the operator. A missing manifest fails; Niles does not create a default.
 Run `niles doctor` to check the required CLIs.
 
@@ -160,7 +166,7 @@ one workspace skill. Without a workspace manifest it lists all effective pairs. 
 load before project `models:` overrides; new workspace pairs need user-registry metadata to be
 listed. Invalid registry overrides error.
 
-Only the entry skill must be bound. `entry:` defaults to `lead`; other bindings are optional.
+Only the entry skill must be bound. `entry:` is required; other bindings are optional.
 For direct editing with native sub-agents, [bind `solo` and set `entry: solo`](docs/skills.md#entry-sessions).
 Each binding requires a `standard` tier and may list `frontier`, `economy`,
 or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
