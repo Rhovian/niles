@@ -19,7 +19,6 @@ pub(super) struct Form {
     pub draft: WorkspaceManifest,
     pub screen: Screen,
     pub selected: usize,
-    pub save_reason: Option<String>,
     families: Vec<Family>,
 }
 
@@ -30,13 +29,12 @@ impl Form {
             draft: manifest,
             screen: Screen::Skills,
             selected: 0,
-            save_reason: None,
             families: columns::families(config)?,
         })
     }
 
     pub fn can_save(&self) -> bool {
-        self.save_reason.is_some() || self.draft != self.original
+        self.draft != self.original
     }
 
     #[expect(

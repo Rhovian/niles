@@ -124,7 +124,7 @@ mod tests {
         ] {
             let body = format!(
                 "{name}: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n{}",
-                include_str!("../../examples/claude-lead.yaml")
+                crate::test_support::manifest_body()
             );
             let error = format!("{:#}", load_body("manifest-reserved", &body).unwrap_err());
             assert!(
@@ -140,11 +140,7 @@ mod tests {
         let templates = skill
             .split("```yaml\n")
             .skip(1)
-            .map(|block| block.split_once("```").unwrap().0)
-            .chain([
-                include_str!("../../examples/claude-lead.yaml"),
-                include_str!("../../examples/codex-lead.yaml"),
-            ]);
+            .map(|block| block.split_once("```").unwrap().0);
         let root = temp_test_path("manifest-templates");
         for body in templates {
             fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
@@ -157,9 +153,9 @@ mod tests {
     }
 
     #[test]
-    fn default_roles_ship_only_their_configured_tiers() {
+    fn setup_skills_ship_only_their_configured_tiers() {
         use crate::agents::roster::Tier;
-        let manifest = WorkspaceManifest::default();
+        let manifest = crate::test_support::manifest();
         for (skill, frontier, economy, mechanical) in [
             ("lead", true, false, false),
             ("worker", true, true, true),
@@ -180,7 +176,7 @@ mod tests {
     fn invalid_schema_and_inexact_agents_error_with_path() {
         let root = temp_test_path("manifest-invalid-tiers");
         fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
-        let body = include_str!("../../examples/claude-lead.yaml");
+        let body = crate::test_support::manifest_body();
         for invalid in [
             body.replacen("standard:", "unknown:", 1),
             body.replacen("claude:sonnet:high", "claude:sonnet", 1),
@@ -192,7 +188,7 @@ mod tests {
             let error = format!("{:#}", load(&root).unwrap_err());
             assert!(error.contains("manifest.yaml"), "{error}");
         }
-        let mut manifest = WorkspaceManifest::default();
+        let mut manifest = crate::test_support::manifest();
         manifest
             .bindings
             .get_mut(&skill("worker"))
@@ -229,10 +225,10 @@ mod tests {
     #[test]
     fn save_sorts_bindings_preserves_cadence_and_omits_absent_keys() {
         let root = temp_test_path("manifest-save-cadence");
-        let manifest = WorkspaceManifest::default();
+        let manifest = crate::test_support::manifest();
         let path = manifest_path(&root).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, include_str!("../../examples/claude-lead.yaml")).unwrap();
+        fs::write(&path, crate::test_support::manifest_body()).unwrap();
         save(&root, &manifest).unwrap();
         let body = fs::read_to_string(&path).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest.clone()));
@@ -263,8 +259,8 @@ mod tests {
     }
 
     #[test]
-    fn required_role_and_tier_fields_fail_with_manifest_path() {
-        let body = include_str!("../../examples/claude-lead.yaml");
+    fn required_skill_and_tier_fields_fail_with_manifest_path() {
+        let body = crate::test_support::manifest_body();
         for (invalid, cause) in [
             (
                 body.replacen("standard:", "economy:", 1),

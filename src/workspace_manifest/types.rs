@@ -300,17 +300,6 @@ pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec>
     Ok(spec)
 }
 
-impl Default for WorkspaceManifest {
-    #[expect(
-        clippy::expect_used,
-        reason = "the shipped manifest is compiled in and tested"
-    )]
-    fn default() -> Self {
-        crate::store::parse_yaml(include_str!("../../examples/claude-lead.yaml"))
-            .expect("shipped manifest must parse")
-    }
-}
-
 #[cfg(test)]
 impl From<String> for Binding {
     fn from(primary: String) -> Self {

@@ -8,7 +8,7 @@ fn retier_preflight_never_sends_or_records_rejected_bindings() {
     let env = TestEnv::new("retier-preflight");
     let dir = write_worker(&env.root, "worker", "session:worker", None, b"");
     let path = dir.join("meta.json");
-    let manifest = include_str!("../examples/claude-lead.yaml").replacen(
+    let manifest = setup_manifest_body().replacen(
         "primary: codex:gpt-6.1-sol:medium",
         "primary: claude:sonnet:high",
         1,

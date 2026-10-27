@@ -20,18 +20,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         Screen::Editing { skill, .. } => format!("NILES / SKILLS / {}", skill.as_str()),
         Screen::Skills | Screen::Review => "NILES / SKILLS".to_owned(),
     };
-    let (mut body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
-    if let Some(reason) = &form.save_reason {
-        let [notice, rest] =
-            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(body);
-        frame.render_widget(
-            Paragraph::new(clamp(reason, 400))
-                .wrap(ratatui::widgets::Wrap { trim: true })
-                .style(theme.style(StyleKey::Accent)),
-            notice,
-        );
-        body = rest;
-    }
+    let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
     let mut warning = None;
     let hints = match &form.screen {
         Screen::Skills => {

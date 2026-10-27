@@ -29,11 +29,9 @@ pub(crate) fn skills(
     root: &Utf8Path,
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
-    save_reason: Option<&str>,
 ) -> Result<Choice> {
     let theme = Theme::load()?;
     let mut form = Form::new(manifest, config)?;
-    form.save_reason = save_reason.map(str::to_owned);
     let mut terminal = ratatui::init();
     let result = run_form(&mut terminal, root, &mut form, config, &theme);
     ratatui::restore();

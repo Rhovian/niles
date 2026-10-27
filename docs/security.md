@@ -64,7 +64,7 @@ global per-project `manifest.yaml` file selects an entry skill and agents for sk
 listed agent the lead picks. Manifests live in operator state. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
-[`prompts/skills/lead/SKILL.md`](../prompts/skills/lead/SKILL.md).
+[`skills/built-in/lead/SKILL.md`](../skills/built-in/lead/SKILL.md).
 
 **Existing mitigations.** Spawn defaults to the skill's standard primary and rejects unlisted
 tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
@@ -276,9 +276,8 @@ length; worker status append does not take that lock, so a racing report can int
 are clamped and stripped of control characters before terminal rendering. The shared skills picker
 also clamps repository-authored family names and skill values. It probes built-in executables
 with the same PATH lookup as doctor; it does not execute them.
-When a manifest cannot deserialize, the interactive skills picker displays a clamped, control-stripped
-parse error and starts from built-in defaults. Only an explicit save replaces the invalid manifest;
-quitting leaves it unchanged, and non-interactive launches still fail.
+Missing or malformed manifests fail before the skills picker opens, without creating or
+replacing a manifest. The setup skill guides manifest creation.
 
 **Known gaps.** The wait renderer is not a global sanitizer. `niles workers` prints stored status
 strings, `niles report` prints a report body, and `niles peek` prints tmux capture without a shared
@@ -299,9 +298,9 @@ Primary skill instructions reach the agent at system/developer privilege, above 
 `AGENTS.md` text: Claude/pi use `--append-system-prompt`, Codex uses TOML-escaped
 `--config developer_instructions`, and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`.
 NUL-bearing primary text is rejected. Task text and worker/session paths stay in the opening
-user turn. These primary instructions are currently compiled-in; workspace skill resolution is
-a separate change. The argument is passed before any CLI trust prompt; declining a prompt
-cannot retract it. Whether a provider receives text before a declined prompt is unverified.
+user turn. These instructions resolve from built-in, global and workspace sources as described in
+[Skills as an instruction source](#skills-as-an-instruction-source). The argument is passed
+before any CLI trust prompt; declining a prompt cannot retract it. Whether a provider receives text before a declined prompt is unverified.
 Niles has no repository-trust gate and never accepts a CLI's trust prompt itself.
 
 Skill names are validated as nonempty ASCII letters, digits, hyphens and underscores at parse

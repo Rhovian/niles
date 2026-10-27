@@ -64,7 +64,7 @@ subset of it.
 
 ## Invariants
 
-- Built-in skills live in `prompts/skills/` and are compiled in with `include_str!`. They are the
+- Built-in skills live in `skills/built-in/` and are compiled in with `include_str!`. They are the
   product's behavior, so edit them with the same care as code.
 - Agent families and their launch mechanics are defined in `src/agents/families.rs`; models and
   effort levels in `src/agents/roster.yaml`.

@@ -119,7 +119,7 @@ impl Fixture {
         fs::read_to_string(self.checkin_path(id)).unwrap()
     }
 
-    /// The workspace manifest with extra keys under the role bindings: the `checkin`/`recheck`
+    /// The workspace manifest with top-level `checkin`/`recheck` settings: the
     /// cadence a test is about, and nothing else changed.
     fn write_manifest(&self, keys: &str) {
         write_workspace_manifest(&self.env.root, "claude", "claude", "claude", "claude");

@@ -7,8 +7,6 @@ use crate::test_support::{
     temp_test_path,
 };
 
-const MANIFEST: &str = include_str!("../../../examples/claude-lead.yaml");
-
 fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
     let root = temp_test_path(label);
     fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
@@ -18,9 +16,12 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 
 #[test]
 fn changing_only_lead_preserves_worker_and_design_tiers() {
-    let root = root("picker-preserve-tiers", MANIFEST);
+    let root = root(
+        "picker-preserve-tiers",
+        crate::test_support::manifest_body(),
+    );
     let before = load(&root).unwrap().unwrap();
-    let saved = ensure(&root, None, true, &mut Vec::new(), |_, mut draft, _, _| {
+    let saved = ensure(&root, None, true, &mut Vec::new(), |_, mut draft, _| {
         *draft.bindings.get_mut(&skill("lead")).unwrap() =
             "codex:gpt-6.1-sol:high".to_owned().into();
         Ok(Choice::Save(Box::new(draft)))
@@ -42,7 +43,7 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
 
 #[test]
 fn continue_quit_and_unchanged_save_write_nothing() {
-    let root = root("picker-no-write", MANIFEST);
+    let root = root("picker-no-write", crate::test_support::manifest_body());
     let path = manifest_path(&root).unwrap();
     let before = fs::metadata(&path).unwrap().modified().unwrap();
     let manifest = load(&root).unwrap();
@@ -51,33 +52,46 @@ fn continue_quit_and_unchanged_save_write_nothing() {
         (Choice::Quit, &None),
         (Choice::Save(Box::new(manifest.clone().unwrap())), &manifest),
     ] {
-        let result = ensure(&root, None, true, &mut Vec::new(), |_, _, _, _| Ok(choice)).unwrap();
+        let result = ensure(&root, None, true, &mut Vec::new(), |_, _, _| Ok(choice)).unwrap();
         assert_eq!(&result, launched);
-        assert_eq!(fs::read_to_string(&path).unwrap(), MANIFEST);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            crate::test_support::manifest_body()
+        );
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
-fn first_run_offers_saving_unchanged_defaults_and_writes_them() {
-    let root = temp_test_path("picker-first-save");
-    let result = ensure(&root, None, true, &mut Vec::new(), |_, draft, _, reason| {
-        assert!(reason.is_some(), "missing manifest must require saving");
-        assert_eq!(draft, WorkspaceManifest::default());
-        Ok(Choice::Save(Box::new(draft)))
-    })
-    .unwrap();
-    assert_eq!(result, Some(WorkspaceManifest::default()));
-    assert_eq!(load(&root).unwrap(), result);
+fn missing_manifest_fails_before_picker_in_any_terminal() {
+    let root = temp_test_path("picker-missing");
+    for interactive in [true, false] {
+        let mut output = Vec::new();
+        let error = ensure(&root, None, interactive, &mut output, |_, _, _| {
+            panic!("opened picker without manifest")
+        })
+        .unwrap_err();
+        let error = error.to_string();
+        assert!(
+            error.contains(manifest_path(&root).unwrap().as_str()),
+            "{error}"
+        );
+        assert!(error.contains("niles-setup"), "{error}");
+        assert!(output.is_empty());
+        assert!(!manifest_path(&root).unwrap().exists());
+    }
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
-fn no_terminal_uses_existing_manifest_and_prints_roles() {
-    let root = root("picker-noninteractive", MANIFEST);
+fn no_terminal_uses_existing_manifest_and_prints_skills() {
+    let root = root(
+        "picker-noninteractive",
+        crate::test_support::manifest_body(),
+    );
     let mut output = Vec::new();
-    let result = ensure(&root, None, false, &mut output, |_, _, _, _| {
+    let result = ensure(&root, None, false, &mut output, |_, _, _| {
         panic!("opened picker without terminal")
     })
     .unwrap();
@@ -89,35 +103,14 @@ fn no_terminal_uses_existing_manifest_and_prints_roles() {
     );
     assert_eq!(
         fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
-        MANIFEST
+        crate::test_support::manifest_body()
     );
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn no_terminal_missing_or_malformed_manifest_errors() {
-    let missing = temp_test_path("picker-missing");
-    let error = ensure(&missing, None, false, &mut Vec::new(), |_, _, _, _| {
-        panic!("opened picker")
-    })
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("run `niles` from an interactive terminal")
-    );
-    let root = root("picker-malformed", "lead: [\n");
-    let error = ensure(&root, None, false, &mut Vec::new(), |_, _, _, _| {
-        panic!("opened picker")
-    })
-    .unwrap_err();
-    assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn changes_are_applied_to_latest_manifest() {
-    let root = root("picker-reread", MANIFEST);
+    let root = root("picker-reread", crate::test_support::manifest_body());
     let name = uuid::Uuid::new_v4().simple().to_string();
     let selection = format!("global:{name}").parse().unwrap();
     let named = crate::skills::global_dir()
@@ -125,12 +118,12 @@ fn changes_are_applied_to_latest_manifest() {
         .join("setups")
         .join(format!("{name}.yaml"));
     fs::create_dir_all(named.parent().unwrap()).unwrap();
-    fs::write(&named, MANIFEST).unwrap();
+    fs::write(&named, crate::test_support::manifest_body()).unwrap();
     let before = super::load(&root, Some(&selection)).unwrap().unwrap();
     fs::create_dir_all(root.join(".niles/setups")).unwrap();
     fs::write(
         root.join(".niles/setups").join(format!("{name}.yaml")),
-        MANIFEST,
+        crate::test_support::manifest_body(),
     )
     .unwrap();
     let mut latest = before.clone();
@@ -146,7 +139,7 @@ fn changes_are_applied_to_latest_manifest() {
     draft
         .set_primary(&skill("research"), "claude:sonnet:high".into())
         .unwrap();
-    let result = save_changes(&root, Some(&selection), Some(&before), &draft).unwrap();
+    let result = save_changes(&root, Some(&selection), &before, &draft).unwrap();
     for name in ["lead", "research"] {
         latest
             .bindings
@@ -159,42 +152,20 @@ fn changes_are_applied_to_latest_manifest() {
 }
 
 #[test]
-fn invalid_manifests_reopen_with_defaults_and_save_a_complete_replacement() {
-    for body in [
-        "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n",
-        "manager: claude\n",
-        "lead: [\n",
-    ] {
-        let root = root("picker-replace", body);
-        let saved = ensure(&root, None, true, &mut Vec::new(), |_, draft, _, reason| {
-            assert_eq!(draft, WorkspaceManifest::default());
-            let reason = reason.unwrap();
-            assert!(reason.contains("Cannot parse manifest"), "{reason}");
-            assert!(reason.contains("manifest.yaml"), "{reason}");
-            Ok(Choice::Save(Box::new(draft)))
+fn malformed_manifest_fails_without_replacement_in_any_terminal() {
+    let body = "lead: [\n";
+    let root = root("picker-malformed", body);
+    for interactive in [true, false] {
+        let error = ensure(&root, None, interactive, &mut Vec::new(), |_, _, _| {
+            panic!("opened picker with malformed manifest")
         })
-        .unwrap()
-        .unwrap();
-        assert_eq!(saved, WorkspaceManifest::default());
-        assert_eq!(load(&root).unwrap(), Some(saved));
-        crate::test_support::remove_workspace(&root).unwrap();
+        .unwrap_err();
+        assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
+        assert_eq!(
+            fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
+            body
+        );
     }
-}
-
-#[test]
-fn quitting_replacement_preserves_the_invalid_manifest() {
-    let body = "lead: claude\n";
-    let root = root("picker-replace-quit", body);
-    let result = ensure(&root, None, true, &mut Vec::new(), |_, _, _, reason| {
-        assert!(reason.is_some());
-        Ok(Choice::Quit)
-    })
-    .unwrap();
-    assert_eq!(result, None);
-    assert_eq!(
-        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
-        body
-    );
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
@@ -202,7 +173,7 @@ fn quitting_replacement_preserves_the_invalid_manifest() {
 fn manifest_read_failures_do_not_open_replacement() {
     let root = temp_test_path("picker-read-failure");
     fs::create_dir_all(manifest_path(&root).unwrap()).unwrap();
-    let error = ensure(&root, None, true, &mut Vec::new(), |_, _, _, _| {
+    let error = ensure(&root, None, true, &mut Vec::new(), |_, _, _| {
         panic!("opened picker for a read failure")
     })
     .unwrap_err();
@@ -214,7 +185,7 @@ fn manifest_read_failures_do_not_open_replacement() {
 fn noninteractive_stale_manifest_fails_without_writing() {
     let body = "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n";
     let root = root("picker-stale-noninteractive", body);
-    let error = ensure(&root, None, false, &mut Vec::new(), |_, _, _, _| {
+    let error = ensure(&root, None, false, &mut Vec::new(), |_, _, _| {
         panic!("opened picker without terminal")
     })
     .unwrap_err();
@@ -227,9 +198,10 @@ fn noninteractive_stale_manifest_fails_without_writing() {
 }
 
 #[test]
-fn replacement_write_failure_stops_launch() {
-    let root = root("picker-replace-write-failure", "lead: [\n");
-    let error = ensure(&root, None, true, &mut Vec::new(), |_, draft, _, _| {
+fn save_write_failure_stops_launch() {
+    let root = root("picker-write-failure", crate::test_support::manifest_body());
+    let error = ensure(&root, None, true, &mut Vec::new(), |_, mut draft, _| {
+        draft.set_primary(&skill("lead"), "codex:gpt-6.1-sol:medium".into())?;
         fs::remove_file(manifest_path(&root).unwrap()).unwrap();
         fs::create_dir(manifest_path(&root).unwrap()).unwrap();
         Ok(Choice::Save(Box::new(draft)))

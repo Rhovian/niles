@@ -123,7 +123,7 @@ mod tests {
         WorkspaceManifest {
             checkin: checkin.map(str::to_owned),
             recheck: recheck.map(str::to_owned),
-            ..WorkspaceManifest::default()
+            ..crate::test_support::manifest()
         }
     }
 
