@@ -17,7 +17,6 @@ pub struct WorkspaceManifest {
     // Flatten accepts skill keys; nested Binding and TierBinding remain strict.
     #[serde(flatten)]
     pub bindings: BTreeMap<SkillName, Binding>,
-    #[serde(default)]
     pub entry: SkillName,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute

@@ -99,6 +99,7 @@ impl TestEnv {
         let bin = root.join("bin");
         let tmux_log = root.join("tmux.log");
         fs::create_dir_all(&home).unwrap();
+        copy_skills(&home.join(".niles"));
         fs::write(root.join(TEST_ENV_MARKER), "").unwrap();
         fs::create_dir_all(&bin).unwrap();
         write_executable(&bin.join("tmux"), tmux);
@@ -261,7 +262,11 @@ fn write_manifest<'a>(workspace: &Path, bindings: impl IntoIterator<Item = (&'a 
             format!("{skill}:\n  standard: {{primary: {exact}, secondaries: []}}\n")
         })
         .collect::<String>();
-    fs::write(state_dir(workspace).join("manifest.yaml"), body).unwrap();
+    fs::write(
+        state_dir(workspace).join("manifest.yaml"),
+        format!("entry: lead\n{body}"),
+    )
+    .unwrap();
 }
 
 pub fn write_worker(
@@ -337,4 +342,17 @@ pub fn setup_manifest_body() -> &'static str {
         .split_once("```")
         .unwrap()
         .0
+}
+
+pub fn copy_skills(root: &Path) {
+    for entry in fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("skills")).unwrap() {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let source = entry.path();
+        let dest = root.join("skills").join(source.file_name().unwrap());
+        fs::create_dir_all(&dest).unwrap();
+        fs::copy(source.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
+    }
 }

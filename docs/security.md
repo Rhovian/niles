@@ -64,7 +64,7 @@ global per-project `manifest.yaml` file selects an entry skill and agents for sk
 listed agent the lead picks. Manifests live in operator state. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
-[`skills/built-in/lead/SKILL.md`](../skills/built-in/lead/SKILL.md).
+[`skills/lead/SKILL.md`](../skills/lead/SKILL.md).
 
 **Existing mitigations.** Spawn defaults to the skill's standard primary and rejects unlisted
 tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
@@ -89,13 +89,12 @@ Workspace skill text has the additional instruction boundary [described below](#
 
 **Attacker and capability.** A repository author can ship
 `.niles/skills/<name>/SKILL.md`. A bound primary skill's body reaches the lead or worker at
-system/developer-prompt privilege, higher than `AGENTS.md`. The resolution chain is compiled
-built-in → `~/.niles/skills/` → workspace `.niles/skills/`; a repository can override built-in
-or global text with the same name. This is an accepted instruction boundary, with no Niles
+system/developer-prompt privilege, higher than `AGENTS.md`. Workspace `.niles/skills/`
+overrides `~/.niles/skills/` by exact name; a repository can override global text.
+No skill bodies are embedded in the binary. This is an accepted instruction boundary, with no Niles
 trust gate. Global skills are operator-owned.
 **Mitigations.** Only names explicitly named by a binding or spawn flag are looked up; directories are
-never scanned. Every launch prints `skill: <name> (<source> <path>)` (built-ins have no disk
-path), to stderr for an entry session, and `niles skills` shows the same provenance. Names
+never scanned. Every launch prints `skill: <name> (<source> <path>)`, to stderr for an entry session, and `niles skills` shows the same provenance. Names
 have the shared ASCII grammar. Frontmatter requires a matching name and a nonempty description
 of at most 1,024 characters. Parse errors name the source and problem without quoting content.
 Disk documents are read through a 131,072-byte limit (including frontmatter), with one
@@ -130,6 +129,44 @@ without un-sending the text. Whether a provider receives anything before a decli
 unverified per family. A `git pull` can change skill text without a prompt, as it changes
 `AGENTS.md`. Project registration does not establish trust. Repository configuration and skill
 text share the no-trust-gate policy described above.
+
+### Imported skills
+
+A `SKILL.ref` in either existing skill root pins a GitHub directory to a full SHA.
+The root owner selects the exact commit, equivalent to vendoring its instructions;
+its privilege is the same as `SKILL.md` at that origin, including primary/entry and
+trigger injection. Both documents in a directory fail. Floating or malformed pins
+fail during offline manifest loading; lookup does not add a root or special skill family.
+
+Inline `--menu <ref>` has lower instruction privilege: text is discoverable tool
+output and never appended to the system prompt. Worker metadata snapshots the pin;
+discovery checks that map before local/global shadows. A name clash anywhere in the
+spawn fails. Names in `--with`, triggers and manifests cannot contain refs. The lead
+skill permits inline refs only when named by the operator. This is not a boundary
+against a compromised lead with same-user shell access to skill roots.
+
+Git fetches use only github.com URLs, the operator's credential configuration and
+`GIT_TERMINAL_PROMPT=0`. Repository-routing environment variables inherited from
+hooks or rebase commands are cleared, including `GIT_DIR`, `GIT_WORK_TREE` and
+`GIT_INDEX_FILE`; credential configuration remains available. Private credentials
+are not copied into refs. Commands pass argv directly, disable hooks and checkout with `core.symlinks=false`; remote links
+become plain files. Gitlinks, missing paths and file paths are rejected. Imported
+Markdown is read with workspace regular-file/`O_NOFOLLOW` rules and existing content
+bounds. Git metadata is removed from the staged checkout before publishing.
+Directory content over 8 MiB is rejected after checkout; this bounds cached content,
+not network-transfer bytes. Root-level skills include all repository content.
+Niles does not execute imported scripts; agents may choose to run them,
+just as they may run repository files. No sandbox is added.
+
+The cache under `~/.niles/cache/skills/github.com/<owner>/<repo>/<sha>/<path>/@skill/`
+is derived state. The reserved leaf separates root, ancestor and nested skill keys;
+it cannot occur in a ref path. A complete staged directory is installed by atomic
+rename. A competing complete entry can win the rename race; an incomplete populated
+entry fails and must be removed before retrying. There are no readiness markers or
+recursive merges. Cache reads never update a pin. Deleting an entry causes on-demand
+refetch of the same SHA. A cache is trusted same-user state, not protection against
+a malicious local user replacing entries. No compatibility enforcement, remote
+discovery, automatic updates, or script execution is part of import.
 
 ### Named setups
 
@@ -298,7 +335,7 @@ Primary skill instructions reach the agent at system/developer privilege, above 
 `AGENTS.md` text: Claude/pi use `--append-system-prompt`, Codex uses TOML-escaped
 `--config developer_instructions`, and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`.
 NUL-bearing primary text is rejected. Task text and worker/session paths stay in the opening
-user turn. These instructions resolve from built-in, global and workspace sources as described in
+user turn. These instructions resolve from global and workspace disk sources as described in
 [Skills as an instruction source](#skills-as-an-instruction-source). The argument is passed
 before any CLI trust prompt; declining a prompt cannot retract it. Whether a provider receives text before a declined prompt is unverified.
 Niles has no repository-trust gate and never accepts a CLI's trust prompt itself.

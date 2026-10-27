@@ -68,7 +68,14 @@ fn configured_rounds_require_stage_and_reset_after_done() {
         worker.fails("done", "stage first");
         for _ in 0..limit {
             let text = worker.succeeds("stage");
-            assert!(text.contains("on_stage_skill: reviewer (built-in)"));
+            assert!(text.contains(&format!(
+                    "on_stage_skill: reviewer (global {})",
+                    worker
+                        .env
+                        .home
+                        .join(".niles/skills/reviewer/SKILL.md")
+                        .display()
+                )));
             assert!(!text.contains("---"));
             assert!(text.contains("report `done`"));
         }
@@ -184,7 +191,13 @@ fn spawn_snapshot_provenance_and_cap() {
         .filter(|line| line.starts_with("on_stage_skill:"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(provenance, ["on_stage_skill: reviewer (built-in)"]);
+    assert_eq!(
+        provenance,
+        [format!(
+            "on_stage_skill: reviewer (global {})",
+            env.home.join(".niles/skills/reviewer/SKILL.md").display()
+        )]
+    );
     assert!(stdout_of(&output).contains("gate: check run [\"printf\",\"literal; $(false)\"]"));
     let workers = state_dir(&env.root).join("worker");
     let dir = workers.join("job");

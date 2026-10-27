@@ -19,6 +19,8 @@ pub(super) struct WorkerMeta {
     pub(super) gates: Option<crate::workspace_manifest::Gates>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) menu: Vec<SkillName>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(super) imports: std::collections::BTreeMap<SkillName, crate::skills::reference::PinnedRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) always: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -72,7 +74,16 @@ pub(super) fn read_meta(worker_dir: &Utf8Path) -> Result<WorkerMeta> {
 
 pub(super) fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    store::read_optional_json(&path)
+    let meta: Option<WorkerMeta> = store::read_optional_json(&path)?;
+    if let Some(meta) = &meta {
+        for (name, reference) in &meta.imports {
+            ensure!(
+                name == &reference.reference().name && meta.menu.contains(name),
+                "invalid ephemeral import {name} in {path}"
+            );
+        }
+    }
+    Ok(meta)
 }
 
 pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {

@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 
 fn manifest(agent: &str) -> String {
     format!(
-        "lead: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\nworker: {{standard: {{primary: {agent}, secondaries: []}}}}\n"
+        "entry: lead\nlead: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\nworker: {{standard: {{primary: {agent}, secondaries: []}}}}\n"
     )
 }
 

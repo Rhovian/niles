@@ -102,7 +102,10 @@ fn run() -> Result<ExitCode> {
                 anyhow::bail!("built without remote; reinstall with --features remote");
             }
         }
-        Some(CommandName::Skills) => skills::list(selection()?.as_ref())?,
+        Some(CommandName::Skills { command }) => match command {
+            None => skills::list(selection()?.as_ref())?,
+            Some(command) => command.run()?,
+        },
         Some(CommandName::Doctor) => doctor::doctor(selection()?.as_ref())?,
         Some(CommandName::Compat { families }) => {
             return compat::compat(&families, selection()?.as_ref());

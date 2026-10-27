@@ -23,7 +23,16 @@ Skip installation if `niles --version` succeeds. Otherwise choose any of these m
 The shell installer puts `niles` in `${CARGO_HOME:-$HOME/.cargo}/bin`, which may not yet be on
 this shell's PATH. Verify `niles --version` before continuing.
 
-## 3. Write the manifest
+## 3. Choose skills and write the manifest
+
+Ask how the user wants to work and which skills should supply those instructions.
+Niles embeds no skill bodies. Write their chosen `SKILL.md` files to
+`<workspace>/.niles/skills/<name>/` or `~/.niles/skills/<name>/`, with YAML frontmatter
+containing matching `name` and nonempty `description` strings. Existing skill directories
+can be copied or pinned with `niles skills import <owner>/<repo>/<path>@<rev>`
+(`--global` shares the pin across workspaces). This repository's ordinary `skills/`
+directories are shareable examples; import or copy the ones the user wants. Use the templates below only when the
+user chooses those skills; otherwise bind their chosen names and set `entry:` explicitly.
 
 Set the project state directory:
 
@@ -37,9 +46,10 @@ secondary. Otherwise use their chosen CLI's template.
 Create the file exclusively: `mkdir -p "$niles_project_dir" && set -C && cat > "$niles_project_dir/manifest.yaml"` with the
 chosen YAML as input. If the file appears before creation, stop and keep it.
 
-Claude Code and Codex (built-in default; change `lead` to the user's choice):
+Claude Code and Codex (example; choose the entry skill with the user):
 
 ```yaml
+entry: lead
 lead:
   standard:
     primary: claude:sonnet:high
@@ -99,6 +109,7 @@ research:
 Claude Code only:
 
 ```yaml
+entry: lead
 lead:
   standard:
     primary: claude:sonnet:high
@@ -158,6 +169,7 @@ research:
 Codex only:
 
 ```yaml
+entry: lead
 lead:
   standard:
     primary: codex:gpt-6.1-sol:medium
@@ -217,7 +229,7 @@ research:
 For Hermes, pi, or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
 Each skill lists tiers with one exact `family:model:effort` primary and ordered secondaries.
-Only the entry skill (default `lead`) must be bound; each binding needs a standard tier; no-effort models omit the effort suffix. The only file you write is `"$niles_project_dir/manifest.yaml"`.
+An explicit `entry:` is required and its skill must be bound; each binding needs a standard tier; no-effort models omit the effort suffix.
 
 ## 4. Check with niles doctor
 

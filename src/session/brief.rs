@@ -171,9 +171,13 @@ mod tests {
     use crate::test_support::temp_test_path;
     static LEAD_BRIEF_TEMPLATE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let root = temp_test_path("lead-body");
-        crate::skills::resolve(&SkillName::default(), &root, &root)
-            .unwrap()
-            .body
+        crate::skills::resolve(
+            &"lead".parse().unwrap(),
+            &root,
+            &crate::skills::global_dir().unwrap(),
+        )
+        .unwrap()
+        .body
     });
 
     #[test]
@@ -256,7 +260,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
         let mut meta = SessionMeta {
             setup: None,
-            entry_skill: SkillName::default(),
+            entry_skill: "lead".parse().unwrap(),
             id: "session".to_owned(),
             agent: "claude".to_owned(),
             agent_family: None,

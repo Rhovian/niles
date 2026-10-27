@@ -192,7 +192,10 @@ pub enum CommandName {
     /// List effective built-in and workspace model rosters.
     Models,
     /// List bound skills, their sources, descriptions and tier primaries.
-    Skills,
+    Skills {
+        #[command(subcommand)]
+        command: Option<crate::skills::SkillsCommand>,
+    },
     /// Print a worker's durable report file.
     Report {
         /// Worker task id.

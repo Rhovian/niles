@@ -12,8 +12,6 @@ pub(crate) enum Origin {
     Workspace,
 }
 
-pub(crate) const DEFAULT_ENTRY_SKILL: &str = "lead";
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String")]
 pub struct SkillName(String);
@@ -21,12 +19,6 @@ pub struct SkillName(String);
 impl SkillName {
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl Default for SkillName {
-    fn default() -> Self {
-        Self(DEFAULT_ENTRY_SKILL.to_owned())
     }
 }
 
@@ -91,10 +83,15 @@ impl From<Origin> for String {
     }
 }
 
-pub(crate) mod builtin;
+mod cache;
+mod import;
+pub(crate) mod reference;
+pub(crate) use import::SkillsCommand;
 pub(crate) mod files;
 mod resolve;
-pub(crate) use resolve::{Skill, Source, global_dir, locate, resolve};
+pub(crate) use cache::pin;
+pub(crate) use resolve::imported;
+pub(crate) use resolve::{Skill, global_dir, locate, resolve};
 
 pub(crate) fn display_description(text: &str) -> String {
     text.split_whitespace()
@@ -159,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn orchestration_does_not_name_builtin_skills() {
+    fn orchestration_does_not_name_workspace_skills() {
         fn scan(dir: &std::path::Path) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -168,7 +165,6 @@ mod tests {
                     || name == "tests.rs"
                     || name.ends_with("_tests.rs")
                     || name == "test_support.rs"
-                    || path.ends_with("skills/builtin.rs")
                 {
                     continue;
                 }

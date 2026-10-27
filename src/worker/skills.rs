@@ -1,10 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Result, ensure};
 use camino::Utf8Path;
 
 use crate::{
-    skills::{self, Skill, SkillName, Source},
+    skills::{
+        self, Skill, SkillName,
+        reference::{MenuItem, PinnedRef},
+    },
     workspace_manifest::Binding,
 };
 
@@ -13,6 +16,7 @@ const MAX_STAGE_BYTES: usize = 32_768;
 
 pub(super) struct LaunchSkills {
     pub names: Vec<SkillName>,
+    pub imports: BTreeMap<SkillName, PinnedRef>,
     pub prompt: String,
     pub menu: String,
     pub provenance: String,
@@ -22,13 +26,31 @@ pub(super) struct LaunchSkills {
 pub(super) fn prepare(
     primary: &Skill,
     binding: &Binding,
-    menu: &[SkillName],
+    menu: &[MenuItem],
     with: &[SkillName],
     from: bool,
     workspace: &Utf8Path,
 ) -> Result<LaunchSkills> {
+    let mut imports = BTreeMap::new();
     let mut names = binding.skills.clone();
-    names.extend_from_slice(menu);
+    for item in menu {
+        let name = item.name();
+        if let MenuItem::Ref(reference) = item {
+            let occupied = std::iter::once(&primary.name)
+                .chain(&binding.skills)
+                .chain(&binding.always)
+                .chain(&binding.on_from)
+                .chain(&binding.on_stage)
+                .chain(with)
+                .any(|other| other == name);
+            ensure!(
+                !occupied && menu.iter().filter(|other| other.name() == name).count() == 1,
+                "ephemeral skill name {name} collides with another spawn skill"
+            );
+            imports.insert(name.clone(), reference.clone());
+        }
+        names.push(name.clone());
+    }
     let mut seen = HashSet::new();
     names.retain(|name| seen.insert(name.clone()));
     ensure!(
@@ -37,21 +59,22 @@ pub(super) fn prepare(
         names.len()
     );
     let global = skills::global_dir()?;
+    let imports: BTreeMap<_, _> = imports
+        .into_iter()
+        .map(|(name, reference)| Ok((name, skills::pin(reference)?)))
+        .collect::<Result<_>>()?;
     let mut provenance = String::new();
     let mut resolve = |kind, names: &[SkillName]| -> Result<Vec<Skill>> {
-        let skills = resolve_names(names, workspace, &global)?;
+        let skills = names
+            .iter()
+            .map(|name| resolve_available(name, &imports, workspace, &global))
+            .collect::<Result<Vec<_>>>()?;
         for skill in &skills {
             provenance.push_str(&format!("{kind}: {skill}\n"));
         }
         Ok(skills)
     };
     let menu_skills = resolve("menu_skill", &names)?;
-    for skill in &menu_skills {
-        ensure!(
-            !matches!(skill.source, Source::Builtin(_)),
-            "menu skill {skill} needs a disk SKILL.md"
-        );
-    }
     let always = resolve("always_skill", &binding.always)?;
     let on_from = resolve("on_from_skill", &binding.on_from)?;
     let on_stage = resolve("on_stage_skill", &binding.on_stage)?;
@@ -99,11 +122,24 @@ pub(super) fn prepare(
     prompt.push_str(include_str!("../../skills/skill_common.md"));
     Ok(LaunchSkills {
         names,
+        imports,
         prompt,
         menu,
         provenance,
         warnings,
     })
+}
+
+fn resolve_available(
+    name: &SkillName,
+    imports: &BTreeMap<SkillName, PinnedRef>,
+    workspace: &Utf8Path,
+    global: &Utf8Path,
+) -> Result<Skill> {
+    match imports.get(name) {
+        Some(reference) => skills::imported(reference, global),
+        None => skills::resolve(name, workspace, global),
+    }
 }
 
 fn resolve_names(
@@ -143,7 +179,7 @@ pub(super) fn discover(name: Option<&SkillName>) -> Result<()> {
     match name {
         None => {
             for name in &meta.menu {
-                let skill = skills::resolve(name, &meta.project, &global)?;
+                let skill = resolve_available(name, &meta.imports, &meta.project, &global)?;
                 println!("{}", menu_row(&skill));
             }
         }
@@ -165,7 +201,7 @@ pub(super) fn discover(name: Option<&SkillName>) -> Result<()> {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-            let skill = skills::resolve(name, &meta.project, &global)?;
+            let skill = resolve_available(name, &meta.imports, &meta.project, &global)?;
             println!("skill: {skill}");
             print!("{}", skill.body);
         }

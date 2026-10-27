@@ -64,8 +64,7 @@ subset of it.
 
 ## Invariants
 
-- Built-in skills live in `skills/built-in/` and are compiled in with `include_str!`. They are the
-  product's behavior, so edit them with the same care as code.
+- This repository's skills live in `skills/` as ordinary disk skills. They are shareable instructions, so edit them with the same care as code.
 - Agent families and their launch mechanics are defined in `src/agents/families.rs`; models and
   effort levels in `src/agents/roster.yaml`.
 - `niles wait` reserves stdout for wake lines; diagnostics go to stderr. Its workspace exit codes
