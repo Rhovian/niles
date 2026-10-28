@@ -99,10 +99,7 @@ fn apply_retier(
     let cursor = tmux::cursor_position(&pane)?;
     let screen = tmux::capture_visible_rows(&pane)?;
     ensure!(
-        cursor.visible
-            && screen.lines().nth(cursor.y).is_some_and(|line| line
-                .chars()
-                .all(|ch| ch.is_whitespace() || matches!(ch, '❯' | '›' | '>'))),
+        empty_composer(&screen, cursor),
         "retier requires an empty composer; inspect with niles peek {id}"
     );
     for step in &steps {
@@ -117,6 +114,14 @@ fn apply_retier(
     meta.effort = Some(effort.to_owned());
     write_meta(dir, meta)?;
     Ok(())
+}
+
+fn empty_composer(screen: &str, cursor: tmux::CursorPosition) -> bool {
+    cursor.visible
+        && screen.lines().nth(cursor.y).is_some_and(|line| {
+            line.chars()
+                .all(|ch| ch.is_whitespace() || matches!(ch, '❯' | '›' | '»' | '>'))
+        })
 }
 
 fn check_context_fit(conversation_tokens: Option<u64>, target_window: u64) -> Result<()> {

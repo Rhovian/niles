@@ -162,7 +162,7 @@ pub(crate) fn start(
     session_dir: &Utf8Path,
     workspace: &Utf8Path,
     lead_pane: Option<&str>,
-    composer: Option<&'static str>,
+    composer: Option<&'static [&'static str]>,
 ) -> Watcher {
     let log = WatchLog {
         path: session_dir.join(WATCH_LOG),

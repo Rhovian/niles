@@ -17,7 +17,7 @@ pub struct AgentProfile {
     pub system_prompt: SystemPromptArg,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
-    pub composer: Option<&'static str>,
+    pub composer: Option<&'static [&'static str]>,
 }
 
 /// How an agent receives its opening user turn.
@@ -103,7 +103,8 @@ const PROFILES: &[AgentProfile] = &[
             },
         },
         launch_env: &[],
-        composer: Some("› "),
+        // Codex rust-v0.164.0: bottom_pane/effort_ignition.rs::EffortTier::prompt_glyph.
+        composer: Some(&["› ", "» "]),
     },
     AgentProfile {
         id: "claude",
@@ -123,7 +124,7 @@ const PROFILES: &[AgentProfile] = &[
             ("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false"),
             ("CLAUDE_CODE_DISABLE_AGENT_VIEW", "1"),
         ],
-        composer: Some("❯\u{a0}"),
+        composer: Some(&["❯\u{a0}"]),
     },
     AgentProfile {
         id: "hermes",

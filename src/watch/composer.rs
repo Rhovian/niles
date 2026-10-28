@@ -2,7 +2,7 @@
 
 use crate::tmux::CursorPosition;
 
-pub(crate) fn recognize(screen: &str, cursor: CursorPosition, marker: &str) -> bool {
+pub(crate) fn recognize(screen: &str, cursor: CursorPosition, markers: &[&str]) -> bool {
     if !cursor.visible {
         return false;
     }
@@ -10,15 +10,15 @@ pub(crate) fn recognize(screen: &str, cursor: CursorPosition, marker: &str) -> b
     let Some(line) = lines.get(cursor.y) else {
         return false;
     };
-    if line.starts_with(marker) {
-        // Both markers are single-cell characters, so their width in cells is their char count.
+    if let Some(marker) = markers.iter().find(|marker| line.starts_with(**marker)) {
+        // All marker characters occupy one cell each.
         return cursor.x > marker.chars().count();
     }
     if !line.starts_with("  ") {
         return false;
     }
     for line in lines[..cursor.y].iter().rev() {
-        if line.starts_with(marker) {
+        if markers.iter().any(|marker| line.starts_with(marker)) {
             return true;
         }
         if !line.starts_with("  ") {
@@ -34,10 +34,16 @@ mod tests {
 
     #[test]
     fn cursor_identifies_drafts_for_both_families() {
-        for marker in ["❯\u{a0}", "› "] {
+        for (family, marker) in [("claude", "❯\u{a0}"), ("codex", "› "), ("codex", "» ")] {
+            let markers = crate::agents::profile_for(family)
+                .unwrap()
+                .composer
+                .unwrap();
             let screen = format!("header\n{marker}hello\n  world\nfooter\n");
+            let empty = format!("{marker}\n");
             let dialog = format!("{marker}hello\n╭ dialog\n  option\n");
             for (text, x, y, visible, expected) in [
+                (&empty, 2, 0, true, false),
                 (&screen, 2, 1, true, false),
                 (&screen, 7, 1, true, true),
                 (&screen, 7, 2, true, true),
@@ -47,7 +53,7 @@ mod tests {
                 (&screen, 7, 4, true, false),
             ] {
                 assert_eq!(
-                    recognize(text, CursorPosition { x, y, visible }, marker),
+                    recognize(text, CursorPosition { x, y, visible }, markers),
                     expected
                 );
             }
