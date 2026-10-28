@@ -351,7 +351,10 @@ exists and is a directory.
 With `--worktree`, Niles uses git to create a worktree under `~/.niles/trees` and can
 remove it on close. The branch name is checked by git before it becomes a path. Close removes only
 registered worktrees under that workspace's managed tree root after checking live workers, status,
-and remote reachability; it never deletes branches.
+and remote reachability; it never deletes branches. These Git calls clear inherited
+repository-routing environment variables (including repository, worktree, index and object paths),
+so hooks and rebase commands cannot redirect them to the caller's repository. Operator credential
+configuration is retained.
 
 The operator-owned global project manifest may supply `worktree.env` and `worktree.setup`. For
 `spawn --worktree`, Niles applies literal environment overrides to the worker and executes setup

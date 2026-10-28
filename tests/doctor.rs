@@ -104,7 +104,7 @@ fn doctor_without_manifest_reports_absence() {
 }
 
 #[test]
-fn doctor_dirty_source_tree_never_reports_stale_no() {
+fn doctor_dirty_source_tree_ignores_inherited_repository_routing() {
     let workspace = temp_workspace("niles-doctor-dirty-test");
     fs::create_dir_all(workspace.join("src")).unwrap();
     fs::write(
@@ -131,6 +131,8 @@ edition = "2024"
             "initial",
         ],
     );
+    let caller = temp_workspace("niles-doctor-caller");
+    git(&workspace, &["clone", ".", caller.to_str().unwrap()]);
     fs::write(
         workspace.join("src/main.rs"),
         "fn main() { println!(\"dirty\"); }\n",
@@ -139,6 +141,8 @@ edition = "2024"
 
     let output = niles_bare(&workspace, &niles_home(&workspace))
         .arg("doctor")
+        .env("GIT_DIR", caller.join(".git"))
+        .env("GIT_WORK_TREE", &caller)
         .output()
         .unwrap();
 
