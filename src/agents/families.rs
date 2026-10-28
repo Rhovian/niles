@@ -13,24 +13,10 @@ pub struct AgentProfile {
     /// Switches a worker launch to a single non-interactive turn; appended after
     /// `worker_args` because codex's subcommand must follow its root flags.
     pub headless: &'static [&'static str],
-    pub opening_turn: BriefDelivery,
     pub system_prompt: SystemPromptArg,
     tier_args: TierArgs,
     pub launch_env: &'static [(&'static str, &'static str)],
     pub composer: Option<&'static str>,
-}
-
-/// How an agent receives its opening user turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BriefDelivery {
-    /// The brief is one argument: the agent's opening turn.
-    Arg,
-    /// The brief behind a flag: `value` takes text, `path` takes a file.
-    /// Passing a path preserves the brief verbatim and leaves the pane's TTY available.
-    Flag {
-        value: &'static str,
-        path: &'static str,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +26,6 @@ pub enum SystemPromptArg {
         flag: &'static str,
         key: &'static str,
     },
-    Env(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,21 +43,13 @@ enum EffortArg {
     },
 }
 
-const HERMES_QUERY: BriefDelivery = BriefDelivery::Flag {
-    value: "-q",
-    path: "--query-file",
-};
-
 /// The session niles can read usage back from, chosen at launch. A family not listed has none.
-pub(crate) fn session_link(family: &str, source: &str, dir: &Utf8Path) -> Option<SessionLink> {
+pub(crate) fn session_link(family: &str, dir: &Utf8Path) -> Option<SessionLink> {
     Some(match profile_for(family)?.id {
         "claude" => SessionLink::Claude {
             session_id: Uuid::new_v4().to_string(),
         },
         "codex" => SessionLink::Codex,
-        "hermes" => SessionLink::Hermes {
-            source: format!("niles:{source}:{}", Uuid::new_v4()),
-        },
         "pi" => SessionLink::Pi {
             session_dir: dir.join("pi"),
         },
@@ -90,7 +67,6 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &["--no-daemon"],
         worker_args: &["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"],
         headless: &["exec", "--skip-git-repo-check"],
-        opening_turn: BriefDelivery::Arg,
         system_prompt: SystemPromptArg::Config {
             flag: "--config",
             key: "developer_instructions",
@@ -112,7 +88,6 @@ const PROFILES: &[AgentProfile] = &[
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
-        opening_turn: BriefDelivery::Arg,
         system_prompt: SystemPromptArg::Flag("--append-system-prompt"),
         tier_args: TierArgs {
             model_flag: "--model",
@@ -126,29 +101,12 @@ const PROFILES: &[AgentProfile] = &[
         composer: Some("❯\u{a0}"),
     },
     AgentProfile {
-        id: "hermes",
-        binary: "hermes",
-        tested_version: "0.21.3",
-        foreground_args: &["chat"],
-        worker_args: &["chat", "--yolo"],
-        headless: &["--oneshot"],
-        opening_turn: HERMES_QUERY,
-        system_prompt: SystemPromptArg::Env("HERMES_EPHEMERAL_SYSTEM_PROMPT"),
-        tier_args: TierArgs {
-            model_flag: "--model",
-            effort: EffortArg::Flag("--reasoning"),
-        },
-        launch_env: &[],
-        composer: None,
-    },
-    AgentProfile {
         id: "pi",
         binary: "pi",
         tested_version: "1.2.0",
         foreground_args: &[],
         worker_args: &[],
         headless: &["-p"],
-        opening_turn: BriefDelivery::Arg,
         system_prompt: SystemPromptArg::Flag("--append-system-prompt"),
         tier_args: TierArgs {
             model_flag: "--model",
@@ -194,8 +152,7 @@ pub(crate) struct SwitchStep {
 }
 
 // Claude 2.1.296: ModelPicker's search gate, Cr/KHe effort clamping and dr's
-// session-only action; Hermes 0.21.7 cli_model_switch_mixin.py / cli_commands_mixin.py;
-// pi 1.2.0 interactive-mode.js. None exposes a pane acknowledgement API.
+// session-only action. Pi 1.2.0: interactive-mode.js. None exposes a pane acknowledgement API.
 pub(crate) fn switch_steps(family: &str, model: &str, effort: &str) -> Result<Vec<SwitchStep>> {
     let step = |text: String, keys, prefix: String, suffix: String| SwitchStep {
         text,
@@ -229,16 +186,6 @@ pub(crate) fn switch_steps(family: &str, model: &str, effort: &str) -> Result<Ve
                 ),
             ]
         }
-        "hermes" => vec![
-            inline(
-                format!("/model {model} --session"),
-                format!("✓ Model switched: {model}"),
-            ),
-            inline(
-                format!("/reasoning {effort}"),
-                format!("✓ Reasoning effort set to '{effort}'"),
-            ),
-        ],
         "pi" => vec![
             inline(format!("/model {model}"), format!("Model: {model}")),
             inline(
@@ -247,7 +194,7 @@ pub(crate) fn switch_steps(family: &str, model: &str, effort: &str) -> Result<Ve
             ),
         ],
         "codex" => vec![inline("/model".into(), "Select Model".into())],
-        _ => bail!("retier supports only Claude, Codex, Hermes and pi"),
+        _ => bail!("retier supports only Claude, Codex and pi"),
     })
 }
 

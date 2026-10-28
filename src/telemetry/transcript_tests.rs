@@ -21,20 +21,6 @@ fn assistant(content: Value) -> Value {
     }})
 }
 
-fn db() -> Connection {
-    let db = Connection::open_in_memory().unwrap();
-    db.execute_batch(
-        "CREATE TABLE sessions (id TEXT, source TEXT, started_at REAL, model_config TEXT);
-        CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, active INTEGER,
-            role TEXT, content TEXT, tool_calls TEXT, timestamp REAL);
-        INSERT INTO sessions VALUES ('old','test',1,NULL),('main','test',2,NULL),
-            ('delegate','test',3,'{\"_delegate_from\":\"main\"}');
-        INSERT INTO messages VALUES (1,'main',1,'user','Hi',NULL,1792454400);",
-    )
-    .unwrap();
-    db
-}
-
 #[test]
 fn all_families_emit_one_visible_block_per_item() {
     let blocks = json!([{"type":"thinking","thinking":"private"},
@@ -57,22 +43,9 @@ fn all_families_emit_one_visible_block_per_item() {
             "type":"function_call","name":"Bash","arguments":"{\"command\":\"cargo test\"}"}}),
         ],
     );
-    let db = db();
-    db.execute("DELETE FROM messages", []).unwrap();
-    db.execute(
-        "INSERT INTO messages VALUES(1,'main',1,'assistant','Testing',?1,1792454401)",
-        [r#"[{"function":{"name":"Bash","arguments":"{\"command\":\"cargo test\"}"}}]"#],
-    )
-    .unwrap();
-    let hermes = TranscriptReader::hermes(db, "test")
-        .unwrap()
-        .unwrap()
-        .read()
-        .unwrap();
     assert_eq!(claude.len(), 2);
     assert_eq!(claude, pi);
     assert_eq!(claude, codex);
-    assert_eq!(claude, hermes);
     assert_eq!(
         serde_json::to_value(&claude[1]).unwrap(),
         json!({"role":"assistant",
@@ -203,77 +176,6 @@ fn jsonl_cursor_waits_for_complete_utf8_records_and_does_not_replay() {
     assert!(read_jsonl(&mut file, Family::Claude).is_err());
     assert_eq!(file.stream_position().unwrap(), before);
     std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn hermes_cursor_filters_sessions_roles_and_inactive_rows() {
-    let db = db();
-    db.execute_batch(
-        "INSERT INTO messages VALUES (2,'old',1,'assistant','old',NULL,1),
-        (3,'delegate',1,'assistant','delegate',NULL,1),(4,'main',0,'assistant','inactive',NULL,1),
-        (5,'main',1,'tool','result',NULL,1);",
-    )
-    .unwrap();
-    let mut reader = TranscriptReader::hermes(db, "test").unwrap().unwrap();
-    assert_eq!(reader.read().unwrap().len(), 1);
-    assert!(reader.read().unwrap().is_empty());
-    let Source::Hermes { db, .. } = &reader.source else {
-        panic!("Hermes");
-    };
-    db.execute(
-        "INSERT INTO messages VALUES (6,'main',1,'assistant','New',NULL,1)",
-        [],
-    )
-    .unwrap();
-    assert_eq!(
-        reader.read().unwrap()[0].content,
-        TextBlock::Text { text: "New".into() }
-    );
-}
-
-#[test]
-fn hermes_structured_content_is_decoded() {
-    let db = db();
-    db.execute(
-        "UPDATE messages SET content=?1",
-        ["\0json:[{\"type\":\"text\",\"text\":\"Testing\"}]"],
-    )
-    .unwrap();
-    let turns = TranscriptReader::hermes(db, "test")
-        .unwrap()
-        .unwrap()
-        .read()
-        .unwrap();
-    assert_eq!(turns.len(), 1);
-    assert_eq!(
-        turns[0].content,
-        TextBlock::Text {
-            text: "Testing".into()
-        }
-    );
-}
-
-#[test]
-fn hermes_retains_invalid_arguments_and_omits_unknown_tool_shapes() {
-    let db = db();
-    db.execute(
-        "UPDATE messages SET tool_calls=?1",
-        [r#"[{"function":{"name":"Bash","arguments":"{bad"}},{},null,42]"#],
-    )
-    .unwrap();
-    let turns = TranscriptReader::hermes(db, "test")
-        .unwrap()
-        .unwrap()
-        .read()
-        .unwrap();
-    assert_eq!(turns.len(), 2);
-    assert_eq!(
-        turns[1].content,
-        TextBlock::ToolUse {
-            name: "Bash".into(),
-            input: json!("{bad")
-        }
-    );
 }
 
 #[test]

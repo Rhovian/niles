@@ -34,7 +34,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     let path = state_dir(&env.root).join("manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replacen(
         "claude:sonnet:high",
-        "hermes:z-ai/glm-5.3-flash:high",
+        "pi:z-ai/glm-5.3-flash:high",
         1,
     );
     fs::write(&path, body).unwrap();
@@ -46,10 +46,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         &env.bin.join("codex"),
         "#!/bin/sh\nprintf 'Codex CLI 1.0.0\\n'\n",
     );
-    write_executable(
-        &env.bin.join("hermes"),
-        "#!/bin/sh\nprintf 'Hermes CLI 1.0.0\\n'\n",
-    );
+    write_executable(&env.bin.join("pi"), "#!/bin/sh\nprintf 'Pi CLI 1.0.0\\n'\n");
 
     let output = env.run(&["doctor"]);
 
@@ -64,7 +61,7 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         "agent codex: {} — Codex CLI 1.0.0; tested ",
         env.bin.join("codex").display()
     )));
-    assert!(stdout.contains("agent hermes:"), "{stdout}");
+    assert!(stdout.contains("agent pi:"), "{stdout}");
     assert_eq!(stdout.matches("agent claude:").count(), 1);
     assert!(!stdout.contains("second line"));
 }

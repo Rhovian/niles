@@ -35,15 +35,14 @@ This local file is operator-controlled data; Niles does not authenticate its res
 ### Maintainer CLI updates
 
 `scripts/cli-versions.sh` reads installed CLI versions and GitHub release metadata. Its explicit
-`--update` mode also changes host installations without confirmation. It preflights all four
-CLIs before invoking npm or Hermes's native updater, identifies npm ownership by the resolved
-executable's location in npm's global tree, and admits Hermes Git updates only for the official
-repository. Unsupported ownership fails rather than selecting an installer. `--plan` performs
+`--update` mode also changes host installations without confirmation. It preflights all three
+CLIs before invoking npm and identifies npm ownership by the resolved executable's location in
+npm's global tree. Unsupported ownership fails rather than selecting an installer. `--plan` performs
 the same lookups without running updates. Release versions are parsed as numeric stable versions
 and commands use argument arrays; feed and CLI output are never evaluated as shell code.
 The operator trusts the installed tools and upstream release/package publishers, including npm
-install scripts and Hermes's dependency preparation and service restarts. Updates across CLIs
-are sequential and are not a transaction; a later failure does not undo earlier updates.
+install scripts. Updates across CLIs are sequential and are not a transaction; a later failure does
+not undo earlier updates.
 
 `niles compat` launches built-in CLIs with approval-bypass flags and operator credentials in a
 fresh temp directory, using a fixed prompt with no outside input. It tests shipped profiles,
@@ -102,7 +101,7 @@ extra byte to detect overflow; errors report the path, observed read and file si
 Bodies are not summarized or truncated. Empty primary bodies, NUL, or assembled/rendered text
 over 65,536 bytes fail before worker/session state is written. Codex TOML escaping is included
 in a separate 131,071-byte argument bound; the terminating NUL stays within Linux's 128 KiB
-per-string limit. Hermes's env name/value overhead also fits that limit under the text cap.
+per-string limit.
 Shell quoting in a worker's `launch.sh` is file content, not an additional exec argument.
 Descriptions in `niles skills`, opening-turn menus and worker discovery share the
 same sanitizer: whitespace collapsed, Unicode control and format characters stripped,
@@ -333,7 +332,7 @@ styling. A keystroke between capture and submit can still merge with a nudge.
 
 Primary skill instructions reach the agent at system/developer privilege, above repository
 `AGENTS.md` text: Claude/pi use `--append-system-prompt`, Codex uses TOML-escaped
-`--config developer_instructions`, and Hermes uses `HERMES_EPHEMERAL_SYSTEM_PROMPT`.
+`--config developer_instructions`.
 NUL-bearing primary text is rejected. Task text and worker/session paths stay in the opening
 user turn. These instructions resolve from global and workspace disk sources as described in
 [Skills as an instruction source](#skills-as-an-instruction-source). The argument is passed
@@ -396,24 +395,22 @@ values. These are launch-integrity measures, not containment. See
 [`src/agent_window.rs`](../src/agent_window.rs), and
 [`src/agents/families.rs`](../src/agents/families.rs).
 
-Niles reads Claude, Codex, Hermes, and pi session stores to report agent token usage and extract
+Niles reads Claude, Codex, and pi session stores to report agent token usage and extract
 user/assistant text and structured tool calls. It uses read-only access to those stores and links
 sessions through launch identifiers or a Codex brief. Transcript content is untrusted display
 data, including tool arguments; consumers must escape it and must never execute it. Tool results,
 images, and private reasoning blocks are omitted.
-For Hermes, it opens the local `state.db` read-only to read session usage and state.
 For pi, Niles chooses transcript directories under its global project worker and lead session
 state directories using `--session-dir`, and reads the newest JSONL transcript there.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
-`--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`, and
-Hermes `chat` with `--yolo`. Pi runs with no permission prompts in either launch path, like
-Hermes with `--yolo`. Niles launches pi with `PI_OFFLINE=1`, which disables its startup update
-check and install telemetry only. Foreground defaults differ, and project configuration can replace
-default arguments for either launch path. Actual access therefore depends on the agent CLI, launch
-flags, credentials, and OS permissions. Niles adds no sandbox or process isolation. Agents share
-the workspace tree and inherited environment, and global state artifacts, reports, pane captures, and
-logs may contain secrets. Treat them as sensitive.
+`--dangerously-bypass-approvals-and-sandbox` and Claude with `--dangerously-skip-permissions`. Pi
+runs with no permission prompts in either launch path. Niles launches pi with `PI_OFFLINE=1`, which
+disables its startup update check and install telemetry only. Foreground defaults differ, and
+project configuration can replace default arguments for either launch path. Actual access therefore
+depends on the agent CLI, launch flags, credentials, and OS permissions. Niles adds no sandbox or
+process isolation. Agents share the workspace tree and inherited environment, and global state
+artifacts, reports, pane captures, and logs may contain secrets. Treat them as sensitive.
 
 Retier sends validated same-family model and effort commands to the recorded live worker window,
 requires an idle session and empty composer, and records the binding only after fresh

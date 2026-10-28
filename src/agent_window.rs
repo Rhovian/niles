@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use crate::{
-    agents::{self, BriefDelivery},
+    agents,
     tmux::{self, SessionName, WindowTarget},
     wake,
 };
@@ -63,10 +63,7 @@ fn launch_script(
     for arg in &invocation.args {
         body.push_str(&format!(" {}", shell_quote(arg)));
     }
-    match invocation.brief {
-        BriefDelivery::Arg => body.push_str(" \"$(cat \"$BRIEF\")\""),
-        BriefDelivery::Flag { path, .. } => body.push_str(&format!(" {path} \"$BRIEF\"")),
-    }
+    body.push_str(" \"$(cat \"$BRIEF\")\"");
     // `|| code=$?` rather than a bare call: `set -e` would otherwise abort the script on a failing
     // agent, which is precisely the case the report below exists for.
     body.push_str(" || code=$?\n");
@@ -103,11 +100,10 @@ fn shell_assignment_value(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn script_for(brief: BriefDelivery) -> String {
+    fn script_for() -> String {
         let invocation = agents::AgentInvocation {
             binary: "codex",
             args: vec!["--flag".to_owned()],
-            brief,
             system_prompt: agents::profile_for("codex").unwrap().system_prompt,
             env: Vec::new(),
             spec: agents::AgentSpec::parse("codex", &agents::ModelRoster::builtin().unwrap())
@@ -123,7 +119,7 @@ mod tests {
     /// The agent is run, not `exec`ed, so something survives it to report the exit.
     #[test]
     fn the_launch_script_reports_the_agents_exit() {
-        let script = script_for(BriefDelivery::Arg);
+        let script = script_for();
 
         assert!(
             !script.contains("exec "),
@@ -135,19 +131,6 @@ mod tests {
             script.contains(r#"echo 'closed: agent exited (status '"$code"')' >> "$STATUS""#),
             "the status must expand, and the rest of the line must not:\n{script}"
         );
-    }
-
-    #[test]
-    fn a_query_file_prompt_hands_over_the_brief_path_not_its_contents() {
-        let script = script_for(agents::profile_for("hermes").unwrap().opening_turn);
-
-        assert!(
-            script.contains(r#"--query-file "$BRIEF" || code=$?"#),
-            "{script}"
-        );
-        // The brief must not be expanded into the command line: hermes reads the file itself, so
-        // nothing in the brief can be taken for shell syntax.
-        assert!(!script.contains("$(cat"), "{script}");
     }
 
     #[test]

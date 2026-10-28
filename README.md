@@ -24,7 +24,6 @@ latest tested; if a newer release breaks something, report it with that version.
 | --- | --- |
 | Claude Code | 2.1.296 |
 | Codex | 0.162.1 |
-| Hermes Agent | 0.21.3 |
 | pi coding agent | 1.2.0 |
 
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
@@ -39,13 +38,12 @@ Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKIL
 - [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-choose-skills-and-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
 - [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
 
-Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line),
-or Hermes (third line). Then ask "set up Niles here":
+Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line).
+Then ask "set up Niles here":
 
 ```sh
 mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
 mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
-mkdir -p ~/.hermes/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.hermes/skills/niles-setup/SKILL.md
 ```
 
 Rerun these lines to update the skill.

@@ -2,7 +2,6 @@ use super::SessionLink;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -11,7 +10,7 @@ use std::{
 };
 
 mod project;
-use project::{file_turns, message_turns};
+use project::file_turns;
 
 #[cfg(feature = "remote")]
 pub(crate) struct TranscriptSource {
@@ -74,19 +73,8 @@ pub(super) enum Family {
 
 /// Independent of usage/activity reads. Owns an append cursor, not a polling timer.
 pub(crate) struct TranscriptReader {
-    source: Source,
-}
-
-enum Source {
-    Jsonl {
-        file: BufReader<File>,
-        family: Family,
-    },
-    Hermes {
-        db: Connection,
-        session: String,
-        after: i64,
-    },
+    file: BufReader<File>,
+    family: Family,
 }
 
 impl TranscriptReader {
@@ -125,47 +113,20 @@ impl TranscriptReader {
             SessionLink::Pi { session_dir } => {
                 (super::pi::transcript_path(session_dir)?, Family::Pi)
             }
-            SessionLink::Hermes { source } => {
-                return Self::hermes(super::hermes::open_db(home)?, source);
-            }
         };
         path.map(|path| {
             Ok(Self {
-                source: Source::Jsonl {
-                    file: BufReader::new(
-                        File::open(&path).with_context(|| format!("open transcript {path}"))?,
-                    ),
-                    family,
-                },
+                file: BufReader::new(
+                    File::open(&path).with_context(|| format!("open transcript {path}"))?,
+                ),
+                family,
             })
         })
         .transpose()
     }
 
-    fn hermes(db: Connection, source: &str) -> Result<Option<Self>> {
-        let session = db
-            .query_row(
-                "SELECT id FROM sessions WHERE source = ?1
-             AND json_extract(model_config, '$._delegate_from') IS NULL
-             ORDER BY started_at DESC LIMIT 1",
-                [source],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(session.map(|session| Self {
-            source: Source::Hermes {
-                db,
-                session,
-                after: 0,
-            },
-        }))
-    }
-
     pub(crate) fn read(&mut self) -> Result<Vec<TextTurn>> {
-        match &mut self.source {
-            Source::Jsonl { file, family } => read_jsonl(file, *family),
-            Source::Hermes { db, session, after } => read_hermes(db, session, after),
-        }
+        read_jsonl(&mut self.file, self.family)
     }
 }
 
@@ -192,49 +153,6 @@ fn read_jsonl(file: &mut BufReader<File>, family: Family) -> Result<Vec<TextTurn
         file.seek(SeekFrom::Start(start))?;
     }
     result
-}
-
-// Hermes 71d34bad hermes_state_messages.py persists IDs, active flags, sentinel-prefixed
-// content and OpenAI tool_calls. rusqlite provides row iteration, not a message tail:
-// https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Statement.html
-fn read_hermes(db: &Connection, session: &str, after: &mut i64) -> Result<Vec<TextTurn>> {
-    let mut statement = db.prepare(
-        "SELECT id, role, content, tool_calls, timestamp FROM messages
-         WHERE session_id = ?1 AND active = 1 AND id > ?2 ORDER BY id",
-    )?;
-    let mut rows = statement.query(rusqlite::params![session, *after])?;
-    let mut turns = Vec::new();
-    let mut next = *after;
-    while let Some(row) = rows.next()? {
-        next = row.get("id")?;
-        let role: String = row.get("role")?;
-        let Some(role) = TextRole::parse(&role) else {
-            continue;
-        };
-        let content: Option<String> = row.get("content")?;
-        let content = match content {
-            Some(content) => match content.strip_prefix("\0json:") {
-                Some(json) => serde_json::from_str(json)?,
-                None => Value::String(content),
-            },
-            None => Value::Null,
-        };
-        let seconds: f64 = row.get("timestamp")?;
-        let at = DateTime::from_timestamp_micros((seconds * 1_000_000.0).round() as i64)
-            .context("Hermes message timestamp out of range")?;
-        turns.extend(message_turns(role, Some(at), content));
-        let calls: Option<String> = row.get("tool_calls")?;
-        if let Some(calls) = calls {
-            let calls: Vec<Value> = serde_json::from_str(&calls)?;
-            for mut call in calls {
-                if let Some(function) = call.get_mut("function") {
-                    turns.extend(project::function_turn(function.take(), Some(at)));
-                }
-            }
-        }
-    }
-    *after = next;
-    Ok(turns)
 }
 
 #[cfg(test)]

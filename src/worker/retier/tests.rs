@@ -57,20 +57,13 @@ fn retier_acknowledgements_require_applied_values_and_session_scope() {
 
 #[test]
 fn retier_inline_sequences_confirm_model_before_effort() {
-    for (family, command) in [("hermes", "/reasoning low"), ("pi", "/thinking low")] {
-        let steps = agents::switch_steps(family, "tencent/hy3", "low").unwrap();
-        assert!(steps[0].text.starts_with("/model tencent/hy3"));
-        assert_eq!(steps[1].text, command);
-        let acknowledgement = if family == "hermes" {
-            "✓ Reasoning effort set to 'low'"
-        } else {
-            "Thinking level: low"
-        };
-        assert_eq!(
-            acknowledgements(acknowledgement, &steps[1].acknowledgement),
-            1
-        );
-    }
+    let steps = agents::switch_steps("pi", "tencent/hy3", "low").unwrap();
+    assert_eq!(steps[0].text, "/model tencent/hy3");
+    assert_eq!(steps[1].text, "/thinking low");
+    assert_eq!(
+        acknowledgements("Thinking level: low", &steps[1].acknowledgement),
+        1
+    );
 }
 
 #[test]

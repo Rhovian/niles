@@ -10,17 +10,15 @@ const VERSION: &str = r#"if [ "$1" = --version ]; then
   exit 0
 fi
 "#;
-const SAMPLE_LABEL: &str = r#"primary=$HERMES_EPHEMERAL_SYSTEM_PROMPT
-prompt=
+const SAMPLE_LABEL: &str = r#"primary=
 for arg do
   case "$previous" in
     --append-system-prompt) primary=$arg;;
-    --query-file) prompt=$(cat "$arg");;
     --config) case "$arg" in developer_instructions=*) primary=${arg#developer_instructions=}; primary=${primary#\"}; primary=${primary%\"};; esac;;
   esac
   previous=$arg
 done
-[ -n "$prompt" ] || prompt=$arg
+prompt=$arg
 sample_label=${primary##* }
 [ "$primary" = "The sample label for this Niles compatibility check is $sample_label" ] || exit 4
 [ "$prompt" = "For the Niles compatibility check, run \`niles agent status working <sample-label>\` using this run's sample label, then reply with only the word done." ] || exit 5
@@ -120,14 +118,15 @@ fn unknown_family_fails_before_running_turns() {
 #[test]
 fn all_families_use_their_brief_and_launch_environment() {
     let env = TestEnv::new("niles-compat-all");
-    write_workspace_manifest(
+    write_manifest(
         &env.root,
-        "claude",
-        "codex",
-        "hermes:z-ai/glm-5.3-flash:high",
-        "pi:deepseek/deepseek-v4.1-flash:high",
+        [
+            ("lead", "claude:sonnet:high"),
+            ("worker", "codex:gpt-6.1-sol:medium"),
+            ("reviewer", "pi:deepseek/deepseek-v4.1-flash:high"),
+        ],
     );
-    for family in ["claude", "codex", "hermes", "pi"] {
+    for family in ["claude", "codex", "pi"] {
         let check = match family {
             "claude" => {
                 "[ \"$CLAUDE_CODE_DISABLE_AGENT_VIEW\" = 1 ] && [ \"$CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION\" = false ] || exit 3\n"
@@ -146,7 +145,7 @@ fn all_families_use_their_brief_and_launch_environment() {
         .output()
         .unwrap();
     assert_command_success("compat all", &output);
-    assert_eq!(stdout_of(&output).matches("\tpass\t").count(), 4);
+    assert_eq!(stdout_of(&output).matches("\tpass\t").count(), 3);
     assert!(
         stderr_of(&output)
             .contains("'--model' 'gpt-6.1-sol' '--config' 'model_reasoning_effort=\"medium\"'")
@@ -162,7 +161,7 @@ fn unused_family_is_skipped_and_missing_manifest_errors() {
         "compat requires a workspace manifest",
     );
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "codex");
-    let output = env.run(&["compat", "hermes"]);
+    let output = env.run(&["compat", "pi"]);
     assert_command_success("unused family", &output);
-    assert!(stdout_of(&output).contains("hermes\t-\tskip\tnot used by manifest"));
+    assert!(stdout_of(&output).contains("pi\t-\tskip\tnot used by manifest"));
 }
