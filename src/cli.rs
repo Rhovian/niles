@@ -87,9 +87,9 @@ pub enum CommandName {
         #[command(subcommand)]
         line: StatusLine,
     },
-    /// Start the lead in a project session.
+    /// Launch the start session in a project.
     #[command(hide = true)]
-    Lead {
+    Start {
         #[arg(long)]
         keep_skills: bool,
     },
@@ -119,7 +119,7 @@ pub enum CommandName {
     /// Spawn a worker agent in a tmux window
     ///
     /// Launch a bound primary skill. Use --from to build on a completed worker's report,
-    /// or --mechanical to log the reason for mechanical work in the lead session.
+    /// or --mechanical to log the reason for mechanical work in the start session.
     ///
     /// `--wait` starts the workspace wait after spawning, so the turn does not need a
     /// separate `niles wait`.
@@ -177,7 +177,7 @@ pub enum CommandName {
     },
     /// Switch a live worker after operator approval (same family only).
     Retier { id: String, agent: String },
-    /// Append a decision to the current lead session log.
+    /// Append a decision to the current start session log.
     Log {
         /// Worker id, or `-` for a session-wide decision.
         id: String,
@@ -187,7 +187,7 @@ pub enum CommandName {
     },
     /// Print live spawned workers as JSON.
     Workers,
-    /// Print usage for live lead and worker sessions as JSON.
+    /// Print usage for live start and worker sessions as JSON.
     Usage,
     /// List effective built-in and workspace model rosters.
     Models,
@@ -266,7 +266,7 @@ pub enum CommandName {
     /// Disarm a worker's check-in, so the watcher stops nudging about it
     ///
     /// `spawn` and `send` arm one, and the watcher nudges when it comes due with no report since.
-    /// Quiet a worker that is idle on purpose, so its check-ins do not keep calling the lead back.
+    /// Quiet a worker that is idle on purpose, so its check-ins do not keep waking the start session.
     #[command(verbatim_doc_comment)]
     Quiet {
         /// Worker task id.
@@ -317,6 +317,25 @@ mod tests {
     #[test]
     fn command_definition_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn start_replaces_the_lead_subcommand() {
+        for (args, expected) in [
+            (vec!["niles", "start"], false),
+            (vec!["niles", "start", "--keep-skills"], true),
+        ] {
+            let Some(CommandName::Start { keep_skills }) =
+                Cli::try_parse_from(args).unwrap().command
+            else {
+                panic!("not a start session");
+            };
+            assert_eq!(keep_skills, expected);
+        }
+        assert_eq!(
+            Cli::try_parse_from(["niles", "lead"]).unwrap_err().kind(),
+            clap::error::ErrorKind::InvalidSubcommand
+        );
     }
 
     #[test]

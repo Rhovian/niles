@@ -39,7 +39,7 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     );
     let args_log = env.root.join("args");
     let output = env
-        .niles(&env.root, &["lead", "--keep-skills"])
+        .niles(&env.root, &["start", "--keep-skills"])
         .env("NILES_TEST_ARGS", &args_log)
         .env_remove("TMUX_PANE")
         .output()
@@ -72,7 +72,7 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let dir = args
         .last()
         .expect(entry)
-        .strip_prefix(&format!("# Niles {entry} session\nsession_dir: "))
+        .strip_prefix("# Niles start session\nsession_dir: ")
         .expect(entry)
         .strip_suffix("\n\nStart the Niles manager session.")
         .expect(entry);

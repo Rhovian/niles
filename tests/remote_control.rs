@@ -199,7 +199,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
     fs::remove_file(marker(&env, "running")).unwrap();
     server.status("PUT", "/api/projects/api/session", "", 200);
     let log = env.tmux_log();
-    assert!(log.contains("lead --keep-skills"), "{log}");
+    assert!(log.contains("start --keep-skills"), "{log}");
     assert!(log.contains("env -u NILES_SETUP"));
     assert!(!log.contains("--setup"));
     server.status("PUT", "/api/projects/api/session", "", 200);
@@ -219,7 +219,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
         assert!(
             env.tmux_log()
                 .lines()
-                .any(|line| line.starts_with(command) && line.contains("lead --keep-skills"))
+                .any(|line| line.starts_with(command) && line.contains("start --keep-skills"))
         );
         fs::remove_file(marker(&env, state)).unwrap();
     }

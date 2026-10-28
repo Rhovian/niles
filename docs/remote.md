@@ -186,7 +186,7 @@ remain readable but sending returns 503. Close works for live and lost workers.
 
 Start appears for registered projects that are not running. It requires a saved,
 parsing manifest: start once at the desk to choose skills. Phone starts always use
-that manifest's default lead and skip the picker (`niles lead --keep-skills`); desk
+that manifest's default lead and skip the picker (`niles start --keep-skills`); desk
 starts still show it. Stop and Close require confirmation. The API routes are:
 
 - `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the

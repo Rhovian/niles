@@ -123,7 +123,7 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         let output = if name == "worker" {
             env.spawn(name, &["job", "--worktree", "untouched", "task"])
         } else {
-            env.run(&["lead", "--keep-skills"])
+            env.run(&["start", "--keep-skills"])
         };
         assert_failure_contains("invalid primary", &output, error);
         assert!(!state_dir(&env.root).join("worker/job").exists());

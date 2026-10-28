@@ -508,7 +508,7 @@ No request chooses an agent, command, args, skill or filesystem path. Registrati
 manifest creation remain desk-only. Start checks the directory, parses the manifest,
 and refuses foreign session names. Its fixed 409 texts distinguish those three
 operator-fixable conflicts; other errors expose only status codes. Phone starts bypass
-the skill picker with `niles lead --keep-skills`. Agents run with the host user's privileges
+the skill picker with `niles start --keep-skills`. Agents run with the host user's privileges
 and the service/tmux server environment; registration already trusts project configuration.
 Shell-rc-only credentials may be unavailable. Worker close runs `current_exe` with a
 registry cwd and enumerated ID as argv, without a shell. Stop closes workers before

@@ -63,7 +63,7 @@ fn session_activity_missing_after_one_interval_reports_unknown_once() {
     write_executable(&fixture.env.bin.join("claude"), "#!/bin/sh\nsleep 3\n");
     let output = fixture
         .env
-        .niles(&fixture.env.root, &["lead"])
+        .niles(&fixture.env.root, &["start"])
         .env("HOME", &fixture.env.home)
         .env("TMUX_PANE", "%9")
         .env("TMUX_PANE_FILE", &fixture.pane_file)
