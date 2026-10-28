@@ -65,9 +65,10 @@ fn collect(
     let mut tail = Vec::new();
     let mut written = 0;
     let mut buffer = [0; 8192];
+    let mut exited = None;
     // std 1.89 Child has no timed wait or capped output collector:
     // https://doc.rust-lang.org/1.89.0/std/process/struct.Child.html
-    // Reap only after draining, or at the deadline; never kill a reaped child's group.
+    // Drain again after observing exit; never kill a reaped child's group.
     let status = (|| {
         loop {
             let n = match reader.read(&mut buffer) {
@@ -83,8 +84,12 @@ fn collect(
             tail.drain(..tail.len().saturating_sub(TAIL_CAP));
             let expired = started.elapsed() >= timeout;
             if n == 0 || expired {
-                if let Some(status) = child.try_wait()? {
-                    return Ok(Some(status));
+                if exited.is_some() {
+                    return Ok(exited);
+                }
+                exited = child.try_wait()?;
+                if exited.is_some() {
+                    continue;
                 }
                 if expired {
                     return Ok(None);
@@ -96,7 +101,9 @@ fn collect(
     let status = match status {
         Ok(status) => status,
         Err(error) => {
-            terminate(child).with_context(|| format!("gate cleanup after {error:#}"))?;
+            if exited.is_none() {
+                terminate(child).with_context(|| format!("gate cleanup after {error:#}"))?;
+            }
             return Err(error);
         }
     };
@@ -133,6 +140,56 @@ fn terminate(child: &mut Child) -> Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn output_written_between_empty_read_and_exit_check_is_drained() {
+        struct ReleaseOnEmpty {
+            reader: UnixStream,
+            release: Option<(std::process::ChildStdin, u32)>,
+        }
+        impl Read for ReleaseOnEmpty {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let result = self.reader.read(buffer);
+                if let Some((mut stdin, pid)) = self.release.take() {
+                    assert_eq!(result.as_ref().unwrap_err().kind(), ErrorKind::WouldBlock);
+                    stdin.write_all(b"go\n").unwrap();
+                    let mut status = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+                    // SAFETY: status is writable; WNOWAIT observes exit without reaping,
+                    // leaving collect's try_wait to observe the real child status.
+                    assert_eq!(
+                        unsafe {
+                            libc::waitid(
+                                libc::P_PID,
+                                pid,
+                                status.as_mut_ptr(),
+                                libc::WEXITED | libc::WNOWAIT,
+                            )
+                        },
+                        0
+                    );
+                }
+                result
+            }
+        }
+        let (reader, writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "read line; printf private-output >&2; exit 7"])
+            .stdin(std::process::Stdio::piped())
+            .stderr(OwnedFd::from(writer))
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let reader = ReleaseOnEmpty {
+            reader,
+            release: Some((child.stdin.take().unwrap(), child.id())),
+        };
+        let mut log = Vec::new();
+        let (reason, tail) = collect(&mut child, reader, &mut log, Duration::from_secs(5)).unwrap();
+        assert_eq!(reason.as_deref(), Some("exit 7"));
+        assert_eq!(log, b"private-output");
+        assert_eq!(tail, b"private-output");
+    }
 
     #[test]
     fn read_and_log_write_errors_kill_and_reap_the_child() {
