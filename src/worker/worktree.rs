@@ -22,7 +22,7 @@ pub enum SpawnTree {
 }
 
 fn git(workspace: &Utf8Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
+    let output = crate::util::git_command()
         .args(args)
         .current_dir(workspace)
         .output()

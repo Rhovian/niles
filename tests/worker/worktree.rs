@@ -108,6 +108,46 @@ impl Repo {
 }
 
 #[test]
+fn worktree_git_ignores_inherited_repository_routing() {
+    let repo = Repo::new("niles-managed-git-env");
+    let caller = Repo::new("niles-caller-git-env");
+    for mut command in [
+        repo.spawn_command(
+            "worker",
+            &["--worktree", "fix/x", "--base", "origin/main", "Fix"],
+        ),
+        repo.command(&["close", "worker"]),
+    ] {
+        command
+            .env("GIT_DIR", caller.workspace.join(".git"))
+            .env("GIT_WORK_TREE", &caller.workspace)
+            .env("GIT_COMMON_DIR", caller.workspace.join(".git"))
+            .env(
+                "GIT_OBJECT_DIRECTORY",
+                caller.workspace.join(".git/objects"),
+            );
+        for name in [
+            "GIT_INDEX_FILE",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_GRAFT_FILE",
+            "GIT_SHALLOW_FILE",
+            "GIT_PREFIX",
+            "GIT_INTERNAL_SUPER_PREFIX",
+        ] {
+            command.env(name, caller.workspace.join(name));
+        }
+        assert_command_success(
+            "worktree with inherited Git environment",
+            &command.output().unwrap(),
+        );
+    }
+    assert!(!repo.tree.exists());
+    assert!(git(&repo.workspace, &["branch", "--list", "fix/x"]).contains("fix/x"));
+    assert!(git(&caller.workspace, &["branch", "--list", "fix/x"]).is_empty());
+    assert!(!caller.tree.exists());
+}
+
+#[test]
 fn create_join_and_retire_managed_tree() {
     let repo = Repo::new("niles-managed-create");
     repo.spawn("first", true);

@@ -3,11 +3,33 @@ use std::{
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::PathBuf,
+    process::Command,
 };
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
+
+pub(crate) fn git_command() -> Command {
+    let mut command = Command::new("git");
+    // Git 2.50.1 Documentation/githooks.adoc: repository-local environment
+    // overrides cwd. Clear repository paths, retaining operator credential config.
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_GRAFT_FILE",
+        "GIT_SHALLOW_FILE",
+        "GIT_PREFIX",
+        "GIT_INTERNAL_SUPER_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
+    command
+}
 
 /// All home-scoped paths share one boundary, including the isolated unit-test home.
 pub(crate) fn home_dir() -> Result<Utf8PathBuf> {
