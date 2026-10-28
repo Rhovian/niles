@@ -7,7 +7,7 @@ use serde_json::Value;
 // https://docs.rs/serde_json/1.0.151/serde_json/value/index.html
 // Claude Code 2.1.296 and pi-ai 1.2.0 dist/types.d.ts define these content blocks.
 // Unknown/malformed block shapes are deliberately omitted; they never gate telemetry.
-pub(super) fn message_turns(
+fn message_turns(
     role: TextRole,
     timestamp: Option<DateTime<Utc>>,
     content: Value,
@@ -66,10 +66,7 @@ fn arguments(value: Value) -> Value {
     }
 }
 
-pub(super) fn function_turn(
-    mut value: Value,
-    timestamp: Option<DateTime<Utc>>,
-) -> Option<TextTurn> {
+fn function_turn(mut value: Value, timestamp: Option<DateTime<Utc>>) -> Option<TextTurn> {
     let name = value["name"].as_str()?.to_owned();
     Some(TextTurn {
         role: TextRole::Assistant,

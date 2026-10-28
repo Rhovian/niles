@@ -78,19 +78,6 @@ claude:
     - {effort: "high", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
     - {effort: "xhigh", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
     - {effort: "max", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", cost: 2, speed: 2, context_window: 1000000}
-hermes:
-  deepseek/deepseek-v4.1-flash:
-    - {effort: "low", tier: "mechanical", description: "sparse MoE; efficient reasoning and long-context tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
-    - {effort: "high", tier: "economy", description: "sparse MoE; efficient reasoning and long-context tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
-    - {effort: "max", tier: "economy", description: "sparse MoE; efficient reasoning and long-context tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
-  tencent/hy3:
-    - {effort: "none", tier: "mechanical", description: "agentic MoE reasoning model; smallest-model low-effort work", cost: 1, speed: null, context_window: 262144}
-    - {effort: "low", tier: "mechanical", description: "agentic MoE reasoning model; smallest-model low-effort work", cost: 1, speed: null, context_window: 262144}
-    - {effort: "high", tier: "economy", description: "agentic MoE reasoning model; efficient or smaller model", cost: 1, speed: null, context_window: 262144}
-  z-ai/glm-5.3-flash:
-    - {effort: "low", tier: "mechanical", description: "efficient coding and long-horizon agent tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}
-    - {effort: "high", tier: "economy", description: "efficient coding and long-horizon agent tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
-    - {effort: "max", tier: "economy", description: "efficient coding and long-horizon agent tasks; efficient or smaller model", cost: 1, speed: null, context_window: 1048576}
 pi:
   deepseek/deepseek-v4.1-flash:
     - {effort: "low", tier: "mechanical", description: "sparse MoE; efficient reasoning and long-context tasks; smallest-model low-effort work", cost: 1, speed: null, context_window: 1048576}

@@ -129,7 +129,7 @@ fn changes_are_applied_to_latest_manifest() {
     let mut latest = before.clone();
     latest.checkin = Some("1h".to_owned());
     latest
-        .set_primary(&skill("security"), "hermes:z-ai/glm-5.3-flash:high".into())
+        .set_primary(&skill("security"), "pi:z-ai/glm-5.3-flash:high".into())
         .unwrap();
     super::save(&root, &latest, Some(&selection)).unwrap();
     let mut draft = before.clone();

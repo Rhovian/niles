@@ -66,24 +66,10 @@ newer_than() {
 }
 
 detect_update() {
-    local cli=$1 output=$2 latest=$3 executable npm_root package directory origin published
+    local cli=$1 latest=$2 executable npm_root package published
     update_command=()
     remove_command=()
     executable=$(command -v "$cli") || return 1
-    if [[ $cli == hermes && $output == *$'\nInstall method: git\n'* ]]; then
-        directory=${output#*$'\nInstall directory: '}
-        directory=${directory%%$'\n'*}
-        origin=$(git -C "$directory" remote get-url origin) || return 1
-        case $origin in
-            https://github.com/NousResearch/hermes-agent|https://github.com/NousResearch/hermes-agent.git|git@github.com:NousResearch/hermes-agent.git) ;;
-            *) printf 'ERROR: Hermes checkout is not the official repository: %s\n' "$origin" >&2; return 1 ;;
-        esac
-        # The native updater owns dependency preparation and service restarts.
-        # --channel stable and --yes are documented by `hermes update --help`.
-        method=git
-        update_command=("$executable" update --yes --channel stable)
-        return 0
-    fi
     if command -v npm >/dev/null; then
         # npm root identifies its global tree, not the owner of a PATH binary:
         # https://docs.npmjs.com/cli/v11/commands/npm-root
@@ -136,16 +122,15 @@ queue_update() {
     update_lengths+=("$#")
     update_argv+=("$@")
 }
-# gh returns release names, not the embedded CLI version (Hermes tags can be dates):
+# gh returns release names, not the embedded CLI version:
 # https://cli.github.com/manual/gh_release_view
 version_pattern='(^|[[:space:]])v?([0-9]+\.[0-9]+\.[0-9]+([-+][[:alnum:].+-]+)?)'
 exit_code=0
 printf 'cli\tinstalled\ttested\tlatest\trepo\tresult\n'
-for cli in codex claude hermes pi; do
+for cli in codex claude pi; do
     case $cli in
         codex) repo=openai/codex ;;
         claude) repo=anthropics/claude-code ;;
-        hermes) repo=NousResearch/hermes-agent ;;
         pi) repo=earendil-works/pi ;;
     esac
     installed=missing
@@ -198,7 +183,7 @@ for cli in codex claude hermes pi; do
         if [[ $installed == missing || $installed == error || $latest == error ]]; then
             printf 'ERROR: cannot plan an update for %s without installed/latest versions\n' "$cli" >&2
             exit_code=2
-        elif detect_update "$cli" "$output" "$latest"; then
+        elif detect_update "$cli" "$latest"; then
             printf '%s method: %s\n' "$cli" "$method"
             if (( ${#remove_command[@]} )); then
                 print_command "${remove_command[@]}"
@@ -213,7 +198,7 @@ for cli in codex claude hermes pi; do
     fi
 done
 if [[ $mode == update ]]; then
-    # No installation changes until all four release and method lookups succeed.
+    # No installation changes until all three release and method lookups succeed.
     if (( exit_code == 2 )); then exit 2; fi
     for i in "${!update_offsets[@]}"; do
         update_command=("${update_argv[@]:${update_offsets[i]}:${update_lengths[i]}}")

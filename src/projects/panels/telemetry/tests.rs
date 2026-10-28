@@ -262,22 +262,13 @@ fn projects() -> Vec<Project> {
         },
         Project {
             name: "web".into(),
-            sessions: vec![
-                session(
-                    "rev",
-                    "reviewer",
-                    "pi:tencent/hy3:high",
-                    fixtures::pi(),
-                    false,
-                ),
-                session(
-                    "herm",
-                    "worker",
-                    "hermes:tencent/hy3",
-                    fixtures::hermes(),
-                    true,
-                ),
-            ],
+            sessions: vec![session(
+                "rev",
+                "reviewer",
+                "pi:tencent/hy3:high",
+                fixtures::pi(),
+                false,
+            )],
             events: Vec::new(),
         },
         Project {
@@ -293,18 +284,13 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
     let mut projects = projects();
     let window = Window::new(Range::Month, local(2, 12)).unwrap();
     let board = dashboard(&projects, window);
-    let [claude, codex, pi, hermes] = [
-        fixtures::claude(),
-        fixtures::codex(),
-        fixtures::pi(),
-        fixtures::hermes(),
-    ]
-    .map(|usage| usage.total_tokens());
+    let [claude, codex, pi] =
+        [fixtures::claude(), fixtures::codex(), fixtures::pi()].map(|usage| usage.total_tokens());
     let api = claude + codex + 4 * pi;
-    let web = pi + hermes;
+    let web = pi;
     assert_eq!(board.projects, [("api", api), ("web", web), ("idle", 0)]);
     assert_eq!(board.bins.iter().sum::<u64>(), api + web);
-    assert_eq!((board.sessions, board.spawns, board.wakes), (8, 4, 3));
+    assert_eq!((board.sessions, board.spawns, board.wakes), (7, 4, 3));
     let models = board
         .models
         .iter()
@@ -327,7 +313,6 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
         ),
         ("claude:opus:high", vec![("lead", 1)], claude),
         ("codex:gpt-5.5:high", vec![("worker", 1)], codex),
-        ("hermes:tencent/hy3", vec![("worker", 1)], hermes),
     ];
     expected.sort_by_key(|row| std::cmp::Reverse(row.2));
     assert_eq!(models, expected);

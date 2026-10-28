@@ -7,8 +7,8 @@ mod system_prompt;
 #[cfg(test)]
 mod tests;
 
-pub use families::{BriefDelivery, SystemPromptArg, known_agent_ids, profile_for, profiles};
 pub(crate) use families::{SwitchStep, session_link, switch_steps};
+pub use families::{SystemPromptArg, known_agent_ids, profile_for, profiles};
 pub use roster::ModelRoster;
 
 #[derive(Debug, Clone, Copy)]
@@ -22,7 +22,6 @@ pub enum InvocationDefaults {
 pub struct AgentInvocation {
     pub binary: &'static str,
     pub args: Vec<String>,
-    pub brief: BriefDelivery,
     pub system_prompt: SystemPromptArg,
     pub spec: AgentSpec,
     pub env: Vec<(String, String)>,
@@ -55,7 +54,6 @@ pub fn invocation(
     Ok(AgentInvocation {
         binary: profile.binary,
         args,
-        brief: profile.opening_turn,
         system_prompt: profile.system_prompt,
         env: profile
             .launch_env

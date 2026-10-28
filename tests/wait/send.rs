@@ -148,7 +148,7 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
         "BEGIN\n{}\nEND",
         "multiline follow-up with Unicode: café 🦀\n".repeat(16)
     );
-    for family in ["claude", "codex", "hermes", "pi"] {
+    for family in ["claude", "codex", "pi"] {
         let dir = receiving_worker(&lab, b"");
         let meta_path = dir.join("meta.json");
         let meta = fs::read_to_string(&meta_path)

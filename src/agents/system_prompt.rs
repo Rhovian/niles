@@ -30,7 +30,6 @@ impl AgentInvocation {
                 );
                 self.args.extend([flag.to_string(), value]);
             }
-            SystemPromptArg::Env(name) => self.env.push((name.to_string(), text.to_owned())),
         }
         Ok(())
     }

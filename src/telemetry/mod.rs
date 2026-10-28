@@ -8,7 +8,6 @@ mod buckets;
 mod cache;
 mod claude;
 mod codex;
-mod hermes;
 mod pi;
 mod processes;
 #[cfg_attr(
@@ -29,7 +28,6 @@ pub(crate) use buckets::{BUCKET, Buckets};
 pub(crate) use cache::closed_buckets;
 use claude::read_claude;
 use codex::read_codex;
-use hermes::read_hermes;
 use pi::read_pi;
 pub(crate) use processes::process_activity;
 
@@ -37,7 +35,6 @@ pub(crate) use processes::process_activity;
 #[serde(tag = "family", rename_all = "lowercase")]
 pub(crate) enum SessionLink {
     Claude { session_id: String },
-    Hermes { source: String },
     Codex,
     Pi { session_dir: Utf8PathBuf },
 }
@@ -93,7 +90,6 @@ impl SessionLink {
     pub(crate) fn args(&self) -> Vec<String> {
         match self {
             Self::Claude { session_id } => vec!["--session-id".into(), session_id.clone()],
-            Self::Hermes { source } => vec!["--source".into(), source.clone()],
             Self::Codex => Vec::new(),
             Self::Pi { session_dir } => vec!["--session-dir".into(), session_dir.to_string()],
         }
@@ -118,7 +114,6 @@ pub(crate) fn read_session(
     let home = crate::util::home_dir()?;
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
-        SessionLink::Hermes { source } => read_hermes(&home, source),
         SessionLink::Codex => read_codex(&home, workspace, needle, created_at),
         SessionLink::Pi { session_dir } => read_pi(session_dir),
     }
@@ -188,10 +183,6 @@ pub(crate) mod fixtures {
     pub(crate) fn pi() -> Usage {
         pi::pi_usage(PI).unwrap()
     }
-
-    pub(crate) fn hermes() -> Usage {
-        hermes::tests::fixture_usage()
-    }
 }
 
 #[cfg(test)]
@@ -204,12 +195,7 @@ mod tests {
 
     #[test]
     fn buckets_sum_to_the_total_for_every_family() {
-        for usage in [
-            fixtures::claude(),
-            fixtures::codex(),
-            fixtures::pi(),
-            fixtures::hermes(),
-        ] {
+        for usage in [fixtures::claude(), fixtures::codex(), fixtures::pi()] {
             assert_eq!(
                 usage.buckets.iter().map(|(_, tokens)| tokens).sum::<u64>(),
                 usage.total_tokens()
@@ -246,10 +232,6 @@ mod tests {
         assert_eq!(codex.prompt_tokens, Some(900 + 50));
         assert_eq!(codex.context_window, Some(1000));
         assert_eq!(fixtures::pi().prompt_tokens, Some(20 + 40 + 50));
-
-        let hermes = fixtures::hermes();
-        assert_eq!(hermes.buckets.iter().count(), 1);
-        assert_eq!(hermes.prompt_tokens, None);
     }
 
     fn state(record: Option<SessionRecord>) -> Option<SessionState> {

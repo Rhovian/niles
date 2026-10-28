@@ -14,7 +14,6 @@ fn foreground_invocation_preserves_builtin_manager_defaults() {
         invocation.args,
         ["--model", "opus", "--effort", "max"].map(str::to_owned)
     );
-    assert!(matches!(invocation.brief, BriefDelivery::Arg));
 }
 
 #[test]
@@ -45,6 +44,18 @@ fn parses_agent_model_effort_specs() {
     assert_eq!(uppercase.effort(), Some("max"));
 
     assert!(AgentSpec::parse("custom", &models()).is_err());
+}
+
+#[test]
+fn only_supported_families_are_launchable() {
+    assert_eq!(
+        known_agent_ids().collect::<Vec<_>>(),
+        ["codex", "claude", "pi"]
+    );
+    for spec in ["hermes", "hermes:z-ai/glm-5.3-flash:high"] {
+        let error = invocation(spec, InvocationDefaults::Worker, &models()).unwrap_err();
+        assert!(error.to_string().contains("unknown agent family `hermes`"));
+    }
 }
 
 #[test]
@@ -97,9 +108,9 @@ fn a_model_off_the_roster_is_rejected_whatever_it_looks_like() {
         ("codex", "gpt-5.4"),
         ("codex", "omega"),
         ("codex", "anthropic/claude-opus-5"),
-        ("hermes", "anthropic/claude-opus-5"),
-        ("hermes", "x-ai/grok-4.6"),
-        ("hermes", "hy3"),
+        ("pi", "anthropic/claude-opus-5"),
+        ("pi", "x-ai/grok-4.6"),
+        ("pi", "hy3"),
     ] {
         let spec = AgentSpec::parse(&format!("{family}:{model}"), &models()).unwrap();
         let error = validate_model(&spec, &models()).unwrap_err().to_string();
@@ -139,7 +150,6 @@ fn invocation_maps_codex_model_effort_flags() {
         invocation("codex:gpt-5.5:xhigh", InvocationDefaults::Worker, &models()).unwrap();
 
     assert_eq!(invocation.binary, "codex");
-    assert!(matches!(invocation.brief, BriefDelivery::Arg));
     assert_eq!(
         invocation.args,
         [
@@ -170,92 +180,6 @@ fn invocation_maps_claude_model_effort_flags() {
         ]
         .map(str::to_owned)
     );
-}
-
-#[test]
-fn hermes_worker_runs_the_chat_subcommand_and_reads_the_brief_from_a_file() {
-    let invocation = invocation(
-        "hermes:tencent/hy3:high",
-        InvocationDefaults::Worker,
-        &models(),
-    )
-    .unwrap();
-
-    assert_eq!(invocation.binary, "hermes");
-    assert_eq!(
-        invocation.args,
-        [
-            "chat",
-            "--yolo",
-            "--model",
-            "tencent/hy3",
-            "--reasoning",
-            "high"
-        ]
-        .map(str::to_owned)
-    );
-    assert!(matches!(
-        invocation.brief,
-        BriefDelivery::Flag {
-            path: "--query-file",
-            ..
-        }
-    ));
-}
-
-#[test]
-fn hermes_foreground_keeps_the_subcommand_without_the_approval_bypass() {
-    let invocation = invocation("hermes", InvocationDefaults::Foreground, &models()).unwrap();
-
-    assert_eq!(invocation.binary, "hermes");
-    assert_eq!(invocation.args, ["chat"].map(str::to_owned));
-}
-
-#[test]
-fn hermes_carries_a_roster_like_every_other_family() {
-    // hermes routes to any provider its config knows, but Niles launches only what it carries:
-    // another vendor path is a line in the roster, not a shape we wave through.
-    for model in [
-        "tencent/hy3",
-        "deepseek/deepseek-v4.1-flash",
-        "z-ai/glm-5.3-flash",
-    ] {
-        let spec = AgentSpec::parse(&format!("hermes:{model}"), &models()).unwrap();
-        validate_model(&spec, &models()).unwrap();
-    }
-}
-
-#[test]
-fn hermes_reasoning_levels_match_verified_provider_support() {
-    for effort in ["none", "low", "high"] {
-        AgentSpec::parse(&format!("hermes:tencent/hy3:{effort}"), &models()).unwrap();
-    }
-
-    for effort in ["minimal", "medium", "xhigh", "max", "ultra", "turbo"] {
-        let unsupported =
-            AgentSpec::parse(&format!("hermes:tencent/hy3:{effort}"), &models()).unwrap_err();
-        assert!(
-            unsupported
-                .to_string()
-                .contains("unsupported hermes effort"),
-            "{unsupported}"
-        );
-    }
-}
-
-#[test]
-fn hermes_sources_are_unique_per_launch() {
-    let first = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
-    let second = super::session_link("hermes", "worker", camino::Utf8Path::new("/state")).unwrap();
-    let (
-        crate::telemetry::SessionLink::Hermes { source: a },
-        crate::telemetry::SessionLink::Hermes { source: b },
-    ) = (first, second)
-    else {
-        panic!("hermes must have a source")
-    };
-    assert!(a.starts_with("niles:worker:"));
-    assert_ne!(a, b);
 }
 
 #[test]

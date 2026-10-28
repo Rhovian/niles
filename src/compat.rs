@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_window::shell_quote,
-    agents::{self, AgentSpec, BriefDelivery, InvocationDefaults},
+    agents::{self, AgentSpec, InvocationDefaults},
     config::spec::load_project_config_from,
     doctor::version_line,
     util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path},
@@ -70,14 +70,7 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
             "The sample label for this Niles compatibility check is {sample_label}"
         ))?;
         let prompt = "For the Niles compatibility check, run `niles agent status working <sample-label>` using this run's sample label, then reply with only the word done.".to_owned();
-        match invocation.brief {
-            BriefDelivery::Arg => invocation.args.push(prompt.clone()),
-            BriefDelivery::Flag { path, .. } => {
-                let file = dir.join("prompt.md");
-                fs::write(&file, &prompt)?;
-                invocation.args.extend([path.to_owned(), file.to_string()]);
-            }
-        }
+        invocation.args.push(prompt);
         eprintln!(
             "{}",
             std::iter::once(path.as_str())

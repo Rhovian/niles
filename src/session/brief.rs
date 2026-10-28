@@ -72,7 +72,7 @@ pub(super) fn prepare_manager_session(
         workspace: workspace.to_path_buf(),
         brief: path,
         lead_pane: recorded_lead_pane(),
-        session_link: agents::session_link(agent.family(), &format!("lead-{id}"), &dir),
+        session_link: agents::session_link(agent.family(), &dir),
     };
     Ok(ManagerSession {
         meta,

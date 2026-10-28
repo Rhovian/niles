@@ -1,6 +1,6 @@
 # Niles
 
-> Rust CLI that runs Claude Code, Codex, Hermes and pi as one team in tmux. Unix only.
+> Rust CLI that runs Claude Code, Codex and pi as one team in tmux. Unix only.
 
 To set Niles up in a repository, load the `niles-setup` skill, or read it directly and follow it.
 

@@ -29,7 +29,7 @@ pub(super) struct Session {
 }
 
 pub(super) struct Live {
-    /// `None` for a session with no per-turn record, such as a Hermes one.
+    /// `None` for a session with no per-turn record.
     pub(super) prompt_tokens: Option<u64>,
     pub(super) context_window: Option<u64>,
 }

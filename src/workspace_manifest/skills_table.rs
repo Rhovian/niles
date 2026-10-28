@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn a_long_model_name_widens_every_row_together() {
-        let rendered = render(&manifest("hermes:deepseek/deepseek-v4.1-flash:high"));
+        let rendered = render(&manifest("pi:deepseek/deepseek-v4.1-flash:high"));
 
         assert!(
             rendered.contains("deepseek/deepseek-v4.1-flash"),

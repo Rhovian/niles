@@ -127,7 +127,7 @@ pub fn spawn(
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let dir = store::workers_dir(&project)?.join(&id);
-    let session_link = agents::session_link(invocation.spec.family(), &id, &dir);
+    let session_link = agents::session_link(invocation.spec.family(), &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }

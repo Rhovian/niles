@@ -8,7 +8,7 @@ description: Install Niles, write the global project manifest for this repositor
 ## 1. Prerequisites
 
 Niles is Unix only. Work in the repository root the user named; "here" means the current directory.
-Check `command -v tmux claude codex hermes pi`. You need tmux and at least one agent CLI,
+Check `command -v tmux claude codex pi`. You need tmux and at least one agent CLI,
 installed and logged in. If tmux is missing, ask before installing it: `brew install tmux` on
 macOS, or the system package manager on Linux. If no agent CLI is installed, ask which to install.
 
@@ -92,7 +92,7 @@ security:
     primary: codex:gpt-6.1-sol:high
     secondaries: []
   economy:
-    primary: hermes:z-ai/glm-5.3-flash:high
+    primary: pi:z-ai/glm-5.3-flash:high
     secondaries: [pi:deepseek/deepseek-v4.1-flash:high]
   mechanical:
     primary: codex:gpt-6-luna:low
@@ -226,7 +226,7 @@ research:
     secondaries: []
 ```
 
-For Hermes, pi, or specific models/efforts, run `niles models` and read
+For pi or specific models/efforts, run `niles models` and read
 [Configuration](https://github.com/Rhovian/niles/blob/main/README.md#configuration).
 Each skill lists tiers with one exact `family:model:effort` primary and ordered secondaries.
 An explicit `entry:` is required and its skill must be bound; each binding needs a standard tier; no-effort models omit the effort suffix.
