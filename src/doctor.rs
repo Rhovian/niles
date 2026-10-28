@@ -188,7 +188,7 @@ fn git_output(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
     reason = "doctor dev-mode git metadata is advisory; git launch failure should be reported as unknown metadata"
 )]
 fn git_output_raw(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = crate::util::git_command()
         .arg("-C")
         .arg(workspace.as_str())
         .args(args)

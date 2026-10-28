@@ -192,6 +192,60 @@ mod tests {
     }
 
     #[test]
+    fn io_error_after_exit_does_not_kill_the_reaped_childs_group() {
+        struct ErrorAfterEmpty(bool);
+        impl Read for ErrorAfterEmpty {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                if std::mem::replace(&mut self.0, true) {
+                    Err(ErrorKind::Other.into())
+                } else {
+                    Ok(0)
+                }
+            }
+        }
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
+            .stdin(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut holder = Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .process_group(child.id() as libc::pid_t)
+            .spawn()
+            .unwrap();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        let result = collect(
+            &mut child,
+            ErrorAfterEmpty(false),
+            std::io::sink(),
+            Duration::from_secs(5),
+        );
+        // A live member makes an erroneous kill observable without PID reuse.
+        let mut echo = [0];
+        let survived = holder
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"x")
+            .and_then(|()| holder.stdout.as_mut().unwrap().read_exact(&mut echo));
+        holder.kill().unwrap();
+        holder.wait().unwrap();
+        assert_eq!(
+            result
+                .unwrap_err()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            ErrorKind::Other
+        );
+        survived.unwrap();
+        assert_eq!(echo, *b"x");
+    }
+
+    #[test]
     fn read_and_log_write_errors_kill_and_reap_the_child() {
         let dir = tempfile::tempdir().unwrap();
         let readers: [Box<dyn Read>; 2] = [

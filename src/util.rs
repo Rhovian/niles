@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 
+/// Clears repository-routing environment variables while retaining operator credential config.
 pub(crate) fn git_command() -> Command {
     let mut command = Command::new("git");
     // Git 2.50.1 Documentation/githooks.adoc: repository-local environment
