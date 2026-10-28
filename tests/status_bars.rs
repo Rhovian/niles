@@ -26,7 +26,7 @@ fn window_labels_need_metadata_but_never_logs_or_telemetry() {
         .unwrap();
     assert_command_success("window labels", &output);
     let text = stdout_of(&output);
-    assert!(text.contains("0:lead#[default] │ "), "{text}");
+    assert!(text.contains("0:start#[default] │ "), "{text}");
     assert!(text.contains("1:parse#[default] │ "), "{text}");
     assert!(
         text.contains("2:shell##{pane_id},##[fg=red]#[default]"),

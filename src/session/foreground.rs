@@ -44,7 +44,7 @@ pub(super) fn launch_foreground_agent(
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
     }
-    let prompt = entry_prompt_args(invocation.brief, meta.entry_skill.as_str(), &dir);
+    let prompt = entry_prompt_args(invocation.brief, &dir);
     invocation.args.extend(prompt);
 
     // The watcher is held for exactly as long as the foreground agent runs, on the failing path
@@ -106,13 +106,10 @@ fn foreground_invocation_for_project(
     )
 }
 
-fn entry_prompt_args(delivery: BriefDelivery, skill: &str, dir: &Utf8Path) -> Vec<String> {
+fn entry_prompt_args(delivery: BriefDelivery, dir: &Utf8Path) -> Vec<String> {
     const ENTRY_TURN_TEMPLATE: &str =
-        "# Niles {skill} session\nsession_dir: {dir}\n\nStart the Niles manager session.";
-    let turn = render_template(
-        ENTRY_TURN_TEMPLATE,
-        &[("{skill}", skill), ("{dir}", dir.as_str())],
-    );
+        "# Niles start session\nsession_dir: {dir}\n\nStart the Niles manager session.";
+    let turn = render_template(ENTRY_TURN_TEMPLATE, &[("{dir}", dir.as_str())]);
     match delivery {
         BriefDelivery::Arg => vec![turn],
         BriefDelivery::Flag { value, .. } => vec![value.to_owned(), turn],
@@ -222,18 +219,17 @@ mod tests {
     fn entry_prompt_args_seed_a_hermes_query() {
         let args = entry_prompt_args(
             agents::profile_for("hermes").unwrap().opening_turn,
-            "lead",
             Utf8Path::new("/tmp/session"),
         );
 
         assert_eq!(args[0], "-q");
-        assert!(args[1].starts_with("# Niles lead session\nsession_dir: /tmp/session\n"));
+        assert!(args[1].starts_with("# Niles start session\nsession_dir: /tmp/session\n"));
         assert_eq!(args.len(), 2);
     }
 
     #[test]
     fn entry_header_does_not_expand_replacement_values() {
-        let prompt = entry_prompt_args(BriefDelivery::Arg, "{dir}", Utf8Path::new("/tmp/{skill}"));
-        assert!(prompt[0].starts_with("# Niles {dir} session\nsession_dir: /tmp/{skill}\n"));
+        let prompt = entry_prompt_args(BriefDelivery::Arg, Utf8Path::new("/tmp/{dir}"));
+        assert!(prompt[0].starts_with("# Niles start session\nsession_dir: /tmp/{dir}\n"));
     }
 }

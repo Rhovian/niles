@@ -44,7 +44,7 @@ fn window(name: &str, kind: WindowKind, label: &str) -> AgentWindow {
 fn projects() -> Vec<Project> {
     let agents = SessionAgents {
         windows: vec![
-            window("niles", WindowKind::Lead, "lead"),
+            window("niles", WindowKind::Lead, "start"),
             window(
                 "parse",
                 WindowKind::Worker("parse".into(), "worker".parse().unwrap()),
@@ -119,7 +119,7 @@ fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
 fn cycling_projects_wraps_over_running_project_rows() {
     let mut tree = tree();
     let lead = SessionAgents {
-        windows: vec![window("niles", WindowKind::Lead, "lead")],
+        windows: vec![window("niles", WindowKind::Lead, "start")],
         lost: Vec::new(),
     };
     let mut projects = projects();
@@ -248,7 +248,7 @@ fn panels_keep_selection_and_cycle_only_to_windows() {
 #[test]
 fn waiting_project_shows_warning_and_spinner() {
     let agents = SessionAgents {
-        windows: vec![window("niles", WindowKind::Lead, "lead")],
+        windows: vec![window("niles", WindowKind::Lead, "start")],
         lost: Vec::new(),
     };
     let waiting_none = project("wait", State::Waiting(None), Some(agents));

@@ -250,7 +250,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     )
     .unwrap();
     assert!(stdout_of(&pack.run(&["skills"])).contains("skill: pdf (import github.com/"));
-    let output = pack.run(&["lead", "--keep-skills"]);
+    let output = pack.run(&["start", "--keep-skills"]);
     assert_command_success("imported entry", &output);
     assert!(stderr_of(&output).contains("skill: pdf (import github.com/"));
 }
