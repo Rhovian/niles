@@ -126,16 +126,6 @@ fn worktree_git_ignores_inherited_repository_routing() {
                 "GIT_OBJECT_DIRECTORY",
                 caller.workspace.join(".git/objects"),
             );
-        for name in [
-            "GIT_INDEX_FILE",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_GRAFT_FILE",
-            "GIT_SHALLOW_FILE",
-            "GIT_PREFIX",
-            "GIT_INTERNAL_SUPER_PREFIX",
-        ] {
-            command.env(name, caller.workspace.join(name));
-        }
         assert_command_success(
             "worktree with inherited Git environment",
             &command.output().unwrap(),

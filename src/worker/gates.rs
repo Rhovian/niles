@@ -139,7 +139,7 @@ fn terminate(child: &mut Child) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::ExitStatusExt;
+    use std::{os::unix::process::ExitStatusExt, process::Stdio};
 
     #[test]
     fn output_written_between_empty_read_and_exit_check_is_drained() {
@@ -175,7 +175,7 @@ mod tests {
         reader.set_nonblocking(true).unwrap();
         let mut child = Command::new("sh")
             .args(["-c", "read line; printf private-output >&2; exit 7"])
-            .stdin(std::process::Stdio::piped())
+            .stdin(Stdio::piped())
             .stderr(OwnedFd::from(writer))
             .process_group(0)
             .spawn()
@@ -205,13 +205,13 @@ mod tests {
         }
         let mut child = Command::new("sh")
             .args(["-c", "read line"])
-            .stdin(std::process::Stdio::piped())
+            .stdin(Stdio::piped())
             .process_group(0)
             .spawn()
             .unwrap();
         let mut holder = Command::new("cat")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .process_group(child.id() as libc::pid_t)
             .spawn()
             .unwrap();
@@ -233,14 +233,8 @@ mod tests {
             .and_then(|()| holder.stdout.as_mut().unwrap().read_exact(&mut echo));
         holder.kill().unwrap();
         holder.wait().unwrap();
-        assert_eq!(
-            result
-                .unwrap_err()
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .kind(),
-            ErrorKind::Other
-        );
+        let error = result.unwrap_err().downcast::<std::io::Error>().unwrap();
+        assert_eq!(error.kind(), ErrorKind::Other);
         survived.unwrap();
         assert_eq!(echo, *b"x");
     }
