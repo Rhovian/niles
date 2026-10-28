@@ -79,3 +79,22 @@ fn retier_context_uses_the_exact_effort_entry() {
     let high = models.entry("codex", "fixture", Some("high")).unwrap();
     assert!(check_context_fit(Some(1500), high.context_window.get()).is_ok());
 }
+
+#[test]
+fn retier_composer_accepts_ultra_marker_but_refuses_drafts() {
+    for (screen, expected) in [("» ", true), ("» draft", false), ("› ", true)] {
+        let cursor = tmux::CursorPosition {
+            x: 2,
+            y: 0,
+            visible: true,
+        };
+        assert_eq!(empty_composer(screen, cursor), expected);
+        assert!(!empty_composer(
+            screen,
+            tmux::CursorPosition {
+                visible: false,
+                ..cursor
+            }
+        ));
+    }
+}

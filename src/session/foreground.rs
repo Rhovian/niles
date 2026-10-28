@@ -40,9 +40,7 @@ pub(super) fn launch_foreground_agent(
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
     }
-    invocation
-        .args
-        .push(entry_prompt(meta.entry_skill.as_str(), &dir));
+    invocation.args.push(entry_prompt(&dir));
 
     // The watcher is held for exactly as long as the foreground agent runs, on the failing path
     // too: dropping it stops and joins the thread.
@@ -103,13 +101,10 @@ fn foreground_invocation_for_project(
     )
 }
 
-fn entry_prompt(skill: &str, dir: &Utf8Path) -> String {
+fn entry_prompt(dir: &Utf8Path) -> String {
     const ENTRY_TURN_TEMPLATE: &str =
-        "# Niles {skill} session\nsession_dir: {dir}\n\nStart the Niles manager session.";
-    render_template(
-        ENTRY_TURN_TEMPLATE,
-        &[("{skill}", skill), ("{dir}", dir.as_str())],
-    )
+        "# Niles start session\nsession_dir: {dir}\n\nStart the Niles manager session.";
+    render_template(ENTRY_TURN_TEMPLATE, &[("{dir}", dir.as_str())])
 }
 
 fn exit_code_label(code: Option<i32>) -> String {
@@ -213,7 +208,10 @@ mod tests {
 
     #[test]
     fn entry_header_does_not_expand_replacement_values() {
-        let prompt = entry_prompt("{dir}", Utf8Path::new("/tmp/{skill}"));
-        assert!(prompt.starts_with("# Niles {dir} session\nsession_dir: /tmp/{skill}\n"));
+        let prompt = entry_prompt(Utf8Path::new("/tmp/{dir}"));
+        assert_eq!(
+            prompt,
+            "# Niles start session\nsession_dir: /tmp/{dir}\n\nStart the Niles manager session."
+        );
     }
 }

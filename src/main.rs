@@ -59,7 +59,7 @@ fn run() -> Result<ExitCode> {
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Lead { keep_skills }) => session::run(
+        Some(CommandName::Start { keep_skills }) => session::run(
             if keep_skills {
                 tmux::LeadStart::Unattended
             } else {

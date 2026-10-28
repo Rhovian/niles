@@ -24,18 +24,18 @@ pub(super) trait Sink {
 pub(super) struct WatchSink {
     pub(super) target: TmuxTarget,
     pub(super) log: WatchLog,
-    pub(super) composer: Option<&'static str>,
+    pub(super) composer: Option<&'static [&'static str]>,
 }
 
 impl Sink for WatchSink {
     fn has_draft(&mut self) -> bool {
-        let Some(marker) = self.composer else {
+        let Some(markers) = self.composer else {
             return false;
         };
         let screen = tmux::capture_visible_rows(&self.target);
         let cursor = tmux::cursor_position(&self.target);
         match (screen, cursor) {
-            (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, marker),
+            (Ok(screen), Ok(cursor)) => composer::recognize(&screen, cursor, markers),
             (Err(err), _) | (_, Err(err)) => {
                 self.note(&format!("could not read lead composer: {err:#}"));
                 false

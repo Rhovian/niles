@@ -250,7 +250,7 @@ fn context_row(row: &ContextRow<'_>, theme: &Theme) -> Vec<Cell> {
     vec![
         Cell::left(row.project, style(StyleKey::Muted)),
         Cell::left(
-            if session.entry { "lead" } else { &session.id },
+            if session.entry { "start" } else { &session.id },
             style(StyleKey::Accent),
         ),
         Cell::left(&session.agent, style(StyleKey::Muted)),

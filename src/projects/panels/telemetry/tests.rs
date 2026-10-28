@@ -373,6 +373,7 @@ fn render_lays_out_pairs_by_width_and_warns_on_full_context() {
     let warn = theme.style(StyleKey::Waiting).paint("|");
     let warn = warn.split('|').next().unwrap();
     for text in [&narrow, &wide] {
+        assert!(together(text, "start", "0%"));
         assert!(text.contains("1 reviewer · 4 worker"));
         assert!(
             text.lines()

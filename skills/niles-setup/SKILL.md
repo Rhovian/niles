@@ -246,7 +246,7 @@ Doctor does not check logins. Ask the user to confirm each bound CLI is logged i
 
 ## 5. Hand off to start
 
-Do not run bare `niles`, `niles lead`, or any command that attaches or switches tmux yourself:
+Do not run bare `niles`, `niles start`, or any command that attaches or switches tmux yourself:
 it takes over the user's terminal. Give the user the repository's absolute path and say:
 "In a terminal, `cd <absolute-repo-path>` and run `niles`. If the project is already listed,
 use the arrow keys to select it and press Enter. Otherwise press `r`, type

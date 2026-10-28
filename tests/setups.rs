@@ -114,7 +114,7 @@ fn assert_entry_setup(entry: &str) {
     );
     let capture = env.root.join("selection");
     let output = env
-        .niles(&env.root, &["lead", "--keep-skills", "--setup", "tdd"])
+        .niles(&env.root, &["start", "--keep-skills", "--setup", "tdd"])
         .env("NILES_TEST_CAPTURE", &capture)
         .env("NILES_TEST_WORKSPACE", &env.root)
         .env("NILES_TEST_OVERRIDE", &override_file)

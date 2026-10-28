@@ -134,7 +134,7 @@ pub(super) fn labels(
 
 fn window_label(name: &str, project: bool, worker: Option<&str>) -> String {
     match (project && name == LEAD_WINDOW, worker) {
-        (true, _) => "lead",
+        (true, _) => "start",
         (false, Some(id)) => id,
         (false, None) => name,
     }
