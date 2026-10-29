@@ -22,9 +22,9 @@ latest tested; if a newer release breaks something, report it with that version.
 
 | CLI | Tested version |
 | --- | --- |
-| Claude Code | 2.1.296 |
-| Codex | 0.162.1 |
-| pi coding agent | 1.2.0 |
+| Claude Code | 2.1.312 |
+| Codex | 0.165.0 |
+| pi coding agent | 1.4.0 |
 
 > **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
 > sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
