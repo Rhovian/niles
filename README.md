@@ -3,22 +3,36 @@
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
 
-An opinionated orchestration harness across your agent CLIs, featuring research, design, and security
-skills; small diffs, telemetry, and options to make it your own. See the [roadmap](ROADMAP.md) for
+Niles orchestrates multi-agent and multi-family workflows across projects from one terminal
+window. It runs Claude Code, Codex, and pi side by side in tmux, and you decide how they work
+together by choosing skills. Any skill can be the entry agent you talk to: a lead that hands work
+to other agents, or a solo agent that does the work itself. See the [roadmap](ROADMAP.md) for
 what's next and the [releases](https://github.com/Rhovian/niles/releases) for what changed.
 
 ![Niles demo](docs/assets/niles-demo.gif)
 
+## Is it for you
+
+Niles suits you if you want the flexibility to use several model families instead of
+committing to one. Small mechanical work can stay with one agent; complex work, or work that
+benefits from scrutiny by a second family, can go to several. Most of the extra cost of using
+several agents is in starting and stopping them, so you decide when that's worth it.
+
+It isn't for you if you don't want to be in the terminal at least some of the time. With the
+[remote PWA](#remote-access-opt-in) that time can be small.
+
+> **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
+> sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
+
 ## Requirements
 
 - `tmux`. Rust 1.89+ is required when installing with Cargo or building from source.
-- The agent CLIs you select must already be installed, on `PATH`, and authenticated.
-  One CLI is enough: bind every skill to `claude` or to `codex`. Mixing families adds independent
-  review.
+- The agent CLIs you select must already be installed, on `PATH`, and logged in. One is enough.
 - Unix only.
 
 Niles tracks the agent CLIs closely and bumps its tested versions as often as it can. These are the
-latest tested; if a newer release breaks something, report it with that version.
+latest tested; older versions are not blocked. If a newer release breaks something, report it
+with that version.
 
 | CLI | Tested version |
 | --- | --- |
@@ -26,196 +40,113 @@ latest tested; if a newer release breaks something, report it with that version.
 | Codex | 0.165.0 |
 | pi coding agent | 1.4.0 |
 
-> **Trust:** built-in worker defaults bypass agent approval prompts, and Niles provides no
-> sandbox. Read the [threat model](docs/security.md) before running agents on a repository.
-
-## For agents
-
-Agents: if you are setting Niles up for someone, load the `niles-setup` skill and follow it.
-Without it installed, read [skills/niles-setup/SKILL.md](skills/niles-setup/SKILL.md) and follow it.
-
-- [Install Niles](skills/niles-setup/SKILL.md#2-install).
-- [Write the global project `manifest.yaml` with the user](skills/niles-setup/SKILL.md#3-choose-skills-and-write-the-manifest) and [run `niles doctor`](skills/niles-setup/SKILL.md#4-check-with-niles-doctor).
-- [Have the user run `niles` to start the workspace](skills/niles-setup/SKILL.md#5-hand-off-to-start).
-
-Install the skill for the CLIs you use: Claude Code (first line), Codex and pi (second line).
-Then ask "set up Niles here":
-
-```sh
-mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
-mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
-```
-
-Rerun these lines to update the skill.
-
 ## Quickstart
 
-1. Install with Homebrew, the shell installer or Cargo:
+1. Install Niles with Homebrew, the shell installer, or Cargo:
 
-```sh
-brew tap Rhovian/niles
-brew install niles
-```
+   ```sh
+   brew tap Rhovian/niles && brew install niles
+   ```
 
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
-```
+   ```sh
+   curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh
+   ```
 
-```sh
-cargo install niles
-```
+   ```sh
+   cargo install niles
+   ```
 
-2. Choose your workflow and create disk skills and their bindings with the
-[setup skill](skills/niles-setup/SKILL.md). Run `niles` from your repository. In the home view, select your project with the arrow
-keys and press Enter. If it isn't listed, press `r`, enter the repository's absolute path,
-then accept or choose a project name. Select the registered project and press Enter.
-Choose and save your agent skills when prompted, then type to the lead in the right pane.
+   The shell installer puts `niles` in `${CARGO_HOME:-$HOME/.cargo}/bin`. Check that
+   `niles --version` works.
 
-3. Check with `niles doctor` in another terminal in the repository after saving the skills.
-It reports tmux and each bound agent CLI with its tested version; it does not check logins.
-Without the global project `manifest.yaml`, it reports `agents: no workspace manifest` and checks no agent CLI.
+2. Install the setup skill for your agent CLI. The first line is for Claude Code, the second for
+   Codex and pi. Rerun it later to update the skill.
 
-See [suggested setup](docs/setup.md) for the status bar and tmux key bindings.
+   ```sh
+   mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
+   mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
+   ```
 
-## What niles changes on your machine
+3. In your repository, start that agent CLI and ask it to "set up Niles here". It copies the skills
+   you choose, writes the project's manifest with you, and runs `niles doctor`, which checks tmux
+   and each bound CLI against its tested version; the agent fixes what doctor reports. Doctor does
+   not check logins.
+
+4. In a terminal in the repository, run `niles`. In the home view, select your project with the
+   arrow keys and press Enter. If it isn't listed, press `r`, enter the repository's absolute path,
+   accept or choose a project name, then select it and press Enter.
+
+5. When the skills picker appears, press `c` to keep the manifest, or change an agent and save.
+   Then type to your entry agent in the right pane.
+
+To leave, detach with tmux (`Ctrl-b d` by default); agents keep running. To stop a project, select
+it in the home view and press `c`. See [suggested setup](docs/setup.md) for the home view keys,
+the status bar, and tmux key bindings.
+
+## How it works
+
+Each project is a tmux session. You are the operator, the person talking to the entry agent. What
+the entry agent does is set by its skill, an ordinary `SKILL.md` file. A lead skill spawns workers, each in its own tmux window, and reads
+their reports; a solo skill does the work in one session.
+
+The manifest binds each skill to an agent, written `family:model:effort`, such as
+`claude:sonnet:high`. A binding can list tiers (`frontier`, `standard`, `economy`, `mechanical`),
+so a lead can propose a cheaper or stronger model for a task. `niles models` lists the models and
+their relative cost and speed.
+
+## Skills in this repository
+
+The `niles` binary contains no skills; it loads `SKILL.md` files from `.niles/skills/` in the repository or
+from `~/.niles/skills/`. The [skills](skills/) here are one workflow you can copy, or pin with
+`niles skills import Rhovian/niles/skills/<name>@<rev>`.
+
+- `lead` coordinates a session: it talks to you, spawns agents, and forwards their work. See the
+  [lead workflow](skills/lead/SKILL.md).
+- `solo` carries out your request directly in one session.
+- `worker` implements a change and runs the focused checks CI doesn't cover.
+- `reviewer` reviews correctness, idiom, economy, and test quality, and flags security concerns
+  without reviewing them.
+- `security` asks what an attacker can do with a change.
+- `design` writes a design record before implementation.
+- `research` answers one question with a source for every claim and edits nothing.
+- `niles-setup` installs Niles and writes the manifest with you.
+
+## What Niles changes on your machine
 
 - `~/.niles/state/<mangled absolute workspace path>/`: the skill manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback.
 - `~/.niles/projects`: the list of registered projects.
+- `~/.niles/cache/`: checkouts of skills pinned with `niles skills import`, which also writes a
+  `SKILL.ref` pointer under `.niles/skills/` or `~/.niles/skills/`.
+- `~/.niles/config.yaml`: settings you save in the config panel.
+- `~/.niles/trees/<absolute workspace path>/<branch>` and its Git branch when you spawn with
+  `--worktree`.
+- `~/.niles/remote/`: push keys and subscriptions, only if you use [remote access](#remote-access-opt-in).
 - One tmux session per project, with its status bar options set on that session only.
-- `~/.niles/trees/<absolute workspace path>/<branch>` when you spawn with `--worktree`.
 
-Niles does not edit your agent CLIs' configuration or your tmux config.
-
-## Skills
-
-Niles loads ordinary `SKILL.md` files from workspace or global skills directories. It supplies
-no embedded skill bodies. The [skills](skills/) are shareable
-directories; copy them into `.niles/skills/` or `~/.niles/skills/`, or pin them with
-`niles skills import Rhovian/niles/skills/<name>@<rev>`. In this example workflow, the lead
-is the agent you talk to. It coordinates agents and forwards their artifacts within
-operator-requested scope. Design and implementation go to the corresponding skills; reviews
-and security work require the operator's request. See the [lead workflow](skills/lead/SKILL.md).
-
-- **Worker** implements the change and owns the gate: CI runs its checks on push; the worker
-  runs focused checks CI does not cover and reports what printed.
-- **Reviewer** gives an independent read on correctness, idiom, economy, and test quality. It never
-  does security review; it flags anything security-relevant in one line.
-- **Security** asks what an attacker can do with the change, when requested by the operator.
-- **Research** answers one question with a source for every claim. It edits nothing and runs no
-  checks, so the lead keeps the answer without spending its own context on the reading.
+Niles reads, but never writes, the model overrides in `~/.niles/roster.yaml` and a project's
+`niles.yaml`. It
+does not edit your agent CLIs' configuration or your tmux config. To remove Niles, stop its
+projects, uninstall the binary the way you installed it, and delete `~/.niles`, the
+`niles-setup` skill directories, any `.niles/` directory in your repositories, and any branches
+worktree spawns left behind.
 
 ## Configuration
 
-The workspace manifest binds skills. Here is a global project `manifest.yaml`:
+Each project has one manifest, at `~/.niles/state/<workspace key>/manifest.yaml`. The setup
+skill writes it; a missing manifest fails, and Niles does not create a default. It names the entry
+skill and binds every skill you use to a `standard` tier's `primary` agent, with optional
+fallback `secondaries`:
 
 ```yaml
 entry: lead
-lead: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
+lead: {standard: {primary: claude:opus:medium, secondaries: []}}
 worker: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 reviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}
-security: {standard: {primary: codex:gpt-6.1-sol:high, secondaries: []}}
-design: {standard: {primary: claude:sonnet:high, secondaries: []}}
-research: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
 ```
 
-Use the [setup skill](skills/niles-setup/SKILL.md#3-choose-skills-and-write-the-manifest) to create the manifest
-with the operator. A missing manifest fails; Niles does not create a default.
-Run `niles doctor` to check the required CLIs.
-
-The first of `niles.yaml` or `.niles.yaml` extends the model roster for the built-in agent families:
-
-```yaml
-models:
-  codex:
-    gpt-5.7:
-      efforts: [low, med, high, xhigh]
-      context_window: 400000
-```
-
-Model entries extend the built-in roster; listing an existing model replaces its entry.
-An empty `efforts: []` marks a model that takes no effort qualifier. The optional
-`context_window`, in tokens, is what the telemetry panel measures a live session's context
-against; without one, the panel shows the session's tokens and no percentage.
-
-The shipped `src/agents/roster.yaml` registers each effort's tier, description, relative cost,
-relative speed, and context window. `~/.niles/roster.yaml` replaces the complete entry list for
-any model it names, or adds a model within a built-in family:
-
-```yaml
-codex:
-  gpt-6-sol:
-    - effort: high
-      tier: standard
-      description: Complex work with a balance of intelligence and cost
-      cost: 2
-      speed: null
-      context_window: 1050000
-```
-
-Tiers are `frontier`, `standard`, `economy`, and `mechanical`. Omit `effort` for a model that takes
-no effort flag. Cost ranks run from 1 (cheapest) to 4 (most expensive); speed ranks from 1
-(fastest) to 4 (slowest). Ranks are model-level proxies; `null` represents unverified metadata.
-`niles models` displays unverified ranks as `unknown` and lists only pairs allowed by at least
-one workspace skill. Without a workspace manifest it lists all effective pairs. User overrides
-load before project `models:` overrides; new workspace pairs need user-registry metadata to be
-listed. Invalid registry overrides error.
-
-Only the entry skill must be bound. `entry:` is required; other bindings are optional.
-For direct editing with native sub-agents, [bind `solo` and set `entry: solo`](docs/skills.md#entry-sessions).
-Each binding requires a `standard` tier and may list `frontier`, `economy`,
-or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
-`family:model:effort` entries. Models without effort support, such as `claude:haiku`, omit
-that suffix. Scalar bindings and `when:` groups are rejected.
-
-`niles spawn <id> --skill <name>` uses its standard primary; `--tier <tier>` selects another listed
-tier's primary. An unlisted tier errors. `--agent family:model:effort` selects an exact listed
-primary or secondary and conflicts with `--tier`. The lead starts at its standard primary,
-looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
-and cost difference, waiting for the operator's yes. It proposes economical step-downs too.
-
-A manifest can configure managed worktrees without tying Niles to a build tool:
-
-```yaml
-worktree:
-  env:
-    CARGO_TARGET_DIR: /absolute/path/to/main/target
-  setup: 'test -d "$CARGO_TARGET_DIR"'
-```
-
-`env` overrides the inherited worker environment for `spawn --worktree`, including when joining
-an existing tree. Values are literal strings: use absolute paths, since `$HOME`, `~`, and shell
-substitutions are not expanded. Sharing the main checkout's Cargo target directory reuses its
-warm dependency cache; concurrent Cargo builds serialize on Cargo's lock. Niles sets no
-language-specific defaults.
-
-Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same
-configured environment, before launching the worker. Use it for project preparation such as
-`uv sync` or `pnpm install`. It runs only on creation, never on reuse. Stdin is `/dev/null` (EOF),
-so setup must be non-interactive; both output streams go to Niles's stderr, keeping spawn stdout
-reserved for its result. A nonzero exit fails the spawn and removes the new tree (including
-setup-created files), so a retry runs setup again. The branch remains; omit `--base` when
-retrying. Neither setting applies to plain spawns or `--tree`.
-
-Concurrent creation/join of the same branch fails while creation or setup holds its lock. Niles
-records pending creation before adding the tree, so failed Git creation, interrupted setup, or
-failed cleanup block subsequent joins, even if setup later finishes in an orphan process. Setup
-is never rerun on that existing tree. To recover, stop any remaining setup process, inspect/save
-needed files, remove the incomplete worktree with Git, then remove the `.pending` file named in
-the error (`~/.niles/state/<workspace-key>/worktrees/<branch>/.pending`). Recreate without
-`--base` if the branch already exists. Keep the sibling `.lock` file; removing a live lock can
-break exclusion. Trees created before this tracking existed are treated as existing trees and
-skip setup.
-
-Only put trusted commands in this operator-owned manifest: setup runs with your permissions.
-
-Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
-to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
-followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
-fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
-`--checkin` overrides the manifest.
-
-See [skill workflows](docs/skills.md#design-and-implementation) for design, implementation,
-and the `--from` and `--mechanical` spawn flags.
+Only put trusted commands in this operator-owned manifest: worktree `setup` runs with your
+permissions. See [configuration](docs/configuration.md) for tiers, model overrides, worktrees,
+and check-ins, and [skill workflows](docs/skills.md) for design, implementation, and named setups.
 
 ## Remote access (opt-in)
 
@@ -241,22 +172,3 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
 this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
 any additional terms or conditions.
-
-`niles wait` covers every live worker in the current workspace, including workers spawned
-while it runs. It returns immediately with all pending reports, one escaped
-`<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
-the batch, then wait again; reports accumulate while you act, with no batching timer.
-Status logs must be appended to (`>>`). An unsupported in-place truncate and rewrite that
-regrows to the cached scan offset or beyond between polls can skip the rewritten prefix;
-normal appends and respawns use the supported delivery path.
-Unreadable or corrupt worker state, probe errors, and failures to append a generated wake stop
-the workspace wait with an error on stderr. Repair the reported state and run wait again;
-workers whose lines were not printed keep their cursors. Any lines already printed on stdout
-stand as delivered even if a later worker causes a nonzero exit; process those lines before retrying.
-A newer wait supersedes the old one. An unreported worker whose window or agent exits
-produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
-Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.
-A kill after printing but before advancing the cursor may replay that printed line. Exit codes: 0 wakes (reports or `gone:`), 11 superseded, 22 timeout.
-`spawn --wait` and `send --wait` start this same workspace wait after dispatch.
-The watcher also combines pending reports and overdue check-ins in one `niles:` line;
-while a wait runs, it leaves report delivery to that wait.
