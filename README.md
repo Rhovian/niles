@@ -57,7 +57,7 @@ with the version):
    it isn't listed). Press `c` in the skills picker to keep the manifest, then type to your entry
    agent in the right pane.
 
-Detach with `Ctrl-b d`; agents keep running. See [suggested setup](docs/setup.md) for keys and
+Detach with `Ctrl-b d`; agents keep running. See the [interface reference](docs/setup.md) for keys and
 the status bar.
 
 ## How it works
