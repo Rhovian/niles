@@ -84,6 +84,12 @@ change. `gh` must be installed and authenticated. Nothing runs in CI.
    `<issue>-<slug>` branch. Commit only when asked. `niles compat` is a new visible command,
    so it ships in a minor release.
 
+This procedure trusts the installed CLIs and their upstream publishers, including npm install
+scripts. `--update` changes host installations once the plan is approved, and parses versions
+and runs commands as argument arrays, never evaluating feed or CLI output as shell code.
+`niles compat` runs real agents with approval-bypass flags and your logins; its temporary
+directory keeps evidence, not a sandbox.
+
 ## Model tier research
 
 Run this agent procedure when asked to refresh tier placements or registry metadata. The lead
