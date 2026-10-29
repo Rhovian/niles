@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 import { Chat } from './Chat';
@@ -22,7 +22,6 @@ beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clea
   vi.stubGlobal('EventSource', Stream);
   Element.prototype.scrollIntoView = vi.fn();
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('sanitizes every markdown render, including markup, URLs, forms and attributes', () => {
   const { container, rerender } = render(<Markdown text={'**safe** <img src=x onerror=alert(1)><script>alert(1)</script><form><button>send</button></form>'} />);
@@ -176,7 +175,7 @@ it('dismisses the history notice after five seconds without live turns extending
     expect(screen.getByText('New message')).toBeDefined();
     await act(async () => { Stream.latest.emit('snapshot', snapshot); });
     expect(screen.queryByText(/Showing the most recent 200 turns/)).toBeNull();
-  } finally { cleanup(); vi.useRealTimers(); }
+  } finally { act(cleanup); vi.useRealTimers(); }
 });
 
 it('sends directly to the selected worker chat', async () => {

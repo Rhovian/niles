@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 import { Navigation } from './Navigation';
 import { projects, type Project, type Session } from './api';
@@ -33,7 +33,6 @@ beforeEach(() => {
     url === '/api/projects' ? { api_version: 1, projects: registered } : { api_version: 1, sessions: leads },
   })));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('shows the logo without auto-selecting a live project and opens the explorer menu', async () => {
   render(<App />);
   await screen.findByText('Open projects on the sidebar.');

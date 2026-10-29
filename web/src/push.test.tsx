@@ -1,10 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { fireEvent, render, screen } from '@testing-library/preact';
 import { Notifications } from './push';
 import { App } from './App';
 import { selectedSession, sessionHash } from './notification';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
+afterEach(() => { window.history.replaceState(null, '', '/'); });
 it('registers the browser subscription only after permission', async () => {
   const subscription = { toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/device', keys: { auth: 'auth', p256dh: 'key' } }) };
   const subscribe = vi.fn().mockResolvedValue(subscription);
