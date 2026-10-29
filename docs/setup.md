@@ -5,24 +5,25 @@
 Each project is a tmux session, and each worker is a window in it. Project sessions show a
 two-line status bar at the top:
 
-- **Projects:** every live project and its lead's state. `●` the lead or one of its workers is
-  working; `⚠` the lead is idle with no worker working, so it is waiting for you, with how long
-  it has waited.
-- **Windows:** the current project's lead and workers, with each agent's model, state (`●`
-  working, `○` idle, `⚠` lead waiting for you), token total, and for workers, time since spawn.
+- The projects line shows every live project and its entry agent's state. `●` the entry agent or
+  one of its workers is working; `⚠` the entry agent is idle with no worker working, so it is
+  waiting for you, with how long it has waited.
+- The windows line shows the current project's entry agent and workers, with each agent's model,
+  state (`●` working, `○` idle, `⚠` entry agent waiting for you), token total, and for workers,
+  time since spawn.
 
 ## The home view
 
 Bare `niles` opens the `niles+home` session, creating it on first use: the explorer on the left
 and the view pane on the right, started where you ran `niles`. The explorer lists every registered
-project with its lead's state and refreshes every two seconds. A header across the top counts
+project with its entry agent's state and refreshes every two seconds. A header across the top counts
 projects, live and lost agents, and their tokens, with the poll interval and time.
 
 | Key | Action |
 | --- | --- |
 | ↑ ↓ | Move |
 | → ← | Expand or collapse a running project or skill folder |
-| Enter | Show the project's lead, or the selected window, in the view pane |
+| Enter | Show the project's entry agent, or the selected window, in the view pane |
 | `[` `]` | Show the previous or next running project |
 | `;` `'` | Show the previous or next window of the shown project |
 | `?` | Show help in the view pane |
@@ -47,15 +48,10 @@ Unknown keys, unknown theme names, and unreadable files are errors naming the co
 theme: tokyo-night
 ```
 
-Available names from `ThemeName::all()`: `dracula`, `one-dark-pro`, `nord`,
+Available themes: `dracula`, `one-dark-pro`, `nord`,
 `catppuccin-mocha`, `catppuccin-latte`, `gruvbox-dark`, `gruvbox-light`, `tokyo-night`,
 `solarized-dark`, `solarized-light`, `monokai-pro`, `rose-pine`, `kanagawa`, `everforest`,
 `cyberpunk`, `midnight-commander`.
-
-Palette slots: running uses `success`, waiting `warning`, lost `error`, idle/muted/guides
-`muted` (guides dim), accents `accent` (bold), selection `selection` (bold background),
-active pills `bg` text on `accent` (bold), and the bar `fg` text on `selection`.
-Headings stay bold without a color; glyphs are fixed and unstyled text keeps the terminal default.
 
 Bar changes apply when a session's status is configured; there is no live reload.
 
@@ -75,33 +71,6 @@ tmux:
 The four cycling keys send their plain keys to the explorer in `niles+home`; elsewhere,
 they pass the original Meta key through to the current pane.
 
-Bindings are installed in tmux's root table on the next bare `niles`, replacing any existing
+Bindings are installed in tmux's root table the next time you run `niles`, replacing any existing
 bindings for those five keys. Switching the option off installs nothing and removes nothing:
 installed bindings stay until tmux restarts.
-
-## Pi with OpenRouter
-
-Install `@earendil-works/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
-key in `~/.pi/agent/auth.json`. Pi never reads `.env` files. An exported `OPENROUTER_API_KEY`
-only reaches niles workers if the tmux server started after the export; `/login` avoids that
-requirement.
-
-Pi's bundled model catalog lags these models. Add them to `~/.pi/agent/models.json`, which
-merges into the built-in OpenRouter provider:
-
-```json
-{
-  "providers": {
-    "openrouter": {
-      "models": [
-        { "id": "deepseek/deepseek-v4.1-flash", "reasoning": true },
-        { "id": "tencent/hy3", "reasoning": true },
-        { "id": "z-ai/glm-5.3-flash", "reasoning": true }
-      ]
-    }
-  }
-}
-```
-
-These entries omit prices, so pi reports their cost as zero. Niles reports token usage and
-leaves estimated cost unavailable.

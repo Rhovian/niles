@@ -46,7 +46,7 @@ the client percent-encodes session IDs in URL path segments.
 - `GET /api/sessions` → `200 {"api_version":1,"sessions":[Session]}`.
   `Session = {id, project, agent:{family, entry_skill, model?}, waiting, worker_count}`.
   `id`, `project`, `family`, `entry_skill` are strings; `id` is nonempty;
-  `waiting` reflects the lead alone, independently of worker activity; `worker_count` is a nonnegative integer. The foreground
+  `waiting` reflects the entry agent alone, independently of worker activity; `worker_count` is a nonnegative integer. The foreground
   **agent** can have any entry skill (including `lead` and `solo`). The list refreshes
   every 15 seconds and on window focus; waiting sessions sort first.
 - `GET /api/sessions/:id/events` → `200 text/event-stream`. Named events:
@@ -86,9 +86,9 @@ the client percent-encodes session IDs in URL path segments.
 
 
 - `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the
-  lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
+  session chat schemas and limits; worker SSE emits snapshot/turn, without status.
   Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
-- `PUT /api/projects/:project/session` starts the saved manifest's default lead,
+- `PUT /api/projects/:project/session` starts the saved manifest's entry skill,
   bypassing the skill picker. Already running returns 200. Start returns 409 with one
   fixed plain-text body: `Project directory missing`, `No saved manifest; start once
   at the desk`, or `Tmux session name held by a foreign session`.
@@ -123,11 +123,11 @@ in offline caches. Notification clicks navigate the app, so finish any draft fir
 Dismiss any notifications left by the older, untagged app version once after upgrading.
 
 The hamburger menu lists all registered projects and workers grouped by skill,
-including lost workers. Selecting a project opens its live lead chat; the project
-name is remembered in local storage across visits and lead restarts. Notification
+including lost workers. Selecting a project opens its live entry chat; the project
+name is remembered in local storage across visits and entry restarts. Notification
 session links still open the corresponding project. With no selection, the main
 screen shows the Niles logo and invites opening projects on the sidebar. Worker
-rows open direct chat; Start launches the default lead and Stop/Close end sessions/workers.
+rows open direct chat; Start launches the entry skill and Stop/Close end sessions/workers.
 The local mock refuses control and worker chat with 501.
 
 Chat panes share the top toolbar: hamburger, pane skill/name, recorded model label,

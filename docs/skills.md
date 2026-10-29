@@ -32,10 +32,10 @@ Launches print name/origin/path and record name/origin in session and worker met
 The entry environment carries the qualified selection, so its `niles spawn` calls inherit it
 and a new workspace shadow cannot redirect them. Multi-project services use each project's
 default manifest; selection is not forwarded to home, panels or explorer child processes.
-Switch by starting a new lead; live sessions are unchanged. Workspace setup symlinks are rejected; global links are allowed
+Switch by starting a new entry session; live sessions are unchanged. Workspace setup symlinks are rejected; global links are allowed
 ([security](security.md#named-setups)).
 
-## Design and implementation
+## Spawning
 
 `niles spawn --skill <name>` requires a binding in the workspace manifest. The entry skill
 (selected with the required `entry:`) cannot be spawned. Only the entry must be bound when
@@ -56,32 +56,21 @@ symlinks; global skill symlinks are allowed. See [the threat model](security.md#
 
 `--from <id>` passes a live worker's report path as `from_report:`; its latest status must be
 `done:`. Any skill can build on a finished report. `--mechanical <reason>` optionally logs
-mechanical work in the latest lead session. It accepts any skill and requires a nonempty
+mechanical work in the latest entry session. It accepts any skill and requires a nonempty
 reason without control characters. The flags conflict.
 
-The lead runs design when the operator asks for it. Otherwise, it judges from what the operator
-has said, not from the issue: when that settles the way forward, it sends the work to a worker
-without asking. It asks “Do you want a design?” only when the approach is genuinely open.
-A trivial change, such as a line or a wording fix, never gets the question.
-
-Design uses one designer by default; a second runs only on operator request and comes from a
-different family in the manifest's selected `design` tier. Designers get one blind round. With two
-designers, there is one critique; all contested points then go to the operator, with no further
-critique rounds. The named record author incorporates the operator's rulings. With one designer,
-its report becomes the record once operator questions and scope corrections are resolved.
-The lead may send back scope creep against the issue's wording but does not rule on disputes;
-a disputed scope correction goes to the operator.
+How the shipped `lead` skill runs design and review is in its
+[`SKILL.md`](../skills/lead/SKILL.md).
 
 ## Primary instructions
 
-The skill's primary instructions reach every worker and lead through the family's system-prompt
+The skill's primary instructions reach every worker and entry agent through the family's system-prompt
 argument: Claude and pi use `--append-system-prompt`, and Codex uses
 `--config developer_instructions`. The opening user turn carries the task and paths.
-All leads receive their standing brief at launch, with startup context frozen for the session.
-`lead.md` remains the written brief.
+Entry agents receive their brief at launch, with startup context frozen for the session.
 
-| Family (tested version) | Primary instruction lifetime (source-backed) |
-|---|---|
+| Family (verified at) | Primary instruction lifetime (source-backed) |
+| --- | --- |
 | Claude 2.1.296 | System prompt resent per request; survives compaction (documented). |
 | Codex 0.162.1 | Developer message rebuilt from launch config after local and remote compaction. |
 | pi 1.2.0 | Effective system message carried through compaction (source and offline probe). |
@@ -154,12 +143,12 @@ For one worker, use an inline ref in its menu:
 niles spawn --skill worker task-id --menu anthropics/skills/skills/pdf@main "task"
 ```
 
-This resolves once and snapshots the canonical pin in `WorkerMeta.imports`. It installs
+This resolves once and snapshots the canonical pin in the worker's metadata. It installs
 no skill pointer. Discovery serves that pin ahead of the lookup chain throughout the
 worker's lifetime, including after a branch moves or the cache is removed. Inline refs
 are menu-only: `--with`, manifest lists and triggers accept names. A ref's name cannot
 appear anywhere else in the spawn (including another inline ref), and counts toward
-the 16-skill cap. The lead uses inline refs only when the operator names them.
+the 16-skill cap.
 
 Provenance shows `import github.com/owner/repo/path@<short-sha> <cache>/…/SKILL.md`.
 The complete directory, including supporting scripts and reference files, is cached at
@@ -180,16 +169,16 @@ There is no search, auto-update, namespace, or separate pack root.
 
 ## Staging
 
-`on_stage: [reviewer]` enables post-work skills. `gates: {rounds: 2}` sets the stage
-limit (default 1, range 1–10) and enables staging even without post-work skills.
-Spawn snapshots these settings.
-Write a nonempty report, run `niles agent status stage "summary"`, apply the printed
-skills, then report `done` without lead approval. Bodies are capped at 32,768 bytes
-at spawn and stage and printed on every round. No skills are injected at done;
-`blocked`, `failed`, `needs-decision` and `working` remain ungated.
-Stage wakes nobody and does not answer check-ins. Stage and configured done share
-`stage.lock`; `gates.json` records completed rounds before the non-waking status.
-Done starts a fresh round allowance for the next task. Stage/done require valid
-worker metadata; unconfigured done creates no stage lock. `gates.post` adds sequential
-`run:` argv gates; failures require another stage while rounds remain, or are annotated
-on done at the round limit.
+Staging runs post-work skills and command gates before a worker reports `done`. Enable it in a
+binding with `on_stage: [reviewer]`, or with `gates: {rounds: 2}` alone; `rounds` limits stage
+rounds (default 1, range 1–10). `gates.post` adds sequential `run:` argv gates. Spawn snapshots
+these settings.
+
+The worker writes a nonempty report, runs `niles agent status stage "summary"`, applies the
+printed skills, then reports `done` without approval from the entry agent. A failed gate requires
+another stage while rounds remain; at the round limit, failures are annotated on `done`. Done
+starts a fresh round allowance for the next task.
+
+Stage bodies are capped at 32,768 bytes at spawn and stage and printed every round. No skills are
+injected at done; `blocked`, `failed`, `needs-decision` and `working` remain ungated. Stage wakes
+nobody and does not answer check-ins.

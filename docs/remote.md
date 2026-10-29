@@ -2,22 +2,10 @@
 
 Phone access is shell access on the Niles host: the foreground agent can run commands
 and spawn workers that bypass approval prompts. Niles adds no sandbox. Serve this
-PWA **from the Niles host, on the API's origin**, never from a public frontend/CDN.
+PWA from the Niles host, on the API's origin, never from a public frontend/CDN.
 Whoever controls its JavaScript can send instructions to that agent. Same-origin
 serving keeps this trust boundary at the host/tailnet and needs no CORS grant.
 See the [threat model](security.md#remote-api).
-
-With a remote-enabled binary and matching built web assets installed, configure the
-host with:
-
-```sh
-niles remote setup --web-dir /absolute/path/to/web --allow-user you@example.com \
-  --subject mailto:you@example.com
-```
-
-This merges authorization, initializes push if needed, starts a user service, mounts
-the same-origin shell/API through Tailscale Serve, and attempts API verification.
-Installation and tailnet prerequisites follow; see [setup details](#configure-with-niles-remote-setup).
 
 ## Prerequisites
 
@@ -28,11 +16,10 @@ The checkout installer needs Node 24 and pnpm 10.8.1; see the [web prerequisites
 
 Install Tailscale on the host and phone, join the tailnet, and restrict access to
 this host's TCP 443 to the intended users/devices with tailnet ACLs/grants. Tailnet
-membership plus these rules register the device; Niles adds no device password.
-Tailscale handles roaming networks and DERP relay connections. The phone must have
+membership plus these rules register the device; Niles adds no device password. The phone must have
 a user identity: tagged clients do not get the identity header Niles requires.
 
-Enable MagicDNS/HTTPS at https://login.tailscale.com/admin/dns before setup. It provisions HTTPS at `https://<host>.<tailnet>.ts.net`.
+Enable MagicDNS and HTTPS in the [Tailscale DNS settings](https://login.tailscale.com/admin/dns) before setup. It provisions HTTPS at `https://<host>.<tailnet>.ts.net`.
 On macOS, serving directories requires the open-source `tailscaled` variant;
 sandboxed GUI clients cannot serve the directory in this setup. These commands use
 the modern Serve CLI, checked with 1.96.2. See [Serve prerequisites/limitations](https://tailscale.com/docs/features/tailscale-serve).
@@ -67,13 +54,19 @@ treat this checkout and its build commands as executable host code.
 The archive contains the contents of `dist/`, not a surrounding `dist` directory;
 `$NILES_WEB_DIR/index.html` must exist. Serve only this dedicated shell directory,
 never the repository, home directory, or `~/.niles/` state/keys. Treat the release
-asset and its update source as executable host code. The web build is independent
-of Cargo; the API version is separate from the CLI JSON schema.
+asset and its update source as executable host code.
 
 ## Configure with `niles remote setup`
 
-After installing the backend and matching web asset above, run the setup command
-at the top of this guide with `--web-dir "$NILES_WEB_DIR"`. Use your ordinary user
+After installing the backend and matching web asset above, run:
+
+```sh
+niles remote setup --web-dir "$NILES_WEB_DIR" --allow-user you@example.com \
+  --subject mailto:you@example.com
+```
+
+It merges authorization, initializes push if needed, starts a user service, mounts the
+same-origin shell and API through Tailscale Serve, and attempts API verification. Use your ordinary user
 with permission to configure `tailscaled`, not root. The directory must contain
 only trusted built web assets; setup checks for index.html, not directory contents.
 Stop any manually running backend before installing the user service.
@@ -94,8 +87,7 @@ at the first failure with commands or an admin-console link to fix it:
   installation shadows it, put the new binary's directory first on PATH and run
   `hash -r`. If `niles remote doctor` itself reports “built without remote”, use the
   absolute path of the binary installed with `--features remote`; inspect `type -a niles`.
-- CLI and daemon releases must match. Release build hashes in the daemon version
-  are accepted. Repair stale GUI wrappers using `type -a tailscale` and reinstall
+- CLI and daemon releases must match. Repair stale GUI wrappers using `type -a tailscale` and reinstall
   the Homebrew CLI if needed.
 - On macOS, remove the GUI app before using Homebrew `tailscaled`. The Homebrew
   LaunchDaemon plist must give PATH access to the selected CLI directory. Doctor
@@ -132,11 +124,11 @@ Setup mounts static `/` and proxies `/api` to `http://127.0.0.1:PORT/api`. The t
 `/api` suffix matters: Serve strips the mount prefix before joining the target URL.
 The API stays on IPv4 loopback; exposing it on a LAN/tailnet IP would allow forged
 identity headers. Serve injects verified identities and strips caller-supplied ones.
-Use **Serve, never Funnel**, and keep Tailscale available on the host.
+Use Serve, never Funnel, and keep Tailscale available on the host.
 
 Setup attempts HTTPS `/api/sessions` verification with curl 7.84+: HTTP 200,
 `Cache-Control: no-store`, expected API version and a sessions array. It sends no
-identity header and follows no redirects. **Verification failure is a warning**;
+identity header and follows no redirects. Verification failure is a warning;
 installed configuration stays active and setup succeeds. Host self-resolution,
 a tagged/disallowed host identity, an older curl, or service startup delay can
 prevent this check even when the phone can connect. Follow the printed `curl -i`
@@ -145,9 +137,7 @@ contract; do not supply an identity header yourself. Direct unauthenticated requ
 to the loopback API return 403 by design.
 
 Setup does not join devices, change tailnet policies, build the PWA, or install the
-binary. Complete these manual steps before setup: join host and phone to the tailnet,
-enable MagicDNS/HTTPS, restrict TCP 443 with ACLs/grants, and on macOS install the
-open-source `tailscaled` variant. After setup, open the printed URL on the phone and
+binary; those are the [prerequisites](#prerequisites). After setup, open the printed URL on the phone and
 install/Add to Home Screen; enable notifications in the installed app for push.
 
 Failures other than advisory verification stop setup and leave completed steps in
@@ -169,7 +159,7 @@ There is no draft/prompt guard or watcher send lock: mid-turn input is sent anyw
 A failed acknowledgement can still mean delivery; inspect before resending.
 
 Install using the browser's install/Add to Home Screen control. On iOS 16.4+, push
-requires the installed home-screen app. Choose **Enable notifications** there.
+requires the installed home-screen app. Choose Enable notifications there.
 Push arrives over the public internet even with Tailscale off; opening its session
 link still needs Tailscale. See [PWA notification behavior](../web/README.md#notifications).
 
@@ -181,31 +171,20 @@ surrounding prose, inline code, and operator messages remain. Complete transcrip
 remain available at the desk. This is a display filter, not secret redaction.
 
 Tap a worker in the menu to read its live transcript and send directly to its recorded
-window. The lead is not notified and its worker wait is not re-armed. Lost workers
+window. The entry agent is not notified and its worker wait is not re-armed. Lost workers
 remain readable but sending returns 503. Close works for live and lost workers.
 
 Start appears for registered projects that are not running. It requires a saved,
 parsing manifest: start once at the desk to choose skills. Phone starts always use
-that manifest's default lead and skip the picker (`niles start --keep-skills`); desk
-starts still show it. Stop and Close require confirmation. The API routes are:
-
-- `GET /api/projects/:project/workers/:id/events` and `POST .../message` use the
-  lead chat schemas and limits; worker SSE emits snapshot/turn, without status.
-  Lost workers have readable transcripts; sending returns 503. Unknown IDs return 404.
-- `PUT /api/projects/:project/session` starts the saved manifest's default lead,
-  bypassing the skill picker. Already running returns 200. Start returns 409 with one
-  fixed plain-text body: `Project directory missing`, `No saved manifest; start once
-  at the desk`, or `Tmux session name held by a foreign session`.
-- `DELETE /api/projects/:project/session` closes workers then stops the tagged project
-  session; `DELETE /api/projects/:project/workers/:id` closes a live or lost worker.
-  Both return 200 on success, 404 when already gone/unregistered. Stop/Close ask for
-  confirmation. Actions refetch the menu; they do not update it optimistically.
+that manifest's entry skill and skip the picker (`niles start --keep-skills`); desk
+starts still show it. Stop and Close require confirmation. The routes behind these controls are in the
+[API contract](../web/README.md#api-v1-contract).
 
 A launch that fails afterwards appears as not running; the API does not diagnose
 agent login/trust dialogs or missing credentials. Agents inherit the service/tmux
 server environment, so shell-rc-only credentials may be missing. Stop with many workers
 can take tens of seconds; proxy timeout behavior is unverified. The server continues
-an in-flight operation after disconnect, and retrying is safe. Concurrent desk/lead
+an in-flight operation after disconnect, and retrying is safe. Concurrent desk/entry
 changes can leave lost workers after stop; close those from the menu.
 
 ## Operations and troubleshooting
@@ -227,9 +206,6 @@ changes can leave lost workers after stop; close those from the menu.
   no redirects. Payload is session ID/project/generic reason, never transcript.
   Five-minute TTL; 404/410 prunes a device. Other provider/store/catalog errors stop
   the server: inspect its diagnostics, fix the cause and restart. No automatic retry.
-  The PWA shows the project name in the title and project/reason in the body. Repeated
-  pushes replace the session's active notification without alerting again; different
-  sessions remain separate. After dismissal, the next push can alert again.
   Startup can notify already-waiting sessions again, replacing any active notification
   for that session. Device-owner revocation takes effect after restarting with the
   changed allowlist.
@@ -262,7 +238,7 @@ Serve configuration too.
 
 ## Known framing gap
 
-The shell carries strict **meta CSP**, with no inline scripts; markdown is sanitized
+The shell carries a strict meta CSP, with no inline scripts; markdown is sanitized
 on every changed render. Meta CSP cannot enforce `frame-ancestors`, and direct
 `tailscale serve` directory hosting cannot add that response header. Clickjacking
 protection is therefore a known gap of this deployment, not a solved requirement.
