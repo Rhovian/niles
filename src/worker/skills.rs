@@ -119,7 +119,6 @@ pub(super) fn prepare(
             skill.primary_body()?
         ));
     }
-    prompt.push_str(include_str!("../../skills/skill_common.md"));
     Ok(LaunchSkills {
         names,
         imports,

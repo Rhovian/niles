@@ -123,7 +123,7 @@ fn send_accepts_stdin_and_literal_flag_text() {
     let stdin = child.wait_with_output().unwrap();
     assert_command_success("send stdin", &stdin);
     let delivered = fs::read_to_string(&pane_file).unwrap();
-    assert!(delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\n\nUpdate `"));
+    assert!(delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\x1b[201~"));
     assert!(delivered.ends_with("\nsubmitted\n"));
 
     let literal = env
@@ -136,10 +136,6 @@ fn send_accepts_stdin_and_literal_flag_text() {
 
     let log = env.tmux_log();
     let dir = state_dir(&env.root).join("worker/worker");
-    assert_eq!(
-        log.matches("then report with `niles agent status`").count(),
-        2
-    );
     assert_eq!(
         fs::read_to_string(dir.join("status.log")).unwrap(),
         "working: follow-up dispatch started\nworking: follow-up dispatch started\n"

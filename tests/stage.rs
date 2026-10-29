@@ -212,11 +212,6 @@ fn spawn_snapshot_provenance_and_cap() {
         meta["gates"]["post"][0]["run"],
         serde_json::json!(["printf", "literal; $(false)"])
     );
-    assert!(
-        fs::read_to_string(dir.join("launch.sh"))
-            .unwrap()
-            .contains("longest tool timeout your harness allows")
-    );
     fs::write(&manifest, text).unwrap();
     let worker = Worker { env, dir };
     worker.report();

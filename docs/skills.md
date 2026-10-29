@@ -47,7 +47,7 @@ A `SKILL.md` starts with YAML frontmatter between `---` lines: `name` must equal
 name and `description` must be nonempty and at most 1,024 characters. Other frontmatter keys
 are allowed. Disk documents are limited to 131,072 bytes including frontmatter.
 The Markdown body follows unchanged. Workers receive the primary body, then `always`,
-active `on_from` and `--with` bodies, then `skills/skill_common.md`; entry sessions retain
+active `on_from` and `--with` bodies; entry sessions retain
 their template rendering. Primary text must be nonempty, contain no NUL and fit 65,536 bytes
 after assembly/rendering. Codex's encoded argument
 must also fit 131,071 bytes. Invalid content fails before worker/session creation. Manifest load
@@ -114,7 +114,7 @@ resolving names at call time. Fetched bodies last until compaction; rerun to ref
 Copy a skill directory to share it.
 
 `always` bodies follow the primary in the system prompt, then `on_from` bodies
-when spawned with `--from`, then repeatable `--with <name>` injections. They share the 65,536-byte assembled prompt cap, including Niles notes;
+when spawned with `--from`, then repeatable `--with <name>` injections. They share the 65,536-byte assembled prompt cap;
 they last as long as the system prompt. Injected names are deduplicated in
 primary → always → active on_from → --with order; the first occurrence wins.
 Spawn prints every list's provenance.
@@ -182,7 +182,7 @@ There is no search, auto-update, namespace, or separate pack root.
 
 `on_stage: [reviewer]` enables post-work skills. `gates: {rounds: 2}` sets the stage
 limit (default 1, range 1–10) and enables staging even without post-work skills.
-Spawn snapshots these settings and adds a standing stage instruction.
+Spawn snapshots these settings.
 Write a nonempty report, run `niles agent status stage "summary"`, apply the printed
 skills, then report `done` without lead approval. Bodies are capped at 32,768 bytes
 at spawn and stage and printed on every round. No skills are injected at done;

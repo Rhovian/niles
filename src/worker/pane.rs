@@ -58,11 +58,6 @@ pub fn send(
     }
 
     let dir = worker_dir(&id)?;
-    let message = format!(
-        "{message}\n\n{}",
-        include_str!("../../skills/followup_reporting.md")
-            .replace("{report_path}", dir.join("report.md").as_str())
-    );
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
     let armed_len = crate::worker::status_log_len(&dir)?;
