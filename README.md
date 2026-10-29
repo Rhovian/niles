@@ -1,4 +1,4 @@
-<img alt="Niles" src="docs/assets/niles-lockup-amber.svg" width="800">
+<img alt="Niles" src="assets/niles-lockup-amber.svg" width="800">
 
 [![CI](https://github.com/Rhovian/niles/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Rhovian/niles/actions/workflows/ci.yml?query=branch%3Amain)
 [![crates.io](https://img.shields.io/crates/v/niles)](https://crates.io/crates/niles)
@@ -7,7 +7,7 @@ Niles orchestrates multi-agent and multi-family workflows across projects from o
 window. It runs Claude Code, Codex, and pi side by side in tmux; the skills you choose decide how
 they work together. See the [roadmap](ROADMAP.md) and [releases](https://github.com/Rhovian/niles/releases).
 
-![Niles demo](docs/assets/niles-demo.gif)
+![Niles demo](assets/niles-demo.gif)
 
 ## Is it for you
 

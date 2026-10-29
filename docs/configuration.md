@@ -14,9 +14,7 @@ that suffix. Scalar bindings and `when:` groups are rejected.
 
 `niles spawn <id> --skill <name>` uses its standard primary; `--tier <tier>` selects another listed
 tier's primary. An unlisted tier errors. `--agent family:model:effort` selects an exact listed
-primary or secondary and conflicts with `--tier`. The lead starts at its standard primary,
-looks up metadata with `niles models`, and proposes tier or secondary changes with the reason
-and cost difference, waiting for the operator's yes. It proposes economical step-downs too.
+primary or secondary and conflicts with `--tier`.
 
 ## Models
 
@@ -57,6 +55,33 @@ no effort flag. Cost ranks run from 1 (cheapest) to 4 (most expensive); speed ra
 one workspace skill. Without a workspace manifest it lists all effective pairs. User overrides
 load before project `models:` overrides; new workspace pairs need user-registry metadata to be
 listed. Invalid registry overrides error.
+
+### Pi models through OpenRouter
+
+Install `@earendil-works/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
+key in `~/.pi/agent/auth.json`. Pi never reads `.env` files. An exported `OPENROUTER_API_KEY`
+only reaches Niles workers if the tmux server started after the export; `/login` avoids that
+requirement.
+
+Pi's bundled model catalog lags the pi models in Niles's roster. Add them to `~/.pi/agent/models.json`, which
+merges into the built-in OpenRouter provider:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "models": [
+        { "id": "deepseek/deepseek-v4.1-flash", "reasoning": true },
+        { "id": "tencent/hy3", "reasoning": true },
+        { "id": "z-ai/glm-5.3-flash", "reasoning": true }
+      ]
+    }
+  }
+}
+```
+
+These entries omit prices, so pi reports their cost as zero. Niles reports token usage and
+leaves estimated cost unavailable.
 
 ## Worktrees
 

@@ -1,4 +1,4 @@
-# Niles Threat Model
+# Niles threat model
 
 This document describes Niles's current security boundaries. It is not a claim that running an
 agent on an untrusted repository is safe, and it is not a broad audit of Niles or the agent CLIs it
@@ -15,7 +15,7 @@ workspace, or another process running as the operator: such an adversary already
 outside the boundary Niles can provide.
 
 Niles keeps only operator-added projects as symlinks in `~/.niles/projects/`. Opening a
-registered project creates its named tmux session and starts the lead in that path; workers run
+registered project creates its named tmux session and starts the entry agent in that path; workers run
 in the same session. Niles writes orchestration state, including skill manifests, beneath
 `~/.niles/state/<mangled-absolute-workspace-path>/`, outside the repository tree.
 It never accepts an agent CLI workspace-trust prompt. Niles does not create an isolation boundary
@@ -60,13 +60,13 @@ an operator to launch Niles from the clone.
 **Attacker-controlled input.** Niles reads the first present project configuration file,
 `niles.yaml` or `.niles.yaml`, which can extend model and effort choices for the built-in families. The
 global per-project `manifest.yaml` file selects an entry skill and agents for skill-keyed bindings, and its per-skill tiers and ordered secondaries can influence which
-listed agent the lead picks. Manifests live in operator state. See
+listed agent the spawning agent picks. Manifests live in operator state. See
 [`src/config/spec.rs`](../src/config/spec.rs),
 [`src/workspace_manifest/types.rs`](../src/workspace_manifest/types.rs), and
 [`skills/lead/SKILL.md`](../skills/lead/SKILL.md).
 
 **Existing mitigations.** Spawn defaults to the skill's standard primary and rejects unlisted
-tiers or exact model/effort pairs. The lead brief requires operator approval for tier and
+tiers or exact model/effort pairs. The shipped lead skill requires operator approval for tier and
 secondary changes; the CLI does not enforce that conversational approval. Deserializing YAML
 does not itself execute shell commands. Unknown binding and tier fields are rejected;
 top-level skill keys are open, and built-in agent families reject unsupported model names. Worker
@@ -79,7 +79,7 @@ separate `Command` arguments; these measures prevent incidental shell parsing. S
 **Known gaps.** Niles has no repository-trust gate of its own. Once the operator launches it, Niles
 executes built-in family binaries found on the operator's PATH. Project configuration cannot
 replace their executable names or launch arguments. Skill bindings select what is launched,
-and planning text is instruction input to the lead. The manifest can also configure a
+and planning text is instruction input to the entry agent. The manifest can also configure a
 `worktree.setup` shell command and `worktree.env`; see the execution boundary below.
 `niles doctor` executes the selected built-in family binaries from PATH with `--version`.
 Workspace skill text has the additional instruction boundary [described below](#skills-as-an-instruction-source).
@@ -94,26 +94,24 @@ No skill bodies are embedded in the binary. This is an accepted instruction boun
 trust gate. Global skills are operator-owned.
 **Mitigations.** Only names explicitly named by a binding or spawn flag are looked up; directories are
 never scanned. Every launch prints `skill: <name> (<source> <path>)`, to stderr for an entry session, and `niles skills` shows the same provenance. Names
-have the shared ASCII grammar. Frontmatter requires a matching name and a nonempty description
-of at most 1,024 characters. Parse errors name the source and problem without quoting content.
-Disk documents are read through a 131,072-byte limit (including frontmatter), with one
-extra byte to detect overflow; errors report the path, observed read and file sizes.
-Bodies are not summarized or truncated. Empty primary bodies, NUL, or assembled/rendered text
-over 65,536 bytes fail before worker/session state is written. Codex TOML escaping is included
-in a separate 131,071-byte argument bound; the terminating NUL stays within Linux's 128 KiB
+have the shared ASCII grammar. Frontmatter and size limits are in [skill workflows](skills.md). Parse errors name the source and problem without quoting content.
+Disk documents are read with one extra byte past the limit to detect overflow; errors report the path, observed read and file sizes.
+Bodies are not summarized or truncated. Empty primary bodies, NUL, or oversized assembled text
+fail before worker/session state is written. Codex TOML escaping counts toward the separate
+argument bound; the terminating NUL stays within Linux's 128 KiB
 per-string limit.
 Shell quoting in a worker's `launch.sh` is file content, not an additional exec argument.
 Descriptions in `niles skills`, opening-turn menus and worker discovery share the
 same sanitizer: whitespace collapsed, Unicode control and format characters stripped,
-and output clamped to 200 characters. Descriptions never enter the system prompt.
+and output clamped for display. Descriptions never enter the system prompt.
 Semantic prompt injection remains possible.
 
 `always`, active `on_from`, and explicit `--with` bodies share the primary skill's
 system-prompt privilege and assembled cap; spawn prints their sources. Menu and
 trigger names are snapshotted. `niles agent skill` serves only snapshotted names
 through the resolver and workspace symlink rules, never arbitrary paths. `--menu`
-requires validated disk skill names, capped at 16 after deduplication. `on_stage`
-bodies are resolved at spawn with a 32,768-byte total cap; staging delivers them.
+requires validated disk skill names, capped after deduplication. `on_stage`
+bodies are resolved at spawn with a total cap; staging delivers them.
 
 Workspace skill directories and files are checked with `symlink_metadata`; directories must
 be directories and files regular, without symlinks. The file is opened with `O_NOFOLLOW`.
@@ -196,7 +194,7 @@ briefs, launch scripts, reports, status logs, and cursors in the global tree. Se
 [`src/store/paths.rs`](../src/store/paths.rs) and [`src/store/worker.rs`](../src/store/worker.rs).
 
 **Existing mitigations.** `niles log` appends timestamped decisions via
-Niles, so the lead needs no extra filesystem sandbox grant. It requires the latest lead session's
+Niles, so the entry agent needs no extra filesystem sandbox grant. It requires the latest entry session's
 recorded pane to match `TMUX_PANE`, validates the worker label and rejects control-bearing decision
 text; this is session routing, not authentication against same-user processes.
 
@@ -239,7 +237,7 @@ files are left alone. Unparseable names are also retained. See
 
 `niles agent status` accepts only worker-owned kinds and non-empty details without control
 characters. It requires an existing status log and uses `append_line` with `O_NOFOLLOW`;
-`done` also requires a non-empty report. Status text remains unauthenticated input to the lead.
+`done` also requires a non-empty report. Status text remains unauthenticated input to the entry agent.
 
 **Known gaps.** `O_NOFOLLOW` protects only those final path components; parent directories and
 other filesystem operations are not protected globally against symlink traversal or replacement.
@@ -263,7 +261,7 @@ header and explorer still resolve telemetry.
 Theme config text never reaches tmux formats. The theme name selects a palette; only typed RGB
 colors and styling modifiers are rendered into tmux formats.
 
-### Status lines, pane capture, and terminal or lead injection
+### Status lines, pane capture, and terminal or entry-pane injection
 
 **Attacker.** A malicious repository author whose content is repeated or acted on by an agent, or
 another source able to influence agent output. A deliberately malicious same-user worker is a
@@ -276,7 +274,7 @@ terminal-control risks and semantic prompt-injection risks.
 **Existing mitigations.** `niles wait` escapes characters for which Rust's `char::is_control` is
 true and limits each escaped rendered line, including its worker id and truncation suffix,
 to 4,096 bytes. Worker IDs and task labels have the restricted grammar described above. Watcher nudges identify only the
-worker and wake kind; they do not copy status-line content into the lead pane. Text sent through
+worker and wake kind; they do not copy status-line content into the entry pane. Text sent through
 tmux uses literal-key mode with explicit bracketed-paste delimiters. Niles refuses text containing
 ESC so message bytes cannot end the paste early. Framing does not depend on the pane advertising
 paste mode or newer tmux format fields. During a new worker's first 30 seconds, while its status
@@ -285,7 +283,7 @@ displaying the exact workspace, appends a `blocked:` status, and never accepts t
 keys. See
 [`src/wait.rs`](../src/wait.rs), [`src/watch/decide.rs`](../src/watch/decide.rs),
 [`src/tmux.rs`](../src/tmux.rs), and [`src/watch/trust.rs`](../src/watch/trust.rs).
-Before sending a lead nudge, the watcher captures the visible lead pane and queries its cursor.
+Before sending an entry nudge, the watcher captures the visible entry pane and queries its cursor.
 It holds the nudge only when the cursor is visible on a typed Claude or Codex composer row, or an
 indented continuation of one. An absent marker, hidden cursor, or failed query delivers; a
 continuous hold ends after five minutes. The recognizer reads terminal output and cursor position
@@ -343,7 +341,7 @@ Skill names are validated as nonempty ASCII letters, digits, hyphens and undersc
 time; workspace setting keys are reserved. Binding and tier schemas remain strict. Spawn requires
 a bound non-entry skill even with an agent override. `--from` can name any live worker whose
 latest status is done; it passes a report path, without executing report contents. Mechanical
-reasons reject control characters before being appended to the lead's decisions log.
+reasons reject control characters before being appended to the entry session's decisions log.
 
 With `--tree`, the worker agent runs in a directory chosen by the lead; Niles validates only that it
 exists and is a directory.
@@ -400,7 +398,7 @@ user/assistant text and structured tool calls. It uses read-only access to those
 sessions through launch identifiers or a Codex brief. Transcript content is untrusted display
 data, including tool arguments; consumers must escape it and must never execute it. Tool results,
 images, and private reasoning blocks are omitted.
-For pi, Niles chooses transcript directories under its global project worker and lead session
+For pi, Niles chooses transcript directories under its global project worker and entry session
 state directories using `--session-dir`, and reads the newest JSONL transcript there.
 
 **Known gaps.** Built-in worker profiles explicitly launch Codex with
@@ -419,17 +417,6 @@ can forge acknowledgements. Partial or unconfirmed switches fail loudly without 
 Codex retier navigates recognized model and reasoning picker rows, including advanced reasoning,
 and uses the session-only action. It requires a fresh acknowledgement naming both model and effort
 before recording the binding; missing choices or unfamiliar picker layouts fail without recording.
-
-## Non-goals
-
-This model does not promise protection from:
-
-- hostile local users or shared-host and multi-user isolation failures;
-- malicious workers already running as the same OS user; or
-- sandboxing or otherwise containing the agent CLIs Niles launches.
-
-These non-goals do not make a cloned repository trustworthy. They clarify that Niles coordinates
-the operator's existing tools and permissions rather than reducing them.
 
 ### Remote API
 
@@ -499,7 +486,7 @@ and injection are not atomic; concurrent session exit/restart or desk/watcher in
 race with sending, under the operator's no-lock/no-draft-guard ruling. Trusted frontend JavaScript from this host is essential: an
 allowed tailnet user can instruct an agent with the host user's execution privileges.
 
-Remote control can start only a saved manifest's default lead for a registered project,
+Remote control can start only a saved manifest's entry skill for a registered project,
 stop a session tagged with that registry path, and close enumerated live/lost workers.
 No request chooses an agent, command, args, skill or filesystem path. Registration and
 manifest creation remain desk-only. Start checks the directory, parses the manifest,
@@ -509,9 +496,9 @@ the skill picker with `niles start --keep-skills`. Agents run with the host user
 and the service/tmux server environment; registration already trusts project configuration.
 Shell-rc-only credentials may be unavailable. Worker close runs `current_exe` with a
 registry cwd and enumerated ID as argv, without a shell. Stop closes workers before
-killing the tagged session. These operations are not atomic against desk/lead actions:
+killing the tagged session. These operations are not atomic against desk/entry actions:
 concurrent disappearance is rechecked and logged; workers spawned during stop can
-remain as lost metadata, closable later. Concurrent crashed-lead starts can respawn
+remain as lost metadata, closable later. Concurrent crashed-entry starts can respawn
 over one another, leaving an orphan session directory for `niles prune`.
 
 Tailscale identity is ambient on requests from an allowed device, including cross-site
@@ -587,3 +574,14 @@ the worker’s tool result. Status annotations carry only counts and setup-defin
 A harness killing stage first records no round and may leave a gate child running until it
 exits (accepted v1 limit). I/O-error cleanup kills the group and reaps the gate; processes
 that leave its group are outside that cleanup. Passing gates do not track subsequent edits.
+
+## Non-goals
+
+This model does not promise protection from:
+
+- hostile local users or shared-host and multi-user isolation failures;
+- malicious workers already running as the same OS user; or
+- sandboxing or otherwise containing the agent CLIs Niles launches.
+
+These non-goals do not make a cloned repository trustworthy. They clarify that Niles coordinates
+the operator's existing tools and permissions rather than reducing them.
