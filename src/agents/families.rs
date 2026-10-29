@@ -61,7 +61,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
-        tested_version: "0.162.1",
+        tested_version: "0.165.0",
         // The shared daemon lets a running session continue in the background, out of its tmux
         // pane.
         foreground_args: &["--no-daemon"],
@@ -85,7 +85,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
-        tested_version: "2.1.296",
+        tested_version: "2.1.312",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
@@ -104,7 +104,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "pi",
         binary: "pi",
-        tested_version: "1.2.0",
+        tested_version: "1.4.0",
         foreground_args: &[],
         worker_args: &[],
         headless: &["-p"],
