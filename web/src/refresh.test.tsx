@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 
 const navigation = { ok: true, json: async () => ({ api_version: 1, projects: [{ name: 'notes', state: 'running', workers: [] }] }) };
@@ -8,7 +8,6 @@ const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open 
 const session = { id: 'solo', project: 'notes', agent: { family: 'codex', entry_skill: 'solo' }, waiting: false, worker_count: 0 };
 const response = (sessions: unknown[]) => ({ ok: true, json: async () => ({ api_version: 1, sessions }) });
 beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clear(); Element.prototype.scrollIntoView = vi.fn(); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
   const interval = vi.spyOn(globalThis, 'setInterval');
   let resolve!: (result: ReturnType<typeof response>) => void;

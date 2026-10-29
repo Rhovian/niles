@@ -1,8 +1,7 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { Chat } from './Chat';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('follows viewport/content changes, pauses on scroll up, and resumes at bottom', async () => {
   let resize!: () => void;
   const disconnect = vi.fn();
@@ -25,5 +24,5 @@ it('follows viewport/content changes, pauses on scroll up, and resumes at bottom
   height = 1_400;
   await act(async () => { resize(); });
   expect(transcript.scrollTop).toBe(1_400);
-  cleanup(); expect(disconnect).toHaveBeenCalled();
+  act(cleanup); expect(disconnect).toHaveBeenCalled();
 });
