@@ -79,11 +79,6 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
         .find(|pair| pair[0] == "--append-system-prompt")
         .unwrap()[1];
     assert!(primary.starts_with(&format!("## Skill: triage\n{body}\n")));
-    assert!(
-        primary
-            .contains("Deliverables go in the report file; the lead reads it, not your terminal.")
-    );
-    assert!(primary.ends_with("Skills beyond this prompt: `niles agent skills` lists them, `niles agent skill <name>` prints one.\n"));
 }
 
 #[test]

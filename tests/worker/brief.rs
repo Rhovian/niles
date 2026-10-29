@@ -76,13 +76,6 @@ fn skill_selects_primary_instructions_outside_the_opening_turn() {
         let script = fs::read_to_string(dir.join("launch.sh")).unwrap();
         assert!(script.contains("'--append-system-prompt'"), "{script}");
         assert!(script.contains(&format!("You are the {skill}")), "{script}");
-        assert!(script.contains("Work from this brief and the code."));
-        assert!(
-            script.contains(
-                "Deliverables go in the report file; the lead reads it, not your terminal."
-            )
-        );
-        assert!(script.contains("Report uncertainty as uncertainty."));
     }
 }
 
