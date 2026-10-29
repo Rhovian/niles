@@ -123,3 +123,22 @@ A kill after printing but before advancing the cursor may replay that printed li
 `spawn --wait` and `send --wait` start this same workspace wait after dispatch.
 The watcher also combines pending reports and overdue check-ins in one `niles:` line;
 while a wait runs, it leaves report delivery to that wait.
+
+## State layout
+
+- `~/.niles/state/<mangled absolute workspace path>/`: the skill manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback.
+- `~/.niles/projects`: the list of registered projects.
+- `~/.niles/cache/`: checkouts of skills pinned with `niles skills import`, which also writes a
+  `SKILL.ref` pointer under `.niles/skills/` or `~/.niles/skills/`.
+- `~/.niles/config.yaml`: settings you save in the config panel.
+- `~/.niles/trees/<absolute workspace path>/<branch>` and its Git branch when you spawn with
+  `--worktree`.
+- `~/.niles/remote/`: push keys and subscriptions, only if you use [remote access](remote.md).
+- One tmux session per project, with its status bar options set on that session only.
+
+Niles reads, but never writes, the model overrides in `~/.niles/roster.yaml` and a project's
+`niles.yaml`. It
+does not edit your agent CLIs' configuration or your tmux config. To remove Niles, stop its
+projects, uninstall the binary the way you installed it, and delete `~/.niles`, the
+`niles-setup` skill directories, any `.niles/` directory in your repositories, and any branches
+worktree spawns left behind.
