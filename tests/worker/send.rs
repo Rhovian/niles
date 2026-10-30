@@ -47,13 +47,19 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .find(|line| line.starts_with("export NILES_AGENT_DIR="))
         .unwrap();
     let assigned = Command::new("sh")
-        .args(["-c", &format!("{assignment}\nprintf '%s' \"$NILES_AGENT_DIR\"")])
+        .args([
+            "-c",
+            &format!("{assignment}\nprintf '%s' \"$NILES_AGENT_DIR\""),
+        ])
         .output()
         .unwrap();
     assert_command_success("worker directory assignment", &assigned);
     assert_eq!(
         stdout_of(&assigned),
-        state_dir(&env.root).join("worker/auth-fix").to_str().unwrap()
+        state_dir(&env.root)
+            .join("worker/auth-fix")
+            .to_str()
+            .unwrap()
     );
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
     assert!(launch.contains("CLAUDE_CODE_DISABLE_AGENT_VIEW=1"));
