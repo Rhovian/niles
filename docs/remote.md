@@ -126,3 +126,18 @@ and app together: a version mismatch shows an update banner and blocks chat.
 your allowlist, push keys and any other Serve mounts. Check `tailscale serve status` first, and
 never use `tailscale serve reset`, which removes unrelated Serve configuration too. If uninstall
 reports a service-manager error for a stopped service, delete the service file by hand and rerun.
+
+## Shared push through a relay
+
+Generate the VAPID key once with `niles remote init --subject mailto:you@example.com`.
+Securely copy `~/.niles/remote/vapid.json` to that same path on every host (including the relay
+if it runs Niles), preserving mode 0600 and a private mode 0700 parent directory. Never put
+this private file in the PWA directory. Restart every host after installing the key; do not
+initialize independent keys per host.
+
+With the relay's `/hosts.json` listing all hosts, Enable notifications verifies that every
+host uses the same key, creates or reuses one browser subscription, and registers it through
+each `/h/<id>/api/push/subscribe`. All hosts must be awake during registration. A failed
+registration names the host; retry after fixing it. Existing registrations remain valid.
+Enable notifications again after adding a host. Notifications display the originating host
+and open its session even when other hosts use the same session ID.

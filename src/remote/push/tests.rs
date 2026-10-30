@@ -22,8 +22,12 @@ fn fixture() -> (tempfile::TempDir, Store, Subscription) {
 fn private_keys_and_device_files_survive_restart_without_rotation() {
     let (root, store, subscription) = fixture();
     let key = store.public_key().unwrap();
-    store.save("alice".into(), subscription.clone()).unwrap();
-    store.save("alice".into(), subscription.clone()).unwrap();
+    store
+        .save("alice".into(), subscription.clone(), None)
+        .unwrap();
+    store
+        .save("alice".into(), subscription.clone(), None)
+        .unwrap();
     assert_eq!(store.subscriptions().unwrap().len(), 1);
     assert_eq!(
         fs::metadata(root.path().join("remote/vapid.json"))
@@ -43,7 +47,10 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     assert!(Store::create(path.clone(), "mailto:operator@example.com").is_err());
     let loaded = Store::load(path).unwrap();
     assert_eq!(loaded.public_key().unwrap(), key);
-    assert_eq!(loaded.subscriptions().unwrap()[0].0, subscription.0);
+    assert_eq!(
+        loaded.subscriptions().unwrap()[0].subscription.0,
+        subscription.0
+    );
     let (receiver, auth) = ece::generate_keypair_and_auth_secret().unwrap();
     let info = SubscriptionInfo::new(
         subscription.0.endpoint,
@@ -113,7 +120,9 @@ fn waiting_transitions_include_solo_without_repeating_or_retaining_exited_sessio
 fn prunes_only_gone_endpoints_and_propagates_other_failures() {
     let (_root, store, subscription) = fixture();
     for code in [404, 410] {
-        store.save("alice".into(), subscription.clone()).unwrap();
+        store
+            .save("alice".into(), subscription.clone(), None)
+            .unwrap();
         let info = serde_json::from_value(
             serde_json::json!({"code":code,"errno":0,"error":"gone","message":"gone"}),
         )
@@ -126,7 +135,9 @@ fn prunes_only_gone_endpoints_and_propagates_other_failures() {
         finish_delivery(&store, &subscription, Err(error)).unwrap();
         assert!(store.subscriptions().unwrap().is_empty());
     }
-    store.save("alice".into(), subscription.clone()).unwrap();
+    store
+        .save("alice".into(), subscription.clone(), None)
+        .unwrap();
     assert!(finish_delivery(&store, &subscription, Err(WebPushError::InvalidResponse)).is_err());
     assert_eq!(store.subscriptions().unwrap().len(), 1);
 }
@@ -203,4 +214,56 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
         .unwrap()
         .unwrap_err();
     assert!(error.to_string().contains("catalog failure"));
+}
+
+#[test]
+fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
+    let (root, first, subscription) = fixture();
+    let second_root = camino::Utf8PathBuf::from_path_buf(root.path().join("second")).unwrap();
+    fs::create_dir(&second_root).unwrap();
+    fs::set_permissions(&second_root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::copy(
+        root.path().join("remote/vapid.json"),
+        second_root.join("vapid.json"),
+    )
+    .unwrap();
+    let second = Store::load(second_root.clone()).unwrap();
+    assert_eq!(first.public_key().unwrap(), second.public_key().unwrap());
+    let session = Session {
+        id: "same-session".into(),
+        project: "p".into(),
+        agent: super::super::Agent {
+            model: None,
+            family: "codex".into(),
+            entry_skill: "solo".into(),
+        },
+        waiting: true,
+        worker_count: 0,
+    };
+    for (store, id) in [(&first, "desk"), (&second, "laptop")] {
+        let registration: store::Registration = serde_json::from_value(serde_json::json!({
+            "endpoint": subscription.0.endpoint, "keys": subscription.0.keys,
+            "host": {"id": id, "name": id},
+        }))
+        .unwrap();
+        store
+            .save("alice".into(), registration.subscription, registration.host)
+            .unwrap();
+        let devices = store.subscriptions().unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_slice(&devices[0].payload(&session).unwrap()).unwrap();
+        assert_eq!(payload["host"]["id"], id);
+        assert_eq!(payload["session_id"], "same-session");
+        store
+            .message(
+                &devices[0].subscription,
+                &serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+    }
+    let loaded = Store::load(second_root).unwrap();
+    assert_eq!(
+        loaded.subscriptions().unwrap()[0].host.as_ref().unwrap().id,
+        "laptop"
+    );
 }

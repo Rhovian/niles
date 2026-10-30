@@ -12,7 +12,7 @@ const HOST_TIMEOUT_MS = 8_000;
 const HOST_REFRESH_MS = 15_000;
 const LOCAL_HOST: Host = { id: '', name: 'This host' };
 export const hostPrefix = (host: Host) => host.id ? `/h/${host.id}` : '';
-export const qualified = (host: Host, id: string) => host.id ? JSON.stringify([host.id, id]) : id;
+export { qualified } from './notification';
 type Availability = { state: 'loading' | 'asleep' } | { state: 'error'; error: string } |
   { state: 'incompatible'; version: number } | { state: 'ready'; projects: Project[]; sessions: Session[] };
 export type HostState = Host & Availability;
