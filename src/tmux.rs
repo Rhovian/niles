@@ -13,7 +13,8 @@ mod session;
 mod target;
 
 pub(crate) use home::{
-    close_view, configure_home, focus_explorer, install_home_bindings, open_home, show_in_view,
+    close_view, configure_home, explorer_pane, focus_explorer, install_home_bindings, open_home,
+    show_in_view,
 };
 pub(crate) use panels::open_panel;
 pub(crate) use session::{

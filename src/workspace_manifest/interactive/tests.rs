@@ -2,6 +2,9 @@ use crate::test_support::skill;
 use std::fs;
 
 use super::*;
+fn never(_: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
+    panic!("setup with an existing manifest or no terminal")
+}
 use crate::test_support::{
     default_manifest::{load, manifest_path},
     temp_test_path,
@@ -21,7 +24,8 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
         crate::test_support::manifest_body(),
     );
     let before = load(&root).unwrap().unwrap();
-    let saved = ensure(&root, None, true, &mut Vec::new(), |_, mut draft, _| {
+    let mut output = vec![];
+    let saved = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
         *draft.bindings.get_mut(&skill("lead")).unwrap() =
             "codex:gpt-6.1-sol:high".to_owned().into();
         Ok(Choice::Save(Box::new(draft)))
@@ -30,12 +34,8 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
     .unwrap();
     let after = load(&root).unwrap().unwrap();
     let mut expected = before;
-    expected
-        .bindings
-        .get_mut(&skill("lead"))
-        .unwrap()
-        .standard
-        .primary = "codex:gpt-6.1-sol:high".into();
+    let standard = &mut expected.bindings.get_mut(&skill("lead")).unwrap().standard;
+    standard.primary = "codex:gpt-6.1-sol:high".into();
     assert_eq!(after, expected);
     assert_eq!(after, saved);
     crate::test_support::remove_workspace(&root).unwrap();
@@ -52,7 +52,7 @@ fn continue_quit_and_unchanged_save_write_nothing() {
         (Choice::Quit, &None),
         (Choice::Save(Box::new(manifest.clone().unwrap())), &manifest),
     ] {
-        let result = ensure(&root, None, true, &mut Vec::new(), |_, _, _| Ok(choice)).unwrap();
+        let result = ensure(&root, None, true, &mut vec![], never, |_, _, _| Ok(choice)).unwrap();
         assert_eq!(&result, launched);
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
@@ -64,23 +64,16 @@ fn continue_quit_and_unchanged_save_write_nothing() {
 }
 
 #[test]
-fn missing_manifest_fails_before_picker_in_any_terminal() {
+fn missing_manifest_uses_setup_only_when_interactive() {
     let root = temp_test_path("picker-missing");
-    for interactive in [true, false] {
-        let mut output = Vec::new();
-        let error = ensure(&root, None, interactive, &mut output, |_, _, _| {
-            panic!("opened picker without manifest")
-        })
-        .unwrap_err();
-        let error = error.to_string();
-        assert!(
-            error.contains(manifest_path(&root).unwrap().as_str()),
-            "{error}"
-        );
-        assert!(error.contains("niles-setup"), "{error}");
-        assert!(output.is_empty());
-        assert!(!manifest_path(&root).unwrap().exists());
+    for expected in [None, Some(crate::test_support::manifest())] {
+        let setup = |_: &Utf8Path| Ok(expected.clone());
+        let result = ensure(&root, None, true, &mut vec![], setup, |_, _, _| panic!()).unwrap();
+        assert_eq!(result, expected);
     }
+    let error = ensure(&root, None, false, &mut vec![], never, |_, _, _| panic!()).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("select the project in `niles` in a terminal"));
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
@@ -91,7 +84,7 @@ fn no_terminal_uses_existing_manifest_and_prints_skills() {
         crate::test_support::manifest_body(),
     );
     let mut output = Vec::new();
-    let result = ensure(&root, None, false, &mut output, |_, _, _| {
+    let result = ensure(&root, None, false, &mut output, never, |_, _, _| {
         panic!("opened picker without terminal")
     })
     .unwrap();
@@ -100,10 +93,6 @@ fn no_terminal_uses_existing_manifest_and_prints_skills() {
         String::from_utf8(output)
             .unwrap()
             .contains("lead      claude")
-    );
-    assert_eq!(
-        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
-        crate::test_support::manifest_body()
     );
     crate::test_support::remove_workspace(&root).unwrap();
 }
@@ -156,9 +145,14 @@ fn malformed_manifest_fails_without_replacement_in_any_terminal() {
     let body = "lead: [\n";
     let root = root("picker-malformed", body);
     for interactive in [true, false] {
-        let error = ensure(&root, None, interactive, &mut Vec::new(), |_, _, _| {
-            panic!("opened picker with malformed manifest")
-        })
+        let error = ensure(
+            &root,
+            None,
+            interactive,
+            &mut vec![],
+            never,
+            |_, _, _| panic!(),
+        )
         .unwrap_err();
         assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
         assert_eq!(
@@ -173,7 +167,7 @@ fn malformed_manifest_fails_without_replacement_in_any_terminal() {
 fn manifest_read_failures_do_not_open_replacement() {
     let root = temp_test_path("picker-read-failure");
     fs::create_dir_all(manifest_path(&root).unwrap()).unwrap();
-    let error = ensure(&root, None, true, &mut Vec::new(), |_, _, _| {
+    let error = ensure(&root, None, true, &mut vec![], never, |_, _, _| {
         panic!("opened picker for a read failure")
     })
     .unwrap_err();
@@ -182,25 +176,10 @@ fn manifest_read_failures_do_not_open_replacement() {
 }
 
 #[test]
-fn noninteractive_stale_manifest_fails_without_writing() {
-    let body = "lead: claude\nworker: codex\nreviewer: claude\nsecurity: claude\n";
-    let root = root("picker-stale-noninteractive", body);
-    let error = ensure(&root, None, false, &mut Vec::new(), |_, _, _| {
-        panic!("opened picker without terminal")
-    })
-    .unwrap_err();
-    assert!(format!("{error:#}").contains("manifest.yaml"));
-    assert_eq!(
-        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
-        body
-    );
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
 fn save_write_failure_stops_launch() {
     let root = root("picker-write-failure", crate::test_support::manifest_body());
-    let error = ensure(&root, None, true, &mut Vec::new(), |_, mut draft, _| {
+    let mut output = vec![];
+    let error = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
         draft.set_primary(&skill("lead"), "codex:gpt-6.1-sol:medium".into())?;
         fs::remove_file(manifest_path(&root).unwrap()).unwrap();
         fs::create_dir(manifest_path(&root).unwrap()).unwrap();

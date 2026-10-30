@@ -42,6 +42,11 @@ fn roots_override_without_reading_shadowed_content() {
     let blocked = root.join("blocked-global-root");
     fs::write(&blocked, "not a directory").unwrap();
     assert_eq!(resolve(&name, &workspace, &blocked).unwrap().body, body);
+    fs::remove_file(&path).unwrap();
+    let pointer = path.with_file_name("SKILL.ref");
+    fs::write(&pointer, "junk").unwrap();
+    assert!(find(&name, &workspace, root).is_err());
+    assert_eq!(fs::read_to_string(pointer).unwrap(), "junk");
 }
 
 #[test]

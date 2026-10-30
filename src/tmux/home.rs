@@ -16,7 +16,7 @@ const VIEW_WIDTH: &str = "75%";
 const VIEW_OPTION: &str = "@niles-view";
 
 /// The explorer's pane: it is created first, top left, in the home session.
-fn explorer_pane() -> String {
+pub(crate) fn explorer_pane() -> String {
     format!("={HOME_SESSION}:{{start}}.{{top-left}}")
 }
 

@@ -43,19 +43,15 @@ with the version):
    cargo install niles
    ```
 
-2. Install the setup skill: the first line for Claude Code, the second for Codex and pi.
+2. Run Niles in your repository and answer the setup prompts:
 
    ```sh
-   mkdir -p ~/.claude/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.claude/skills/niles-setup/SKILL.md
-   mkdir -p ~/.agents/skills/niles-setup && curl -fsSL https://raw.githubusercontent.com/Rhovian/niles/main/skills/niles-setup/SKILL.md -o ~/.agents/skills/niles-setup/SKILL.md
+   cd <repo> && niles
    ```
 
-3. In your repository, ask that agent to "set up Niles here". It copies skills, writes the
-   manifest with you, and checks the result with `niles doctor`.
-
-4. Run `niles` in the repository, select the project and press Enter (press `r` to register it if
-   it isn't listed). Press `c` in the skills picker to keep the manifest, then type to your entry
-   agent in the right pane.
+   Register the folder when prompted, then choose defaults or edit the full manifest in the
+   project pane. Niles detects your agent CLIs, pins release-matched skills from GitHub, and starts
+   the entry agent there. Registration is optional; `r` in the home view registers later projects.
 
 Detach with `Ctrl-b d`; agents keep running. See the [interface reference](docs/setup.md) for keys and
 the status bar.
@@ -69,8 +65,9 @@ stronger tiers; `niles models` lists them.
 
 ## Skills in this repository
 
-The binary contains no skills. Copy the [skills](skills/) you want into `.niles/skills/` or
-`~/.niles/skills/`, or pin them with `niles skills import Rhovian/niles/skills/<name>@<rev>`.
+The binary embeds no skill text. Setup in the project pane pins the default set from this
+repository, at the binary's release tag, into `~/.niles/skills`; copy or pin others with
+`niles skills import Rhovian/niles/skills/<name>@<rev>`.
 
 - `lead` coordinates: talks to you, spawns agents, forwards their work.
 - `solo` does your request directly in one session.
@@ -79,21 +76,21 @@ The binary contains no skills. Copy the [skills](skills/) you want into `.niles/
 - `security` asks what an attacker can do with a change.
 - `design` writes a design record before implementation.
 - `research` answers one question with sources and edits nothing.
-- `niles-setup` installs Niles and writes the manifest with you.
 
 ## What Niles changes on your machine
 
 Niles writes under `~/.niles/` (state, project list, skill cache, config, worktrees, remote keys),
+pins skills from GitHub at the binary's release tag on first setup,
 creates one tmux session per project, and creates branches for worktree spawns. It doesn't touch your agent CLIs' or tmux's
-config. To remove it, close its projects in the home view (`c`), uninstall the binary, and delete `~/.niles`, the
-`niles-setup` skill directories, and any `.niles/` in your repositories. See
+config. To remove it, close its projects in the home view (`c`), uninstall the binary, and delete `~/.niles` and
+any `.niles/` in your repositories. See
 [state layout](docs/configuration.md#state-layout) for details.
 
 ## Configuration
 
 Each project's manifest lives at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml`
-(see [state layout](docs/configuration.md#state-layout) for the encoding). The setup skill
-writes it; Niles has no default. It names the entry skill and binds each skill to a `standard`
+(see [state layout](docs/configuration.md#state-layout) for the encoding). First-run setup
+generates it from your installed agent CLIs. It names the entry skill and binds each skill to a `standard`
 tier `primary`, with optional fallback `secondaries`:
 
 ```yaml

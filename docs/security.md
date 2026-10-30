@@ -120,3 +120,22 @@ This model does not protect against:
 
 These limits don't make a cloned repository trustworthy. Niles coordinates your existing tools
 and permissions; it doesn't reduce them.
+
+## First-run setup
+
+Bare `niles` offers registration only when no projects are registered. An attended terminal
+start of a project without a manifest offers setup in its pane. Before
+consent it names GitHub (`Rhovian/niles`), the binary’s release tag, and workers’ bypassed approval
+prompts and absent sandbox. Enter accepts. Missing skills are fetched using the existing Git
+import mechanism and pinned globally to a commit at `v{CARGO_PKG_VERSION}`; existing skills are
+kept. Trust in these agent instructions rests on the release repository and tag. Once installed,
+a moved tag cannot change a pinned skill. Missing revisions, malformed references and fetch
+failures stop setup before the manifest is written; the registered project can be started again.
+
+Custom setup runs the operator’s `$VISUAL`, `$EDITOR`, or `vi` command on a uniquely named,
+0600 draft in the project’s user-owned state directory. The draft path is a separate shell
+argument. The file is read once per edit, parsed, and its entry and agents resolved before skill
+imports. The exact validated text is written with exclusive creation, preserving a manifest
+that appeared concurrently. This matters because manifest worktree setup commands execute with
+the user’s permissions. Drafts are removed on success, abort, and error; a crash may leave a draft
+in the state directory, which deregistration removes.

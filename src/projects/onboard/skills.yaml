@@ -1,0 +1,11 @@
+lead:
+  tiers: [standard, frontier]
+  families: &claude_first
+    - &claude [claude, {standard: claude:sonnet:high, frontier: claude:opus:high, economy: claude:sonnet:medium, mechanical: claude:sonnet:low}]
+    - &codex [codex, {standard: codex:gpt-6.1-sol:medium, frontier: codex:gpt-6-astra:high, economy: codex:gpt-6-luna:medium, mechanical: codex:gpt-6-luna:low}]
+    - &pi [pi, {standard: pi:z-ai/glm-5.3-flash:high, economy: pi:z-ai/glm-5.3-flash:high, mechanical: pi:z-ai/glm-5.3-flash:low}]
+design: {tiers: [standard, frontier], families: *claude_first}
+reviewer: {tiers: [standard, frontier, economy], families: *claude_first}
+worker: {tiers: [standard, frontier, economy, mechanical], families: &codex_first [*codex, *claude, *pi]}
+security: {tiers: [standard, economy, mechanical], families: *codex_first}
+research: {tiers: [standard, economy], families: *codex_first}
