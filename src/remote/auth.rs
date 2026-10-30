@@ -52,7 +52,7 @@ pub(super) fn tailnet_ip() -> Result<Ipv4Addr> {
     // The CLI selects the local IPv4; Rust parses its text representation.
     // https://github.com/tailscale/tailscale/blob/v1.96.2/cmd/tailscale/cli/ip.go
     let ip = command(&["ip", "-4"])?;
-    Ok(ip.trim().parse().context("parse tailscale ip -4")?)
+    ip.trim().parse().context("parse tailscale ip -4")
 }
 
 // WhoIs authenticates the TCP peer, never an HTTP forwarding header.
