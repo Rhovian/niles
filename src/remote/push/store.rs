@@ -120,16 +120,14 @@ impl Store {
             URL_SAFE_NO_PAD.encode(openssl::sha::sha256(subscription.0.endpoint.as_bytes()))
         ))
     }
-    pub(super) fn subscriptions(&self, users: &[String]) -> Result<Vec<Subscription>> {
+    pub(super) fn subscriptions(&self) -> Result<Vec<Subscription>> {
         let mut subscriptions = Vec::new();
         for entry in fs::read_dir(self.root.join("subscriptions"))? {
             let path = Utf8PathBuf::from_path_buf(entry?.path())
                 .map_err(|_| anyhow::anyhow!("non-UTF8 subscription path"))?;
             if path.extension() == Some("json") {
                 let device: Device = serde_json::from_slice(&read(&path)?)?;
-                if users.contains(&device.user) {
-                    subscriptions.push(device.subscription);
-                }
+                subscriptions.push(device.subscription);
             }
         }
         Ok(subscriptions)

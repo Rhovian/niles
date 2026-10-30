@@ -50,10 +50,9 @@ impl Fixture {
         let records = Arc::new(Mutex::new(vec![record]));
         let source_records = records.clone();
         let state = AppState::new(
-            vec!["alice@example.com".into()],
+            relay(),
             Arc::new(move || Ok(source_records.lock().unwrap().clone())),
-        )
-        .unwrap();
+        );
         Self {
             root,
             records,
@@ -75,9 +74,21 @@ fn message(text: &str) -> String {
         json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":text}]}})
     )
 }
+pub(super) fn relay() -> auth::Relay {
+    auth::Relay {
+        node: "relay".into(),
+        lookup: Arc::new(|peer| {
+            assert_eq!(peer, "100.64.0.1:1234".parse().unwrap());
+            Ok("relay".into())
+        }),
+    }
+}
 fn request(path: &str) -> HttpRequest<Body> {
     HttpRequest::builder()
         .uri(path)
+        .extension(ConnectInfo(
+            "100.64.0.1:1234".parse::<SocketAddr>().unwrap(),
+        ))
         .header("Tailscale-User-Login", "alice@example.com")
         .body(Body::empty())
         .unwrap()
@@ -102,29 +113,32 @@ async fn event(body: &mut BodyDataStream) -> (String, Value) {
 }
 
 #[test]
-fn configuration_requires_explicit_nonempty_users_and_survives_config_save() {
-    for users in [
-        vec![],
-        vec!["".into()],
-        vec![" alice".into()],
-        vec!["alice\n".into()],
+fn configuration_requires_relay_node_and_survives_config_save() {
+    for node in [
+        None,
+        Some("".into()),
+        Some(" relay".into()),
+        Some("relay\n".into()),
     ] {
-        assert!(AppState::new(users, Arc::new(|| Ok(Vec::new()))).is_err());
+        assert!(auth::Relay::new(node).is_err());
     }
-    let file: user::FileConfig =
-        crate::store::parse_yaml("remote: { allowed_users: ['alice@example.com'] }").unwrap();
-    assert_eq!(file.remote.allowed_users, ["alice@example.com"]);
+    let file: user::FileConfig = crate::store::parse_yaml("remote: { relay_node: relay }").unwrap();
+    assert_eq!(file.remote.relay_node.as_deref(), Some("relay"));
     let path = crate::test_support::temp_test_path("remote-config").join("config.yaml");
     file.save(&path).unwrap();
     assert_eq!(
-        user::FileConfig::load(&path).unwrap().remote.allowed_users,
-        ["alice@example.com"]
+        user::FileConfig::load(&path)
+            .unwrap()
+            .remote
+            .relay_node
+            .as_deref(),
+        Some("relay")
     );
     fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 #[tokio::test]
-async fn all_routes_require_one_allowed_identity_and_never_cache() {
+async fn all_routes_require_one_forwarded_identity_and_never_cache() {
     let fixture = Fixture::new(0);
     for path in [
         "/api/projects",
@@ -132,7 +146,7 @@ async fn all_routes_require_one_allowed_identity_and_never_cache() {
         "/api/sessions/project:session/events",
         "/api/unknown",
     ] {
-        for login in [None, Some("mallory@example.com")] {
+        for login in [None, Some(""), Some(" alice"), Some("alice,bob")] {
             let mut req = HttpRequest::builder()
                 .uri(path)
                 .body(Body::empty())
@@ -288,11 +302,7 @@ async fn unavailable_transcripts_can_appear_after_the_initial_snapshot() {
 
 #[tokio::test]
 async fn internal_errors_are_not_returned_to_the_client_or_cached() {
-    let state = AppState::new(
-        vec!["alice@example.com".into()],
-        Arc::new(|| anyhow::bail!("private path /secret")),
-    )
-    .unwrap();
+    let state = AppState::new(relay(), Arc::new(|| anyhow::bail!("private path /secret")));
     let response = router(state)
         .oneshot(request("/api/sessions"))
         .await
@@ -446,4 +456,42 @@ fn worker_feed_streams_turns_without_lead_status_and_ends_when_gone() {
     assert_eq!(events.len(), 1);
     fixture.records.lock().unwrap().clear();
     assert!(feed.poll(&lookup).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn only_the_relay_peer_can_forward_any_user_login() {
+    let fixture = Fixture::new(0);
+    for login in ["alice@example.com", "other@example.net"] {
+        let mut req = request("/api/sessions");
+        req.headers_mut()
+            .insert("tailscale-user-login", login.parse().unwrap());
+        assert_eq!(
+            fixture.app().oneshot(req).await.unwrap().status(),
+            StatusCode::OK
+        );
+    }
+    for path in [
+        "/api/sessions",
+        "/api/projects",
+        "/api/push/vapid",
+        "/api/unknown",
+    ] {
+        let mut req = request(path);
+        req.extensions_mut().remove::<ConnectInfo<SocketAddr>>();
+        assert_eq!(
+            fixture.app().oneshot(req).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            let mut state = fixture.state.clone();
+            state.relay.lookup = Arc::new(|_| Ok("other-node".into()));
+            let mut req = request(path);
+            *req.method_mut() = method.parse().unwrap();
+            req.headers_mut()
+                .insert("x-forwarded-for", "100.64.0.1".parse().unwrap());
+            let response = router(state).oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
 }

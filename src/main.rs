@@ -91,9 +91,8 @@ fn run() -> Result<ExitCode> {
                 Some(cli::RemoteCommand::Setup {
                     port,
                     web_dir,
-                    allow_user,
                     subject,
-                }) => remote::setup::run(&web_dir, allow_user, subject.as_deref(), port)?,
+                }) => remote::setup::run(&web_dir, subject.as_deref(), port)?,
                 None => remote::run(port)?,
             }
             #[cfg(not(feature = "remote"))]

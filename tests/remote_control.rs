@@ -37,12 +37,13 @@ struct Server {
 }
 impl Server {
     fn new(env: &TestEnv) -> Self {
+        common::stub_tailscale(env);
         fs::write(&env.tmux_log, "").unwrap();
         fs::create_dir_all(env.home.join(".niles/projects")).unwrap();
         std::os::unix::fs::symlink(&env.root, env.home.join(".niles/projects/api")).unwrap();
         fs::write(
             env.home.join(".niles/config.yaml"),
-            "remote: { allowed_users: ['alice'] }",
+            "remote: { relay_node: relay }",
         )
         .unwrap();
         // Workspace selection must not affect this multi-project service or its close children.
