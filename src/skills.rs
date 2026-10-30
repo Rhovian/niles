@@ -177,10 +177,8 @@ mod tests {
                 }
                 let source = std::fs::read_to_string(&path).unwrap();
                 for line in source.split("\nmod tests {").next().unwrap().lines() {
-                    // A worker directory and audit field are identities, not skill selection.
-                    if (path.ends_with("store/paths.rs") && line.contains("const WORKERS_DIR"))
-                        || (path.ends_with("worker/retier.rs") && line.contains("\"worker\": id"))
-                    {
+                    // A worker directory is an identity, not skill selection.
+                    if path.ends_with("store/paths.rs") && line.contains("const WORKERS_DIR") {
                         continue;
                     }
                     for name in "worker reviewer security design research solo".split_whitespace() {

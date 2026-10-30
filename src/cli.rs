@@ -175,8 +175,6 @@ pub enum CommandName {
         #[arg(long, action = ArgAction::SetTrue)]
         all: bool,
     },
-    /// Switch a live worker after operator approval (same family only).
-    Retier { id: String, agent: String },
     /// Append a decision to the current start session log.
     Log {
         /// Worker id, or `-` for a session-wide decision.
