@@ -164,3 +164,24 @@ pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path) -> Result<Option<Str
     git(workspace, &["worktree", "remove", tree.as_str()])?;
     Ok(Some(format!("removed: {tree}")))
 }
+
+/// Use Git to remove only this repository's managed trees, including dirty trees.
+pub(crate) fn remove_project_worktrees(workspace: &Utf8Path) -> Result<()> {
+    let root = root(workspace)?;
+    if !root.try_exists()? {
+        return Ok(());
+    }
+    let root = crate::util::utf8_path(fs::canonicalize(root)?, "managed worktree root")?;
+    // Git's -z porcelain format preserves paths containing newlines or quoting characters:
+    // https://git-scm.com/docs/git-worktree#_porcelain_format
+    for path in git(workspace, &["worktree", "list", "--porcelain", "-z"])?
+        .split('\0')
+        .filter_map(|field| field.strip_prefix("worktree "))
+    {
+        let path = Utf8Path::new(path);
+        if path != workspace && path.starts_with(&root) {
+            git(workspace, &["worktree", "remove", "--force", path.as_str()])?;
+        }
+    }
+    Ok(())
+}

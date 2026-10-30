@@ -26,6 +26,7 @@ pub use retier::retier;
 pub use spawn::{Assignment, SpawnTask, spawn};
 pub use usage::usage;
 pub use worktree::SpawnTree;
+pub(crate) use worktree::remove_project_worktrees;
 
 pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub(crate) use resolve::resolve_worker as worker_dir;

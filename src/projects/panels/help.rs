@@ -31,7 +31,7 @@ const KEYS: &str = "Choose a project on the left.
   ↵      open                 → ←    expand / collapse
   [ ]    previous / next project
   ; '    previous / next window
-  r      register a project
+  r / d  register / deregister
   c      close a worker or project
   ?      this help            esc    back
 

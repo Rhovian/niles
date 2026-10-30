@@ -96,7 +96,7 @@ impl ConfigPanel<'_> {
         let theme = &self.theme;
         self.footer = match (setting.edit.as_ref(), key) {
             (Some(Edit::Registry), KeyCode::Enter) => Some(format!(
-                "r in the explorer registers; rm ~/.niles/projects/{} unregisters",
+                "r in the explorer registers; select {} and press d to deregister",
                 setting.key
             )),
             (Some(Edit::Skill { root, skill }), KeyCode::Enter) => {

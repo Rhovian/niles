@@ -49,6 +49,20 @@ keys cannot contain each other's state. See [state layout](configuration.md#stat
 Legacy slash-to-hyphen state must be migrated by hand before installing the new binary;
 there is no legacy lookup that could share another workspace's state.
 
+### Project deregistration
+
+The explorer's `d` action requires confirmation before deleting a project's
+`~/.niles/state/v2/<workspace key>/@state/` folder (including archives and saved configuration)
+and managed worktrees, including uncommitted files. It rechecks the registry link and refuses
+while any worker metadata remains live, including workers whose tmux windows were lost. A matching tagged project session is closed; unrelated
+sessions and the original checkout are preserved. Git removes only registered worktrees of
+that repository under its managed tree root; external worktrees are preserved.
+
+Deletion is not transactional: an error can leave some trees removed, with the registration
+retained for retry. Live-worker detection is a snapshot, not exclusion against a concurrent
+spawn. Do not launch workers during deregistration. A missing checkout with remaining managed
+trees requires restoring the checkout before Git can remove them.
+
 ### Named setups
 
 A workspace setup under `.niles/setups/` is repository-controlled. It takes effect only when you
