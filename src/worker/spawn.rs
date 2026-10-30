@@ -44,7 +44,7 @@ const UNLABELED_TASK_LABEL: &str = "-";
 
 #[derive(Debug, clap::Args)]
 pub struct Assignment {
-    /// Primary skill to launch from the workspace bindings.
+    /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
     /// Add a skill to the discovery menu (repeatable).
@@ -108,7 +108,11 @@ pub fn spawn(
     let mut invocation =
         agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
     let primary_skill = skills::resolve(&skill, &project, &skills::global_dir()?)?;
-    let binding = manifest.binding(&skill)?;
+    let empty_composition = workspace_manifest::Binding::default();
+    let binding = match manifest.bindings.get(&skill) {
+        Some(binding) => binding,
+        None => &empty_composition,
+    };
     let resolved = super::skills::prepare(
         &primary_skill,
         binding,
@@ -304,21 +308,18 @@ fn resolve_agent(
     if *skill == manifest.entry {
         bail!("entry skill {skill} cannot be spawned");
     }
-    let binding = manifest
-        .binding(skill)
-        .with_context(|| format!("in {path}"))?;
     if let Some(agent) = agent {
         let requested = agents::AgentSpec::parse(&agent, &config.models)?;
         agents::validate_model(&requested, &config.models)?;
-        if !binding.allows(&requested, &config.models)? {
+        if !manifest.tiers.allows(&requested, &config.models)? {
             bail!(
-                "agent {agent} is not allowed for skill '{skill}' in manifest {path}; allowed agents: {}",
-                binding.agents().collect::<Vec<_>>().join(", ")
+                "agent {agent} is not allowed in manifest {path}; allowed agents: {}",
+                manifest.tiers.agents().collect::<Vec<_>>().join(", ")
             );
         }
         return Ok(agent);
     }
-    Ok(binding.tier(tier)?.primary.clone())
+    Ok(manifest.tiers.tier(tier)?.primary.clone())
 }
 
 #[cfg(test)]

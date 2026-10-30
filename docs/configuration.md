@@ -7,9 +7,10 @@ Reference for the workspace manifest, model registry and Niles state. The
 
 | Key | Where | What it does |
 | --- | --- | --- |
-| `entry` | top level, required | The skill you talk to. It must be bound. |
-| `<skill>` | top level | A binding: the agents that skill runs on. Only the entry skill must be bound. |
-| `standard`, `frontier`, `economy`, `mechanical` | binding | Tiers. `standard` is required; each tier has one `primary` and an ordered `secondaries` list. |
+| `entry` | top level, required | The skill you talk to. No binding is required. |
+| `<skill>` | top level | Optional skill composition; no models or default tier. |
+| `tiers` | top level, required | Project-wide model choices for every skill. |
+| `standard`, `frontier`, `economy`, `mechanical` | `tiers` | Tiers. `standard` is required; each tier has one `primary` and an ordered `secondaries` list. |
 | `skills`, `always`, `on_from`, `on_stage` | binding | Menu and injected skills; see [skill workflows](skills.md#composing-skills). |
 | `gates` | binding | Stage rounds and `post` command gates; see [staging](skills.md#staging). |
 | `worktree` | top level | `env` and `setup` for `spawn --worktree`; see [worktrees](#worktrees). |
@@ -17,11 +18,14 @@ Reference for the workspace manifest, model registry and Niles state. The
 
 Agents are written `family:model:effort`, such as `claude:sonnet:high`; models without effort
 support, such as `claude:haiku`, omit the suffix. Scalar bindings and `when:` groups are rejected.
-For direct editing with native sub-agents, [bind `solo` and set `entry: solo`](skills.md#entry-sessions).
+For direct editing with native sub-agents, [set `entry: solo`](skills.md#entry-sessions).
 
 `niles spawn <id> --skill <name>` uses the standard primary. `--tier <tier>` picks another listed
 tier's primary, and `--agent family:model:effort` picks an exact listed primary or secondary; the
-two conflict, and an unlisted tier errors.
+two conflict, and an unlisted tier or agent errors. Any installed skill can use any listed tier,
+including skills supplied through `--menu` or `--with`. Skill bindings contain composition only;
+per-skill models, default tiers and overrides are rejected. Existing manifests must be updated
+before upgrading; there is no automatic migration.
 
 ## Models
 

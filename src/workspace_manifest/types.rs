@@ -18,6 +18,7 @@ pub struct WorkspaceManifest {
     #[serde(flatten)]
     pub bindings: BTreeMap<SkillName, Binding>,
     pub entry: SkillName,
+    pub tiers: Tiers,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
     /// default.
@@ -35,7 +36,7 @@ pub struct WorkspaceManifest {
     pub worktree: Option<super::WorktreeConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -48,6 +49,11 @@ pub struct Binding {
     pub on_stage: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gates: Option<GateConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tiers {
     pub standard: TierBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontier: Option<TierBinding>,
@@ -206,38 +212,6 @@ pub struct TierBinding {
     pub secondaries: Vec<String>,
 }
 
-impl WorkspaceManifest {
-    pub fn binding(&self, skill: &SkillName) -> Result<&Binding> {
-        self.bindings.get(skill).ok_or_else(|| {
-            anyhow::anyhow!(
-                "skill {skill} is not bound; bound skills: {}",
-                self.bindings
-                    .keys()
-                    .map(SkillName::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })
-    }
-
-    pub(crate) fn set_primary(&mut self, skill: &SkillName, primary: String) -> Result<()> {
-        self.bindings
-            .get_mut(skill)
-            .with_context(|| format!("skill {skill} is no longer bound"))?
-            .standard
-            .primary = primary;
-        Ok(())
-    }
-
-    pub(crate) fn ordered_bindings(&self) -> impl Iterator<Item = (&SkillName, &Binding)> {
-        self.bindings.get_key_value(&self.entry).into_iter().chain(
-            self.bindings
-                .iter()
-                .filter(|(skill, _)| **skill != self.entry),
-        )
-    }
-}
-
 impl Binding {
     pub(crate) fn attached_skills(&self) -> impl Iterator<Item = &SkillName> {
         self.skills
@@ -246,15 +220,33 @@ impl Binding {
             .chain(&self.on_from)
             .chain(&self.on_stage)
     }
+}
 
-    pub fn tier(&self, tier: Tier) -> Result<&TierBinding> {
+impl Tiers {
+    pub(crate) fn set_primary(&mut self, tier: Tier, primary: String) -> Result<()> {
+        match tier {
+            Tier::Standard => Some(&mut self.standard),
+            Tier::Frontier => self.frontier.as_mut(),
+            Tier::Economy => self.economy.as_mut(),
+            Tier::Mechanical => self.mechanical.as_mut(),
+        }
+        .with_context(|| format!("manifest does not list tier {}", tier.as_str()))?
+        .primary = primary;
+        Ok(())
+    }
+
+    pub fn get(&self, tier: Tier) -> Option<&TierBinding> {
         match tier {
             Tier::Standard => Some(&self.standard),
             Tier::Frontier => self.frontier.as_ref(),
             Tier::Economy => self.economy.as_ref(),
             Tier::Mechanical => self.mechanical.as_ref(),
         }
-        .ok_or_else(|| anyhow::anyhow!("skill does not list tier {}", tier.as_str()))
+    }
+
+    pub fn tier(&self, tier: Tier) -> Result<&TierBinding> {
+        self.get(tier)
+            .ok_or_else(|| anyhow::anyhow!("manifest does not list tier {}", tier.as_str()))
     }
 
     pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {
@@ -266,25 +258,19 @@ impl Binding {
         Ok(false)
     }
 
-    pub fn tiers(&self) -> impl Iterator<Item = (Tier, &TierBinding)> {
+    pub fn iter(&self) -> impl Iterator<Item = (Tier, &TierBinding)> {
         [
-            Some((Tier::Standard, &self.standard)),
-            self.frontier
-                .as_ref()
-                .map(|binding| (Tier::Frontier, binding)),
-            self.economy
-                .as_ref()
-                .map(|binding| (Tier::Economy, binding)),
-            self.mechanical
-                .as_ref()
-                .map(|binding| (Tier::Mechanical, binding)),
+            Tier::Standard,
+            Tier::Frontier,
+            Tier::Economy,
+            Tier::Mechanical,
         ]
         .into_iter()
-        .flatten()
+        .filter_map(|tier| self.get(tier).map(|binding| (tier, binding)))
     }
 
     pub fn agents(&self) -> impl Iterator<Item = &str> {
-        self.tiers().flat_map(|(_, tier)| {
+        self.iter().flat_map(|(_, tier)| {
             std::iter::once(tier.primary.as_str())
                 .chain(tier.secondaries.iter().map(String::as_str))
         })
@@ -307,34 +293,9 @@ pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec>
     Ok(spec)
 }
 
-impl From<TierBinding> for Binding {
-    fn from(standard: TierBinding) -> Self {
-        Self {
-            skills: Vec::new(),
-            always: Vec::new(),
-            on_from: Vec::new(),
-            on_stage: Vec::new(),
-            gates: None,
-            standard,
-            frontier: None,
-            economy: None,
-            mechanical: None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    impl From<String> for Binding {
-        fn from(primary: String) -> Self {
-            Self::from(TierBinding {
-                primary,
-                secondaries: Vec::new(),
-            })
-        }
-    }
 
     #[test]
     fn rounds_are_bounded_at_yaml_and_json_parse_boundaries() {

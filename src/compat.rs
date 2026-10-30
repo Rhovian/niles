@@ -37,8 +37,8 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
     let manifest = workspace_manifest::load(&root, selection)?
         .context("compat requires a workspace manifest")?;
     let specs = manifest
-        .ordered_bindings()
-        .flat_map(|(_, binding)| binding.agents())
+        .tiers
+        .agents()
         .map(|agent| AgentSpec::parse(agent, &models))
         .collect::<Result<Vec<_>>>()?;
     let mut passed = true;

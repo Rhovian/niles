@@ -27,7 +27,7 @@ What Niles launches:
 | --- | --- | --- | --- |
 | Repository configuration | `niles.yaml` or `.niles.yaml` | Accepts only model and effort entries; unknown fields fail. It can't change executables or launch arguments. | It can add models and efforts that spawns may select. |
 | Repository code execution | `.niles/setups/<name>.yaml`, when you select it | Runs its `worktree.setup` and `gates.post` only from a setup you name with `--setup`; prints gate argv at spawn. | Selecting a repository setup runs its commands as you. See [Named setups](#named-setups). |
-| Workspace skills | `.niles/skills/<name>/SKILL.md` | Looks up only bound or named skills, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
+| Workspace skills | `.niles/skills/<name>/SKILL.md` | Lists installed skills by scanning workspace/global skill directories, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
 | Imported skills | The pinned GitHub repository | Pins a full commit SHA, fetches only from github.com with hooks off and symlinks as plain files, caps content at 8 MiB, and never runs imported scripts. | Agents may still choose to run those scripts. |
 | Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
 | Status lines and pane text | Worker status lines and captured pane text | Declares the orchestration contract independently of skills; `niles agent status` rejects invalid kinds and details before appending, and checks reports and staging for `done`. Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | Same-user writers can bypass submission checks by editing the log directly; malformed lines are still skipped by wait. `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
@@ -37,7 +37,10 @@ What Niles launches:
 
 The global project manifest at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml` is yours, not the
 repository's. Its `worktree.setup` and `gates.post` run with your permissions, so only put
-commands there you would run yourself.
+commands there you would run yourself. Model spending approval is project-wide:
+only exact agents in the manifest's `tiers` list may be selected by `spawn --agent`, and
+`--tier` selects only a listed tier. A skill needs no composition binding to use those agents;
+composition bindings grant no additional model access.
 
 Workspace keys encode the full absolute path's UTF-8 bytes as lowercase hex, split into
 directory components of at most 240 characters. `@state` is outside that alphabet, so prefix
@@ -71,9 +74,14 @@ setup's name, origin and gate commands, but printing them is not approval.
 ### Skills as an instruction source
 
 A repository can ship `.niles/skills/<name>/SKILL.md`, which overrides a global skill of the
-same name. A bound skill's body reaches the agent at system or developer-prompt privilege,
-above `AGENTS.md`. Only names a binding or spawn flag mentions are looked up, and every launch
-prints `skill: <name> (<source> <path>)`, so you can see where the text came from.
+same name. A named skill's body reaches the agent at system or developer-prompt privilege,
+above `AGENTS.md`. `niles skills` scans workspace and global skill directories and reads all
+installed skills, including unbound ones, using the same workspace precedence, symlink and
+size checks as explicit resolution. Invalid discovered skills are skipped with warnings on
+stderr, so valid skills remain available in the listing. Explicit launches still reject invalid
+skills. Listing an imported skill may fetch its pinned cache. Listing displays source and
+description without injecting skill bodies into an agent. Launches resolve only named skills.
+Every launch prints `skill: <name> (<source> <path>)`, so you can see where the text came from.
 Size limits are in [skill workflows](skills.md).
 
 ### Remote API

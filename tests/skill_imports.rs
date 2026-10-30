@@ -211,7 +211,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     std::os::unix::fs::symlink(&external, &pointer).unwrap();
     let manifest = state_dir(&pack.env.root).join("manifest.yaml");
     let body = fs::read_to_string(&manifest).unwrap().replace(
-        "worker:\n",
+        "worker: {}\n",
         "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_from: [pdf]\n  on_stage: [pdf]\n",
     );
     fs::write(&manifest, body).unwrap();
@@ -246,7 +246,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     assert_command_success("listing", &listing);
     fs::write(
         &manifest,
-        "entry: pdf\npdf: {standard: {primary: claude:sonnet:high, secondaries: []}}\n",
+        "entry: pdf\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\npdf: {}\n",
     )
     .unwrap();
     assert!(stdout_of(&pack.run(&["skills"])).contains("skill: pdf (import github.com/"));
@@ -328,11 +328,7 @@ fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
     );
     let manifest = state_dir(&pack.env.root).join("manifest.yaml");
     let body = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        format!("{body}pdf: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n"),
-    )
-    .unwrap();
+    fs::write(&manifest, format!("{body}pdf: {{}}\n")).unwrap();
     let output = pack.run(&["models"]);
     assert_failure_contains("dual documents", &output, "has both");
     assert!(stderr_of(&output).contains("SKILL.md") && stderr_of(&output).contains("SKILL.ref"));

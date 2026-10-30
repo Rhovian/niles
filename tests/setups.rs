@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 
 fn manifest(agent: &str) -> String {
     format!(
-        "entry: lead\nlead: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\nworker: {{standard: {{primary: {agent}, secondaries: []}}}}\n"
+        "entry: lead\ntiers: {{standard: {{primary: {agent}, secondaries: [claude:sonnet:high]}}}}\n"
     )
 }
 
@@ -60,7 +60,7 @@ fn env_selection_reads_global_links_and_never_merges_the_default_manifest() {
         .unwrap();
     assert_command_success("env setup through directory and file links", &output);
     assert!(
-        !stdout_of(&output)
+        stdout_of(&output)
             .lines()
             .any(|line| line.starts_with("skill: research "))
     );
@@ -95,7 +95,7 @@ fn assert_entry_setup(entry: &str) {
     fs::write(
         &setups.global,
         format!(
-            "entry: {entry}\n{entry}: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\nworker: {{standard: {{primary: codex:gpt-6.1-sol:medium, secondaries: []}}, skills: [guide], always: [guide]}}\n"
+            "entry: {entry}\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{skills: [guide], always: [guide]}}\n"
         ),
     )
     .unwrap();
@@ -132,7 +132,7 @@ fn assert_entry_setup(entry: &str) {
         worker["setup"],
         serde_json::json!({"name":"tdd","origin":"global"})
     );
-    assert!(worker["agent"].as_str().unwrap().starts_with("codex:"));
+    assert_eq!(worker["agent"], "claude:sonnet:high");
     assert_eq!(worker["menu"], serde_json::json!(["guide"]));
     assert_eq!(worker["always"], serde_json::json!(["guide"]));
     let worker_dir = state_dir(&env.root).join("worker/selected");

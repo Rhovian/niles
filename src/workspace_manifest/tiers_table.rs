@@ -2,9 +2,9 @@ use std::io::Write;
 
 use anyhow::Result;
 
-use crate::{config::spec::ProjectConfig, skills::SkillName};
+use crate::{agents::roster::Tier, config::spec::ProjectConfig};
 
-use super::{Binding, WorkspaceManifest};
+use super::{TierBinding, WorkspaceManifest};
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -12,18 +12,18 @@ use super::{Binding, WorkspaceManifest};
 /// `u16::MAX` the format call panics.
 const MAX_CELL: usize = 40;
 const MAX_REASON: usize = 68;
-/// A model or effort the binding leaves to the builtin.
+/// An absent model or effort in the display.
 pub(crate) const MISSING: &str = "-";
 
-pub(crate) fn print_manifest_skills<W: Write>(
+pub(crate) fn print_manifest_tiers<W: Write>(
     output: &mut W,
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<()> {
-    let rows = manifest_skills(manifest, config);
-    let skill_width = rows
+    let rows = manifest_tiers(manifest, config);
+    let tier_width = rows
         .iter()
-        .map(|row| cells(&cell(row.skill.as_str())))
+        .map(|row| cells(&cell(row.tier.as_str())))
         .fold(0, usize::max);
     let family_width = rows
         .iter()
@@ -34,52 +34,53 @@ pub(crate) fn print_manifest_skills<W: Write>(
     for row in &rows {
         writeln!(
             output,
-            "{:<skill_width$}  {:<family_width$}  {:<model_width$}  {}",
-            cell(row.skill.as_str()),
+            "{:<tier_width$}  {:<family_width$}  {:<model_width$}  {}",
+            cell(row.tier.as_str()),
             row.family,
             row.model,
             row.effort,
         )?;
         if let Some(reason) = &row.invalid_reason {
-            writeln!(output, "{:<skill_width$}  reason: {reason}", "")?;
+            writeln!(output, "{:<tier_width$}  reason: {reason}", "")?;
         }
     }
 
     Ok(())
 }
 
-pub(crate) fn manifest_skills(
-    manifest: &WorkspaceManifest,
-    config: &ProjectConfig,
-) -> Vec<SkillRow> {
+pub(crate) fn manifest_tiers(manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<TierRow> {
     manifest
-        .ordered_bindings()
-        .map(|(skill, binding)| binding_row(skill, binding, config))
+        .tiers
+        .iter()
+        .map(|(tier, binding)| tier_row(tier, binding, config))
         .collect()
 }
 
-pub(crate) struct SkillRow {
-    pub skill: SkillName,
+pub(crate) struct TierRow {
+    pub tier: Tier,
     pub family: String,
     pub model: String,
     pub effort: String,
+    pub secondaries: String,
     pub invalid_reason: Option<String>,
 }
 
-fn binding_row(skill: &SkillName, binding: &Binding, config: &ProjectConfig) -> SkillRow {
-    match super::types::exact_spec(&binding.standard.primary, &config.models) {
-        Ok(spec) => SkillRow {
-            skill: skill.clone(),
+fn tier_row(tier: Tier, binding: &TierBinding, config: &ProjectConfig) -> TierRow {
+    match super::types::exact_spec(&binding.primary, &config.models) {
+        Ok(spec) => TierRow {
+            tier,
             family: cell(spec.family()),
             model: spec.model().map_or_else(|| MISSING.to_owned(), cell),
             effort: spec.effort().map_or_else(|| MISSING.to_owned(), cell),
+            secondaries: binding.secondaries.join(", "),
             invalid_reason: None,
         },
-        Err(err) => SkillRow {
-            skill: skill.clone(),
-            family: cell(&binding.standard.primary),
+        Err(err) => TierRow {
+            tier,
+            family: cell(&binding.primary),
             model: MISSING.to_owned(),
             effort: MISSING.to_owned(),
+            secondaries: binding.secondaries.join(", "),
             invalid_reason: Some(clamp(&err.to_string(), MAX_REASON)),
         },
     }
@@ -116,11 +117,9 @@ mod tests {
     use super::*;
     use crate::agents;
 
-    fn manifest(reviewer: &str) -> WorkspaceManifest {
+    fn manifest(primary: &str) -> WorkspaceManifest {
         let mut manifest = crate::test_support::manifest();
-        manifest
-            .bindings
-            .insert("reviewer".parse().unwrap(), reviewer.to_owned().into());
+        manifest.tiers.standard.primary = primary.to_owned();
         manifest
     }
 
@@ -129,7 +128,7 @@ mod tests {
         let config = ProjectConfig {
             models: agents::ModelRoster::builtin().unwrap(),
         };
-        print_manifest_skills(&mut output, manifest, &config).unwrap();
+        print_manifest_tiers(&mut output, manifest, &config).unwrap();
         String::from_utf8(output).unwrap()
     }
 
@@ -140,11 +139,10 @@ mod tests {
             .lines()
             .map(|line| line.split_whitespace().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], ["lead", "claude", "sonnet", "high"]);
-        assert_eq!(rows[1], ["design", "claude", "sonnet", "high"]);
-        assert_eq!(rows[2], ["research", "codex", "gpt-6.1-sol", "medium"]);
-        assert_eq!(rows[3], ["reviewer", "claude", "opus", "max"]);
-        assert_eq!(rows[5], ["worker", "codex", "gpt-6.1-sol", "medium"]);
+        assert_eq!(rows[0], ["standard", "claude", "opus", "max"]);
+        assert_eq!(rows[1], ["frontier", "claude", "opus", "high"]);
+        assert_eq!(rows[2], ["economy", "codex", "gpt-6-luna", "medium"]);
+        assert_eq!(rows[3], ["mechanical", "codex", "gpt-6-luna", "low"]);
     }
 
     #[test]
@@ -152,21 +150,21 @@ mod tests {
         // The display names inexact input rather than inventing a launch choice.
         let rendered = render(&manifest("codex"));
 
-        // Cells, not spacing: padding shifts whenever another binding gets wider.
+        // Cells, not spacing: padding shifts whenever another tier gets wider.
         let row = rendered
             .lines()
-            .find(|line| line.starts_with("reviewer"))
-            .expect("reviewer row missing from rendered manifest");
+            .find(|line| line.starts_with("standard"))
+            .expect("standard row missing from rendered manifest");
         assert_eq!(
             row.split_whitespace().collect::<Vec<_>>(),
-            ["reviewer", "codex", "-", "-"],
+            ["standard", "codex", "-", "-"],
             "{rendered}"
         );
         assert!(rendered.contains("must name an exact"));
     }
 
     #[test]
-    fn an_invalid_binding_says_why_instead_of_aborting() {
+    fn an_invalid_tier_says_why_instead_of_aborting() {
         let rendered = render(&manifest("ghost"));
 
         assert!(rendered.contains("reason: "), "{rendered}");
@@ -177,12 +175,12 @@ mod tests {
     fn a_newline_cannot_forge_an_extra_row() {
         let rendered = render(&manifest("claude\nreviewer  totally  fake  max"));
 
-        // Continuation lines are indented, so a skill row is one that starts at column zero.
-        let skill_rows = rendered
+        // Continuation lines are indented, so a tier row is one that starts at column zero.
+        let tier_rows = rendered
             .lines()
             .filter(|line| !line.starts_with(' '))
             .count();
-        assert_eq!(skill_rows, 6, "{rendered}");
+        assert_eq!(tier_rows, 4, "{rendered}");
         assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
     }
 
@@ -199,18 +197,14 @@ mod tests {
     #[test]
     fn an_enormous_value_is_clamped_rather_than_panicking() {
         // A runtime format width is a u16; past 65535 the format call panics.
-        let mut manifest = manifest(&"q".repeat(70_000));
-        manifest.bindings.insert(
-            "s".repeat(70_000).try_into().unwrap(),
-            "claude:sonnet:high".to_owned().into(),
-        );
+        let manifest = manifest(&"q".repeat(70_000));
         let rendered = render(&manifest);
         assert_eq!(
             rendered
                 .lines()
                 .filter(|line| !line.starts_with(' '))
                 .count(),
-            manifest.bindings.len()
+            manifest.tiers.iter().count()
         );
 
         assert!(
@@ -228,11 +222,9 @@ mod tests {
             rendered.contains("deepseek/deepseek-v4.1-flash"),
             "{rendered}"
         );
-        let effort_columns: Vec<Option<usize>> = rendered
-            .lines()
-            .take(5)
-            .map(|line| line.rfind("  "))
-            .collect();
+        let effort_columns: Vec<Option<usize>> =
+            rendered.lines().map(|line| line.rfind("  ")).collect();
+        assert_eq!(effort_columns.len(), 4);
         assert!(
             effort_columns.windows(2).all(|pair| pair[0] == pair[1]),
             "{rendered}"

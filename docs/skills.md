@@ -7,12 +7,16 @@
    ASCII letters, digits, `-` and `_`.
 2. Start it with YAML frontmatter: `name` must match the directory, and `description` must be
    nonempty and should say when to use the skill. Other keys are allowed; the body follows.
-3. Bind it in the manifest (see [configuration](configuration.md#manifest-keys)) and check it
-   with `niles skills`, which lists bound skills, entry first, with their sources.
+3. Launch it with `niles spawn <id> --skill <name>` on a project tier. Add a
+   [composition binding](configuration.md#manifest-keys) when needed; `niles skills` lists
+   installed skills, entry first, with their sources and descriptions.
 
-Niles looks up only bound or named skills, never scans directories, and fails when one is
-missing. A skill directory holds exactly one of `SKILL.md` or an import's `SKILL.ref`. Workspace
-skill files and directories can't be symlinks; global ones can.
+`niles skills` scans workspace and global skill directories, resolves workspace overrides,
+and reads each installed skill for its source and description. Invalid discovered skills are
+skipped with loud warnings on stderr; valid skills remain listed and the command succeeds.
+Manifest and model configuration errors still fail. Launches resolve only their named skills
+and fail when one is missing. A skill directory holds exactly one of `SKILL.md` or an import's
+`SKILL.ref`. Workspace skill files and directories can't be symlinks; global ones can.
 
 The skill's body reaches the agent as system instructions: `--append-system-prompt` for Claude
 and pi, `--config developer_instructions` for Codex. The opening user turn carries the task and
@@ -21,14 +25,14 @@ from saved history.
 
 ## Entry sessions
 
-`entry:` names the skill you talk to. It must be bound and can't be spawned. This repository's
+`entry:` names the skill you talk to. It needs no binding and can't be spawned. This repository's
 [`skills/`](../skills/) has two: `lead` coordinates workers, and `solo` does the work itself,
 spawning workers only when asked. Native sub-agents get no Niles status line, wake or usage
 rollup.
 
 ```yaml
 entry: solo
-solo:
+tiers:
   standard:
     primary: claude:sonnet:high
     secondaries: []
@@ -39,7 +43,7 @@ unknown placeholders stay literal. Startup context is fixed for the session.
 
 ## Spawning
 
-`niles spawn <id> --skill <name>` launches a bound skill. `--from <id>` passes a finished
+`niles spawn <id> --skill <name>` launches an installed skill on the project tier list. `--from <id>` passes a finished
 worker's report path as `from_report:`; that worker's latest status must be `done:`.
 `--mechanical <reason>` logs the spawn as mechanical work in the entry session's log and
 conflicts with `--from`. How the shipped `lead` skill decides what to spawn is in its
@@ -72,7 +76,6 @@ A binding can add skills around its primary one:
 
 ```yaml
 worker:
-  standard: {primary: claude:sonnet:high, secondaries: []}
   skills: [style-guide]
   always: [coding-rules]
   on_from: [follow-design]

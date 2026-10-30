@@ -5,12 +5,12 @@ use super::{
     Choice,
     columns::{self, Columns, Family, Pick},
 };
-use crate::skills::SkillName;
+use crate::agents::roster::Tier;
 use crate::{config::spec::ProjectConfig, workspace_manifest::WorkspaceManifest};
 
 pub(super) enum Screen {
-    Skills,
-    Editing { skill: SkillName, columns: Columns },
+    Tiers,
+    Editing { tier: Tier, columns: Columns },
     Review,
 }
 
@@ -27,7 +27,7 @@ impl Form {
         Ok(Self {
             original: manifest.clone(),
             draft: manifest,
-            screen: Screen::Skills,
+            screen: Screen::Tiers,
             selected: 0,
             families: columns::families(config)?,
         })
@@ -51,34 +51,35 @@ impl Form {
             _ => {}
         }
         match &mut self.screen {
-            Screen::Editing { skill, columns } => match columns.key(key) {
+            Screen::Editing { tier, columns } => match columns.key(key) {
                 Pick::Pending => {}
-                Pick::Cancelled => self.screen = Screen::Skills,
+                Pick::Cancelled => self.screen = Screen::Tiers,
                 Pick::Selected(value) => {
-                    self.draft.set_primary(skill, value)?;
-                    self.screen = Screen::Skills;
+                    self.draft.tiers.set_primary(*tier, value)?;
+                    self.screen = Screen::Tiers;
                 }
             },
             Screen::Review => match key {
                 KeyCode::Enter => return Ok(Some(Choice::Save(Box::new(self.draft.clone())))),
-                KeyCode::Esc | KeyCode::Left => self.screen = Screen::Skills,
+                KeyCode::Esc | KeyCode::Left => self.screen = Screen::Tiers,
                 _ => {}
             },
-            Screen::Skills => match key {
+            Screen::Tiers => match key {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
                 KeyCode::Down => {
-                    self.selected = (self.selected + 1).min(self.draft.bindings.len() - 1)
+                    self.selected = (self.selected + 1).min(self.draft.tiers.iter().count() - 1)
                 }
                 KeyCode::Char('s') if self.can_save() => self.screen = Screen::Review,
                 KeyCode::Enter => {
-                    let (skill, binding) = self
+                    let (tier, binding) = self
                         .draft
-                        .ordered_bindings()
+                        .tiers
+                        .iter()
                         .nth(self.selected)
-                        .context("selected skill is no longer bound")?;
+                        .context("selected tier is no longer listed")?;
                     self.screen = Screen::Editing {
-                        skill: skill.clone(),
-                        columns: Columns::new(&self.families, &binding.standard.primary, config)?,
+                        tier,
+                        columns: Columns::new(&self.families, &binding.primary, config)?,
                     };
                 }
                 _ => {}

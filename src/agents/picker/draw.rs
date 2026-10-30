@@ -10,34 +10,34 @@ use super::{
     form::{Form, Screen},
 };
 use crate::{
-    skills::SkillName,
+    agents::roster::Tier,
     theme::{StyleKey, Theme},
     workspace_manifest::clamp,
 };
 
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
-        Screen::Editing { skill, .. } => format!("NILES / SKILLS / {}", skill.as_str()),
-        Screen::Skills | Screen::Review => "NILES / SKILLS".to_owned(),
+        Screen::Editing { tier, .. } => format!("NILES / TIERS / {}", tier.as_str()),
+        Screen::Tiers | Screen::Review => "NILES / TIERS".to_owned(),
     };
     let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
     let mut warning = None;
     let hints = match &form.screen {
-        Screen::Skills => {
-            skills(frame, body, form, theme, false);
+        Screen::Tiers => {
+            tiers(frame, body, form, theme, false);
             if form.can_save() {
-                "↑↓ skill · ↵ edit standard primary · s save"
+                "↑↓ tier · ↵ edit primary · s save"
             } else {
-                "↑↓ skill · ↵ edit standard primary"
+                "↑↓ tier · ↵ edit primary"
             }
         }
         Screen::Review => {
-            skills(frame, body, form, theme, true);
+            tiers(frame, body, form, theme, true);
             "↵ save · esc back"
         }
         Screen::Editing { columns, .. } => {
             columns.draw(frame, body, theme);
-            warning = Some("Editing the standard primary; other tiers and secondaries are kept.");
+            warning = Some("Editing the tier primary; other tiers and secondaries are kept.");
             COLUMN_KEYS
         }
     };
@@ -58,8 +58,8 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     footer_text(frame, footer, theme, warning, hints);
 }
 
-pub(super) fn single(frame: &mut Frame, columns: &Columns, skill: &SkillName, theme: &Theme) {
-    let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", skill.as_str()));
+pub(super) fn single(frame: &mut Frame, columns: &Columns, tier: &Tier, theme: &Theme) {
+    let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", tier.as_str()));
     columns.draw(frame, body, theme);
     let hints = Line::styled(COLUMN_KEYS, theme.style(StyleKey::Muted));
     footer_text(frame, footer, theme, None, hints);
@@ -99,13 +99,13 @@ fn footer_text(
     frame.render_widget(Paragraph::new(Text::from(lines)).block(rule), area);
 }
 
-fn skills(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
+fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
     let mut rows = Vec::new();
-    for (skill, binding) in form.draft.ordered_bindings() {
-        let changed = form.original.bindings.get(skill) != Some(binding);
-        let value = clamp(&binding.standard.primary, 120);
+    for (tier, binding) in form.draft.tiers.iter() {
+        let changed = form.original.tiers.get(tier) != Some(binding);
+        let value = clamp(&binding.primary, 120);
         let status = if changed { "changed" } else { "kept" };
-        let row = Row::new([skill.as_str().to_owned(), value, status.to_owned()]);
+        let row = Row::new([tier.as_str().to_owned(), value, status.to_owned()]);
         rows.push(if changed {
             row.style(theme.style(StyleKey::Accent))
         } else {
@@ -121,7 +121,7 @@ fn skills(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: boo
         ],
     )
     .header(
-        Row::new([if review { "REVIEW" } else { "SKILL" }, "AGENT", ""])
+        Row::new([if review { "REVIEW" } else { "TIER" }, "AGENT", ""])
             .style(theme.style(StyleKey::Heading)),
     )
     .row_highlight_style(theme.style(StyleKey::Selection));

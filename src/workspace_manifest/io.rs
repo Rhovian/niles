@@ -18,6 +18,29 @@ pub fn load(
     root: &Utf8Path,
     selection: Option<&SetupSelection>,
 ) -> Result<Option<WorkspaceManifest>> {
+    let manifest = load_for_skill_listing(root, selection)?;
+    if let Some(manifest) = &manifest {
+        let path = manifest_path(root, selection)?;
+        let global = crate::skills::global_dir()?;
+        crate::skills::locate(&manifest.entry, root, &global)
+            .with_context(|| format!("invalid entry skill in {path}"))?;
+        for (skill, binding) in &manifest.bindings {
+            crate::skills::locate(skill, root, &global)
+                .with_context(|| format!("invalid skill in {path}"))?;
+            for name in binding.attached_skills() {
+                crate::skills::locate(name, root, &global)
+                    .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
+            }
+        }
+    }
+    Ok(manifest)
+}
+
+/// Defer skill checks so discovery can warn per skill without losing project settings.
+pub(crate) fn load_for_skill_listing(
+    root: &Utf8Path,
+    selection: Option<&SetupSelection>,
+) -> Result<Option<WorkspaceManifest>> {
     let file = super::setup::active(root, selection)?;
     let path = file.path();
     let mut manifest: Option<WorkspaceManifest> = match &file {
@@ -36,26 +59,13 @@ pub fn load(
         }
         let config = crate::config::spec::load_project_config_from(root)?;
         check(manifest, &config.models).with_context(|| format!("invalid manifest {path}"))?;
-        let global = crate::skills::global_dir()?;
-        for (skill, binding) in &manifest.bindings {
-            crate::skills::locate(skill, root, &global)
-                .with_context(|| format!("invalid skill in {path}"))?;
-            for name in binding.attached_skills() {
-                crate::skills::locate(name, root, &global)
-                    .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
-            }
-        }
     }
     Ok(manifest)
 }
 
 pub(crate) fn check(manifest: &WorkspaceManifest, models: &ModelRoster) -> Result<()> {
-    manifest.binding(&manifest.entry)?;
-    for (skill, binding) in &manifest.bindings {
-        for agent in binding.agents() {
-            super::types::exact_spec(agent, models)
-                .with_context(|| format!("invalid {skill} agent"))?;
-        }
+    for agent in manifest.tiers.agents() {
+        super::types::exact_spec(agent, models).context("invalid manifest agent")?;
     }
     Ok(())
 }
@@ -92,30 +102,28 @@ mod tests {
     fn entry_is_required_by_setup() {
         let error = load_body(
             "manifest-no-entry",
-            "lead: {standard: {primary: claude:sonnet:high, secondaries: []}}\n",
+            "tiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n",
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("missing field `entry`"));
     }
 
     #[test]
-    fn only_entry_must_be_bound() {
-        let body = "entry: reviewer\nreviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+    fn entry_needs_no_composition_binding() {
+        let body =
+            "entry: reviewer\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
         let manifest = load_body("manifest-entry", body).unwrap().unwrap();
         assert_eq!(manifest.entry.as_str(), "reviewer");
-        assert_eq!(manifest.bindings.len(), 1);
-        let error = format!(
-            "{:#}",
-            load_body(
-                "manifest-entry",
-                &body.replace("entry: reviewer", "entry: missing")
-            )
-            .unwrap_err()
-        );
-        assert!(
-            error.contains("missing") && error.contains("manifest.yaml"),
-            "{error}"
-        );
+        assert!(manifest.bindings.is_empty());
+    }
+
+    #[test]
+    fn unbound_missing_entry_fails_with_manifest_path() {
+        let body =
+            "entry: absent\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+        let error = format!("{:#}", load_body("missing-entry-skill", body).unwrap_err());
+        assert!(error.contains("manifest.yaml"), "{error}");
+        assert!(error.contains("skill `absent` has no SKILL.md"), "{error}");
     }
 
     #[test]
@@ -155,18 +163,33 @@ mod tests {
             assert!(error.contains("manifest.yaml"), "{error}");
         }
         let mut manifest = crate::test_support::manifest();
-        manifest
-            .bindings
-            .get_mut(&skill("worker"))
-            .unwrap()
-            .standard
-            .secondaries = vec!["claude:haiku".into(), "claude:sonnet:high".into()];
+        manifest.tiers.standard.secondaries =
+            vec!["claude:haiku".into(), "claude:sonnet:high".into()];
         manifest.checkin = Some("15m".into());
         manifest.recheck = Some("backoff".into());
         save(&root, &manifest).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest));
         crate::test_support::remove_workspace(&root).unwrap();
     }
+
+    #[test]
+    fn skill_model_mappings_and_defaults_are_rejected() {
+        for fields in [
+            "standard: {primary: claude:sonnet:high, secondaries: []}",
+            "default_tier: economy",
+            "tiers: {}",
+        ] {
+            let body = format!(
+                "{}custom: {{{fields}}}\n",
+                crate::test_support::manifest_body()
+            );
+            let error = format!("{:#}", load_body("skill-model-mapping", &body).unwrap_err());
+            assert!(error.contains("unknown field"), "{error}");
+        }
+        let error = load_body("missing-global-tiers", "entry: lead\n").unwrap_err();
+        assert!(format!("{error:#}").contains("missing field `tiers`"));
+    }
+
     #[test]
     fn malformed_manifest_keeps_saphyr_line_and_column() {
         let err = load_body(
@@ -203,7 +226,7 @@ mod tests {
             body.lines()
                 .filter(|line| !line.starts_with(' '))
                 .map(|line| line.split_once(':').unwrap().0)
-                .filter(|key| *key != "entry")
+                .filter(|key| !["entry", "tiers"].contains(key))
                 .is_sorted()
         );
         for gone in ["checkin:", "recheck:", "worktree:"] {
@@ -229,7 +252,7 @@ mod tests {
         let body = crate::test_support::manifest_body();
         for (invalid, cause) in [
             (
-                body.replacen("standard:", "economy:", 1),
+                body.replacen("  standard:\n    primary: codex:gpt-6.1-sol:medium\n    secondaries: [claude:sonnet:high]\n", "", 1),
                 "missing field `standard`",
             ),
             (
@@ -237,7 +260,7 @@ mod tests {
                 "unknown field `when`",
             ),
             (
-                body.replacen("    secondaries: [codex:gpt-6.1-sol:medium]\n", "", 1),
+                body.replacen("    secondaries: [claude:sonnet:high]\n", "", 1),
                 "missing field `secondaries`",
             ),
         ] {

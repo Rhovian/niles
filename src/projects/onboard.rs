@@ -44,10 +44,17 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         manifest::check(&generated, &models)?;
         (body, generated)
     };
+    let starter_skills = if answer == "c" {
+        Vec::new()
+    } else {
+        crate::store::parse_yaml::<Vec<skills::SkillName>>(defaults::SKILLS)?
+    };
     let names: std::collections::BTreeSet<_> = manifest
         .bindings
         .iter()
         .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
+        .chain(&starter_skills)
+        .chain(std::iter::once(&manifest.entry))
         .collect();
     for name in names {
         if skills::find(name, cwd, &global)?.is_none() {

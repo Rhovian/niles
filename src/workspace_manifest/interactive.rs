@@ -5,7 +5,7 @@ use camino::Utf8Path;
 
 use super::{
     WorkspaceManifest, load, manifest_path, save, setup::SetupSelection,
-    skills_table::print_manifest_skills,
+    tiers_table::print_manifest_tiers,
 };
 use crate::{
     agents::picker::{self, Choice},
@@ -24,7 +24,7 @@ pub(crate) fn ensure_interactive(
         start == crate::tmux::LeadStart::Attended && io::stdin().is_terminal(),
         &mut io::stdout(),
         crate::projects::onboard::setup,
-        picker::skills,
+        picker::tiers,
     )
 }
 
@@ -50,7 +50,7 @@ fn ensure(
         ),
     };
     if !interactive {
-        print_manifest_skills(output, &existing, &config)?;
+        print_manifest_tiers(output, &existing, &config)?;
         return Ok(Some(existing));
     }
     match pick(root, existing.clone(), &config)? {
@@ -60,8 +60,8 @@ fn ensure(
     }
 }
 
-/// Re-read before setting skills. Race accepted: a concurrent edit of the same skill inside the
-/// save window is lost, last writer wins.
+/// Re-read before setting tier primaries. Race accepted: concurrent edits of the same tier
+/// inside the save window are lost, last writer wins.
 fn save_changes(
     root: &Utf8Path,
     selection: Option<&SetupSelection>,
@@ -71,9 +71,9 @@ fn save_changes(
     let path = manifest_path(root, selection)?;
     let mut latest = load(root, selection)?.with_context(|| format!("{path} is gone"))?;
     let mut changed = false;
-    for (skill, binding) in &draft.bindings {
-        if before.bindings.get(skill) != Some(binding) {
-            latest.set_primary(skill, binding.standard.primary.clone())?;
+    for (tier, binding) in draft.tiers.iter() {
+        if before.tiers.get(tier) != Some(binding) {
+            latest.tiers.set_primary(tier, binding.primary.clone())?;
             changed = true;
         }
     }

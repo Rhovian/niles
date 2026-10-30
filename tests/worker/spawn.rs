@@ -4,10 +4,7 @@ use super::support::*;
 fn manifest_tiers_bound_spawn_before_worker_state() {
     let env = TestEnv::with_manifest("niles-worker-groups", "claude");
     let path = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&path).unwrap().replace(
-        "research:\n  standard: {primary: claude:sonnet:high, secondaries: []}",
-        "research:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}\n  economy: {primary: claude:haiku, secondaries: []}",
-    );
+    let body = "entry: lead\ntiers:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}\n  economy: {primary: claude:haiku, secondaries: []}\n";
     fs::write(&path, body).unwrap();
     for (id, flags, agent) in [
         ("default", &[][..], "codex:gpt-6-sol:medium"),
@@ -26,10 +23,24 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
         assert!(meta.contains(&format!("\"agent\": \"{agent}\"")), "{meta}");
         assert!(!meta.contains("\"setup\""));
     }
+    let launch = env.spawn(
+        "design",
+        &[
+            "any-skill",
+            "--tier",
+            "economy",
+            "--menu",
+            "reviewer",
+            "--with",
+            "security",
+            "Task",
+        ],
+    );
+    assert_command_success("unbound skill with shared tier", &launch);
     assert_failure_contains(
         "unconfigured tier",
-        &env.spawn("design", &["tier", "--tier", "economy", "Task"]),
-        "does not list tier economy",
+        &env.spawn("design", &["tier", "--tier", "frontier", "Task"]),
+        "does not list tier frontier",
     );
     for (id, agent) in [
         ("unlisted", "codex:gpt-6-luna:medium"),

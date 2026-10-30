@@ -256,22 +256,23 @@ pub fn write_manifest<'a>(
     let state = state_dir(workspace);
     copy_skills(&fixture_home(workspace).join(".niles"));
     fs::create_dir_all(&state).unwrap();
-    let body = bindings
-        .into_iter()
-        .map(|(skill, agent)| {
-            let exact = match agent {
-                "claude" => "claude:sonnet:high",
-                "codex" => "codex:gpt-6.1-sol:medium",
-                _ => agent,
-            };
-            format!("{skill}:\n  standard: {{primary: {exact}, secondaries: []}}\n")
+    let bindings = bindings.into_iter().collect::<Vec<_>>();
+    let agents = bindings
+        .iter()
+        .map(|(_, agent)| match *agent {
+            "claude" => "claude:sonnet:high",
+            "codex" => "codex:gpt-6.1-sol:medium",
+            _ => *agent,
         })
+        .collect::<Vec<_>>();
+    let primary = agents[0];
+    let composition = bindings
+        .iter()
+        .map(|(skill, _)| format!("{skill}: {{}}\n"))
         .collect::<String>();
-    fs::write(
-        state_dir(workspace).join("manifest.yaml"),
-        format!("entry: lead\n{body}"),
-    )
-    .unwrap();
+    fs::write(state.join("manifest.yaml"), format!(
+        "entry: lead\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents.join(", ")
+    )).unwrap();
 }
 
 pub fn write_worker(

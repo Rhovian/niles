@@ -6,7 +6,7 @@ use common::*;
 use std::fs;
 
 #[test]
-fn entry_delivers_its_binding_primary_and_session_header_to_builtin_cli() {
+fn entry_delivers_project_standard_primary_and_session_header_to_builtin_cli() {
     for (entry, model, agent_line) in [
         ("reviewer", "sonnet", ""),
         ("lead", "haiku", "lead_agent: claude:haiku"),
@@ -23,8 +23,15 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let mut body = fs::read_to_string(&manifest)
         .expect(entry)
         .replace("entry: lead", &format!("entry: {entry}"));
+    body = body.replace(
+        "primary: claude:haiku",
+        &format!(
+            "primary: claude:{model}{}",
+            if model == "haiku" { "" } else { ":high" }
+        ),
+    );
     if entry == "solo" {
-        body.push_str("\nsolo: {standard: {primary: claude:sonnet:high, secondaries: []}}\n");
+        body.push_str("\nsolo: {}\n");
     }
     fs::write(&manifest, body).expect(entry);
     let skill = env.root.join(format!(".niles/skills/{entry}/SKILL.md"));

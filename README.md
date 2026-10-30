@@ -60,8 +60,8 @@ the status bar.
 
 Each project is a tmux session. You, the operator, talk to the entry agent, whose skill sets what
 it does: a lead spawns workers in their own windows and reads their reports; solo does the work
-itself. The manifest binds each skill to an agent (`family:model:effort`) with optional cheaper or
-stronger tiers; `niles models` lists them.
+itself. The manifest defines project-wide model tiers (`family:model:effort`) usable by every skill;
+`niles models` lists the approved agents.
 
 ## Skills in this repository
 
@@ -90,14 +90,14 @@ any `.niles/` in your repositories. See
 
 Each project's manifest lives at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml`
 (see [state layout](docs/configuration.md#state-layout) for the encoding). First-run setup
-generates it from your installed agent CLIs. It names the entry skill and binds each skill to a `standard`
-tier `primary`, with optional fallback `secondaries`:
+generates it from your installed agent CLIs. It names the entry skill and defines project-wide tiers with a `primary`
+and ordered fallback `secondaries`:
 
 ```yaml
 entry: lead
-lead: {standard: {primary: claude:opus:medium, secondaries: []}}
-worker: {standard: {primary: codex:gpt-6.1-sol:medium, secondaries: []}}
-reviewer: {standard: {primary: claude:sonnet:high, secondaries: []}}
+tiers:
+  standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}
+  frontier: {primary: claude:opus:high, secondaries: [codex:gpt-6-astra:high]}
 ```
 
 The manifest's worktree `setup` runs with your permissions, so keep it trusted. See

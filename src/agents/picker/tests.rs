@@ -1,4 +1,4 @@
-use crate::test_support::skill;
+use crate::agents::roster::Tier;
 use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyCode};
 
 use super::*;
@@ -88,11 +88,6 @@ fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
 fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     let config = config();
     let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-    form.selected = form
-        .draft
-        .ordered_bindings()
-        .position(|(skill, _)| skill.as_str() == "worker")
-        .unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Esc, &config).unwrap();
     assert_eq!(form.draft, form.original);
@@ -101,13 +96,9 @@ fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     form.key(KeyCode::Enter, &config).unwrap();
     form.key(KeyCode::Up, &config).unwrap();
     form.key(KeyCode::Enter, &config).unwrap();
-    let mut expected = form.original.bindings[&skill("worker")].clone();
+    let mut expected = form.original.tiers.clone();
     expected.standard.primary = "codex:gpt-6.1-sol:low".into();
-    assert_eq!(form.draft.bindings[&skill("worker")], expected);
-    assert_eq!(
-        form.draft.bindings[&skill("lead")],
-        form.original.bindings[&skill("lead")]
-    );
+    assert_eq!(form.draft.tiers, expected);
     assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
     form.key(KeyCode::Char('s'), &config).unwrap();
     assert!(matches!(form.screen, Screen::Review));
@@ -123,7 +114,7 @@ fn unchanged_draft_hides_and_ignores_save() {
     let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     assert!(!render(&form).contains("s save"));
     assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Skills));
+    assert!(matches!(form.screen, Screen::Tiers));
     assert!(render(&form).contains("c continue"));
     assert!(matches!(
         form.key(KeyCode::Char('c'), &config).unwrap(),
@@ -136,7 +127,8 @@ fn restoring_original_draft_hides_and_ignores_save() {
     let config = config();
     let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     form.draft
-        .set_primary(&skill("lead"), "claude:sonnet:medium".into())
+        .tiers
+        .set_primary(Tier::Standard, "claude:sonnet:medium".into())
         .unwrap();
     assert!(render(&form).contains("s save"));
     form.key(KeyCode::Char('s'), &config).unwrap();
@@ -145,7 +137,7 @@ fn restoring_original_draft_hides_and_ignores_save() {
     form.draft = form.original.clone();
     assert!(!render(&form).contains("s save"));
     assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Skills));
+    assert!(matches!(form.screen, Screen::Tiers));
 }
 
 #[test]
@@ -178,7 +170,7 @@ fn render(form: &Form) -> String {
 }
 
 #[test]
-fn arbitrary_binding_names_are_entry_first_then_alphabetical() {
+fn picker_rows_follow_project_tiers() {
     let mut manifest = crate::test_support::manifest();
     let binding = manifest.bindings.values().next().unwrap().clone();
     manifest.bindings = ["zeta", "beta", "alpha"]
@@ -189,7 +181,7 @@ fn arbitrary_binding_names_are_entry_first_then_alphabetical() {
     let mut form = Form::new(manifest, &config()).unwrap();
     form.key(KeyCode::Down, &config()).unwrap();
     form.key(KeyCode::Enter, &config()).unwrap();
-    assert!(matches!(&form.screen, Screen::Editing { skill, .. } if skill.as_str() == "alpha"));
+    assert!(matches!(&form.screen, Screen::Editing { tier, .. } if *tier == Tier::Frontier));
     for _ in 0..3 {
         form.key(KeyCode::Enter, &config()).unwrap();
     }

@@ -13,7 +13,7 @@ mod form;
 #[cfg(test)]
 mod tests;
 
-use crate::skills::SkillName;
+use crate::agents::roster::Tier;
 use columns::{Columns, Pick};
 use form::Form;
 
@@ -25,7 +25,7 @@ pub(crate) enum Choice {
     Quit,
 }
 
-pub(crate) fn skills(
+pub(crate) fn tiers(
     root: &Utf8Path,
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
@@ -57,21 +57,17 @@ fn run_form(
 }
 
 /// Uses the caller's terminal, including CONFIG's existing raw mode and alternate screen.
-pub(crate) fn skill(
+pub(crate) fn tier(
     terminal: &mut DefaultTerminal,
-    skill: &SkillName,
+    tier: &Tier,
     manifest: &WorkspaceManifest,
     config: &ProjectConfig,
     theme: &Theme,
 ) -> Result<Option<String>> {
     let families = columns::families(config)?;
-    let mut columns = Columns::new(
-        &families,
-        &manifest.binding(skill)?.standard.primary,
-        config,
-    )?;
+    let mut columns = Columns::new(&families, &manifest.tiers.tier(*tier)?.primary, config)?;
     loop {
-        terminal.draw(|frame| draw::single(frame, &columns, skill, theme))?;
+        terminal.draw(|frame| draw::single(frame, &columns, tier, theme))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
