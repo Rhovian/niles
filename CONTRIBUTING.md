@@ -37,7 +37,8 @@ Major releases are reserved for a fundamental change in what niles is; there is 
 ## Agent CLI compatibility
 
 Follow this procedure when asked what changed in new agent CLI releases or what Niles should
-change. `gh` must be installed and authenticated. Nothing runs in CI.
+change. `gh` must be installed and authenticated. Release checks run manually; the
+interactive fixture tests described below run in CI.
 
 1. Run `scripts/cli-versions.sh`. It prints TSV fields `cli`, `installed`, `tested`, `latest`,
    `repo`, `result`. Exit 0 means report “all covered” and stop; exit 2 means report stderr and
@@ -75,9 +76,12 @@ change. `gh` must be installed and authenticated. Nothing runs in CI.
    prompt, exit 0 and an unchanged version. The opening turn asks for that run's sample label.
    On failure quote the TSV row, argv from stderr, and the kept evidence directory's `stdout`
    and `stderr`. Re-check versions afterwards.
-6. The headless turn leaves surfaces uncovered: check TUI composer markers, the lead's
-   `--append-system-prompt` (claude, pi) and `foreground_args`, telemetry readers, and worker
-   brief-as-TUI-opening-turn against the notes and each CLI's `--help`.
+6. Unit tests iterate every profile in `src/agents/families.rs` to cover declared composer
+   markers and opening-brief delivery through Niles' launch code. Pasted-brief tests cover the
+   shared sender. These use fixtures and fake agents; `niles compat` runs only the headless turn
+   and does not verify installed CLIs' interactive behavior. Check composer markers,
+   worker brief-as-TUI-opening-turn, the lead's `--append-system-prompt` (claude, pi) and
+   `foreground_args`, and telemetry readers against the notes and each CLI's `--help`.
 7. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
    change and file, and briefly any “no impact” items. On pass, propose updating `tested_version`
    and the README table together using the verified compat `version` column, on an
