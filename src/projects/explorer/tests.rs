@@ -21,7 +21,10 @@ pub(super) fn explorer() -> Explorer {
 fn footer_keys_are_muted() {
     let theme = Theme::parse(None).unwrap();
     let line = key_hints(&theme);
-    assert_eq!(line.to_string(), "↵ open · r register · c close");
+    assert_eq!(
+        line.to_string(),
+        "↵ open · r register · c close · d deregister"
+    );
     assert_eq!(line.style, theme.style(StyleKey::Muted));
 }
 
@@ -81,4 +84,40 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
     assert_eq!(explorer.tree.items().len(), item_count - 1);
     explorer.accept_collection(failed, Err(anyhow::anyhow!("stale failure")));
     assert!(explorer.collection_error.is_none());
+}
+
+#[test]
+fn deregister_requires_project_selection_and_confirmation() {
+    use crate::projects::{registry::Entry, rows::Row};
+    let mut explorer = explorer();
+    explorer.key(KeyCode::Char('d')).unwrap();
+    assert_eq!(
+        explorer.footer.as_deref(),
+        Some("select a project to deregister")
+    );
+    explorer.tree.replace(vec![tree::Project {
+        row: Row {
+            entry: Entry {
+                name: ProjectName::parse("sample").unwrap(),
+                path: "/tmp/sample".into(),
+            },
+            state: State::NotRunning,
+        },
+        agents: None,
+    }]);
+    explorer.key(KeyCode::Down).unwrap();
+    explorer.key(KeyCode::Char('d')).unwrap();
+    assert!(matches!(&explorer.mode, Mode::Deregister(entry) if entry.name.as_str() == "sample"));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+    terminal.draw(|frame| explorer.draw(frame)).unwrap();
+    let rendered: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(rendered.contains("deletes all state and managed worktrees"));
+    explorer.key(KeyCode::Char('n')).unwrap();
+    assert!(matches!(explorer.mode, Mode::Browse));
 }

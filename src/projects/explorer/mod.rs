@@ -32,7 +32,7 @@ use self::{
 use super::{
     panels::{self, Panel},
     register,
-    registry::ProjectName,
+    registry::{self, ProjectName},
     rows::State,
     windows::{LEAD_WINDOW, WindowKind},
 };
@@ -43,7 +43,12 @@ use crate::{
 };
 
 const REFRESH: Duration = Duration::from_secs(2);
-const KEYS: [(&str, &str); 3] = [("↵", "open"), ("r", "register"), ("c", "close")];
+const KEYS: [(&str, &str); 4] = [
+    ("↵", "open"),
+    ("r", "register"),
+    ("c", "close"),
+    ("d", "deregister"),
+];
 
 fn key_hints(theme: &Theme) -> Line<'_> {
     let hints = KEYS.map(|(key, label)| format!("{key} {label}"));
@@ -109,6 +114,7 @@ enum Mode {
         input: String,
     },
     Close(Closing),
+    Deregister(registry::Entry),
 }
 
 enum Closing {
@@ -195,6 +201,20 @@ impl Explorer {
                 }
             }
             (Mode::Browse, KeyCode::Char('r')) => self.mode = Mode::Directory(String::new()),
+            (Mode::Browse, KeyCode::Char('d')) => match self.tree.selected() {
+                Some(Item::Project(project)) => {
+                    self.mode = Mode::Deregister(project.row.entry.clone());
+                }
+                _ => self.footer = Some("select a project to deregister".to_owned()),
+            },
+            (Mode::Deregister(entry), KeyCode::Char('y')) => {
+                self.footer = shown(registry::deregister(entry).and_then(|()| {
+                    tmux::close_view(&self.pane)?;
+                    Ok(Some(format!("deregistered {}", entry.name.as_str())))
+                }));
+                self.mode = Mode::Browse;
+                self.refresh();
+            }
             (Mode::Browse, KeyCode::Char('c')) => match self.selected_closing() {
                 Some(closing) => self.mode = Mode::Close(closing),
                 None => self.footer = Some("select a worker or running project".to_owned()),
@@ -253,7 +273,8 @@ impl Explorer {
                     Err(error) => self.footer = Some(format!("{error:#}")),
                 }
             }
-            (Mode::Close { .. }, _) | (Mode::Directory(_) | Mode::Name { .. }, KeyCode::Esc) => {
+            (Mode::Close { .. } | Mode::Deregister(_), _)
+            | (Mode::Directory(_) | Mode::Name { .. }, KeyCode::Esc) => {
                 self.mode = Mode::Browse;
             }
             (Mode::Browse | Mode::Directory(_) | Mode::Name { .. }, _) => {}
@@ -278,7 +299,7 @@ impl Explorer {
                 match project.row.state {
                     State::Missing => {
                         return Ok(Some(format!(
-                            "rm ~/.niles/projects/{}",
+                            "press d to deregister {}",
                             entry.name.as_str()
                         )));
                     }
@@ -344,6 +365,10 @@ impl Explorer {
             Mode::Browse => None,
             Mode::Directory(input) => Some(format!("directory [{}]: {input}", self.cwd)),
             Mode::Name { default, input, .. } => Some(format!("name [{default}]: {input}")),
+            Mode::Deregister(entry) => Some(format!(
+                "deregister {}? deletes all state and managed worktrees (including uncommitted files); closes its session. y/n",
+                entry.name.as_str()
+            )),
             Mode::Close(Closing::Worker { id, .. }) => Some(format!("close {id}? y/n")),
             Mode::Close(Closing::Project { name, .. }) => {
                 Some(format!("close {} and its workers? y/n", name.as_str()))

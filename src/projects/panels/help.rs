@@ -21,6 +21,7 @@ Coordinates coding agents from different model families in tmux.
 
 Get started
   r    register a project directory, in the explorer on the left
+  d    deregister the selected project, deleting its state and managed worktrees
   ↵    start its lead and show it here
 
 Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
