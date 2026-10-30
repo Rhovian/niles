@@ -33,12 +33,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_identifies_drafts_for_both_families() {
-        for (family, marker) in [("claude", "❯\u{a0}"), ("codex", "› "), ("codex", "» ")] {
-            let markers = crate::agents::profile_for(family)
-                .unwrap()
-                .composer
-                .unwrap();
+    fn cursor_identifies_drafts_for_every_declared_marker() {
+        for (family, markers, marker) in crate::agents::profiles().flat_map(|profile| {
+            profile.composer.into_iter().flat_map(move |markers| {
+                markers
+                    .iter()
+                    .map(move |marker| (profile.id, markers, marker))
+            })
+        }) {
             let screen = format!("header\n{marker}hello\n  world\nfooter\n");
             let empty = format!("{marker}\n");
             let dialog = format!("{marker}hello\n╭ dialog\n  option\n");
@@ -54,7 +56,8 @@ mod tests {
             ] {
                 assert_eq!(
                     recognize(text, CursorPosition { x, y, visible }, markers),
-                    expected
+                    expected,
+                    "{family} {marker:?}"
                 );
             }
         }

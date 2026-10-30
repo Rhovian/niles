@@ -134,6 +134,48 @@ mod tests {
     }
 
     #[test]
+    fn opening_briefs_reach_every_family() {
+        use std::{os::unix::fs::PermissionsExt, process::Command};
+
+        let models = agents::ModelRoster::builtin().unwrap();
+        for profile in agents::profiles() {
+            let temp = tempfile::tempdir().unwrap();
+            let dir = Utf8Path::from_path(temp.path()).unwrap();
+            let binary = dir.join(profile.binary);
+            fs::write(
+                &binary,
+                "#!/bin/sh\nfor arg do :; done\nprintf '%s' \"$arg\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+            let brief = dir.join("brief.md");
+            let text = "line one\n'$(exit 99)' \"quoted\"\nline two";
+            fs::write(&brief, text).unwrap();
+            let invocation =
+                agents::invocation(profile.id, agents::InvocationDefaults::Worker, &models)
+                    .unwrap();
+            let launch = dir.join("launch.sh");
+            fs::write(
+                &launch,
+                launch_script(&invocation, &brief, &dir.join("status.log")),
+            )
+            .unwrap();
+            let output = Command::new("/bin/sh")
+                .arg(&launch)
+                .env("PATH", format!("{dir}:/usr/bin:/bin"))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}: {output:?}", profile.id);
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                text,
+                "{}",
+                profile.id
+            );
+        }
+    }
+
+    #[test]
     fn shell_quotes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }

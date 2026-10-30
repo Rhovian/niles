@@ -179,6 +179,7 @@ mod tests {
     struct ScriptedPane {
         phase: Cell<Phase>,
         actions: RefCell<Vec<&'static str>>,
+        pasted_text: RefCell<Option<String>>,
         pasted_frames: RefCell<VecDeque<String>>,
         cycle_frames: bool,
         submitted_frame: String,
@@ -192,6 +193,7 @@ mod tests {
             Self {
                 phase: Cell::new(Phase::Initial),
                 actions: RefCell::new(Vec::new()),
+                pasted_text: RefCell::new(None),
                 pasted_frames: RefCell::new(
                     pasted_frames
                         .iter()
@@ -245,7 +247,8 @@ mod tests {
             }
         }
 
-        fn paste_literal(&self, _line: &str) -> Result<()> {
+        fn paste_literal(&self, line: &str) -> Result<()> {
+            *self.pasted_text.borrow_mut() = Some(line.to_owned());
             self.actions.borrow_mut().push("paste");
             self.phase.set(Phase::Pasted);
             Ok(())
@@ -262,9 +265,11 @@ mod tests {
     #[test]
     fn rendered_quiet_paste_is_submitted_and_confirmed() {
         let pane = ScriptedPane::new(&["staged"], false, "changed");
+        let brief = "brief\nwith multiple lines";
 
-        send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap();
+        send_line_to_pane(&pane, brief, &TEST_TIMINGS).unwrap();
 
+        assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));
         assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
     }
 
