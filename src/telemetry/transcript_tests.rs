@@ -217,3 +217,82 @@ fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
     assert_eq!(claude.read().unwrap().len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = Utf8Path::from_path(temp.path()).unwrap();
+    let created_at = Utc::now();
+    let local = created_at.with_timezone(&chrono::Local);
+    let dir = home.join(format!(".codex/sessions/{}", local.format("%Y/%m/%d")));
+    std::fs::create_dir_all(&dir).unwrap();
+    let plain = dir.join(format!(
+        "rollout-{}-x.jsonl",
+        local.format("%Y-%m-%dT%H-%M-%S")
+    ));
+    let compressed = plain.with_extension("jsonl.zst");
+    let body = lines(&[
+        json!({"type":"session_meta","payload":{"cwd":"/w"}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user",
+            "content":[{"type":"input_text","text":"# Niles worker brief /w/report.md"}]}}),
+        json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"task_complete"}}),
+        json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"token_count",
+            "info":{"total_token_usage":{"input_tokens":1,"output_tokens":2,"cached_input_tokens":0,"reasoning_output_tokens":0}}}}),
+    ]);
+    let mut frames = zstd::stream::encode_all(&body.as_bytes()[..20], 0).unwrap();
+    frames.extend(zstd::stream::encode_all(&body.as_bytes()[20..], 0).unwrap());
+    let (workspace, needle) = (Utf8Path::new("/w"), Utf8Path::new("/w/report.md"));
+    std::fs::write(plain.with_extension("jsonl.tmp"), &body).unwrap();
+    assert!(
+        codex::read_codex_source(home, workspace, needle, created_at)
+            .unwrap()
+            .is_none()
+    );
+    std::fs::write(&compressed, &frames).unwrap();
+    for expected in [&compressed, &plain] {
+        if expected == &plain {
+            std::fs::write(&plain, &body).unwrap();
+            std::fs::write(&compressed, "corrupt stale duplicate").unwrap();
+        }
+        let (path, parsed) = codex::read_codex_source(home, workspace, needle, created_at)
+            .unwrap()
+            .unwrap();
+        assert_eq!(&path, expected);
+        assert_eq!(codex::codex_usage(&parsed).unwrap().output_tokens, 2);
+        assert!(matches!(
+            codex::codex_activity(&parsed).unwrap().state,
+            super::super::TurnState::Ended
+        ));
+        let mut reader =
+            TranscriptReader::open_in(home, &SessionLink::Codex, workspace, needle, created_at)
+                .unwrap()
+                .unwrap();
+        assert_eq!(reader.read().unwrap().len(), 1);
+        assert!(reader.read().unwrap().is_empty());
+    }
+    std::fs::write(&plain, body.replace("report.md", "other.md")).unwrap();
+    std::fs::write(&compressed, frames).unwrap();
+    assert!(
+        codex::read_codex_source(home, workspace, needle, created_at)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn compressed_transcript_errors_include_the_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = Utf8Path::from_path(temp.path())
+        .unwrap()
+        .join("rollout.jsonl.zst");
+    let valid = zstd::stream::encode_all(b"{}\n".as_slice(), 0).unwrap();
+    for bytes in [
+        b"not zstd".to_vec(),
+        valid[..valid.len() - 1].to_vec(),
+        zstd::stream::encode_all(b"\xff\n".as_slice(), 0).unwrap(),
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        let error = super::super::read_transcript(&path).unwrap_err();
+        assert!(error.to_string().contains(path.as_str()));
+    }
+}

@@ -120,7 +120,17 @@ pub(crate) fn read_session(
 }
 
 fn read_transcript(path: &Utf8Path) -> Result<String> {
-    std::fs::read_to_string(path).with_context(|| format!("read {path}"))
+    (|| -> Result<String> {
+        if path.as_str().ends_with(".jsonl.zst") {
+            let file = std::fs::File::open(path)?;
+            // decode_all handles concatenated frames as well as single-frame rollouts:
+            // https://docs.rs/zstd/0.13.3/zstd/stream/fn.decode_all.html
+            Ok(String::from_utf8(zstd::stream::decode_all(file)?)?)
+        } else {
+            Ok(std::fs::read_to_string(path)?)
+        }
+    })()
+    .with_context(|| format!("read {path}"))
 }
 
 /// No usage and no turn evidence: the shared resolver reports the session as Unknown, so a

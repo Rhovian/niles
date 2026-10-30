@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Seek, SeekFrom},
+    io::{BufRead, BufReader, Cursor, Seek, SeekFrom},
 };
 
 mod project;
@@ -73,8 +73,13 @@ pub(super) enum Family {
 
 /// Independent of usage/activity reads. Owns an append cursor, not a polling timer.
 pub(crate) struct TranscriptReader {
-    file: BufReader<File>,
+    file: TranscriptFile,
     family: Family,
+}
+
+enum TranscriptFile {
+    Live(BufReader<File>),
+    Cold(Cursor<Vec<u8>>),
 }
 
 impl TranscriptReader {
@@ -116,9 +121,13 @@ impl TranscriptReader {
         };
         path.map(|path| {
             Ok(Self {
-                file: BufReader::new(
-                    File::open(&path).with_context(|| format!("open transcript {path}"))?,
-                ),
+                file: if path.as_str().ends_with(".jsonl.zst") {
+                    TranscriptFile::Cold(Cursor::new(super::read_transcript(&path)?.into_bytes()))
+                } else {
+                    TranscriptFile::Live(BufReader::new(
+                        File::open(&path).with_context(|| format!("open transcript {path}"))?,
+                    ))
+                },
                 family,
             })
         })
@@ -126,13 +135,16 @@ impl TranscriptReader {
     }
 
     pub(crate) fn read(&mut self) -> Result<Vec<TextTurn>> {
-        read_jsonl(&mut self.file, self.family)
+        match &mut self.file {
+            TranscriptFile::Live(file) => read_jsonl(file, self.family),
+            TranscriptFile::Cold(file) => read_jsonl(file, self.family),
+        }
     }
 }
 
 // std BufRead::read_until includes delimiters but doesn't distinguish committed JSONL
 // records from a partial append: https://doc.rust-lang.org/1.89.0/std/io/trait.BufRead.html#method.read_until
-fn read_jsonl(file: &mut BufReader<File>, family: Family) -> Result<Vec<TextTurn>> {
+fn read_jsonl(file: &mut (impl BufRead + Seek), family: Family) -> Result<Vec<TextTurn>> {
     let start = file.stream_position()?;
     let result = (|| {
         let mut turns = Vec::new();
