@@ -126,3 +126,32 @@ and app together: a version mismatch shows an update banner and blocks chat.
 your allowlist, push keys and any other Serve mounts. Check `tailscale serve status` first, and
 never use `tailscale serve reset`, which removes unrelated Serve configuration too. If uninstall
 reports a service-manager error for a stopped service, delete the service file by hand and rerun.
+
+## Wake-on-LAN through the relay
+
+Keep the relay awake on the same LAN as the sleeping hosts and enable Wake-on-LAN
+in each host's firmware and OS. Add targets to the relay's `~/.niles/config.yaml`:
+
+```yaml
+remote:
+  relay_node: nYOUR_RELAY_STABLE_NODE_ID
+  wake_hosts:
+    desktop:
+      mac: "01:23:45:67:89:ab"
+      broadcast: 192.168.1.255
+```
+
+Use the same IDs as `/hosts.json`; MAC addresses have six colon-separated hex
+bytes. Restart `niles remote` after editing. Invalid targets stop startup.
+Caddy must route `/api/hosts/*/wake` to the relay's own Niles tailnet listener,
+preserving Tailscale Serve's login header. Configure the relay's `relay_node` as
+its own stable node ID so its connection passes the same WhoIs check as host
+requests. Keep Caddy bound to localhost behind Tailscale Serve.
+
+`POST /api/hosts/desktop/wake` with `Content-Type: application/json` and body `null`
+sends one standard magic packet to the configured broadcast address on UDP port 9.
+It returns 204 after sending, 404 for an unknown ID, and 500 on a socket failure.
+It requires the same relay identity as other API routes. MAC and destination
+addresses never come from the phone. An asleep host's Wake button uses this relay
+route; successful sending does not guarantee the host will wake. Normal polling
+recognizes it when its API becomes reachable.

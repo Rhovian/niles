@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::BTreeMap, fs, net::Ipv4Addr};
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -30,6 +30,15 @@ pub(crate) struct FileRemote {
     pub(crate) allowed_users: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) relay_node: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) wake_hosts: BTreeMap<String, FileWakeHost>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileWakeHost {
+    pub(crate) mac: String,
+    pub(crate) broadcast: Ipv4Addr,
 }
 
 #[cfg(feature = "remote")]
@@ -45,7 +54,7 @@ pub(crate) fn validate_users(users: &[String]) -> Result<()> {
 }
 
 fn remote_is_empty(remote: &FileRemote) -> bool {
-    remote.allowed_users.is_empty() && remote.relay_node.is_none()
+    remote.allowed_users.is_empty() && remote.relay_node.is_none() && remote.wake_hosts.is_empty()
 }
 
 #[derive(Default, Deserialize, Serialize)]

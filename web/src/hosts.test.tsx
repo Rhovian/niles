@@ -86,7 +86,7 @@ it.each([new TypeError('Network down'), { ok: false, status: 502 }, { ok: false,
   failures.set('laptop', failure as Response | Error);
   render(<App />); await screen.findByText(/Laptop: Asleep/); openMenu();
   const wake = hostMenu('Laptop').getByRole('button', { name: 'Wake Laptop' });
-  expect(wake.hasAttribute('disabled')).toBe(true);
+  expect(wake.hasAttribute('disabled')).toBe(false);
   expect(hostMenu('Desktop').getByRole('button', { name: project.name, exact: true })).toBeDefined();
   failures.clear(); fireEvent(window, new Event('focus'));
   await hostMenu('Laptop').findByRole('button', { name: project.name, exact: true });

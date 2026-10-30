@@ -115,6 +115,15 @@ request names a command, argument, skill or path. Message bodies are capped at 1
 contain ESC or NUL. The API grants no CORS access, and mutations use methods that force a
 preflight. See the [deployment guide](remote.md).
 
+The relay's `POST /api/hosts/{id}/wake` sends one UDP magic packet to the MAC and
+IPv4 broadcast address in its local `remote.wake_hosts` map, on port 9. Requests
+cannot supply a destination or packet. Unknown IDs return 404. The same relay peer
+and forwarded-login checks apply; JSON `null` is required to force a cross-origin
+preflight, and the body is capped at 16 bytes. No CORS access is granted. Any user
+admitted by the relay can wake every configured host. Protect the map as routing
+configuration: it authorizes LAN UDP traffic. Packet delivery does not prove the
+machine woke. The relay must share the target's LAN and remain awake.
+
 ### Remote PWA frontend
 
 Whoever controls the app's JavaScript controls an instruction surface for your agents, so serve
