@@ -6,10 +6,8 @@ suspected vulnerabilities according to the [security policy](../SECURITY.md).
 
 ## Trust model
 
-The attack that matters starts when a repository author persuades you to clone their repository
-and launch Niles in it. From then on, repository files are attacker input. Anyone who already
-runs processes as your user is out of scope: they have authority Niles can't take away. That
-rule applies to every boundary below.
+Niles treats the operator's choice to clone a repository as the repository trust decision.
+Processes already running as your user have authority Niles cannot revoke and are out of scope.
 
 What Niles launches:
 
@@ -118,8 +116,7 @@ This model does not protect against:
 - malicious workers already running as your OS user;
 - anything the agent CLIs do once launched. Niles doesn't sandbox or contain them.
 
-These limits don't make a cloned repository trustworthy. Niles coordinates your existing tools
-and permissions; it doesn't reduce them.
+Niles runs your existing tools with your permissions in repositories you have chosen to trust.
 
 ## First-run setup
 
