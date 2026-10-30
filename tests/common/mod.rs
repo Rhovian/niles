@@ -371,3 +371,22 @@ pub fn copy_skills(root: &Path) {
         }
     }
 }
+
+#[cfg(feature = "remote")]
+pub fn stub_tailscale(env: &TestEnv) {
+    write_executable(
+        &env.bin.join("tailscale"),
+        r#"#!/bin/sh
+case "$*" in
+  'ip -4') echo 127.0.0.1 ;;
+  'whois --json --proto=tcp 127.0.0.1:'*)
+    if [ -f "$HOME/whois-fail" ]; then echo 'daemon unavailable' >&2; exit 1; fi
+    if [ -f "$HOME/whois-empty" ]; then echo '{"Node":{"StableID":""}}'; exit 0; fi
+    if [ -f "$HOME/whois-bad" ]; then echo '{}'; exit 0; fi
+    if [ -f "$HOME/whois-other" ]; then echo '{"Node":{"StableID":"other"}}';
+    else echo '{"Node":{"StableID":"relay"},"UserProfile":{"LoginName":"relay-owner"}}'; fi ;;
+  *) echo "unexpected tailscale arguments: $*" >&2; exit 1 ;;
+esac
+"#,
+    );
+}

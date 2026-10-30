@@ -1,9 +1,9 @@
-use std::{convert::Infallible, net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{
@@ -21,6 +21,7 @@ use crate::{
     projects::status::{self, ForegroundSession},
 };
 
+mod auth;
 mod chat;
 mod control;
 mod feed;
@@ -39,21 +40,20 @@ type ProjectSource =
 
 #[derive(Clone)]
 struct AppState {
-    users: Arc<Vec<String>>,
+    relay: auth::Relay,
     source: Source,
     projects: ProjectSource,
     push: Option<Arc<push::Store>>,
 }
 
 impl AppState {
-    fn new(users: Vec<String>, source: Source) -> Result<Self> {
-        user::validate_users(&users)?;
-        Ok(Self {
-            users: Arc::new(users),
+    fn new(relay: auth::Relay, source: Source) -> Self {
+        Self {
+            relay,
             source,
             projects: Arc::new(crate::projects::navigation::collect),
             push: None,
-        })
+        }
     }
 }
 
@@ -110,20 +110,25 @@ fn resolve(source: &Source, id: &str) -> Result<Option<ForegroundSession>> {
 // The runtime is created only when this sync CLI entry point is invoked.
 #[tokio::main]
 pub(crate) async fn run(port: u16) -> Result<()> {
-    let users =
-        blocking(|| Ok(user::FileConfig::load(&user::path()?)?.remote.allowed_users)).await?;
-    let mut state = AppState::new(users, Arc::new(status::live_sessions))?;
+    let relay =
+        blocking(|| auth::Relay::new(user::FileConfig::load(&user::path()?)?.remote.relay_node))
+            .await?;
+    let mut state = AppState::new(relay, Arc::new(status::live_sessions));
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
+    let ip = blocking(auth::tailnet_ip).await?;
+    let listener = tokio::net::TcpListener::bind((ip, port)).await?;
     eprintln!("remote listening on {}", listener.local_addr()?);
     let notifier = state.push.clone();
     let source = state.source.clone();
-    let users = state.users.clone();
-    let server = axum::serve(listener, router(state)).into_future();
+    let server = axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .into_future();
     if let Some(store) = notifier {
         tokio::select! {
             result = server => result?,
-            result = push::watch(source, store, users) => result?,
+            result = push::watch(source, store) => result?,
         }
     } else {
         server.await?;
@@ -173,18 +178,41 @@ struct AuthorizedUser(String);
     reason = "Malformed identity headers intentionally become a 403, not a server error"
 )]
 async fn authorize(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
+    // HeaderMap preserves duplicate values; the relay contract requires a single login.
+    // https://docs.rs/http/1.5.0/http/header/struct.HeaderMap.html#method.get_all
     let mut logins = request.headers().get_all("tailscale-user-login").iter();
     let login = logins
         .next()
         .and_then(|value| value.to_str().ok())
-        .filter(|login| state.users.iter().any(|user| user == login))
+        .filter(|login| {
+            !login.is_empty()
+                && login.trim() == *login
+                && !login.chars().any(char::is_control)
+                && !login.contains(',')
+        })
         .filter(|_| logins.next().is_none())
         .map(str::to_owned);
-    let mut response = if let Some(login) = login {
+    let result = async {
+        let Some(login) = login else {
+            return Ok(StatusCode::FORBIDDEN.into_response());
+        };
+        let Some(ConnectInfo(peer)) = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .copied()
+        else {
+            return Ok(StatusCode::FORBIDDEN.into_response());
+        };
+        if !blocking(move || state.relay.accepts(peer)).await? {
+            return Ok(StatusCode::FORBIDDEN.into_response());
+        }
         request.extensions_mut().insert(AuthorizedUser(login));
-        next.run(request).await
-    } else {
-        StatusCode::FORBIDDEN.into_response()
+        Ok::<_, anyhow::Error>(next.run(request).await)
+    }
+    .await;
+    let mut response = match result {
+        Ok(response) => response,
+        Err(error) => ApiError(error).into_response(),
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,

@@ -28,6 +28,8 @@ pub(crate) struct FileConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileRemote {
     pub(crate) allowed_users: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) relay_node: Option<String>,
 }
 
 #[cfg(feature = "remote")]
@@ -43,7 +45,7 @@ pub(crate) fn validate_users(users: &[String]) -> Result<()> {
 }
 
 fn remote_is_empty(remote: &FileRemote) -> bool {
-    remote.allowed_users.is_empty()
+    remote.allowed_users.is_empty() && remote.relay_node.is_none()
 }
 
 #[derive(Default, Deserialize, Serialize)]
