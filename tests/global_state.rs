@@ -33,7 +33,7 @@ fn new_state_and_manifest_stay_outside_the_repository() {
 }
 
 #[test]
-fn project_keys_use_plain_slash_replacement_and_accept_collisions() {
+fn project_keys_isolate_previously_colliding_workspaces() {
     let env = TestEnv::new("niles-global-keys");
     let a = env.root.join("a/b");
     let b = env.root.join("a-b");
@@ -44,13 +44,12 @@ fn project_keys_use_plain_slash_replacement_and_accept_collisions() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
-        let expected = env
-            .home
-            .join(".niles/state")
-            .join(workspace.to_str().unwrap().replace('/', "-"));
+        let expected = state_dir(workspace);
         assert!(expected.join("worker/wait.lock").is_file());
     }
-    assert_eq!(state_dir(&a), state_dir(&b));
+    assert_ne!(state_dir(&a), state_dir(&b));
+    fs::remove_dir_all(state_dir(&a)).unwrap();
+    assert!(state_dir(&b).join("worker/wait.lock").is_file());
     assert_eq!(env.run(&["state"]).status.code(), Some(2));
 }
 

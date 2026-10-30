@@ -33,15 +33,21 @@ What Niles launches:
 | Repository code execution | `.niles/setups/<name>.yaml`, when you select it | Runs its `worktree.setup` and `gates.post` only from a setup you name with `--setup`; prints gate argv at spawn. | Selecting a repository setup runs its commands as you. See [Named setups](#named-setups). |
 | Workspace skills | `.niles/skills/<name>/SKILL.md` | Looks up only bound or named skills, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
 | Imported skills | The pinned GitHub repository | Pins a full commit SHA, fetches only from github.com with hooks off and symlinks as plain files, caps content at 8 MiB, and never runs imported scripts. | Agents may still choose to run those scripts. |
-| Global state | Nothing directly: state lives in `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels. | Parent directories aren't protected; locks don't authenticate writers. Paths that differ only by `/` versus `-` share state. |
+| Global state | Nothing directly: state lives in `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
 | Status lines and pane text | Text an agent repeats from the repository | Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
 | Agent execution | Repository content an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
 | Remote API | Requests from allowed tailnet devices | Listens on loopback only and requires one Tailscale identity header on the allowlist. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
-The global project manifest at `~/.niles/state/<workspace key>/manifest.yaml` is yours, not the
+The global project manifest at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml` is yours, not the
 repository's. Its `worktree.setup` and `gates.post` run with your permissions, so only put
 commands there you would run yourself.
+
+Workspace keys encode the full absolute path's UTF-8 bytes as lowercase hex, split into
+directory components of at most 240 characters. `@state` is outside that alphabet, so prefix
+keys cannot contain each other's state. See [state layout](configuration.md#state-layout).
+Legacy slash-to-hyphen state must be migrated by hand before installing the new binary;
+there is no legacy lookup that could share another workspace's state.
 
 ### Named setups
 

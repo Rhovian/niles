@@ -110,10 +110,16 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 
 ## State layout
 
-- `~/.niles/state/<workspace key>/`: the manifest, sessions, worker briefs, status logs and
-  reports. The key is the absolute workspace path with `/` replaced by `-`, so
-  `/Users/j/code/my-app` becomes `-Users-j-code-my-app`. Paths that differ only by `/` versus
-  `-` share state, and keys longer than the filesystem's name limit (usually 255 bytes) fail.
+- `~/.niles/state/v2/<workspace key>/@state/`: the manifest, sessions, worker briefs, status
+  logs and reports. Encode the entire absolute workspace path's UTF-8 bytes (including `/`)
+  as lowercase hexadecimal, then split that string into directory components of at most
+  240 characters. For example, `/code/my-app` becomes `v2/2f636f64652f6d792d617070/@state`,
+  while `/code/my/app` becomes `v2/2f636f64652f6d792f617070/@state`. This reversible encoding
+  distinguishes separators, hyphens, case and Unicode bytes even on case-insensitive filesystems.
+  The reserved `@state` leaf keeps prefix keys' state directories disjoint. Individual key
+  components stay below the usual 255-byte name limit; the filesystem's total path limit still
+  applies. Older binaries used slash-to-hyphen keys; move existing state to the new layout
+  by hand before installing this version. Niles does not migrate or read legacy state.
 - `~/.niles/projects`: registered projects.
 - `~/.niles/cache/`: checkouts of skills pinned with `niles skills import`, which also writes a
   `SKILL.ref` pointer under `.niles/skills/` or `~/.niles/skills/`.

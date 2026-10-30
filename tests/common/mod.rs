@@ -335,8 +335,17 @@ pub fn state_dir(workspace: &Path) -> PathBuf {
 }
 
 pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
-    home.join(".niles/state")
-        .join(workspace.to_str().unwrap().replace('/', "-"))
+    let hex: String = workspace
+        .to_str()
+        .unwrap()
+        .bytes()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let mut dir = home.join(".niles/state/v2");
+    for chunk in hex.as_bytes().chunks(240) {
+        dir.push(std::str::from_utf8(chunk).unwrap());
+    }
+    dir.join("@state")
 }
 
 pub fn setup_manifest_body() -> &'static str {

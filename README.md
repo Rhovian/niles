@@ -91,7 +91,8 @@ config. To remove it, close its projects in the home view (`c`), uninstall the b
 
 ## Configuration
 
-Each project's manifest lives at `~/.niles/state/<repo path, / as ->/manifest.yaml`. The setup skill
+Each project's manifest lives at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml`
+(see [state layout](docs/configuration.md#state-layout) for the encoding). The setup skill
 writes it; Niles has no default. It names the entry skill and binds each skill to a `standard`
 tier `primary`, with optional fallback `secondaries`:
 

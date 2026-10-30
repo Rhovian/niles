@@ -73,11 +73,8 @@ fn orchestration_state_uses_the_private_unit_test_home() {
     let home = home_dir();
     assert!(home.is_absolute());
     let state = crate::store::paths::project_dir(&workspace).unwrap();
-    assert_eq!(
-        state,
-        home.join(".niles/state")
-            .join(workspace.as_str().replace('/', "-"))
-    );
+    assert!(state.starts_with(home.join(".niles/state/v2")));
+    assert_eq!(state.file_name(), Some("@state"));
     std::fs::create_dir_all(&state).unwrap();
     assert_eq!(crate::util::home_dir().unwrap(), home);
     remove_workspace(&workspace).unwrap();
