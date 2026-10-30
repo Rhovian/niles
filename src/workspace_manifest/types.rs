@@ -239,6 +239,14 @@ impl WorkspaceManifest {
 }
 
 impl Binding {
+    pub(crate) fn attached_skills(&self) -> impl Iterator<Item = &SkillName> {
+        self.skills
+            .iter()
+            .chain(&self.always)
+            .chain(&self.on_from)
+            .chain(&self.on_stage)
+    }
+
     pub fn tier(&self, tier: Tier) -> Result<&TierBinding> {
         match tier {
             Tier::Standard => Some(&self.standard),
@@ -299,19 +307,15 @@ pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec>
     Ok(spec)
 }
 
-#[cfg(test)]
-impl From<String> for Binding {
-    fn from(primary: String) -> Self {
+impl From<TierBinding> for Binding {
+    fn from(standard: TierBinding) -> Self {
         Self {
             skills: Vec::new(),
             always: Vec::new(),
             on_from: Vec::new(),
             on_stage: Vec::new(),
             gates: None,
-            standard: TierBinding {
-                primary,
-                secondaries: Vec::new(),
-            },
+            standard,
             frontier: None,
             economy: None,
             mechanical: None,
@@ -322,6 +326,15 @@ impl From<String> for Binding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl From<String> for Binding {
+        fn from(primary: String) -> Self {
+            Self::from(TierBinding {
+                primary,
+                secondaries: Vec::new(),
+            })
+        }
+    }
 
     #[test]
     fn rounds_are_bounded_at_yaml_and_json_parse_boundaries() {

@@ -352,13 +352,7 @@ pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
 }
 
 pub fn setup_manifest_body() -> &'static str {
-    include_str!("../../skills/niles-setup/SKILL.md")
-        .split_once("```yaml\n")
-        .unwrap()
-        .1
-        .split_once("```")
-        .unwrap()
-        .0
+    include_str!("../../src/test_support/manifest.yaml")
 }
 
 pub fn copy_skills(root: &Path) {

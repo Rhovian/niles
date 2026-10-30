@@ -1,0 +1,21 @@
+claude codex: |
+  design standard=claude,codex frontier=claude,codex
+  lead standard=claude,codex frontier=claude,codex
+  research standard=codex,claude economy=codex,claude
+  reviewer standard=claude,codex frontier=claude,codex economy=claude,codex
+  security standard=codex,claude economy=codex,claude mechanical=codex,claude
+  worker standard=codex,claude frontier=codex,claude economy=codex,claude mechanical=codex,claude
+pi: |
+  design standard=pi
+  lead standard=pi
+  research standard=pi economy=pi
+  reviewer standard=pi economy=pi
+  security standard=pi economy=pi mechanical=pi
+  worker standard=pi economy=pi mechanical=pi
+claude pi: |
+  design standard=claude,pi frontier=claude
+  lead standard=claude,pi frontier=claude
+  research standard=claude,pi economy=claude,pi
+  reviewer standard=claude,pi frontier=claude economy=claude,pi
+  security standard=claude,pi economy=claude,pi mechanical=claude,pi
+  worker standard=claude,pi frontier=claude economy=claude,pi mechanical=claude,pi

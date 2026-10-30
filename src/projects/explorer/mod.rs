@@ -58,12 +58,27 @@ fn key_hints(theme: &Theme) -> Line<'_> {
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
     let config = crate::config::user::UserConfig::load()?;
-    let home = tmux::open_home(&current_dir_utf8()?)?;
-    tmux::configure_home(&home, &Theme::load()?, REFRESH)?;
+    let cwd = current_dir_utf8()?;
+    let theme = Theme::load()?;
+    let target = super::onboard::first_run(&cwd)?
+        .map(|entry| start_project(&entry, &theme))
+        .transpose()?;
+    let home = tmux::open_home(&cwd)?;
+    tmux::configure_home(&home, &theme, REFRESH)?;
     if config.tmux.bindings {
         tmux::install_home_bindings()?;
     }
+    if let Some(target) = target {
+        tmux::show_in_view(&TmuxTarget::pane(&tmux::explorer_pane())?, &target)?;
+    }
     tmux::switch_or_attach(&TmuxTarget::session(&home))
+}
+
+fn start_project(entry: &registry::Entry, theme: &Theme) -> Result<WindowTarget> {
+    let session = entry.name.session()?;
+    tmux::open_session(&session, &entry.path, tmux::LeadStart::Attended)?;
+    tmux::configure_status(&session, theme)?;
+    WindowTarget::new(session, LEAD_WINDOW)
 }
 
 /// `niles explorer`: the tree in the home session's left pane.
@@ -243,7 +258,10 @@ impl Explorer {
             }
             (Mode::Directory(input), KeyCode::Enter) => match register::directory(input, &self.cwd)
             {
-                Ok((path, default)) => {
+                Ok(register::Directory::Registered(entry)) => {
+                    self.footer = Some(format!("already registered as {}", entry.name.as_str()));
+                }
+                Ok(register::Directory::Unregistered { path, default }) => {
                     self.mode = Mode::Name {
                         path,
                         default,
@@ -262,7 +280,7 @@ impl Explorer {
             ) => {
                 let name = if input.is_empty() { default } else { input };
                 match register::register(name, path) {
-                    Ok(()) => {
+                    Ok(_) => {
                         self.footer = Some(format!("registered {name}"));
                         self.mode = Mode::Browse;
                         self.refresh();
@@ -304,8 +322,7 @@ impl Explorer {
                         )));
                     }
                     State::NotRunning => {
-                        tmux::open_session(&session, &entry.path, tmux::LeadStart::Attended)?;
-                        tmux::configure_status(&session, &self.theme)?;
+                        start_project(entry, &self.theme)?;
                     }
                     State::Running | State::Starting | State::Waiting(_) => {}
                 }

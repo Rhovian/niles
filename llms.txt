@@ -2,14 +2,11 @@
 
 > Rust CLI that runs Claude Code, Codex and pi as one team in tmux. Unix only.
 
-To set Niles up in a repository, load the `niles-setup` skill, or read it directly and follow it.
-
 ## Set up
 
-- [Install](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#2-install): Homebrew, the shell installer, or Cargo.
-- [Write the manifest](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#3-write-the-manifest): `~/.niles/state/v2/<workspace-key>/@state/manifest.yaml`, chosen with the user.
-- [Check with niles doctor](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#4-check-with-niles-doctor)
-- [Start the workspace](https://github.com/Rhovian/niles/blob/main/skills/niles-setup/SKILL.md#5-hand-off-to-start): the user runs `niles`.
+Install Niles with Homebrew, the shell installer, or Cargo (see the README), then have the user
+run `niles` in the repository. The first run offers registration; setup in the project pane
+detects agent CLIs, pins release-matched skills, and configures the manifest. Register later projects with `r`.
 
 ## Docs
 

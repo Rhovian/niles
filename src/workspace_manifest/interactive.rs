@@ -12,7 +12,7 @@ use crate::{
     config::spec::load_project_config_from,
 };
 
-/// The manifest to launch with, or `None` when the operator quit the picker.
+/// The manifest to launch with, or `None` when the operator declines setup or quits the picker.
 pub(crate) fn ensure_interactive(
     root: &Utf8Path,
     start: crate::tmux::LeadStart,
@@ -23,6 +23,7 @@ pub(crate) fn ensure_interactive(
         selection,
         start == crate::tmux::LeadStart::Attended && io::stdin().is_terminal(),
         &mut io::stdout(),
+        crate::projects::onboard::setup,
         picker::skills,
     )
 }
@@ -32,6 +33,7 @@ fn ensure(
     selection: Option<&SetupSelection>,
     interactive: bool,
     output: &mut impl Write,
+    set_up: impl FnOnce(&Utf8Path) -> Result<Option<WorkspaceManifest>>,
     pick: impl FnOnce(
         &Utf8Path,
         WorkspaceManifest,
@@ -40,9 +42,13 @@ fn ensure(
 ) -> Result<Option<WorkspaceManifest>> {
     let config = load_project_config_from(root)?;
     let path = manifest_path(root, selection)?;
-    let existing = load(root, selection)?.with_context(|| {
-        format!("workspace manifest {path} does not exist; create it with the niles-setup skill")
-    })?;
+    let existing = match load(root, selection)? {
+        Some(manifest) => manifest,
+        None if interactive => return set_up(root),
+        None => anyhow::bail!(
+            "workspace manifest {path} does not exist; select the project in `niles` in a terminal to set it up"
+        ),
+    };
     if !interactive {
         print_manifest_skills(output, &existing, &config)?;
         return Ok(Some(existing));

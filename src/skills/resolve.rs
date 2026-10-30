@@ -54,7 +54,11 @@ pub(crate) fn global_dir() -> Result<Utf8PathBuf> {
     Ok(crate::util::home_dir()?.join(".niles"))
 }
 
-pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Source> {
+pub(crate) fn find(
+    name: &SkillName,
+    workspace: &Utf8Path,
+    global: &Utf8Path,
+) -> Result<Option<Source>> {
     for (origin, dir) in [
         (
             Origin::Workspace,
@@ -68,10 +72,10 @@ pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) 
         let rf = super::files::exists(&pointer, origin)?;
         ensure!(!(md && rf), "skill has both {markdown} and {pointer}");
         if md {
-            return Ok(Source::Local {
+            return Ok(Some(Source::Local {
                 origin,
                 path: markdown,
-            });
+            }));
         }
         if rf {
             let text = super::files::read(&pointer, origin)?;
@@ -82,12 +86,16 @@ pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) 
                 "skill ref name must equal its directory name: {pointer}"
             );
             let path = super::cache::directory(&reference, global).join("SKILL.md");
-            return Ok(Source::Import { reference, path });
+            return Ok(Some(Source::Import { reference, path }));
         }
     }
-    bail!(
+    Ok(None)
+}
+
+pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Source> {
+    find(name, workspace, global)?.with_context(|| format!(
         "skill `{name}` has no SKILL.md or SKILL.ref: put one at {global}/skills/{name}/ or {workspace}/.niles/skills/{name}/, or pin one with `niles skills import <owner>/<repo>/<path>`"
-    )
+    ))
 }
 
 pub(crate) fn resolve(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Skill> {

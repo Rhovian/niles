@@ -3,7 +3,7 @@ use std::fs;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::store;
+use crate::{agents::ModelRoster, store};
 
 use super::{
     WorkspaceManifest,
@@ -35,30 +35,29 @@ pub fn load(
             manifest.source = Some(source.clone());
         }
         let config = crate::config::spec::load_project_config_from(root)?;
-        manifest
-            .binding(&manifest.entry)
-            .with_context(|| format!("invalid entry in {path}"))?;
+        check(manifest, &config.models).with_context(|| format!("invalid manifest {path}"))?;
         let global = crate::skills::global_dir()?;
         for (skill, binding) in &manifest.bindings {
             crate::skills::locate(skill, root, &global)
                 .with_context(|| format!("invalid skill in {path}"))?;
-            for name in binding
-                .skills
-                .iter()
-                .chain(&binding.always)
-                .chain(&binding.on_from)
-                .chain(&binding.on_stage)
-            {
+            for name in binding.attached_skills() {
                 crate::skills::locate(name, root, &global)
                     .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
-            }
-            for agent in binding.agents() {
-                super::types::exact_spec(agent, &config.models)
-                    .with_context(|| format!("invalid {skill} agent in {path}"))?;
             }
         }
     }
     Ok(manifest)
+}
+
+pub(crate) fn check(manifest: &WorkspaceManifest, models: &ModelRoster) -> Result<()> {
+    manifest.binding(&manifest.entry)?;
+    for (skill, binding) in &manifest.bindings {
+        for agent in binding.agents() {
+            super::types::exact_spec(agent, models)
+                .with_context(|| format!("invalid {skill} agent"))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn save(
@@ -136,44 +135,6 @@ mod tests {
                 error.contains("manifest.yaml") && error.contains(cause),
                 "{name}: {error}"
             );
-        }
-    }
-
-    #[test]
-    fn shipped_templates_load_and_resolve_every_exact_pair() {
-        let skill = include_str!("../../skills/niles-setup/SKILL.md");
-        let templates = skill
-            .split("```yaml\n")
-            .skip(1)
-            .map(|block| block.split_once("```").unwrap().0);
-        let root = temp_test_path("manifest-templates");
-        for body in templates {
-            fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
-            fs::write(manifest_path(&root).unwrap(), body).unwrap();
-            let manifest = load(&root).unwrap().unwrap();
-            save(&root, &manifest).unwrap();
-            assert_eq!(load(&root).unwrap(), Some(manifest));
-        }
-        crate::test_support::remove_workspace(&root).unwrap();
-    }
-
-    #[test]
-    fn setup_skills_ship_only_their_configured_tiers() {
-        use crate::agents::roster::Tier;
-        let manifest = crate::test_support::manifest();
-        for (skill, frontier, economy, mechanical) in [
-            ("lead", true, false, false),
-            ("worker", true, true, true),
-            ("design", true, false, false),
-            ("reviewer", true, true, false),
-            ("security", false, true, true),
-            ("research", false, true, false),
-        ] {
-            let binding = manifest.binding(&skill.parse().unwrap()).unwrap();
-            assert!(binding.tier(Tier::Standard).is_ok());
-            assert_eq!(binding.tier(Tier::Frontier).is_ok(), frontier);
-            assert_eq!(binding.tier(Tier::Economy).is_ok(), economy);
-            assert_eq!(binding.tier(Tier::Mechanical).is_ok(), mechanical);
         }
     }
 

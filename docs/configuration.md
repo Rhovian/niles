@@ -131,5 +131,5 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 
 Niles reads `~/.niles/roster.yaml` and `niles.yaml` but never writes them, and it doesn't edit
 your agent CLIs' or tmux configuration. To remove Niles, close its projects in the home view
-(`c`), uninstall the binary, and delete `~/.niles`, the `niles-setup` skill directories, any
+(`c`), uninstall the binary, and delete `~/.niles`, any
 `.niles/` directories in your repositories, and branches left by worktree spawns.

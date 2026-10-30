@@ -37,10 +37,7 @@ pub(super) fn prepare(
         let name = item.name();
         if let MenuItem::Ref(reference) = item {
             let occupied = std::iter::once(&primary.name)
-                .chain(&binding.skills)
-                .chain(&binding.always)
-                .chain(&binding.on_from)
-                .chain(&binding.on_stage)
+                .chain(binding.attached_skills())
                 .chain(with)
                 .any(|other| other == name);
             ensure!(
