@@ -1,7 +1,6 @@
 # Niles threat model
 
-Niles coordinates the agent CLIs you already trust, with your permissions. It is not a sandbox,
-and this page does not claim that running agents on an untrusted repository is safe. Report
+Niles coordinates the agent CLIs you already trust, with your permissions. It is not a sandbox. Report
 suspected vulnerabilities according to the [security policy](../SECURITY.md).
 
 ## Trust model
@@ -20,20 +19,19 @@ What Niles launches:
 - Niles has no repository trust gate of its own and never accepts an agent CLI's trust prompt.
   Skill text is passed at launch, before that prompt, so declining the prompt can't take it back.
 - Reports, pane captures, logs and transcripts may contain secrets. Treat `~/.niles/` as
-  sensitive. Transcript text is untrusted display data: code that shows it must escape it and
-  never execute it.
+  sensitive. Code displaying transcript text must escape it and never execute it.
 
 ## Boundaries
 
-| Boundary | Attacker controls | What Niles does | Remaining risk |
+| Boundary | Source or input | What Niles does | Remaining risk |
 | --- | --- | --- | --- |
 | Repository configuration | `niles.yaml` or `.niles.yaml` | Accepts only model and effort entries; unknown fields fail. It can't change executables or launch arguments. | It can add models and efforts that spawns may select. |
 | Repository code execution | `.niles/setups/<name>.yaml`, when you select it | Runs its `worktree.setup` and `gates.post` only from a setup you name with `--setup`; prints gate argv at spawn. | Selecting a repository setup runs its commands as you. See [Named setups](#named-setups). |
 | Workspace skills | `.niles/skills/<name>/SKILL.md` | Looks up only bound or named skills, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
 | Imported skills | The pinned GitHub repository | Pins a full commit SHA, fetches only from github.com with hooks off and symlinks as plain files, caps content at 8 MiB, and never runs imported scripts. | Agents may still choose to run those scripts. |
-| Global state | Nothing directly: state lives in `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
-| Status lines and pane text | Text an agent repeats from the repository | Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
-| Agent execution | Repository content an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
+| Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
+| Status lines and pane text | Worker status lines and captured pane text | Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
+| Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
 | Remote API | Requests from allowed tailnet devices | Listens on loopback only and requires one Tailscale identity header on the allowlist. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
@@ -63,7 +61,7 @@ trees requires restoring the checkout before Git can remove them.
 
 ### Named setups
 
-A workspace setup under `.niles/setups/` is repository-controlled. It takes effect only when you
+A workspace setup is stored under `.niles/setups/` in the repository. It takes effect only when you
 select it with `--setup <name>` or `NILES_SETUP`, and it then shadows a global setup of the same
 name; `--setup global:<name>` pins your own. Its `worktree.setup` runs through `sh -c` in each
 new worktree, and its `gates.post` commands run each time a worker stages. Both run with your
@@ -75,9 +73,8 @@ setup's name, origin and gate commands, but printing them is not approval.
 A repository can ship `.niles/skills/<name>/SKILL.md`, which overrides a global skill of the
 same name. A bound skill's body reaches the agent at system or developer-prompt privilege,
 above `AGENTS.md`. Only names a binding or spawn flag mentions are looked up, and every launch
-prints `skill: <name> (<source> <path>)`, so you can see where the text came from. Seeing the
-source is not trusting it: a `git pull` can change a skill without any prompt, as it can change
-`AGENTS.md`. Size limits are in [skill workflows](skills.md).
+prints `skill: <name> (<source> <path>)`, so you can see where the text came from.
+Size limits are in [skill workflows](skills.md).
 
 ### Remote API
 
@@ -97,9 +94,9 @@ preflight. See the [deployment guide](remote.md).
 ### Remote PWA frontend
 
 Whoever controls the app's JavaScript controls an instruction surface for your agents, so serve
-it only from the Niles host, on the API's origin. Transcripts can echo hostile content: Markdown
-passes through DOMPurify, links open with `noopener noreferrer`, and the CSP allows scripts and
-connections from the same origin only. A meta CSP can't set `frame-ancestors`, and Tailscale
+it only from the Niles host, on the API's origin. Transcript Markdown passes through DOMPurify,
+links open with `noopener noreferrer`, and the CSP allows scripts and connections from the
+same origin only. A meta CSP can't set `frame-ancestors`, and Tailscale
 Serve can't add the header, so this deployment has no clickjacking protection.
 
 Push payloads carry only a session ID, project name and generic reason, encrypted with VAPID.

@@ -110,8 +110,8 @@ A named setup is a whole alternative manifest. Select it with `--setup tdd` or `
 (the flag wins). `.niles/setups/tdd.yaml` in the repository overrides `~/.niles/setups/tdd.yaml`;
 `--setup global:tdd` or `--setup workspace:tdd` picks one. Setups are never merged, and the skill
 picker saves to the selected file. To switch, start a new entry session; running sessions keep
-theirs. Workspace setups can run commands, so read the [threat model](security.md#named-setups)
-before selecting one from a cloned repository.
+theirs. Selected workspace setups run their commands with your permissions; see
+[Named setups](security.md#named-setups) for execution details.
 
 ## Limits
 
