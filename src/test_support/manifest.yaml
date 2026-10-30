@@ -1,55 +1,20 @@
 entry: lead
-lead:
-  standard:
-    primary: claude:sonnet:high
-    secondaries: [codex:gpt-6.1-sol:medium]
-  frontier:
-    primary: claude:opus:high
-    secondaries: [codex:gpt-6-astra:high]
-worker:
+tiers:
   standard:
     primary: codex:gpt-6.1-sol:medium
     secondaries: [claude:sonnet:high]
   frontier:
-    primary: codex:gpt-6-astra:high
-    secondaries: [claude:opus:high]
+    primary: claude:opus:high
+    secondaries: [codex:gpt-6-astra:high]
   economy:
     primary: codex:gpt-6-luna:medium
     secondaries: [claude:sonnet:medium]
   mechanical:
     primary: codex:gpt-6-luna:low
     secondaries: [claude:haiku]
-design:
-  standard:
-    primary: claude:sonnet:high
-    secondaries: [codex:gpt-6.1-sol:medium]
-  frontier:
-    primary: claude:opus:high
-    secondaries: [codex:gpt-6-astra:high]
-reviewer:
-  standard:
-    primary: claude:sonnet:high
-    secondaries: [codex:gpt-6.1-sol:medium]
-  frontier:
-    primary: claude:opus:high
-    secondaries: [codex:gpt-6-astra:high]
-  economy:
-    primary: claude:sonnet:medium
-    secondaries: [codex:gpt-6-luna:medium]
-security:
-  standard:
-    primary: codex:gpt-6.1-sol:high
-    secondaries: []
-  economy:
-    primary: pi:z-ai/glm-5.3-flash:high
-    secondaries: [pi:deepseek/deepseek-v4.1-flash:high]
-  mechanical:
-    primary: codex:gpt-6-luna:low
-    secondaries: []
-research:
-  standard:
-    primary: codex:gpt-6.1-sol:medium
-    secondaries: [claude:sonnet:high]
-  economy:
-    primary: codex:gpt-6-luna:medium
-    secondaries: [claude:sonnet:medium]
+lead: {}
+worker: {}
+design: {}
+reviewer: {}
+security: {}
+research: {}

@@ -22,7 +22,9 @@ fn a_fresh_home_has_no_skill_fallback_or_materialization() {
     let env = TestEnv::with_manifest("skills-fresh-home", "claude");
     fs::remove_dir_all(env.home.join(".niles/skills")).unwrap();
     let output = env.run(&["skills"]);
-    assert_failure_contains("missing disk skill", &output, "has no SKILL.md");
+    assert_command_success("missing disk skill warns", &output);
+    assert!(stdout_of(&output).is_empty());
+    assert!(stderr_of(&output).contains("warning: skill `lead` has no SKILL.md"));
     assert!(stderr_of(&output).contains("niles skills import"));
     assert!(!env.home.join(".niles/skills").exists());
     assert!(!env.root.join(".niles/skills").exists());
@@ -41,7 +43,12 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
         ),
         body,
     );
-    skill(&env.root.join(".niles"), "unreferenced", "", "");
+    skill(
+        &env.root.join(".niles"),
+        "unreferenced",
+        "Use when testing discovery",
+        "body",
+    );
     let manifest = state_dir(&env.root).join("manifest.yaml");
     let text = fs::read_to_string(&manifest).unwrap();
     fs::write(&manifest, text.replace("worker:", "triage:")).unwrap();
@@ -82,6 +89,61 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
 }
 
 #[test]
+fn discovery_lists_installed_skills_without_bindings() {
+    let env = TestEnv::with_manifest("skills-discovery", "claude");
+    let manifest = state_dir(&env.root).join("manifest.yaml");
+    let tiers = "entry: lead\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+    fs::write(&manifest, tiers).unwrap();
+    let local = env.root.join(".niles");
+    let global = env.home.join(".niles");
+    skill(&global, "extra", "Use when global", "global");
+    let winner = skill(&local, "extra", "Use when local", "local");
+    let external = env.root.join("external");
+    let target = skill(&external, "linked", "Use when linked", "body");
+    let link = env.home.join(".niles/skills/linked");
+    std::os::unix::fs::symlink(target.parent().unwrap(), &link).unwrap();
+    let listing = env.run(&["skills"]);
+    assert_command_success("discovery without bindings", &listing);
+    let text = stdout_of(&listing);
+    assert!(text.starts_with("skill: lead (global "));
+    assert!(text.contains(&format!("skill: extra (workspace {})", winner.display())));
+    assert!(text.contains("skill: linked (global "));
+    assert!(text.contains("skill: worker (global "));
+    std::os::unix::fs::symlink(target.parent().unwrap(), local.join("skills/linked")).unwrap();
+    let listing = env.run(&["skills"]);
+    assert_command_success("discovered workspace symlink warns", &listing);
+    assert!(stderr_of(&listing).contains("warning:"));
+    assert!(stderr_of(&listing).contains("without symlinks"));
+    assert!(stdout_of(&listing).contains("skill: worker "));
+    assert!(!stdout_of(&listing).contains("skill: linked "));
+}
+
+#[test]
+fn bad_directories_warn_without_hiding_valid_skills_or_allowing_launch() {
+    let env = TestEnv::with_manifest("skills-warnings", "claude");
+    let local = env.root.join(".niles");
+    skill(&local, "foo.bak", "Use when invalid", "body");
+    let pointer = local.join("skills/broken/SKILL.ref");
+    fs::create_dir_all(pointer.parent().unwrap()).unwrap();
+    fs::write(&pointer, "broken ref").unwrap();
+    let manifest = state_dir(&env.root).join("manifest.yaml");
+    let body = fs::read_to_string(&manifest).unwrap();
+    fs::write(manifest, format!("{body}broken: {{}}\nghost: {{}}\n")).unwrap();
+    let listing = env.run(&["skills"]);
+    assert_command_success("invalid discovered skills warn", &listing);
+    let warnings = stderr_of(&listing);
+    for cause in ["foo.bak", "SKILL.ref", "skill `ghost` has no SKILL.md"] {
+        assert!(warnings.contains(cause), "{warnings}");
+    }
+    assert!(stdout_of(&listing).contains("skill: worker "));
+    assert!(!stdout_of(&listing).contains("skill: broken "));
+    assert!(!stdout_of(&listing).contains("skill: ghost "));
+    let launch = env.spawn("broken", &["bad", "Task"]);
+    assert_failure_contains("invalid explicit launch", &launch, "invalid");
+    assert!(!state_dir(&env.root).join("worker/bad").exists());
+}
+
+#[test]
 fn invalid_primaries_fail_before_worker_or_session_creation() {
     let env = TestEnv::with_manifest("skills-bounds", "codex");
     let path = skill(&env.root.join(".niles"), "worker", "valid", "body");
@@ -99,11 +161,12 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         .unwrap()
         .set_len(8 * 1024 * 1024 * 1024)
         .unwrap();
-    assert_failure_contains(
-        "bounded listing read",
-        &env.run(&["skills"]),
-        "read 131073 bytes (file size 8589934592 bytes)",
-    );
+    let listing = env.run(&["skills"]);
+    assert_command_success("oversized bound skill warns", &listing);
+    assert!(stderr_of(&listing).contains("warning:"));
+    assert!(stderr_of(&listing).contains("read 131073 bytes (file size 8589934592 bytes)"));
+    assert!(!stdout_of(&listing).contains("skill: worker "));
+    assert!(stdout_of(&listing).contains("skill: reviewer "));
     for (name, body, error) in [
         ("worker", " \n".into(), "empty body"),
         ("lead", " \n".into(), "empty body"),
@@ -139,7 +202,9 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
 fn bind_extras(env: &TestEnv, extra: &str) {
     let path = state_dir(&env.root).join("manifest.yaml");
     let body = fs::read_to_string(&path).unwrap();
-    let body = body.replace("worker:\n", &format!("worker:\n{extra}"));
+    let body = body
+        .replace("worker: {}\n", "worker:\n")
+        .replace("worker:\n", &format!("worker:\n{extra}"));
     fs::write(path, body).unwrap();
 }
 

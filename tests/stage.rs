@@ -180,7 +180,7 @@ fn spawn_snapshot_provenance_and_cap() {
     let manifest = state_dir(&env.root).join("manifest.yaml");
     let text = fs::read_to_string(&manifest).unwrap();
     let configured = text.replace(
-        "worker:",
+        "worker: {}",
         "worker:\n  on_stage: [reviewer]\n  gates: {rounds: 2, post: [{name: check, timeout: 1500ms, run: [printf, \"literal; $(false)\"]}]}",
     );
     fs::write(&manifest, &configured).unwrap();

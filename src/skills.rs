@@ -1,4 +1,3 @@
-use crate::workspace_manifest::setup::SetupSelection;
 use std::{fmt, str::FromStr};
 
 use anyhow::{Context, Result, bail};
@@ -84,6 +83,8 @@ impl From<Origin> for String {
 }
 
 mod cache;
+mod list;
+pub(crate) use list::list;
 mod import;
 pub(crate) mod reference;
 pub(crate) use import::{SkillsCommand, import};
@@ -106,23 +107,6 @@ pub(crate) fn display_description(text: &str) -> String {
         })
         .take(200)
         .collect::<String>()
-}
-
-pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
-    let workspace = crate::util::current_dir_utf8()?;
-    let global = global_dir()?;
-    let manifest = crate::workspace_manifest::load(&workspace, selection)?
-        .ok_or_else(|| anyhow::anyhow!("skills requires a workspace manifest"))?;
-    for (name, binding) in manifest.ordered_bindings() {
-        let skill = resolve(name, &workspace, &global)?;
-        let description = display_description(&skill.description);
-        print!("skill: {skill}\t{description}");
-        for (tier, agents) in binding.tiers() {
-            print!("\t{}: {}", tier.as_str(), agents.primary);
-        }
-        println!();
-    }
-    Ok(())
 }
 
 #[cfg(test)]

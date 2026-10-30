@@ -69,7 +69,7 @@ fn clean_draft(env: &TestEnv) {
     let mode = fs::read_to_string(env.home.join("mode")).unwrap();
     assert!(mode.starts_with("-rw-------"));
 }
-const EDIT: &str = "# keep my text\nentry: solo\nsolo: {standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}, economy: {primary: claude:sonnet:medium, secondaries: []}}\n";
+const EDIT: &str = "# keep my text\nentry: solo\ntiers: {standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}, economy: {primary: claude:sonnet:medium, secondaries: []}}\n";
 #[test]
 fn first_run_registers_then_setup_launches_without_picker_or_reimport() {
     let env = environment();

@@ -189,7 +189,7 @@ pub enum CommandName {
     Usage,
     /// List effective built-in and workspace model rosters.
     Models,
-    /// List bound skills, their sources, descriptions and tier primaries.
+    /// List installed skills, sources and descriptions.
     Skills {
         #[command(subcommand)]
         command: Option<crate::skills::SkillsCommand>,

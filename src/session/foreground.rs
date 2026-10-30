@@ -16,7 +16,7 @@ pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
 ) -> Result<()> {
-    let agent = &manifest.binding(&manifest.entry)?.standard.primary;
+    let agent = &manifest.tiers.standard.primary;
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
     let primary = skills::resolve(&manifest.entry, workspace, &skills::global_dir()?)?;
     let prepared = prepare_manager_session(

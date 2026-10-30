@@ -1,4 +1,4 @@
-use crate::test_support::skill;
+use crate::agents::roster::Tier;
 use std::fs;
 
 use super::*;
@@ -18,7 +18,7 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 }
 
 #[test]
-fn changing_only_lead_preserves_worker_and_design_tiers() {
+fn changing_standard_preserves_composition_and_other_tiers() {
     let root = root(
         "picker-preserve-tiers",
         crate::test_support::manifest_body(),
@@ -26,15 +26,14 @@ fn changing_only_lead_preserves_worker_and_design_tiers() {
     let before = load(&root).unwrap().unwrap();
     let mut output = vec![];
     let saved = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
-        *draft.bindings.get_mut(&skill("lead")).unwrap() =
-            "codex:gpt-6.1-sol:high".to_owned().into();
+        draft.tiers.standard.primary = "codex:gpt-6.1-sol:high".into();
         Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap()
     .unwrap();
     let after = load(&root).unwrap().unwrap();
     let mut expected = before;
-    let standard = &mut expected.bindings.get_mut(&skill("lead")).unwrap().standard;
+    let standard = &mut expected.tiers.standard;
     standard.primary = "codex:gpt-6.1-sol:high".into();
     assert_eq!(after, expected);
     assert_eq!(after, saved);
@@ -89,11 +88,7 @@ fn no_terminal_uses_existing_manifest_and_prints_skills() {
     })
     .unwrap();
     assert_eq!(result, load(&root).unwrap());
-    assert!(
-        String::from_utf8(output)
-            .unwrap()
-            .contains("lead      claude")
-    );
+    assert!(String::from_utf8(output).unwrap().contains("standard"));
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
@@ -118,22 +113,22 @@ fn changes_are_applied_to_latest_manifest() {
     let mut latest = before.clone();
     latest.checkin = Some("1h".to_owned());
     latest
-        .set_primary(&skill("security"), "pi:z-ai/glm-5.3-flash:high".into())
+        .tiers
+        .set_primary(Tier::Mechanical, "pi:z-ai/glm-5.3-flash:high".into())
         .unwrap();
     super::save(&root, &latest, Some(&selection)).unwrap();
     let mut draft = before.clone();
     draft
-        .set_primary(&skill("lead"), "codex:gpt-6.1-sol:medium".into())
+        .tiers
+        .set_primary(Tier::Standard, "claude:sonnet:high".into())
         .unwrap();
     draft
-        .set_primary(&skill("research"), "claude:sonnet:high".into())
+        .tiers
+        .set_primary(Tier::Economy, "claude:sonnet:high".into())
         .unwrap();
     let result = save_changes(&root, Some(&selection), &before, &draft).unwrap();
-    for name in ["lead", "research"] {
-        latest
-            .bindings
-            .insert(name.parse().unwrap(), draft.bindings[&skill(name)].clone());
-    }
+    latest.tiers.standard = draft.tiers.standard;
+    latest.tiers.economy = draft.tiers.economy;
     assert_eq!(result, latest);
 
     fs::remove_file(named).unwrap();
@@ -180,7 +175,9 @@ fn save_write_failure_stops_launch() {
     let root = root("picker-write-failure", crate::test_support::manifest_body());
     let mut output = vec![];
     let error = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
-        draft.set_primary(&skill("lead"), "codex:gpt-6.1-sol:medium".into())?;
+        draft
+            .tiers
+            .set_primary(Tier::Standard, "claude:sonnet:high".into())?;
         fs::remove_file(manifest_path(&root).unwrap()).unwrap();
         fs::create_dir(manifest_path(&root).unwrap()).unwrap();
         Ok(Choice::Save(Box::new(draft)))
