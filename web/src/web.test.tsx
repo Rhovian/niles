@@ -41,7 +41,7 @@ it('upserts streaming revisions', () => {
 });
 it('displays the active project lead’s foreground entry skill', async () => {
   localStorage.setItem('niles.activeProject', 'notes');
-  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url === '/api/projects'
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ status: url === '/hosts.json' ? 404 : 200, ok: true, json: async () => url === '/api/projects'
     ? { api_version: 1, projects: [{ name: 'notes', state: 'waiting', workers: [] }] }
     : { api_version: 1, sessions: [session] } })));
   render(<App />);
@@ -49,7 +49,7 @@ it('displays the active project lead’s foreground entry skill', async () => {
   expect(screen.getByText('codex')).toBeDefined();
 });
 it('blocks chat on API version mismatch', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) }));
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url === '/hosts.json' ? { status: 404 } : { ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) })));
   render(<App />);
   await screen.findByText(/Update the web app/);
   expect(screen.getByRole('button', { name: 'Open menu' })).toBeDefined();
@@ -209,7 +209,7 @@ it.each(['/api/sessions/solo', '/api/projects/demo/workers/nav'])('animates wait
 
 it('keeps lead dots through agent prose until the server reports waiting again', async () => {
   localStorage.setItem('niles.activeProject', 'notes');
-  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () => url === '/api/projects'
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ status: url === '/hosts.json' ? 404 : 200, ok: true, json: async () => url === '/api/projects'
     ? { api_version: 1, projects: [{ name: 'notes', state: 'waiting', workers: [] }] }
     : { api_version: 1, sessions: [session] } })));
   const previous = Stream.latest;

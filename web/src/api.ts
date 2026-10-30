@@ -14,8 +14,8 @@ export const projectSchema = z.object({
 });
 export type Project = z.infer<typeof projectSchema>;
 const projectsSchema = z.object({ api_version: z.number().int(), projects: z.array(projectSchema) });
-export async function projects(signal?: AbortSignal) {
-  const response = await fetch('/api/projects', { cache: 'no-store', signal });
+export async function projects(signal?: AbortSignal, prefix = '') {
+  const response = await fetch(`${prefix}/api/projects`, { cache: 'no-store', signal });
   if (!response.ok) throw new ApiError(response.status);
   const data: unknown = await response.json();
   const { api_version } = z.object({ api_version: z.number().int() }).parse(data);
@@ -34,8 +34,8 @@ export type Connection = 'live' | 'reconnecting' | 'catching up' | 'disconnected
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail?: string) { super(detail ?? `API request failed (${status})`); }
 }
-export async function sessions(signal?: AbortSignal) {
-  const response = await fetch('/api/sessions', { cache: 'no-store', signal });
+export async function sessions(signal?: AbortSignal, prefix = '') {
+  const response = await fetch(`${prefix}/api/sessions`, { cache: 'no-store', signal });
   if (!response.ok) throw new ApiError(response.status);
   const data: unknown = await response.json();
   const { api_version } = z.object({ api_version: z.number().int() }).parse(data);
@@ -58,14 +58,14 @@ export function connectionError(cause: unknown): string {
   return cause instanceof TypeError ? `Cannot reach Niles. Check your tailnet connection. ${String(cause)}` : `Invalid API response: ${String(cause)}`;
 }
 
-export const leadBase = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
-export const workerBase = (project: string, id: string) => `/api/projects/${encodeURIComponent(project)}/workers/${encodeURIComponent(id)}`;
+export const leadBase = (id: string, prefix = '') => `${prefix}/api/sessions/${encodeURIComponent(id)}`;
+export const workerBase = (project: string, id: string, prefix = '') => `${prefix}/api/projects/${encodeURIComponent(project)}/workers/${encodeURIComponent(id)}`;
 
 async function request(method: 'PUT' | 'DELETE', url: string) {
   const response = await fetch(url, { method, cache: 'no-store' });
   if (response.status === 200 || response.status === 404) return;
   throw new ApiError(response.status, response.status === 409 ? await response.text() : undefined);
 }
-export const startProject = (name: string) => request('PUT', `/api/projects/${encodeURIComponent(name)}/session`);
-export const stopProject = (name: string) => request('DELETE', `/api/projects/${encodeURIComponent(name)}/session`);
-export const closeWorker = (project: string, id: string) => request('DELETE', workerBase(project, id));
+export const startProject = (name: string, prefix = '') => request('PUT', `${prefix}/api/projects/${encodeURIComponent(name)}/session`);
+export const stopProject = (name: string, prefix = '') => request('DELETE', `${prefix}/api/projects/${encodeURIComponent(name)}/session`);
+export const closeWorker = (project: string, id: string, prefix = '') => request('DELETE', workerBase(project, id, prefix));

@@ -29,7 +29,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn(); Stream.urls = [];
   leads = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
   vi.stubGlobal('EventSource', Stream);
-  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, json: async () =>
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ status: url === '/hosts.json' ? 404 : 200, ok: true, json: async () =>
     url === '/api/projects' ? { api_version: 1, projects: registered } : { api_version: 1, sessions: leads },
   })));
 });
@@ -146,7 +146,7 @@ it('expands only one project, supports collapsing it, and preserves expansion on
   expect(screen.queryByRole('button', { name: 'nav', exact: true })).toBeNull();
   expect(screen.getByRole('button', { name: 'Start offline' })).toBeDefined();
   fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
   expect(screen.getByRole('button', { name: 'offline', expanded: true })).toBeDefined();
   fireEvent.click(screen.getByRole('button', { name: 'offline', exact: true }));
   expect(screen.queryByRole('button', { name: 'Start offline' })).toBeNull();

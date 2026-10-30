@@ -18,6 +18,7 @@ export function mockApi(): Plugin {
   return { name: 'niles-mock-api', configureServer(server) {
     server.middlewares.use(async (request, response, next) => {
       const path = new URL(request.url!, 'http://localhost').pathname;
+      if (path === '/hosts.json') { response.setHeader('Cache-Control', 'no-store'); response.writeHead(404); response.end(); return; }
       if (!path.startsWith('/api/')) return next();
       response.setHeader('Cache-Control', 'no-store');
       const json = (status: number, body: unknown) => {
