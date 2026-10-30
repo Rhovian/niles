@@ -99,8 +99,7 @@ and injects a verified `Tailscale-User-Login`. Serve proxies to Caddy on localho
 serves the PWA and forwards `/h/<host>/...` to hosts' tailnet addresses, preserving that login.
 The host requires exactly one nonempty, well-formed login header on every route, including
 unknown routes. It accepts any login the relay forwards: there is no per-host user allowlist;
-tailnet ACLs are the user access gate. The old `remote.allowed_users` setting does not restrict
-host requests or push delivery. Use Serve, never Funnel.
+tailnet ACLs are the user access gate. Use Serve, never Funnel.
 
 The relay is now trusted to assert user identity for every host. A compromised relay or a
 local process that can make connections as the relay can impersonate any user. Restrict

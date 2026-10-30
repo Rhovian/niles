@@ -19,7 +19,7 @@ impl Setup {
         fs::create_dir_all(env.home.join(".niles")).unwrap();
         fs::write(
             env.home.join(".niles/config.yaml"),
-            "theme: nord\ntmux: {bindings: true}\nremote: {allowed_users: [old@example.com]}\n",
+            "theme: nord\ntmux: {bindings: true}\n",
         )
         .unwrap();
         common::write_executable(
@@ -81,17 +81,8 @@ printf '\n200\nno-store'
     }
 
     fn command(&self) -> Command {
-        self.0.niles(
-            &self.0.root,
-            &[
-                "remote",
-                "setup",
-                "--web-dir",
-                "web",
-                "--allow-user",
-                "alice@example.com",
-            ],
-        )
+        self.0
+            .niles(&self.0.root, &["remote", "setup", "--web-dir", "web"])
     }
 
     fn config(&self) -> Vec<u8> {
@@ -108,15 +99,7 @@ fn remote_setup_installs_service_mounts_and_verifies() {
         String::from_utf8_lossy(&output.stdout)
             .contains("Verified https://host.tail.ts.net/api/sessions")
     );
-    let config = String::from_utf8(fixture.config()).unwrap();
-    for setting in [
-        "nord",
-        "bindings: true",
-        "old@example.com",
-        "alice@example.com",
-    ] {
-        assert!(config.contains(setting));
-    }
+    assert_eq!(fixture.config(), b"theme: nord\ntmux: {bindings: true}\n");
     assert!(fixture.0.home.join(SERVICE).is_file());
     let log = fixture.0.tmux_log();
     assert!(log.contains("serve --bg --https=443 --set-path=/ "));
@@ -234,14 +217,7 @@ fn remote_setup_rejects_bad_web_input_with_context() {
     ] {
         let fixture = Setup::new();
         fs::create_dir_all(fixture.0.root.join("empty")).unwrap();
-        let output = fixture.0.run(&[
-            "remote",
-            "setup",
-            "--web-dir",
-            path,
-            "--allow-user",
-            "alice@example.com",
-        ]);
+        let output = fixture.0.run(&["remote", "setup", "--web-dir", path]);
         assert!(!output.status.success());
         assert!(stderr_of(&output).contains(expected));
         assert!(!fixture.0.home.join(SERVICE).exists());

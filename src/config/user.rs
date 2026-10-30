@@ -27,25 +27,12 @@ pub(crate) struct FileConfig {
 #[derive(Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileRemote {
-    pub(crate) allowed_users: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) relay_node: Option<String>,
 }
 
-#[cfg(feature = "remote")]
-pub(crate) fn validate_users(users: &[String]) -> Result<()> {
-    anyhow::ensure!(!users.is_empty(), "remote.allowed_users must not be empty");
-    anyhow::ensure!(
-        users.iter().all(|user| !user.is_empty()
-            && user.trim() == user
-            && !user.chars().any(char::is_control)),
-        "remote.allowed_users contains an invalid login"
-    );
-    Ok(())
-}
-
 fn remote_is_empty(remote: &FileRemote) -> bool {
-    remote.allowed_users.is_empty() && remote.relay_node.is_none()
+    remote.relay_node.is_none()
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -138,17 +125,6 @@ mod tests {
                 config.theme.style(StyleKey::Bar).bg,
                 Some(ThemeName::TokyoNight.palette().selection)
             );
-        }
-    }
-
-    #[test]
-    fn remote_allowlist_validation_does_not_block_unrelated_configuration() {
-        for text in [
-            "remote: {}",
-            "remote: {allowed_users: []}",
-            "remote: {allowed_users: ['']}",
-        ] {
-            assert!(UserConfig::parse(Some(text)).is_ok(), "{text}");
         }
     }
 
