@@ -53,7 +53,7 @@ fn wake_sends_exact_magic_packet_and_propagates_socket_errors() {
     let mut packet = [0; 103];
     assert_eq!(receiver.recv(&mut packet).unwrap(), 102);
     assert_eq!(&packet[..6], &[0xff; 6]);
-    for mac in packet[6..102].chunks_exact(6) {
+    for mac in packet[6..102].as_chunks::<6>().0 {
         assert_eq!(mac, &[1, 0x23, 0x45, 0x67, 0x89, 0xab]);
     }
     assert!(
