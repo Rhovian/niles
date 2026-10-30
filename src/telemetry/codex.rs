@@ -38,7 +38,21 @@ pub(super) fn read_codex_source(
             break;
         }
         let dir = home.join(format!(".codex/sessions/{}", day.format("%Y/%m/%d")));
-        for path in read_dir_utf8_paths(&dir)? {
+        let paths = read_dir_utf8_paths(&dir)?;
+        for path in &paths {
+            // Directory entries are sorted paths, not logical rollouts. Prefer the live
+            // plain representation, as Codex does when materializing for append:
+            // https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/rollout/src/compression.rs
+            if let Some(plain) = path.as_str().strip_suffix(".jsonl.zst") {
+                if paths
+                    .binary_search(&Utf8PathBuf::from(format!("{plain}.jsonl")))
+                    .is_ok()
+                {
+                    continue;
+                }
+            } else if path.extension() != Some("jsonl") {
+                continue;
+            }
             let Some(stamp) = path.file_name().and_then(rollout_time) else {
                 continue;
             };
@@ -48,11 +62,11 @@ pub(super) fn read_codex_source(
             if local + Duration::seconds(1) < start || local > deadline {
                 continue;
             }
-            let body = read_transcript(&path)?;
+            let body = read_transcript(path)?;
             if let Some(lines) = parse_lines::<CodexLine>(&body)
                 && codex_matches(&lines, workspace, needle)
             {
-                return Ok(Some((path, lines)));
+                return Ok(Some((path.clone(), lines)));
             }
         }
     }
