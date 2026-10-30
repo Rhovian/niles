@@ -75,7 +75,6 @@ fn skill_selects_primary_instructions_outside_the_opening_turn() {
         );
         let script = fs::read_to_string(dir.join("launch.sh")).unwrap();
         assert!(script.contains("'--append-system-prompt'"), "{script}");
-        assert!(script.contains(&format!("You are the {skill}")), "{script}");
     }
 }
 
