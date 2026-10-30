@@ -172,14 +172,11 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
 }
 
 #[test]
-fn entry_and_unbound_skills_fail_before_worker_state_even_with_override() {
+fn entry_and_missing_skills_fail_before_worker_state_even_with_override() {
     let env = TestEnv::with_manifest("spawn-bound-skill", "claude");
     for (skill, error) in [
         ("lead", "entry skill"),
-        (
-            "unbound",
-            "bound skills: design, lead, research, reviewer, security, worker",
-        ),
+        ("unbound", "skill `unbound` has no SKILL.md or SKILL.ref"),
     ] {
         assert_failure_contains(
             skill,
