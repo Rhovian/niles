@@ -21,7 +21,6 @@ Coordinates coding agents from different model families in tmux.
 
 Get started
   r    register a project directory, in the explorer on the left
-  d    deregister the selected project, deleting its state and managed worktrees
   ↵    start its lead and show it here
 
 Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
@@ -32,7 +31,7 @@ const KEYS: &str = "Choose a project on the left.
   ↵      open                 → ←    expand / collapse
   [ ]    previous / next project
   ; '    previous / next window
-  r      register a project
+  r / d  register / deregister
   c      close a worker or project
   ?      this help            esc    back
 
