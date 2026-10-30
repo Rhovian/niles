@@ -45,6 +45,27 @@ worker's report path as `from_report:`; that worker's latest status must be `don
 conflicts with `--from`. How the shipped `lead` skill decides what to spawn is in its
 [`SKILL.md`](../skills/lead/SKILL.md).
 
+## Orchestration contract
+
+Every spawned worker's opening brief directs it to `niles agent status --help`, which prints
+the binary's orchestration contract without requiring a worker environment. It binds every
+skill, including replacements, without an opt-in or a special skill name.
+
+Submit outcomes with `niles agent status <kind> <detail>`, never by appending to `status.log`.
+Unknown kinds, empty details and control characters are rejected before a status line is
+appended. `done` also requires a nonempty `report.md` and completion of any configured staging
+protocol. Correct a rejected submission and resubmit; a rejected command doesn't wake anyone.
+
+`done`, `failed`, `blocked` and `needs-decision` wake the entry agent. `working` and `stage`
+don't. `done` hands back the dispatch; the worker stays live for `niles send` until closed.
+Niles owns `closed` and `gone`; `gone` signals exit or idle without a report.
+`niles wait` reserves stdout for wake lines and stderr for diagnostics, and exits 0 for a wake
+(including `gone`), 11 when superseded, or 22 on timeout.
+
+Finding tags such as `code`, `design` and `policy`, role names, and routing between skills are
+optional skill conventions. The binary doesn't interpret findings or choose their recipient.
+The operator and coordinating skill decide those workflows.
+
 ## Composing skills
 
 A binding can add skills around its primary one:

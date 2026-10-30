@@ -6,6 +6,18 @@ use crate::{
     wake::{self, WakeKind},
 };
 
+const ORCHESTRATION_CONTRACT: &str = "Niles orchestration contract (binding for every spawned worker, independent of skills):
+Submit each dispatch's outcome with niles agent status <kind> <detail>; never write status.log directly.
+Only a status line wakes the lead. done, failed, blocked and needs-decision wake the lead; working wakes nobody. stage wakes nobody.
+For a skill with staging configured, write report.md and run stage first (use your longest tool timeout), apply its post-work skills, then report done. Stage rounds are limited per worker task.
+Write deliverables to report.md before done; it must exist and be non-empty.
+done means hand back, not exit: stay open until the lead closes you. Follow-up arrives through niles send.
+Report uncertainty with blocked or needs-decision; report inability to complete with failed.
+Details must be non-empty and contain no control characters. Invalid submissions fail before appending a status line; correct the error and resubmit.
+NILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json.
+closed and gone are reserved for Niles. A gone wake means a worker exited or stayed idle without reporting.
+Finding tags, roles and routing are skill conventions, not requirements of this contract.";
+
 #[derive(Debug, Subcommand)]
 pub enum AgentCommand {
     /// List this worker's menu skills and their sources.
@@ -13,9 +25,7 @@ pub enum AgentCommand {
     /// Print a skill from this worker's snapshotted skill lists.
     Skill { name: crate::skills::SkillName },
     /// Report to the lead through the worker's status log.
-    #[command(
-        after_help = "Only a status line wakes the lead. working wakes nobody. stage wakes nobody.\nFor a skill with staging configured, write report.md and run stage first (use your longest tool timeout), apply its post-work skills, then report done. Stage rounds are limited per worker task.\nWrite deliverables to report.md before done; it must exist and be non-empty.\ndone means hand back, not exit: stay open until the lead closes you.\nReport uncertainty with blocked or needs-decision.\nDetails must be non-empty and contain no control characters.\nNILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json."
-    )]
+    #[command(after_help = ORCHESTRATION_CONTRACT)]
     Status {
         kind: WorkerWake,
         #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
