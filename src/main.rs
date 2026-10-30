@@ -150,9 +150,6 @@ fn run() -> Result<ExitCode> {
             task_label,
             all,
         }) => worker::worker_close(id, task_label, all)?,
-        Some(CommandName::Retier { id, agent }) => {
-            worker::retier(id, agent, selection()?.as_ref())?
-        }
         Some(CommandName::Log { id, decision }) => session::log::run(&id, &decision.join(" "))?,
         Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Usage) => worker::usage()?,

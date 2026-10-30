@@ -42,7 +42,7 @@ trait Pane: fmt::Display {
     fn leave_copy_mode(&self) -> Result<()>;
     fn capture_watched_lines(&self) -> Result<String>;
     fn paste_literal(&self, line: &str) -> Result<()>;
-    fn send_submit_key(&self, keys: &[&str]) -> Result<()>;
+    fn send_submit_key(&self) -> Result<()>;
 }
 
 impl Pane for TmuxTarget {
@@ -66,8 +66,8 @@ impl Pane for TmuxTarget {
         super::run(&["send-keys", "-t", self.as_str(), "-l", &paste])
     }
 
-    fn send_submit_key(&self, keys: &[&str]) -> Result<()> {
-        super::run(&[&["send-keys", "-t", self.as_str()][..], keys].concat())
+    fn send_submit_key(&self) -> Result<()> {
+        super::run(&["send-keys", "-t", self.as_str(), SEND_LINE_SUBMIT_KEY])
     }
 }
 
@@ -80,28 +80,15 @@ impl Pane for TmuxTarget {
 /// before the submit is sent, and the pane must change after it — a submit that changes nothing
 /// is an error, not a `sent:`.
 pub(crate) fn send_line(target: &TmuxTarget, line: &str) -> Result<()> {
-    send_line_to_pane(target, line, &[SEND_LINE_SUBMIT_KEY], &REAL_TIMINGS)
+    send_line_to_pane(target, line, &REAL_TIMINGS)
 }
 
-pub(crate) fn send_input(target: &TmuxTarget, text: &str, keys: &[&str]) -> Result<()> {
-    send_line_to_pane(target, text, keys, &REAL_TIMINGS)
-}
-
-fn send_line_to_pane<P: Pane>(
-    pane: &P,
-    line: &str,
-    keys: &[&str],
-    timings: &Timings,
-) -> Result<()> {
+fn send_line_to_pane<P: Pane>(pane: &P, line: &str, timings: &Timings) -> Result<()> {
     pane.leave_copy_mode()?;
     let before = pane.capture_watched_lines()?;
-    let staged = if line.is_empty() {
-        before
-    } else {
-        pane.paste_literal(line)?;
-        settle_pane(pane, &before, timings)?
-    };
-    pane.send_submit_key(keys)?;
+    pane.paste_literal(line)?;
+    let staged = settle_pane(pane, &before, timings)?;
+    pane.send_submit_key()?;
     confirm_submit_took(pane, &staged, timings)
 }
 
@@ -264,7 +251,7 @@ mod tests {
             Ok(())
         }
 
-        fn send_submit_key(&self, _keys: &[&str]) -> Result<()> {
+        fn send_submit_key(&self) -> Result<()> {
             self.actions.borrow_mut().push("submit");
             self.submit_at.set(Some(Instant::now()));
             self.phase.set(Phase::Submitted);
@@ -273,17 +260,10 @@ mod tests {
     }
 
     #[test]
-    fn retier_keys_without_text_skip_paste() {
-        let pane = ScriptedPane::new(&["staged"], false, "changed");
-        send_line_to_pane(&pane, "", &["Left", "s"], &TEST_TIMINGS).unwrap();
-        assert_eq!(pane.actions(), ["leave-mode", "submit"]);
-    }
-
-    #[test]
     fn rendered_quiet_paste_is_submitted_and_confirmed() {
         let pane = ScriptedPane::new(&["staged"], false, "changed");
 
-        send_line_to_pane(&pane, "hello", &[SEND_LINE_SUBMIT_KEY], &TEST_TIMINGS).unwrap();
+        send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap();
 
         assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
     }
@@ -298,7 +278,7 @@ mod tests {
         };
         let pane = ScriptedPane::new(&["staged"], false, "changed");
 
-        send_line_to_pane(&pane, "hello", &[SEND_LINE_SUBMIT_KEY], &timings).unwrap();
+        send_line_to_pane(&pane, "hello", &timings).unwrap();
 
         let rendered_at = pane.rendered_at.get().expect("paste should render");
         let submit_at = pane.submit_at.get().expect("submit should be sent");
@@ -309,8 +289,7 @@ mod tests {
     fn paste_that_never_renders_is_not_submitted() {
         let pane = ScriptedPane::new(&["before"], false, "changed");
 
-        let error =
-            send_line_to_pane(&pane, "hello", &[SEND_LINE_SUBMIT_KEY], &TEST_TIMINGS).unwrap_err();
+        let error = send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap_err();
 
         assert!(error.to_string().contains("never appeared"));
         assert_eq!(pane.actions(), ["leave-mode", "paste"]);
@@ -320,8 +299,7 @@ mod tests {
     fn unchanged_pane_after_submit_reports_how_to_inspect_it() {
         let pane = ScriptedPane::new(&["staged"], false, "staged");
 
-        let error =
-            send_line_to_pane(&pane, "hello", &[SEND_LINE_SUBMIT_KEY], &TEST_TIMINGS).unwrap_err();
+        let error = send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap_err();
 
         assert!(error.to_string().contains("`niles peek`"));
         assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
@@ -331,7 +309,7 @@ mod tests {
     fn rendered_paste_that_never_quiets_is_still_submitted() {
         let pane = ScriptedPane::new(&["staged", "moving"], true, "changed");
 
-        send_line_to_pane(&pane, "hello", &[SEND_LINE_SUBMIT_KEY], &TEST_TIMINGS).unwrap();
+        send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap();
 
         assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
     }

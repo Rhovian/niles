@@ -7,7 +7,7 @@ mod system_prompt;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use families::{SwitchStep, session_link, switch_steps};
+pub(crate) use families::session_link;
 pub use families::{SystemPromptArg, known_agent_ids, profile_for, profiles};
 pub use roster::ModelRoster;
 

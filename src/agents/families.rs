@@ -1,5 +1,4 @@
 use crate::telemetry::SessionLink;
-use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use uuid::Uuid;
 
@@ -144,59 +143,6 @@ pub fn tier_args(profile: &AgentProfile, model: Option<&str>, effort: Option<&st
         }
     }
     args
-}
-
-pub(crate) struct SwitchStep {
-    pub text: String,
-    pub keys: Vec<&'static str>,
-    pub acknowledgement: (String, String),
-}
-
-// Claude 2.1.296: ModelPicker's search gate, Cr/KHe effort clamping and dr's
-// session-only action. Pi 1.2.0: interactive-mode.js. None exposes a pane acknowledgement API.
-pub(crate) fn switch_steps(family: &str, model: &str, effort: &str) -> Result<Vec<SwitchStep>> {
-    let step = |text: String, keys, prefix: String, suffix: String| SwitchStep {
-        text,
-        keys,
-        acknowledgement: (prefix, suffix),
-    };
-    let inline = |command: String, reply: String| step(command, vec!["C-m"], reply, String::new());
-    Ok(match family {
-        "claude" => {
-            let index = ["low", "medium", "high", "xhigh", "max"]
-                .iter()
-                .position(|level| *level == effort)
-                .context("unsupported Claude effort")?;
-            // Four Lefts saturate the five-level slider at low, regardless of its initial value.
-            let mut keys = vec!["Left"; 4];
-            keys.extend(vec!["Right"; index]);
-            keys.push("s");
-            vec![
-                inline("/model".into(), "Type to search".into()),
-                step(
-                    model.into(),
-                    vec!["Down"],
-                    String::new(),
-                    "use this session only".into(),
-                ),
-                step(
-                    String::new(),
-                    keys,
-                    format!("Set model to {model}"),
-                    format!("for this session only with {effort} effort"),
-                ),
-            ]
-        }
-        "pi" => vec![
-            inline(format!("/model {model}"), format!("Model: {model}")),
-            inline(
-                format!("/thinking {effort}"),
-                format!("Thinking level: {effort}"),
-            ),
-        ],
-        "codex" => vec![inline("/model".into(), "Select Model".into())],
-        _ => bail!("retier supports only Claude, Codex and pi"),
-    })
 }
 
 #[cfg(test)]
