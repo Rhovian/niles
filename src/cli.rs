@@ -69,7 +69,7 @@ impl MessageInput {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandName {
-    /// Serve the remote API on loopback (requires --features remote).
+    /// Serve the remote API on the tailnet IP (requires --features remote).
     #[command(args_conflicts_with_subcommands = true)]
     Remote {
         #[arg(long, default_value_t = 8765)]
