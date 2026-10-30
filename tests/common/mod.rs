@@ -254,7 +254,7 @@ pub fn write_manifest<'a>(
     bindings: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) {
     let state = state_dir(workspace);
-    copy_skills(state.parent().unwrap().parent().unwrap());
+    copy_skills(&fixture_home(workspace).join(".niles"));
     fs::create_dir_all(&state).unwrap();
     let body = bindings
         .into_iter()
@@ -322,7 +322,11 @@ pub fn append_status(path: &Path, bytes: &[u8]) {
 
 // Match the explicit HOME used by subprocesses, including secondary workspaces in a TestEnv.
 pub fn state_dir(workspace: &Path) -> PathBuf {
-    let home = workspace
+    state_dir_at(&fixture_home(workspace), workspace)
+}
+
+fn fixture_home(workspace: &Path) -> PathBuf {
+    workspace
         .ancestors()
         .find_map(|ancestor| {
             ancestor
@@ -330,8 +334,7 @@ pub fn state_dir(workspace: &Path) -> PathBuf {
                 .is_file()
                 .then(|| ancestor.join("home"))
         })
-        .unwrap_or_else(|| niles_home(workspace));
-    state_dir_at(&home, workspace)
+        .unwrap_or_else(|| niles_home(workspace))
 }
 
 pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
