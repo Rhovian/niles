@@ -61,7 +61,7 @@ pub(super) fn configured(hosts: BTreeMap<String, FileWakeHost>) -> Result<Hosts>
 impl Target {
     fn send(&self, destination: SocketAddrV4) -> Result<()> {
         let mut packet = [0xff; 102];
-        for bytes in packet[6..].chunks_exact_mut(6) {
+        for bytes in packet[6..].as_chunks_mut::<6>().0 {
             bytes.copy_from_slice(&self.mac);
         }
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;

@@ -282,7 +282,7 @@ pub enum RemoteCommand {
     #[cfg(feature = "remote")]
     Doctor,
 
-    /// Configure same-origin Tailscale Serve, authorization, and a user service.
+    /// Configure same-origin Tailscale Serve and a user service.
     #[cfg(feature = "remote")]
     Setup {
         #[arg(long, default_value = "8765")]
@@ -290,9 +290,6 @@ pub enum RemoteCommand {
         /// Dedicated built PWA directory containing index.html.
         #[arg(long)]
         web_dir: camino::Utf8PathBuf,
-        /// Exact Tailscale login to add to the allowlist (repeatable).
-        #[arg(long, required = true)]
-        allow_user: Vec<String>,
         /// Initialize Web Push if absent, using this mailto: or https: contact URI.
         #[arg(long)]
         subject: Option<String>,
