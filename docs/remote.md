@@ -45,13 +45,12 @@ from as code running on your host.
 Run setup as your normal user, not root, after stopping any `niles remote` you started by hand:
 
 ```sh
-niles remote setup --web-dir "$NILES_WEB_DIR" --allow-user you@example.com \
+niles remote setup --web-dir "$NILES_WEB_DIR" \
   --subject mailto:you@example.com
 ```
 
-It adds the allowed logins to `~/.niles/config.yaml`, creates push keys if there are none,
-installs and starts a user service, and serves the app at `/` and the API at `/api` through
-Tailscale Serve on HTTPS 443. Repeat `--allow-user` for more Tailscale logins. Omit `--subject`
+It creates push keys if there are none, installs and starts a user service, and serves the app
+at `/` and the API at `/api` through Tailscale Serve on HTTPS 443. Omit `--subject`
 for chat without push; add push later with `niles remote init --subject mailto:you@example.com`
 and a restart.
 
@@ -97,8 +96,7 @@ Tailscale off, but opening one needs Tailscale. See [notification behavior](../w
 
 ## Troubleshooting
 
-- 403: check the login is exactly on the allowlist, you restarted after editing it, and the phone
-  isn't a tagged device.
+- 403: check the request comes through the configured relay and the phone isn't a tagged device.
 - 404 at `/api/sessions`, or HTML instead of JSON: the `/api` mapping must target
   `http://127.0.0.1:PORT/api`. Run `niles remote uninstall`, then setup again.
 - 502: `niles remote` isn't running, or the proxy port doesn't match `--port`.
@@ -123,7 +121,7 @@ To upgrade a release install, install the new binary and web asset as above, the
 and app together: a version mismatch shows an update banner and blocks chat.
 
 `niles remote uninstall` removes the service and the `/` and `/api` Serve mappings, and keeps
-your allowlist, push keys and any other Serve mounts. Check `tailscale serve status` first, and
+your config, push keys and any other Serve mounts. Check `tailscale serve status` first, and
 never use `tailscale serve reset`, which removes unrelated Serve configuration too. If uninstall
 reports a service-manager error for a stopped service, delete the service file by hand and rerun.
 
