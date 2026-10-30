@@ -1,41 +1,45 @@
 # Configuration
 
-Reference for the workspace manifest and model registry. The [README](../README.md#configuration)
-shows where the manifest lives and a minimal example.
+Reference for the workspace manifest, model registry and Niles state. The
+[README](../README.md#configuration) shows where the manifest lives and a minimal example.
 
-## Bindings and tiers
+## Manifest keys
 
-Only the entry skill must be bound. `entry:` is required; other bindings are optional.
+| Key | Where | What it does |
+| --- | --- | --- |
+| `entry` | top level, required | The skill you talk to. It must be bound. |
+| `<skill>` | top level | A binding: the agents that skill runs on. Only the entry skill must be bound. |
+| `standard`, `frontier`, `economy`, `mechanical` | binding | Tiers. `standard` is required; each tier has one `primary` and an ordered `secondaries` list. |
+| `skills`, `always`, `on_from`, `on_stage` | binding | Menu and injected skills; see [skill workflows](skills.md#composing-skills). |
+| `gates` | binding | Stage rounds and `post` command gates; see [staging](skills.md#staging). |
+| `worktree` | top level | `env` and `setup` for `spawn --worktree`; see [worktrees](#worktrees). |
+| `checkin`, `recheck` | top level | Watcher cadence; see [check-ins](#check-ins). |
+
+Agents are written `family:model:effort`, such as `claude:sonnet:high`; models without effort
+support, such as `claude:haiku`, omit the suffix. Scalar bindings and `when:` groups are rejected.
 For direct editing with native sub-agents, [bind `solo` and set `entry: solo`](skills.md#entry-sessions).
-Each binding requires a `standard` tier and may list `frontier`, `economy`,
-or `mechanical`. Every tier has one `primary` and an ordered `secondaries` list of exact
-`family:model:effort` entries. Models without effort support, such as `claude:haiku`, omit
-that suffix. Scalar bindings and `when:` groups are rejected.
 
-`niles spawn <id> --skill <name>` uses its standard primary; `--tier <tier>` selects another listed
-tier's primary. An unlisted tier errors. `--agent family:model:effort` selects an exact listed
-primary or secondary and conflicts with `--tier`.
+`niles spawn <id> --skill <name>` uses the standard primary. `--tier <tier>` picks another listed
+tier's primary, and `--agent family:model:effort` picks an exact listed primary or secondary; the
+two conflict, and an unlisted tier errors.
 
 ## Models
 
-The first of `niles.yaml` or `.niles.yaml` extends the model roster for the built-in agent families:
+The first of `niles.yaml` or `.niles.yaml` in the repository extends the built-in roster. Listing
+an existing model replaces its entry, and `efforts: []` marks a model with no effort qualifier.
+The optional `context_window`, in tokens, lets the telemetry panel show a percentage:
 
 ```yaml
 models:
   codex:
     gpt-5.7:
-      efforts: [low, med, high, xhigh]
+      efforts: [low, medium, high, xhigh]
       context_window: 400000
 ```
 
-Model entries extend the built-in roster; listing an existing model replaces its entry.
-An empty `efforts: []` marks a model that takes no effort qualifier. The optional
-`context_window`, in tokens, is what the telemetry panel measures a live session's context
-against; without one, the panel shows the session's tokens and no percentage.
-
-The shipped `src/agents/roster.yaml` registers each effort's tier, description, relative cost,
-relative speed, and context window. `~/.niles/roster.yaml` replaces the complete entry list for
-any model it names, or adds a model within a built-in family:
+`~/.niles/roster.yaml` replaces the full entry list for any model it names, or adds a model to a
+built-in family. It loads before project overrides, and new project models need an entry here to
+appear in `niles models`. The shipped list is `src/agents/roster.yaml`:
 
 ```yaml
 codex:
@@ -48,23 +52,18 @@ codex:
       context_window: 1050000
 ```
 
-Tiers are `frontier`, `standard`, `economy`, and `mechanical`. Omit `effort` for a model that takes
-no effort flag. Cost ranks run from 1 (cheapest) to 4 (most expensive); speed ranks from 1
-(fastest) to 4 (slowest). Ranks are model-level proxies; `null` represents unverified metadata.
-`niles models` displays unverified ranks as `unknown` and lists only pairs allowed by at least
-one workspace skill. Without a workspace manifest it lists all effective pairs. User overrides
-load before project `models:` overrides; new workspace pairs need user-registry metadata to be
-listed. Invalid registry overrides error.
+Cost and speed rank from 1 (cheapest, fastest) to 4; `null` means unverified and shows as
+`unknown`. Omit `effort` for a model without one. `niles models` lists only pairs some skill in
+the manifest allows, or every pair when there is no manifest. Invalid overrides are errors.
 
 ### Pi models through OpenRouter
 
 Install `@earendil-works/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
-key in `~/.pi/agent/auth.json`. Pi never reads `.env` files. An exported `OPENROUTER_API_KEY`
-only reaches Niles workers if the tmux server started after the export; `/login` avoids that
-requirement.
+key in `~/.pi/agent/auth.json`. Pi doesn't read `.env` files, and an exported
+`OPENROUTER_API_KEY` reaches workers only if the tmux server started after the export.
 
-Pi's bundled model catalog lags the pi models in Niles's roster. Add them to `~/.pi/agent/models.json`, which
-merges into the built-in OpenRouter provider:
+Pi's bundled catalog lags the pi models in Niles's roster. Add them to `~/.pi/agent/models.json`,
+which merges into pi's OpenRouter provider:
 
 ```json
 {
@@ -80,12 +79,9 @@ merges into the built-in OpenRouter provider:
 }
 ```
 
-These entries omit prices, so pi reports their cost as zero. Niles reports token usage and
-leaves estimated cost unavailable.
+These entries omit prices, so Niles reports their token usage without a cost estimate.
 
 ## Worktrees
-
-A manifest can configure managed worktrees without tying Niles to a build tool:
 
 ```yaml
 worktree:
@@ -94,76 +90,40 @@ worktree:
   setup: 'test -d "$CARGO_TARGET_DIR"'
 ```
 
-`env` overrides the inherited worker environment for `spawn --worktree`, including when joining
-an existing tree. Values are literal strings: use absolute paths, since `$HOME`, `~`, and shell
-substitutions are not expanded. Sharing the main checkout's Cargo target directory reuses its
-warm dependency cache; concurrent Cargo builds serialize on Cargo's lock. Niles sets no
-language-specific defaults.
+`env` sets literal environment variables for workers spawned with `--worktree`, including when
+joining an existing tree. `$HOME`, `~` and shell substitutions aren't expanded, so use absolute
+paths. Pointing `CARGO_TARGET_DIR` at the main checkout reuses its build cache.
 
-Optional `setup` runs synchronously via `sh -c` in a newly created tree, with the same
-configured environment, before launching the worker. Use it for project preparation such as
-`uv sync` or `pnpm install`. It runs only on creation, never on reuse. Stdin is `/dev/null` (EOF),
-so setup must be non-interactive; both output streams go to Niles's stderr, keeping spawn stdout
-reserved for its result. A nonzero exit fails the spawn and removes the new tree (including
-setup-created files), so a retry runs setup again. The branch remains; omit `--base` when
-retrying. Neither setting applies to plain spawns or `--tree`.
-
-Concurrent creation/join of the same branch fails while creation or setup holds its lock. Niles
-records pending creation before adding the tree, so failed Git creation, interrupted setup, or
-failed cleanup block subsequent joins, even if setup later finishes in an orphan process. Setup
-is never rerun on that existing tree. To recover, stop any remaining setup process, inspect/save
-needed files, remove the incomplete worktree with Git, then remove the `.pending` file named in
-the error (`~/.niles/state/<workspace-key>/worktrees/<branch>/.pending`). Recreate without
-`--base` if the branch already exists. Keep the sibling `.lock` file; removing a live lock can
-break exclusion. Trees created before this tracking existed are treated as existing trees and
-skip setup.
-
-Only put trusted commands in this operator-owned manifest: setup runs with your permissions.
+`setup` runs once through `sh -c` in each newly created tree, before the worker starts, with
+stdin closed; use it for steps such as `uv sync` or `pnpm install`. If it fails, the spawn fails
+and the new tree is removed, so a retry runs setup again; the branch stays, so retry without
+`--base`. If an interrupted setup blocks the branch, the error names the `.pending` file to
+remove after cleaning up the tree. Setup runs with your permissions, so only put commands here
+you would run yourself.
 
 ## Check-ins
 
-Optional manifest keys include `checkin` / `recheck` for watcher cadence. Check-ins default
-to five minutes, then back off to hourly reminders. Both take a duration: a non-negative integer
-followed by `ms`, `s`, `m`, or `h`, such as `90s` or `5m`. `0` and `off` disable a check-in, a
-fixed recheck must be greater than zero, and `recheck: backoff` selects backoff. Per-command
-`--checkin` overrides the manifest.
-
-## Waiting for workers
-
-`niles wait` covers every live worker in the current workspace, including workers spawned
-while it runs. It returns immediately with all pending reports, one escaped
-`<id> <kind>: <detail>` line per worker (at most 4096 bytes each). Run one wait, act on
-the batch, then wait again; reports accumulate while you act, with no batching timer.
-Status logs must be appended to (`>>`). An unsupported in-place truncate and rewrite that
-regrows to the cached scan offset or beyond between polls can skip the rewritten prefix;
-normal appends and respawns use the supported delivery path.
-Unreadable or corrupt worker state, probe errors, and failures to append a generated wake stop
-the workspace wait with an error on stderr. Repair the reported state and run wait again;
-workers whose lines were not printed keep their cursors. Any lines already printed on stdout
-stand as delivered even if a later worker causes a nonzero exit; process those lines before retrying.
-A newer wait supersedes the old one. An unreported worker whose window or agent exits
-produces `<id> gone: ...`; a worker confirmed idle for 30 seconds without reporting does too.
-Gone lines use the same log/cursor delivery path as reports, and reported workers remain quiet.
-A kill after printing but before advancing the cursor may replay that printed line. Exit codes: 0 wakes (reports or `gone:`), 11 superseded, 22 timeout.
-`spawn --wait` and `send --wait` start this same workspace wait after dispatch.
-The watcher also combines pending reports and overdue check-ins in one `niles:` line;
-while a wait runs, it leaves report delivery to that wait.
+`checkin` sets when the watcher first reminds the entry agent about a quiet worker (default
+`5m`); `recheck` sets the interval after that, either a duration or `backoff` (the default,
+growing to hourly). Durations are an integer with `ms`, `s`, `m` or `h`. `checkin: 0` or `off`
+disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a command overrides the manifest.
 
 ## State layout
 
-- `~/.niles/state/<mangled absolute workspace path>/`: the skill manifest, sessions, worker briefs, status logs, and reports. The key replaces `/` with `-` (for example `/Users/j/code/my-app` becomes `-Users-j-code-my-app`); slash/hyphen collisions are accepted. The key must fit the filesystem's component length limit (usually 255 bytes); longer paths fail with an OS error, with no shortening fallback.
-- `~/.niles/projects`: the list of registered projects.
+- `~/.niles/state/<workspace key>/`: the manifest, sessions, worker briefs, status logs and
+  reports. The key is the absolute workspace path with `/` replaced by `-`, so
+  `/Users/j/code/my-app` becomes `-Users-j-code-my-app`. Paths that differ only by `/` versus
+  `-` share state, and keys longer than the filesystem's name limit (usually 255 bytes) fail.
+- `~/.niles/projects`: registered projects.
 - `~/.niles/cache/`: checkouts of skills pinned with `niles skills import`, which also writes a
   `SKILL.ref` pointer under `.niles/skills/` or `~/.niles/skills/`.
-- `~/.niles/config.yaml`: settings you save in the config panel.
-- `~/.niles/trees/<absolute workspace path>/<branch>` and its Git branch when you spawn with
-  `--worktree`.
-- `~/.niles/remote/`: push keys and subscriptions, only if you use [remote access](remote.md).
-- One tmux session per project, with its status bar options set on that session only.
+- `~/.niles/config.yaml`: settings saved in the config panel.
+- `~/.niles/trees/<absolute workspace path>/<branch>`, plus its Git branch, for `--worktree`
+  spawns.
+- `~/.niles/remote/`: push keys and subscriptions, if you use [remote access](remote.md).
+- One tmux session per project, with status bar options set on that session only.
 
-Niles reads, but never writes, the model overrides in `~/.niles/roster.yaml` and a project's
-`niles.yaml`. It
-does not edit your agent CLIs' configuration or your tmux config. To remove Niles, stop its
-projects, uninstall the binary the way you installed it, and delete `~/.niles`, the
-`niles-setup` skill directories, any `.niles/` directory in your repositories, and any branches
-worktree spawns left behind.
+Niles reads `~/.niles/roster.yaml` and `niles.yaml` but never writes them, and it doesn't edit
+your agent CLIs' or tmux configuration. To remove Niles, close its projects in the home view
+(`c`), uninstall the binary, and delete `~/.niles`, the `niles-setup` skill directories, any
+`.niles/` directories in your repositories, and branches left by worktree spawns.

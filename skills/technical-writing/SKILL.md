@@ -13,7 +13,7 @@ The author must be able to explain every technical claim in their own words befo
 
 ## Process
 
-Scale to the job. A README section needs steps 1, 2, 6, 7, and 8. A review of an existing draft needs step 1 (the reader and the job only) and then steps 7-10, and it reports its findings as a list, not as edits. If the author wants a fast draft without the interview, draft from sources only and mark every author-owned gap `[TK]`. Keep working notes in one `notes.md` (format under Reference).
+Scale to the job. A README section needs steps 1, 2, 6, 7, and 8. A review of an existing draft needs step 1 (the reader, the job, and a length budget) and then steps 7-10, and it reports its findings as a list, not as edits. Lead the findings with length: the word count against the budget, the longest paragraphs, and what the reader could skip. End with the target shape in 2-3 lines. If the author wants a fast draft without the interview, draft from sources only and mark every author-owned gap `[TK]`. Keep working notes in one `notes.md` (format under Reference).
 
 1. Write a brief: the reader, the job in one sentence ("after reading, the reader can …"), the type, and a length budget. For a rewrite, set the budget below the current length. Infer what's obvious and ask only for the rest. For docs, use Diátaxis and keep one type per page. For posts, pick a pattern (both are listed under Reference). For pieces under the author's name, ask for 1-3 samples of their writing so you can match their rhythm and vocabulary.
 
