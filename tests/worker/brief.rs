@@ -79,6 +79,34 @@ fn skill_selects_primary_instructions_outside_the_opening_turn() {
 }
 
 #[test]
+fn replacement_skills_discover_the_binary_contract_for_every_family() {
+    let env = TestEnv::new("niles-worker-contract");
+    let skill_dir = env.root.join(".niles/skills/custom");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: custom\ndescription: Use when answering questions.\n---\nAnswer questions.\n",
+    )
+    .unwrap();
+    for (family, agent) in [
+        ("claude", "claude"),
+        ("codex", "codex"),
+        ("pi", "pi:deepseek/deepseek-v4.1-flash:high"),
+    ] {
+        write_executable(&env.bin.join(family), "#!/bin/sh\nexit 0\n");
+        write_manifest(&env.root, [("lead", "claude"), ("custom", agent)]);
+        let output = env.spawn("custom", &[family, "Answer this"]);
+        assert_command_success(family, &output);
+        let dir = state_dir(&env.root).join(format!("worker/{family}"));
+        let script = fs::read_to_string(dir.join("launch.sh")).unwrap();
+        assert!(script.contains("Answer questions."));
+        assert!(!script.contains("Niles orchestration contract"));
+        let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
+        assert!(brief.contains("Report with `niles agent status --help`"));
+    }
+}
+
+#[test]
 fn stdin_task_preserves_multiline_text() {
     let env = TestEnv::with_manifest("niles-worker-stdin-task", "claude");
     let mut child = env

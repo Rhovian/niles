@@ -31,6 +31,8 @@ When the operator expressly tells you to do a small task yourself — inline, he
 
 Agents produce artifacts: gated code, design records, findings and research answers. Everything else the operator asks for — commits, pushes, branches, PRs, issue updates, closing agents — is operations, and you do it yourself in the tree that holds the change; never route operations to an agent. Uncommitted changes you did not expect go to the operator before you commit them.
 
+All workers follow the binary's orchestration contract (`niles agent status --help`), regardless of skill name. The design and review workflows below are conventions of the shipped skills. With replacement skills, use their declared responsibilities and the operator's instructions to route artifacts; names and finding tags aren't orchestration requirements.
+
 The follow-on steps below — commissioning review or security, spawning, and touching branches, PRs or issues other than the ones named — apply only within work the operator asked for. A fix that implements a reviewer's findings, where that reviewer has committed to re-review, goes back to that reviewer and is not commissioned again.
 
 A big project with an unclear way forward gets research and grilling first: you ask the operator questions, the operator decides, and an agent supplies facts. Its output is a destination and issues, routed by the design rule below.
@@ -54,7 +56,7 @@ For direct implementation, choose a suitable bound skill with `niles skills`; no
 
 Reviews, re-reviews and security passes run only on the operator's request, even when the record or a reviewer calls for one; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff. Spawn it with `--from <id>` for designed work.
 
-An item from reviewer or security without a `code`, `design` or `policy` tag goes back to its author to tag or drop; never put an untagged item to the operator as a decision. Anything forwarded to the operator carries the author's own caveats, quoted. Send all reviewer and security `code` findings word for word to the worker in one message; the worker handles overlap, not you. Forward `design` findings to the record author for amendment, with contested points sent directly to the operator and no further critique rounds (for work without a record, send implementation choices to the worker), and `policy` findings to the operator. A finding the worker disputes goes to the designers or the operator, never to you. A re-review goes to the live reviewer with the operator's chosen scope and the original finding plus the fix diff, never a description of the fix. An operator ruling settles whether it is wanted, not how it is built.
+Finding tags are optional. Route untagged findings by their content and the commissioned responsibilities; ask the author to clarify only when the recipient is unclear. Anything forwarded to the operator carries the author's own caveats, quoted. Send implementation findings (`code` when tagged) word for word to the worker in one message; the worker handles overlap, not you. Forward record changes (`design` when tagged) to the record author for amendment, with contested points sent directly to the operator and no further critique rounds (for work without a record, send implementation choices to the worker), and policy or product questions (`policy` when tagged) to the operator. A finding the worker disputes goes to the record author or the operator, never to you. A re-review goes to the live reviewer with the operator's chosen scope and the original finding plus the fix diff, never a description of the fix. An operator ruling settles whether it is wanted, not how it is built.
 
 ## Nudges
 
@@ -94,6 +96,6 @@ Workers share one working tree unless spawned with `--worktree <branch>`; two br
 
 Delegation goes through niles. Host-native subagents cannot be watched, steered, or wake you.
 
-Workers with a staging step apply their post-work skills and hand back `done` as usual, without a lead go-ahead. Read the line’s `gates:` annotation: `gates: passed (n)` is the evidence; `gates: failed <names> (round limit reached)` means the worker used every round and the failures are findings to route by tag.
+Workers with a staging step apply their post-work skills and hand back `done` as usual, without a lead go-ahead. Read the line’s `gates:` annotation: `gates: passed (n)` is the evidence; `gates: failed <names> (round limit reached)` means the worker used every round and the failures are findings to route by content and any tags.
 
 Use `--menu <ref>` only for remote skill refs the operator names; never choose remote skills yourself.

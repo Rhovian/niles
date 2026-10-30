@@ -87,7 +87,7 @@ fn invalid_details_and_niles_owned_kinds_leave_log_unchanged() {
         assert!(!status(&env, "working", &[detail]).status.success());
         assert_eq!(fs::read_to_string(&log).unwrap(), "earlier\n");
     }
-    for kind in ["closed", "gone"] {
+    for kind in ["closed", "gone", "finished", "Done", "done:"] {
         assert_failure_contains(kind, &status(&env, kind, &["forged"]), "invalid value");
         assert_eq!(fs::read_to_string(&log).unwrap(), "earlier\n");
     }
@@ -164,6 +164,10 @@ fn help_carries_kinds_and_protocol_without_worker_environment() {
         "lead closes you",
         "non-empty",
         "NILES_AGENT_DIR",
+        "binding for every spawned worker",
+        "never write status.log directly",
+        "Invalid submissions fail before appending",
+        "Finding tags, roles and routing are skill conventions",
     ] {
         assert!(help.contains(text), "{help}");
     }
