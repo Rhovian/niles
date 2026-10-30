@@ -1,5 +1,8 @@
 use super::support::*;
-use std::{io::Write, process::Stdio};
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
 
 #[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
@@ -39,10 +42,25 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 
     let launch =
         fs::read_to_string(state_dir(&env.root).join("worker/auth-fix/launch.sh")).unwrap();
-    assert!(launch.contains(&format!(
-        "NILES_AGENT_DIR={}\n",
-        state_dir(&env.root).join("worker/auth-fix").display()
-    )));
+    let assignment = launch
+        .lines()
+        .find(|line| line.starts_with("export NILES_AGENT_DIR="))
+        .unwrap();
+    let assigned = Command::new("sh")
+        .args([
+            "-c",
+            &format!("{assignment}\nprintf '%s' \"$NILES_AGENT_DIR\""),
+        ])
+        .output()
+        .unwrap();
+    assert_command_success("worker directory assignment", &assigned);
+    assert_eq!(
+        stdout_of(&assigned),
+        state_dir(&env.root)
+            .join("worker/auth-fix")
+            .to_str()
+            .unwrap()
+    );
     assert!(launch.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"));
     assert!(launch.contains("CLAUDE_CODE_DISABLE_AGENT_VIEW=1"));
     // The agent runs as a child, not via exec, so the script survives to report its exit.

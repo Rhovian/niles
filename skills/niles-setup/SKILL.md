@@ -36,8 +36,23 @@ user chooses those skills; otherwise bind their chosen names and set `entry:` ex
 
 Set the project state directory:
 
-`niles_project_dir="$HOME/.niles/state/$(pwd -P | tr '/' '-')"`.
-This plain Claude-style key replaces slashes with hyphens and accepts separator/hyphen collisions.
+```sh
+niles_project_dir="$(python3 - <<'PY'
+import os
+from pathlib import Path
+
+key = os.getcwd().encode('utf-8').hex()
+print(Path.home().joinpath('.niles/state/v2',
+                          *(key[i:i + 240] for i in range(0, len(key), 240)),
+                          '@state'))
+PY
+)"
+```
+
+This encodes the entire physical workspace path as lowercase hex, split into components of
+at most 240 characters, with a reserved `@state` leaf. See
+[state layout](../../docs/configuration.md#state-layout). Old slash-to-hyphen state must be
+moved by hand before installing this version; the binary only reads the new layout.
 If `"$niles_project_dir/manifest.yaml"` exists, keep it; edit only when the user requests it. Otherwise ask in
 one message which installed CLI should lead (the agent they talk to) and, when both Claude Code
 and Codex are present, whether to mix families for independent review. Use the mixed template
