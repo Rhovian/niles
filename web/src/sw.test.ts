@@ -29,6 +29,15 @@ it('always displays a visible notification and opens only an encoded same-origin
     expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:other', data: { session_id: 'other' } }));
     await deliver('p:20261022T173949644004000Z');
     expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:p:20261022T173949644004000Z', data: { session_id: 'p:20261022T173949644004000Z' } }));
+    for (const host of [{ id: 'desk', name: 'Desktop' }, { id: 'laptop', name: 'Laptop' }]) {
+      const id = JSON.stringify([host.id, 's']);
+      listeners.get('push')!({ data: { json: () => ({ host, session_id: 's', project: 'p', reason: 'waiting' }) }, waitUntil });
+      await work;
+      expect(showNotification).toHaveBeenLastCalledWith(`Niles · ${host.name} · p`, expect.objectContaining({ tag: `session:${id}`, data: { session_id: id } }));
+      listeners.get('notificationclick')!({ notification: { close: vi.fn(), data: showNotification.mock.lastCall![1].data }, waitUntil });
+      await work;
+      expect(navigate).toHaveBeenLastCalledWith(`https://niles.test/#/sessions/${encodeURIComponent(id)}`);
+    }
     // Worker restarts must not reset the notification identity.
     vi.resetModules();
     await import('./sw');

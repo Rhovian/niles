@@ -23,9 +23,30 @@ struct Key {
     subject: String,
 }
 #[derive(Serialize, Deserialize)]
-struct Device {
+pub(super) struct Device {
     user: String,
-    subscription: Subscription,
+    pub(super) subscription: Subscription,
+    #[serde(default)]
+    pub(super) host: Option<Host>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct Host {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+#[derive(Deserialize)]
+pub(crate) struct Registration {
+    #[serde(flatten)]
+    pub(super) subscription: Subscription,
+    pub(super) host: Option<Host>,
+}
+impl Device {
+    pub(super) fn payload(&self, session: &super::Session) -> Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "host": self.host, "session_id": session.id, "project": session.project,
+            "reason": "Agent waiting for your input",
+        }))?)
+    }
 }
 pub(crate) struct Store {
     root: Utf8PathBuf,
@@ -105,11 +126,20 @@ impl Store {
             VapidSignatureBuilder::from_pem_no_sub(self.key.pem.as_bytes())?.get_public_key(),
         ))
     }
-    pub(super) fn save(&self, user: String, subscription: Subscription) -> Result<()> {
+    pub(super) fn save(
+        &self,
+        user: String,
+        subscription: Subscription,
+        host: Option<Host>,
+    ) -> Result<()> {
         let path = self.path(&subscription);
         // tempfile 3.27 persist atomically replaces; readers never see partially written JSON.
         let mut temp = tempfile::NamedTempFile::new_in(self.root.join("subscriptions"))?;
-        temp.write_all(&serde_json::to_vec(&Device { user, subscription })?)?;
+        temp.write_all(&serde_json::to_vec(&Device {
+            user,
+            subscription,
+            host,
+        })?)?;
         temp.as_file().sync_all()?;
         temp.persist(path)?;
         Ok(())
@@ -120,14 +150,14 @@ impl Store {
             URL_SAFE_NO_PAD.encode(openssl::sha::sha256(subscription.0.endpoint.as_bytes()))
         ))
     }
-    pub(super) fn subscriptions(&self) -> Result<Vec<Subscription>> {
+    pub(super) fn subscriptions(&self) -> Result<Vec<Device>> {
         let mut subscriptions = Vec::new();
         for entry in fs::read_dir(self.root.join("subscriptions"))? {
             let path = Utf8PathBuf::from_path_buf(entry?.path())
                 .map_err(|_| anyhow::anyhow!("non-UTF8 subscription path"))?;
             if path.extension() == Some("json") {
                 let device: Device = serde_json::from_slice(&read(&path)?)?;
-                subscriptions.push(device.subscription);
+                subscriptions.push(device);
             }
         }
         Ok(subscriptions)

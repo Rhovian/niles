@@ -33,12 +33,12 @@ pub(super) async fn vapid(State(state): State<AppState>) -> Result<Response, Api
 pub(super) async fn subscribe(
     State(state): State<AppState>,
     Extension(AuthorizedUser(user)): Extension<AuthorizedUser>,
-    Json(subscription): Json<Subscription>,
+    Json(registration): Json<store::Registration>,
 ) -> Result<StatusCode, ApiError> {
     let Some(store) = state.push else {
         return Ok(StatusCode::SERVICE_UNAVAILABLE);
     };
-    blocking(move || store.save(user, subscription)).await?;
+    blocking(move || store.save(user, registration.subscription, registration.host)).await?;
     Ok(StatusCode::OK)
 }
 fn newly_waiting(previous: &mut HashSet<String>, sessions: Vec<Session>) -> Vec<Session> {
@@ -70,13 +70,10 @@ pub(super) async fn watch(source: Source, store: Arc<Store>) -> Result<()> {
         let sessions =
             blocking(move || Ok(source()?.iter().map(Session::from_record).collect())).await?;
         for session in newly_waiting(&mut previous, sessions) {
-            let payload = serde_json::to_vec(
-                &serde_json::json!({"session_id":session.id,"project":session.project,"reason":"Agent waiting for your input"}),
-            )?;
             let list_store = store.clone();
-            for subscription in blocking(move || list_store.subscriptions()).await? {
-                let message = store.message(&subscription, &payload)?;
-                finish_delivery(&store, &subscription, client.send(message).await)?;
+            for device in blocking(move || list_store.subscriptions()).await? {
+                let message = store.message(&device.subscription, &device.payload(&session)?)?;
+                finish_delivery(&store, &device.subscription, client.send(message).await)?;
             }
         }
     }

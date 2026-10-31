@@ -131,7 +131,11 @@ links open with `noopener noreferrer`, and the CSP allows scripts and connection
 same origin only. A meta CSP can't set `frame-ancestors`, and Tailscale
 Serve can't add the header, so this deployment has no clickjacking protection.
 
-Push payloads carry only a session ID, project name and generic reason, encrypted with VAPID.
+Push payloads carry a session ID, project name, generic reason and the host ID/name supplied
+by the authenticated browser at registration. The browser qualifies session links and notification
+tags with that host ID. All hosts share one private VAPID key and receive the same browser
+subscription; compromising any host exposes that shared signing identity. Payloads are encrypted
+for the subscription and signed with VAPID.
 Push services see delivery metadata, and a locked phone can show the project and reason.
 Subscriptions are accepted only for Google, Mozilla and Apple push endpoints, so registration
 can't turn the server into an HTTP client inside your network. Keys and subscriptions are
