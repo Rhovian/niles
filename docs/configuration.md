@@ -8,6 +8,7 @@ Reference for the workspace manifest, model registry and Niles state. The
 | Key | Where | What it does |
 | --- | --- | --- |
 | `entry` | top level, required | The skill you talk to. No binding is required. |
+| `entry_agent` | top level, required | The agent the entry session runs on; must be a listed tier agent. `niles start --agent` overrides it for one launch. |
 | `<skill>` | top level | Optional skill composition; no models or default tier. |
 | `tiers` | top level, required | Project-wide model choices for every skill. |
 | `standard`, `frontier`, `economy`, `mechanical` | `tiers` | Tiers. `standard` is required; each tier has one `primary` and an ordered `secondaries` list. |

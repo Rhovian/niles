@@ -18,6 +18,10 @@ pub struct WorkspaceManifest {
     #[serde(flatten)]
     pub bindings: BTreeMap<SkillName, Binding>,
     pub entry: SkillName,
+    /// `entry_agent:` — the agent the entry session launches on. It must be one of the `tiers`
+    /// agents, and it is required: the lead's model is a choice of its own, not whichever agent
+    /// happens to be the standard primary.
+    pub entry_agent: String,
     pub tiers: Tiers,
     /// `checkin:` — the delay `spawn` and `send` arm when `--checkin` is not given: a duration such
     /// as `1s`, `90s`, `5m` or `1h`, or `off` for none. Absent is the built-in five-minute
@@ -247,6 +251,19 @@ impl Tiers {
     pub fn tier(&self, tier: Tier) -> Result<&TierBinding> {
         self.get(tier)
             .ok_or_else(|| anyhow::anyhow!("manifest does not list tier {}", tier.as_str()))
+    }
+
+    /// Admits `agent` only if it is one of the listed tier agents: the spending gate every launch
+    /// passes through.
+    pub fn admit(&self, agent: &str, models: &ModelRoster) -> Result<()> {
+        let requested = AgentSpec::parse(agent, models)?;
+        crate::agents::validate_model(&requested, models)?;
+        ensure!(
+            self.allows(&requested, models)?,
+            "agent {agent} is not listed in the manifest tiers; allowed agents: {}",
+            self.agents().collect::<Vec<_>>().join(", ")
+        );
+        Ok(())
     }
 
     pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {

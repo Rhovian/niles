@@ -271,7 +271,7 @@ pub fn write_manifest<'a>(
         .map(|(skill, _)| format!("{skill}: {{}}\n"))
         .collect::<String>();
     fs::write(state.join("manifest.yaml"), format!(
-        "entry: lead\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents.join(", ")
+        "entry: lead\nentry_agent: {primary}\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents.join(", ")
     )).unwrap();
 }
 

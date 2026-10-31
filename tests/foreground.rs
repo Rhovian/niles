@@ -6,7 +6,7 @@ use common::*;
 use std::fs;
 
 #[test]
-fn entry_delivers_project_standard_primary_and_session_header_to_builtin_cli() {
+fn entry_delivers_entry_agent_and_session_header_to_builtin_cli() {
     for (entry, model, agent_line) in [
         ("reviewer", "sonnet", ""),
         ("lead", "haiku", "lead_agent: claude:haiku"),
@@ -16,6 +16,46 @@ fn entry_delivers_project_standard_primary_and_session_header_to_builtin_cli() {
     }
 }
 
+#[test]
+fn entry_agent_is_chosen_apart_from_standard_primary_and_overridable_within_tiers() {
+    let env = TestEnv::new("niles-foreground-entry-agent");
+    write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
+    let manifest = state_dir(&env.root).join("manifest.yaml");
+    let body = fs::read_to_string(&manifest).unwrap().replace(
+        "entry_agent: claude:haiku",
+        "entry_agent: claude:sonnet:high",
+    );
+    fs::write(&manifest, body).unwrap();
+    write_executable(
+        &env.bin.join("claude"),
+        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$NILES_TEST_ARGS\"\n",
+    );
+    let args_log = env.root.join("args");
+    let start = |extra: &[&str]| {
+        env.niles(&env.root, &[&["start", "--keep-skills"], extra].concat())
+            .env("NILES_TEST_ARGS", &args_log)
+            .env_remove("TMUX_PANE")
+            .output()
+            .unwrap()
+    };
+    for (extra, model) in [
+        (&[][..], "sonnet"),
+        (&["--agent", "claude:haiku"][..], "haiku"),
+    ] {
+        assert_command_success(model, &start(extra));
+        let args = fs::read_to_string(&args_log).unwrap();
+        assert!(
+            args.contains(&format!("--model\0{model}\0")),
+            "{model}: {args}"
+        );
+    }
+    assert_failure_contains(
+        "unlisted",
+        &start(&["--agent", "claude:opus:high"]),
+        "agent claude:opus:high is not listed in the manifest tiers",
+    );
+}
+
 fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let env = TestEnv::new("niles-foreground-header");
     write_workspace_manifest(&env.root, "claude:haiku", "codex", "claude", "codex");
@@ -23,13 +63,13 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     let mut body = fs::read_to_string(&manifest)
         .expect(entry)
         .replace("entry: lead", &format!("entry: {entry}"));
-    body = body.replace(
-        "primary: claude:haiku",
-        &format!(
-            "primary: claude:{model}{}",
-            if model == "haiku" { "" } else { ":high" }
-        ),
+    let agent = format!(
+        "claude:{model}{}",
+        if model == "haiku" { "" } else { ":high" }
     );
+    for key in ["entry_agent", "primary"] {
+        body = body.replace(&format!("{key}: claude:haiku"), &format!("{key}: {agent}"));
+    }
     if entry == "solo" {
         body.push_str("\nsolo: {}\n");
     }

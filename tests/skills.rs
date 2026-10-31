@@ -92,7 +92,7 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
 fn discovery_lists_installed_skills_without_bindings() {
     let env = TestEnv::with_manifest("skills-discovery", "claude");
     let manifest = state_dir(&env.root).join("manifest.yaml");
-    let tiers = "entry: lead\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+    let tiers = "entry: lead\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
     fs::write(&manifest, tiers).unwrap();
     let local = env.root.join(".niles");
     let global = env.home.join(".niles");

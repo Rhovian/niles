@@ -33,8 +33,8 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
     let path = state_dir(&env.root).join("manifest.yaml");
     let body = fs::read_to_string(&path).unwrap().replacen(
-        "claude:sonnet:high",
-        "pi:z-ai/glm-5.3-flash:high",
+        "primary: claude:sonnet:high",
+        "primary: pi:z-ai/glm-5.3-flash:high",
         1,
     );
     fs::write(&path, body).unwrap();

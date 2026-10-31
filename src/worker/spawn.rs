@@ -309,14 +309,10 @@ fn resolve_agent(
         bail!("entry skill {skill} cannot be spawned");
     }
     if let Some(agent) = agent {
-        let requested = agents::AgentSpec::parse(&agent, &config.models)?;
-        agents::validate_model(&requested, &config.models)?;
-        if !manifest.tiers.allows(&requested, &config.models)? {
-            bail!(
-                "agent {agent} is not allowed in manifest {path}; allowed agents: {}",
-                manifest.tiers.agents().collect::<Vec<_>>().join(", ")
-            );
-        }
+        manifest
+            .tiers
+            .admit(&agent, &config.models)
+            .with_context(|| format!("invalid --agent for manifest {path}"))?;
         return Ok(agent);
     }
     Ok(manifest.tiers.tier(tier)?.primary.clone())

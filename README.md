@@ -90,11 +90,12 @@ any `.niles/` in your repositories. See
 
 Each project's manifest lives at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml`
 (see [state layout](docs/configuration.md#state-layout) for the encoding). First-run setup
-generates it from your installed agent CLIs. It names the entry skill and defines project-wide tiers with a `primary`
+generates it from your installed agent CLIs. It names the entry skill and the agent it runs on, and defines project-wide tiers with a `primary`
 and ordered fallback `secondaries`:
 
 ```yaml
 entry: lead
+entry_agent: claude:opus:high
 tiers:
   standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}
   frontier: {primary: claude:opus:high, secondaries: [codex:gpt-6-astra:high]}

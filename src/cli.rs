@@ -92,6 +92,10 @@ pub enum CommandName {
     Start {
         #[arg(long)]
         keep_skills: bool,
+        /// Launch the entry session on this listed tier agent instead of the manifest's
+        /// `entry_agent`.
+        #[arg(short, long)]
+        agent: Option<String>,
     },
     /// Run the project explorer in the home session.
     #[command(hide = true)]
@@ -299,7 +303,7 @@ mod tests {
             (vec!["niles", "start"], false),
             (vec!["niles", "start", "--keep-skills"], true),
         ] {
-            let Some(CommandName::Start { keep_skills }) =
+            let Some(CommandName::Start { keep_skills, .. }) =
                 Cli::try_parse_from(args).unwrap().command
             else {
                 panic!("not a start session");
