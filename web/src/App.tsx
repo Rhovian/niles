@@ -61,7 +61,7 @@ export function App() {
       <img class="brand" src="/icon-32.png" alt="Niles" width="32" height="32" /></header>
     {menu && <aside id="project-menu">
       <header><h2>Projects</h2><button ref={closeButton} onClick={() => setMenu(false)}>Close sidebar</button></header>
-      {compatible && <Notifications />}
+      {compatible && <Notifications hosts={hosts} />}
       {hosts.map(host => <section key={host.id} aria-label={host.name}>
         {host.id && <h3>{host.name}</h3>}
         {host.state === 'ready' ? <Navigation prefix={hostPrefix(host)} projects={host.projects}
