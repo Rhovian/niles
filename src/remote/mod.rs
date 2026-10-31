@@ -30,9 +30,11 @@ pub(crate) mod push;
 pub(crate) mod setup;
 #[cfg(test)]
 mod tests;
+mod wake;
 
 const API_VERSION: u32 = 1;
 const SUBSCRIPTION_BODY_BYTES: usize = 4096;
+const WAKE_BODY_BYTES: usize = 16;
 const POLL: Duration = Duration::from_secs(1);
 type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
 type ProjectSource =
@@ -44,6 +46,7 @@ struct AppState {
     source: Source,
     projects: ProjectSource,
     push: Option<Arc<push::Store>>,
+    wake_hosts: Arc<wake::Hosts>,
 }
 
 impl AppState {
@@ -53,6 +56,7 @@ impl AppState {
             source,
             projects: Arc::new(crate::projects::navigation::collect),
             push: None,
+            wake_hosts: Arc::new(wake::Hosts::new()),
         }
     }
 }
@@ -110,10 +114,12 @@ fn resolve(source: &Source, id: &str) -> Result<Option<ForegroundSession>> {
 // The runtime is created only when this sync CLI entry point is invoked.
 #[tokio::main]
 pub(crate) async fn run(port: u16) -> Result<()> {
-    let relay =
-        blocking(|| auth::Relay::new(user::FileConfig::load(&user::path()?)?.remote.relay_node))
-            .await?;
+    let config = blocking(|| user::FileConfig::load(&user::path()?))
+        .await?
+        .remote;
+    let relay = auth::Relay::new(config.relay_node)?;
     let mut state = AppState::new(relay, Arc::new(status::live_sessions));
+    state.wake_hosts = Arc::new(wake::configured(config.wake_hosts)?);
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
     let ip = blocking(auth::tailnet_ip).await?;
     let listener = tokio::net::TcpListener::bind((ip, port)).await?;
@@ -138,6 +144,10 @@ pub(crate) async fn run(port: u16) -> Result<()> {
 
 fn router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/api/hosts/{id}/wake",
+            post(wake::wake).layer(DefaultBodyLimit::max(WAKE_BODY_BYTES)),
+        )
         .route("/api/push/vapid", get(push::vapid))
         .route(
             "/api/push/subscribe",

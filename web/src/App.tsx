@@ -3,6 +3,7 @@ import { API_VERSION, leadBase, workerBase, type Session } from './api';
 import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
+import { Wake } from './Wake';
 import { Notifications } from './push';
 import { selectedSession } from './notification';
 
@@ -68,7 +69,7 @@ export function App() {
           selected={host.projects.find(project => qualified(host, project.name) === active)?.name}
           refresh={refresh} openProject={name => openProject(host, name)}
           openWorker={(project, id) => { openProject(host, project); setWorker({ host, project, id }); }} /> :
-          host.state === 'asleep' ? <p>Asleep <button disabled title="Wake is not available yet">Wake {host.name}</button></p> :
+          host.state === 'asleep' ? <Wake host={host} refresh={refresh} /> :
           host.state === 'loading' ? <p>Connecting…</p> : null}
         {host.state === 'ready' && host.projects.length === 0 && <p class="empty">No registered projects.</p>}
       </section>)}

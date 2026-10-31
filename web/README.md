@@ -163,8 +163,10 @@ An incompatible or invalid host cannot open chat; healthy hosts remain usable.
 Each host refreshes independently every 15 seconds and on window focus, with an
 eight-second request timeout. Network failures, timeouts and relay 502/503/504
 responses show **Asleep**, clear that host's chat, and recover on a later refresh.
-Authorization and other HTTP failures show errors instead. The asleep row has a
-disabled **Wake** button until the wake endpoint is implemented in #454. Shared
+Authorization and other HTTP failures show errors instead. The asleep row's **Wake**
+button posts JSON `null` to the relay's `/api/hosts/<id>/wake`. A 204 means the packet
+was sent; the host remains asleep until a refresh reaches it. Errors permit retry.
+Wake is disabled in legacy single-host mode. Shared
 push and host-qualified push payloads belong to #453; existing notification
 registration still targets the relay's `/api/push/...` endpoints. No transcripts,
 host responses or outgoing messages are cached or queued.
