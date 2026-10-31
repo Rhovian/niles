@@ -1,27 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, leadBase, workerBase, connectionError, type Session, type Project, projects, sessions } from './api';
+import { API_VERSION, leadBase, workerBase, type Session } from './api';
+import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
 import { Notifications } from './push';
 import { selectedSession } from './notification';
 
-const SESSION_REFRESH_MS = 15_000;
 export function App() {
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
   const [menu, setMenu] = useState(false);
   const [help, setHelp] = useState(false);
-  const [registered, setRegistered] = useState<Project[]>([]);
+  const { hosts, error, refresh, onStatus: hostStatus } = useHosts();
   const [active, setActive] = useState<string | null>(() => localStorage.getItem('niles.activeProject'));
-  const [items, setItems] = useState<Session[]>([]);
   const [selected, setSelected] = useState<string | undefined>(selectedSession(window.location.hash));
-  const [version, setVersion] = useState<number>();
-  const [error, setError] = useState('');
-  const [loaded, setLoaded] = useState(false);
-  const [worker, setWorker] = useState<{ project: string; id: string }>();
-  const refreshMenu = useRef<() => void>(() => {});
-  const statusRevision = useRef(0);
+  const [worker, setWorker] = useState<{ host: Host; project: string; id: string }>();
   useEffect(() => {
     if (!menu) return;
     closeButton.current?.focus();
@@ -34,72 +28,63 @@ export function App() {
     window.addEventListener('hashchange', select);
     return () => window.removeEventListener('hashchange', select);
   }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    let inFlight = false;
-    const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      const revision = statusRevision.current;
-      try {
-        const [response, navigation] = await Promise.all([sessions(controller.signal), projects(controller.signal)]);
-        if (controller.signal.aborted) return;
-        setVersion(response.api_version === API_VERSION ? navigation.api_version : response.api_version);
-        setRegistered(navigation.projects);
-        // An SSE status received after this request started is newer than its snapshot.
-        if (revision === statusRevision.current) setItems(response.sessions);
-        setError(''); setLoaded(true);
-      } catch (cause) {
-        if (!controller.signal.aborted) setError(connectionError(cause));
-      } finally { inFlight = false; }
-    };
-    refreshMenu.current = () => { void refresh(); };
-    void refresh();
-    const timer = setInterval(() => { void refresh(); }, SESSION_REFRESH_MS);
-    window.addEventListener('focus', refresh);
-    return () => { controller.abort(); clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, []);
+  const items = hosts.flatMap(host => host.state === 'ready' ? host.sessions.map(session => ({ host, session })) : []);
+  const current = selected ? items.find(({ host, session }) => qualified(host, session.id) === selected)
+    : items.find(({ host, session }) => qualified(host, session.project) === active);
+  const currentHostId = current?.host.id;
   const onStatus = useCallback((status: Session) => {
-    statusRevision.current += 1;
-    setItems(old => old.map(item => item.id === status.id ? status : item));
-  }, []);
+    if (currentHostId !== undefined) hostStatus(currentHostId, status);
+  }, [currentHostId, hostStatus]);
   useEffect(() => {
-    const project = items.find(item => item.id === selected)?.project;
+    const match = items.find(({ host, session }) => qualified(host, session.id) === selected);
+    const project = match && qualified(match.host, match.session.project);
     if (project) {
       setActive(project); localStorage.setItem('niles.activeProject', project);
       setSelected(undefined); window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
-  }, [items, selected]);
-  const openProject = (name: string) => {
+  }, [hosts, selected]);
+  const openProject = (host: Host, project: string) => {
+    const name = qualified(host, project);
     setWorker(undefined);
     setActive(name); localStorage.setItem('niles.activeProject', name);
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
     setSelected(undefined); setMenu(false); setHelp(false);
   };
-  const current = selected ? items.find(item => item.id === selected) : items.find(item => item.project === active);
-  const member = registered.find(project => project.name === worker?.project)?.workers.find(item => item.id === worker?.id);
-  const compatible = version === API_VERSION;
+  const workerHost = hosts.find(host => host.id === worker?.host.id);
+  const member = workerHost?.state === 'ready' ? workerHost.projects.find(project => project.name === worker?.project)?.workers.find(item => item.id === worker?.id) : undefined;
+  const compatible = hosts.some(host => host.state === 'ready');
+  const loaded = hosts.some(host => host.state !== 'loading');
   return <div class="app">
     <header class="toolbar"><button ref={menuButton} aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu}
       aria-controls="project-menu" onClick={() => setMenu(!menu)}>☰</button>
-      <div class="pane-heading" ref={setHeaderTarget}>{(help || !compatible || (!worker && !current)) && <h1>{help ? 'Help' : 'Niles'}</h1>}</div>
+      <div class="pane-heading" ref={setHeaderTarget}>{(help || (!current && (!worker || workerHost?.state !== 'ready'))) && <h1>{help ? 'Help' : 'Niles'}</h1>}</div>
       <img class="brand" src="/icon-32.png" alt="Niles" width="32" height="32" /></header>
     {menu && <aside id="project-menu">
       <header><h2>Projects</h2><button ref={closeButton} onClick={() => setMenu(false)}>Close sidebar</button></header>
       {compatible && <Notifications />}
-      <Navigation projects={registered} selected={active ?? undefined} refresh={() => refreshMenu.current()} openProject={openProject} openWorker={(project, id) => { openProject(project); setWorker({ project, id }); }}
-        help={() => { setHelp(true); setMenu(false); }} />
-      {loaded && compatible && registered.length === 0 && <p class="empty">No registered projects.</p>}
+      {hosts.map(host => <section key={host.id} aria-label={host.name}>
+        {host.id && <h3>{host.name}</h3>}
+        {host.state === 'ready' ? <Navigation prefix={hostPrefix(host)} projects={host.projects}
+          selected={host.projects.find(project => qualified(host, project.name) === active)?.name}
+          refresh={refresh} openProject={name => openProject(host, name)}
+          openWorker={(project, id) => { openProject(host, project); setWorker({ host, project, id }); }} /> :
+          host.state === 'asleep' ? <p>Asleep <button disabled title="Wake is not available yet">Wake {host.name}</button></p> :
+          host.state === 'loading' ? <p>Connecting…</p> : null}
+        {host.state === 'ready' && host.projects.length === 0 && <p class="empty">No registered projects.</p>}
+      </section>)}
+      <button onClick={() => { setHelp(true); setMenu(false); }}>Help</button>
     </aside>}
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
-    {version !== undefined && !compatible && <p class="banner" role="alert">Update the web app. API version {version} requires a matching release (this app supports {API_VERSION}).</p>}
+    {hosts.map(host => host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: Update the web app. API version {host.version} requires a matching release (this app supports {API_VERSION}).</p> :
+      host.state === 'error' ? <p key={host.id} class="banner" role="alert">{host.name}: {host.error}</p> :
+      host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep. Cannot reach Niles. Check your tailnet connection.</p> : null)}
     {help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by skill; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
-      compatible && worker ? <Chat key={workerBase(worker.project, worker.id)} base={workerBase(worker.project, worker.id)} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${member?.skill ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :
-      compatible && current ? <Chat key={current.id} base={leadBase(current.id)} id={current.id} title={current.project} pane={current.agent.entry_skill} subtitle={current.agent.model ?? current.agent.family} headerTarget={headerTarget} working={!current.waiting} onStatus={onStatus} /> :
+      worker && workerHost?.state === 'ready' ? <Chat key={workerBase(worker.project, worker.id, hostPrefix(worker.host))} base={workerBase(worker.project, worker.id, hostPrefix(worker.host))} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${worker.host.id ? worker.host.name + ' · ' : ''}${member?.skill ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :
+      current ? <Chat key={qualified(current.host, current.session.id)} base={leadBase(current.session.id, hostPrefix(current.host))} id={current.session.id} title={current.session.project} pane={`${current.host.id ? current.host.name + ' · ' : ''}${current.session.agent.entry_skill}`} subtitle={current.session.agent.model ?? current.session.agent.family} headerTarget={headerTarget} working={!current.session.waiting} onStatus={onStatus} /> :
       <main class="empty welcome"><img src="/icon-192.png" alt="Niles logo" width="192" height="192" />
-        <p>{version !== undefined && !compatible ? 'Install the matching web release to continue.' :
+        <p>{hosts.some(host => host.state === 'incompatible') && !compatible ? 'Install the matching web release to continue.' :
           !loaded && !error ? 'Connecting…' : active || selected ? 'This project’s lead is not running. Open projects on the sidebar.' : 'Open projects on the sidebar.'}</p></main>}
   </div>;
 }

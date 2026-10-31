@@ -11,15 +11,16 @@ beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clea
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
   const interval = vi.spyOn(globalThis, 'setInterval');
   let resolve!: (result: ReturnType<typeof response>) => void;
-  const fetch = vi.fn((url: string) => url === '/api/projects' ? Promise.resolve(navigation) : new Promise(done => { resolve = done; }));
+  const fetch = vi.fn((url: string) => url === '/hosts.json' ? Promise.resolve({ status: 404 }) : url === '/api/projects' ? Promise.resolve(navigation) : new Promise(done => { resolve = done; }));
   vi.stubGlobal('fetch', fetch);
   class Stream extends EventTarget { close() {} }
   vi.stubGlobal('EventSource', Stream);
   render(<App />);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
   const tick = interval.mock.calls.find(([, delay]) => delay === 15_000)![0] as () => void;
   fireEvent(window, new Event('focus'));
   tick();
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
   expect(interval).toHaveBeenCalledWith(expect.any(Function), 15_000);
   resolve(response([session]));
   openMenu();
@@ -27,11 +28,11 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   fireEvent.click(screen.getByRole('button', { name: 'notes', exact: true }));
   fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
   tick();
-  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch).toHaveBeenCalledTimes(5);
   resolve(response([]));
   await screen.findByText(/This project’s lead is not running/);
   fireEvent(window, new Event('focus'));
-  expect(fetch).toHaveBeenCalledTimes(6);
+  expect(fetch).toHaveBeenCalledTimes(7);
   resolve(response([]));
 });
 it('does not overwrite an SSE status with an older in-flight snapshot', async () => {
@@ -43,7 +44,7 @@ it('does not overwrite an SSE status with an older in-flight snapshot', async ()
   vi.stubGlobal('EventSource', Stream);
   let resolve!: (result: ReturnType<typeof response>) => void;
   let calls = 0;
-  vi.stubGlobal('fetch', vi.fn((url: string) => url === '/api/projects' ? Promise.resolve(navigation) : ++calls === 1 ? Promise.resolve(response([session])) : new Promise(done => { resolve = done; })));
+  vi.stubGlobal('fetch', vi.fn((url: string) => url === '/hosts.json' ? Promise.resolve({ status: 404 }) : url === '/api/projects' ? Promise.resolve(navigation) : ++calls === 1 ? Promise.resolve(response([session])) : new Promise(done => { resolve = done; })));
   render(<App />);
   openMenu();
   await screen.findByText('notes');

@@ -136,3 +136,35 @@ models use their agent family; legacy workers use their saved agent label. Model
 fields are additive optional API v1 metadata. The chat follows the latest content
 through viewport and content resizing; scrolling up pauses following until the
 operator scrolls back to the bottom. No extra scroll controls are shown.
+
+## Relay hosts
+
+Serve a noncached `/hosts.json` beside the shell to merge hosts in one sidebar:
+
+```json
+{"hosts":[{"id":"desktop","name":"Desktop"},{"id":"laptop","name":"Laptop"}]}
+```
+
+The list must be nonempty. IDs are unique, case-sensitive routing names, starting
+with an ASCII letter or digit and containing only letters, digits, `_` and `-`.
+Names are nonempty display labels. The relay routes `/h/<id>/api/...` to that
+host's `/api/...`; the client never connects directly to a tailnet IP. Only a
+manifest 404 selects the legacy single-host `/api/...` mode; malformed manifests
+and other HTTP errors stop loading and show an error. The development mock uses
+this single-host mode.
+
+Projects and workers are grouped under each host; identical names and IDs remain
+separate. Remembered project keys and session link IDs are JSON tuples
+`["host-id","raw-id"]` (percent-encoded for `#/sessions/<id>` links). Raw session,
+project and worker IDs are percent-encoded only when constructing API paths.
+API compatibility is checked independently for each host's projects and sessions.
+An incompatible or invalid host cannot open chat; healthy hosts remain usable.
+
+Each host refreshes independently every 15 seconds and on window focus, with an
+eight-second request timeout. Network failures, timeouts and relay 502/503/504
+responses show **Asleep**, clear that host's chat, and recover on a later refresh.
+Authorization and other HTTP failures show errors instead. The asleep row has a
+disabled **Wake** button until the wake endpoint is implemented in #454. Shared
+push and host-qualified push payloads belong to #453; existing notification
+registration still targets the relay's `/api/push/...` endpoints. No transcripts,
+host responses or outgoing messages are cached or queued.
