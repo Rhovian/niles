@@ -20,8 +20,8 @@ install/Add to Home Screen control over HTTPS (localhost also works).
 The manifest requests `minimal-ui`, keeping a small browser toolbar in installed apps
 to avoid Chrome’s separate “Tap to copy the URL for this app” notification.
 
-For installation from `niles-web.tar.gz`, same-host Tailscale Serve configuration,
-allowlist and VAPID initialization, follow the [remote setup guide](../docs/remote.md).
+For installation from `niles-web.tar.gz`, relay Tailscale Serve/Caddy configuration,
+tailnet policy and shared VAPID initialization, follow the [remote setup guide](../docs/remote.md).
 Only the built shell directory is served; Cargo never builds this frontend.
 The [threat model](../docs/security.md#remote-pwa-frontend) covers sanitized markdown,
 shell-only caching, CSP and the known framing gap. API responses must use no-store;
@@ -166,7 +166,7 @@ responses show **Asleep**, clear that host's chat, and recover on a later refres
 Authorization and other HTTP failures show errors instead. The asleep row's **Wake**
 button posts JSON `null` to the relay's `/api/hosts/<id>/wake`. A 204 means the packet
 was sent; the host remains asleep until a refresh reaches it. Errors permit retry.
-Wake is disabled in legacy single-host mode. Shared
-push and host-qualified push payloads belong to #453; existing notification
-registration still targets the relay's `/api/push/...` endpoints. No transcripts,
+Wake is disabled in legacy single-host mode. Notification registration verifies a shared
+VAPID key and registers one browser subscription through every manifest host's
+`/h/<id>/api/push/...` endpoints. No transcripts,
 host responses or outgoing messages are cached or queued.

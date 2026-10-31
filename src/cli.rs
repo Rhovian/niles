@@ -274,27 +274,6 @@ pub enum CommandName {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
-    /// Remove the remote service and its Serve mounts, retaining config and push state.
-    #[cfg(feature = "remote")]
-    Uninstall,
-
-    /// Check remote prerequisites without changing configuration or services.
-    #[cfg(feature = "remote")]
-    Doctor,
-
-    /// Configure same-origin Tailscale Serve and a user service.
-    #[cfg(feature = "remote")]
-    Setup {
-        #[arg(long, default_value = "8765")]
-        port: std::num::NonZeroU16,
-        /// Dedicated built PWA directory containing index.html.
-        #[arg(long)]
-        web_dir: camino::Utf8PathBuf,
-        /// Initialize Web Push if absent, using this mailto: or https: contact URI.
-        #[arg(long)]
-        subject: Option<String>,
-    },
-
     /// Generate a private VAPID keypair for Web Push; never overwrites existing keys.
     Init {
         /// VAPID contact URI (mailto: or https:).
