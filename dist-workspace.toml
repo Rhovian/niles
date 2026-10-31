@@ -23,6 +23,7 @@ publish-jobs = ["homebrew", "./publish-crates"]
 # Custom jobs run after the release is announced
 post-announce-jobs = ["./release-notes", "./web-release"]
 
-# dist defaults aarch64-apple-darwin to macos-14, which GitHub retires on 2026-11-02.
+# Pinned to the newest GitHub macOS images; dist's default macos-14 retires on 2026-11-02.
 [dist.github-custom-runners]
-aarch64-apple-darwin = "macos-15"
+aarch64-apple-darwin = "macos-26"
+x86_64-apple-darwin = "macos-26-intel"
