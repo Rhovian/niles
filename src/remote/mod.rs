@@ -27,7 +27,6 @@ mod control;
 mod feed;
 mod message;
 pub(crate) mod push;
-pub(crate) mod setup;
 #[cfg(test)]
 mod tests;
 mod wake;

@@ -106,7 +106,11 @@ local process that can make connections as the relay can impersonate any user. R
 access to its node credentials and local Caddy listener. A direct connection from a user's
 other tailnet device is rejected, even when that device can reach the host through ACLs.
 Host-local processes remain outside this model. Existing single-host setup migration is not
-provided by this change; the deployment setup must configure the relay and ACLs.
+provided. The [remote-setup skill](../skills/remote-setup/SKILL.md) configures tags/grants,
+the relay, and user services for fresh deployments; inspect existing policy because grants
+are additive. Its Caddy listener stays on localhost and its wake route targets the relay
+backend through the relay's tailnet address. The skill and service/config files execute with
+the operator's authority; keep them outside the served asset directory.
 
 Any user admitted by the relay can instruct the entry agent and workers, and so can run commands as you.
 It can start a registered project only with its saved manifest, stop it, and close workers. No

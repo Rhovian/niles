@@ -1,7 +1,7 @@
 # Remote access over Tailscale
 
 Phone access is shell access on the Niles host: the phone can instruct agents that run commands
-as you, and workers bypass approval prompts. Serve the app only from the Niles host, never from
+as you, and workers bypass approval prompts. Serve the app only from your relay, never from
 a public site. Read the [threat model](security.md#remote-api) first.
 
 ## Prerequisites
@@ -40,43 +40,42 @@ The web directory must contain only the built app, with `index.html` at its top.
 at the repository, your home directory or `~/.niles/`. Treat the app and wherever you get it
 from as code running on your host.
 
-## Configure
+## Configure with the remote-setup skill
 
-Run setup as your normal user, not root, after stopping any `niles remote` you started by hand:
+Use the [remote-setup skill](../skills/remote-setup/SKILL.md) with an agent that can access
+these machines. It is an ordinary disk skill: copy its directory to
+`~/.niles/skills/remote-setup/` to use it across projects, or follow the linked instructions
+in an attended agent session. Give it the relay and host inventory, permitted phone users,
+push contact URI, and any Wake-on-LAN targets. It handles fresh installations; migration of
+existing remote deployments is out of scope.
 
-```sh
-niles remote setup --web-dir "$NILES_WEB_DIR" \
-  --subject mailto:you@example.com
+The relay stays awake and also runs Niles. Tailscale Serve terminates HTTPS and forwards to
+Caddy on `127.0.0.1:8080`. Caddy serves the built PWA and `hosts.json`, strips `/h/<id>` from
+host API requests, and forwards them to each host's tailnet IPv4 port (default 8765).
+Serve cannot proxy directly to other tailnet IPs because its dialer bypasses Tailscale routes.
+The phone uses one HTTPS origin; no CORS configuration is needed. Use Serve, never Funnel.
+
+Every host, including the relay, needs this in its existing `~/.niles/config.yaml`:
+
+```yaml
+remote:
+  relay_node: nYOUR_RELAY_STABLE_NODE_ID
 ```
 
-It creates push keys if there are none, installs and starts a user service, and serves the app
-at `/` and the API at `/api` through Tailscale Serve on HTTPS 443. Omit `--subject`
-for chat without push; add push later with `niles remote init --subject mailto:you@example.com`
-and a restart.
+Use `Node.StableID` from `tailscale whois --json <relay-tailnet-ip>`. Caddy must use the relay's
+own tailnet IP for its backend too, so WhoIs can authenticate its connection. Hosts require
+exactly one forwarded Tailscale login and the configured relay as their TCP peer. There is
+no `remote.allowed_users`: tailnet policy restricts phone users to relay TCP 443 and the relay
+to host backend ports. Anyone admitted through the relay has shell authority on every host.
 
-Setup first runs the checks in `niles remote doctor`, which you can rerun at any time. Each
-failure prints the fix. The common ones:
-
-- The `niles` on your PATH isn't the remote-enabled binary. Put its directory first on PATH and
-  run `hash -r`; `type -a niles` shows which one wins.
-- The Tailscale CLI and daemon versions differ. Check `type -a tailscale` for a stale GUI wrapper.
-- On macOS, the Homebrew `tailscaled` LaunchDaemon can't find the CLI on its PATH. Doctor prints
-  the fix; `brew services restart tailscale` can undo it, so rerun doctor afterwards.
-- You aren't the Tailscale operator: run `sudo tailscale set --operator="$(id -un)"`. On macOS
-  you also need to be an administrator.
-- The host has no HTTPS certificate domain: enable HTTPS in the DNS settings.
-
-Setup and doctor never run `sudo`. The service file is
-`~/Library/LaunchAgents/dev.niles.remote.plist` on macOS or
-`~/.config/systemd/user/niles-remote.service` on Linux; on Linux, run
-`loginctl enable-linger "$USER"` to keep it running while you're logged out. Setup refuses to
-replace an existing service file or existing `/` and `/api` Serve handlers, and it ends by
-checking the API from the host. If that check only warns, run the printed `curl -i` command from
-an allowed device. `--port` changes the loopback port.
+The skill configures tags and grants, explicit Caddy routes, a noncached host manifest,
+shared VAPID keys, optional server-side WoL targets, and OS user services. It verifies the
+API through the relay and tests denied access. Its Caddyfile and service files live outside
+the public asset directory. Never put private keys or Niles state in the PWA directory.
 
 ## Install on the phone
 
-Open `https://<host>.<tailnet>.ts.net/` on the phone, select a live session and send a harmless
+Open `https://<relay>.<tailnet>.ts.net/` on the phone, select a live session and send a harmless
 message; check it arrives at the desk. Then use the browser's Add to Home Screen. On iOS 16.4+,
 push needs the installed app: choose Enable notifications there. Notifications arrive even with
 Tailscale off, but opening one needs Tailscale. See [notification behavior](../web/README.md#notifications).
@@ -97,8 +96,8 @@ Tailscale off, but opening one needs Tailscale. See [notification behavior](../w
 ## Troubleshooting
 
 - 403: check the request comes through the configured relay and the phone isn't a tagged device.
-- 404 at `/api/sessions`, or HTML instead of JSON: the `/api` mapping must target
-  `http://127.0.0.1:PORT/api`. Run `niles remote uninstall`, then setup again.
+- 404 at `/h/<id>/api/sessions`, or HTML instead of JSON: check the manifest ID and Caddy
+  `handle_path /h/<id>/*` route. Strip only `/h/<id>`, retaining `/api/...`.
 - 502: `niles remote` isn't running, or the proxy port doesn't match `--port`.
 - No sessions: only registered, running projects appear.
 - Message 503: the session has no recorded agent pane. Push 503: run `niles remote init`, then
@@ -115,15 +114,16 @@ launchctl kickstart -k gui/$(id -u)/dev.niles.remote   # macOS
 systemctl --user restart niles-remote                   # Linux
 ```
 
-To upgrade a release install, install the new binary and web asset as above, then run
-`niles remote uninstall` and rerun setup with the new web directory. To upgrade a checkout, rerun
-`scripts/install-remote.sh`, restart, then close and reopen every Niles window. Upgrade the binary
-and app together: a version mismatch shows an update banner and blocks chat.
+To upgrade a release install, install matching new binary and web assets as above, update
+Caddy's asset directory, validate its config and restart the affected services. To upgrade a
+checkout, rerun `scripts/install-remote.sh` and restart. Close and reopen every Niles app
+window. Upgrade the binary and app together: a version mismatch blocks chat.
 
-`niles remote uninstall` removes the service and the `/` and `/api` Serve mappings, and keeps
-your config, push keys and any other Serve mounts. Check `tailscale serve status` first, and
-never use `tailscale serve reset`, which removes unrelated Serve configuration too. If uninstall
-reports a service-manager error for a stopped service, delete the service file by hand and rerun.
+To uninstall, inspect the files and services recorded by the setup skill. Stop and remove
+only the Niles and dedicated Caddy services it created, then remove only its Serve root mount
+with `tailscale serve --bg --https=443 --set-path=/ off`. Preserve unrelated mounts and services,
+config and push keys. Never use `tailscale serve reset`. Inspect tailnet policy before removing
+Niles tags or grants so unrelated access remains intact.
 
 ## Shared push through a relay
 

@@ -85,14 +85,7 @@ fn run() -> Result<ExitCode> {
         Some(CommandName::Remote { port, command }) => {
             #[cfg(feature = "remote")]
             match command {
-                Some(cli::RemoteCommand::Uninstall) => remote::setup::uninstall()?,
-                Some(cli::RemoteCommand::Doctor) => remote::setup::doctor()?,
                 Some(cli::RemoteCommand::Init { subject }) => remote::push::init(&subject)?,
-                Some(cli::RemoteCommand::Setup {
-                    port,
-                    web_dir,
-                    subject,
-                }) => remote::setup::run(&web_dir, subject.as_deref(), port)?,
                 None => remote::run(port)?,
             }
             #[cfg(not(feature = "remote"))]
