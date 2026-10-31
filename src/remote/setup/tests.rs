@@ -1,46 +1,6 @@
 use super::*;
 
 #[test]
-fn remote_setup_merges_typed_config_without_losing_settings() {
-    let mut config: user::FileConfig = crate::store::parse_yaml(
-        "theme: nord\ntmux: {bindings: true}\nremote: {allowed_users: [alice@example.com]}",
-    )
-    .unwrap();
-    merge_users(
-        &mut config,
-        vec!["alice@example.com".into(), "bob@example.com".into()],
-    );
-    let dir = tempfile::tempdir().unwrap();
-    let path = Utf8Path::from_path(dir.path()).unwrap().join("config.yaml");
-    config.save(&path).unwrap();
-    let config = user::FileConfig::load(&path).unwrap();
-    assert_eq!(
-        config.remote.allowed_users,
-        ["alice@example.com", "bob@example.com"]
-    );
-    assert_eq!(config.theme, Some(ratatui_themes::ThemeName::Nord));
-    assert_eq!(config.tmux.bindings, Some(true));
-}
-
-#[test]
-fn remote_setup_rejects_invalid_allowlists_without_rejecting_global_config() {
-    for value in [
-        "[]",
-        "['']",
-        "[' alice@example.com']",
-        "['alice@example.com ']",
-        "[\"alice\\n@example.com\"]",
-    ] {
-        let file: user::FileConfig =
-            crate::store::parse_yaml(&format!("remote: {{allowed_users: {value}}}")).unwrap();
-        assert!(
-            user::validate_users(&file.remote.allowed_users).is_err(),
-            "{value}"
-        );
-    }
-}
-
-#[test]
 fn remote_setup_preserves_other_mounts_and_known_metadata() {
     for json in ["{}", include_str!("serve-status.json")] {
         serde_json::from_str::<Serve>(json)

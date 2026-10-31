@@ -15,19 +15,44 @@ fn disabled_remote_is_a_recognized_command_with_install_instructions() {
 
 #[cfg(feature = "remote")]
 #[test]
-fn empty_allowlist_refuses_startup_before_binding() {
+fn missing_relay_refuses_startup_before_binding() {
     let env = TestEnv::new("remote-empty-users");
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port().to_string();
     let output = env.run(&["remote", "--port", &port]);
     assert!(!output.status.success());
-    assert!(stderr_of(&output).contains("remote.allowed_users must not be empty"));
+    assert!(stderr_of(&output).contains("remote.relay_node must be"));
     assert!(!stderr_of(&output).contains("Address already in use"));
 }
 
 #[cfg(feature = "remote")]
 #[test]
-fn server_binds_loopback_and_reads_registered_live_sessions() {
+fn tailnet_address_lookup_must_succeed_before_binding() {
+    let env = TestEnv::new("remote-ip-failure");
+    std::fs::create_dir_all(env.home.join(".niles")).unwrap();
+    std::fs::write(
+        env.home.join(".niles/config.yaml"),
+        "remote: { relay_node: relay }",
+    )
+    .unwrap();
+    for (script, error) in [
+        (
+            "#!/bin/sh\necho 'no local daemon' >&2\nexit 1\n",
+            "no local daemon",
+        ),
+        ("#!/bin/sh\necho not-an-ip\n", "parse tailscale ip -4"),
+    ] {
+        common::write_executable(&env.bin.join("tailscale"), script);
+        let output = env.run(&["remote", "--port", "0"]);
+        assert!(!output.status.success());
+        assert!(stderr_of(&output).contains(error), "{}", stderr_of(&output));
+        assert!(!stderr_of(&output).contains("remote listening"));
+    }
+}
+
+#[cfg(feature = "remote")]
+#[test]
+fn server_binds_tailscale_address_and_reads_registered_live_sessions() {
     use serde_json::json;
     use std::{
         fs,
@@ -63,14 +88,11 @@ case "$1" in
 esac
 "#,
     );
+    common::stub_tailscale(&env);
     let niles = env.home.join(".niles");
     fs::create_dir_all(niles.join("projects")).unwrap();
     std::os::unix::fs::symlink(&env.root, niles.join("projects/api")).unwrap();
-    fs::write(
-        niles.join("config.yaml"),
-        "remote: { allowed_users: ['alice@example.com'] }",
-    )
-    .unwrap();
+    fs::write(niles.join("config.yaml"), "remote: { relay_node: relay }").unwrap();
     let dir = common::state_dir(&env.root).join("sessions/session");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
@@ -125,6 +147,24 @@ esac
     };
     let get = |login| request("GET", "/api/sessions", login, "");
     assert!(get("").starts_with("HTTP/1.1 403"));
+    for (marker, status) in [
+        ("whois-other", 403),
+        ("whois-fail", 500),
+        ("whois-bad", 500),
+        ("whois-empty", 500),
+    ] {
+        fs::write(env.home.join(marker), "").unwrap();
+        let response =
+            get("Tailscale-User-Login: alice@example.com\r\nX-Forwarded-For: 100.64.0.1\r\n");
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {status}")),
+            "{response}"
+        );
+        assert!(response.contains("cache-control: no-store"));
+        assert!(!response.contains("daemon unavailable"));
+        fs::remove_file(env.home.join(marker)).unwrap();
+    }
+    assert!(get("Tailscale-User-Login: other@example.net\r\n").starts_with("HTTP/1.1 200"));
     let response = get("Tailscale-User-Login: alice@example.com\r\n");
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.contains("cache-control: no-store"));
@@ -155,7 +195,7 @@ esac
     assert!(
         post(
             endpoint,
-            "Tailscale-User-Login: mallory@example.com\r\n",
+            "Tailscale-User-Login: alice@example.com\r\nTailscale-User-Login: bob@example.com\r\n",
             r#"{"text":"hi"}"#
         )
         .starts_with("HTTP/1.1 403")

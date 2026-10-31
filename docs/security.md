@@ -32,7 +32,7 @@ What Niles launches:
 | Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
 | Status lines and pane text | Worker status lines and captured pane text | Declares the orchestration contract independently of skills; `niles agent status` rejects invalid kinds and details before appending, and checks reports and staging for `done`. Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | Same-user writers can bypass submission checks by editing the log directly; malformed lines are still skipped by wait. `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
 | Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
-| Remote API | Requests from allowed tailnet devices | Listens on loopback only and requires one Tailscale identity header on the allowlist. | Phone access is shell access. See [Remote API](#remote-api). |
+| Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
 The global project manifest at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml` is yours, not the
@@ -86,14 +86,29 @@ Size limits are in [skill workflows](skills.md).
 
 ### Remote API
 
-The `remote` feature is off in release binaries. When you run `niles remote`, it listens on IPv4
-loopback only. Tailscale Serve terminates tailnet access, strips caller-supplied identity
-headers and injects a verified `Tailscale-User-Login`. Niles requires exactly one such header,
-on its allowlist, for every route. Local processes can forge that header; they are same-user
-and out of scope. Never expose the API on a LAN or tailnet address or behind a public proxy,
-and use Serve, never Funnel.
+The `remote` feature is off in release binaries. `niles remote` binds the host's IPv4 address
+from `tailscale ip -4`, never a wildcard or LAN address. Set `remote.relay_node` in
+`~/.niles/config.yaml` to the relay's stable Tailscale node ID (the `Node.StableID` from
+`tailscale whois --json <relay-tailnet-ip>`). Missing or invalid configuration stops startup.
+Each request authenticates its TCP peer through `tailscale whois --json --proto=tcp` and must
+match that node ID. Forwarding headers cannot select the peer. WhoIs failures and malformed
+responses fail closed; another node gets 403 even with a forged login header.
 
-An allowed device can instruct the entry agent and workers, and so can run commands as you.
+On the relay, Tailscale Serve terminates tailnet HTTPS, strips client-supplied identity headers
+and injects a verified `Tailscale-User-Login`. Serve proxies to Caddy on localhost only; Caddy
+serves the PWA and forwards `/h/<host>/...` to hosts' tailnet addresses, preserving that login.
+The host requires exactly one nonempty, well-formed login header on every route, including
+unknown routes. It accepts any login the relay forwards: there is no per-host user allowlist;
+tailnet ACLs are the user access gate. Use Serve, never Funnel.
+
+The relay is now trusted to assert user identity for every host. A compromised relay or a
+local process that can make connections as the relay can impersonate any user. Restrict
+access to its node credentials and local Caddy listener. A direct connection from a user's
+other tailnet device is rejected, even when that device can reach the host through ACLs.
+Host-local processes remain outside this model. Existing single-host setup migration is not
+provided by this change; the deployment setup must configure the relay and ACLs.
+
+Any user admitted by the relay can instruct the entry agent and workers, and so can run commands as you.
 It can start a registered project only with its saved manifest, stop it, and close workers. No
 request names a command, argument, skill or path. Message bodies are capped at 16 KiB and can't
 contain ESC or NUL. The API grants no CORS access, and mutations use methods that force a
@@ -102,7 +117,7 @@ preflight. See the [deployment guide](remote.md).
 ### Remote PWA frontend
 
 Whoever controls the app's JavaScript controls an instruction surface for your agents, so serve
-it only from the Niles host, on the API's origin. Transcript Markdown passes through DOMPurify,
+it only from the relay, on the API's origin. Transcript Markdown passes through DOMPurify,
 links open with `noopener noreferrer`, and the CSP allows scripts and connections from the
 same origin only. A meta CSP can't set `frame-ancestors`, and Tailscale
 Serve can't add the header, so this deployment has no clickjacking protection.

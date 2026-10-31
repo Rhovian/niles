@@ -24,7 +24,7 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     let key = store.public_key().unwrap();
     store.save("alice".into(), subscription.clone()).unwrap();
     store.save("alice".into(), subscription.clone()).unwrap();
-    assert_eq!(store.subscriptions(&["alice".into()]).unwrap().len(), 1);
+    assert_eq!(store.subscriptions().unwrap().len(), 1);
     assert_eq!(
         fs::metadata(root.path().join("remote/vapid.json"))
             .unwrap()
@@ -42,17 +42,8 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     let path = camino::Utf8PathBuf::from_path_buf(root.path().join("remote")).unwrap();
     assert!(Store::create(path.clone(), "mailto:operator@example.com").is_err());
     let loaded = Store::load(path).unwrap();
-    assert!(
-        loaded
-            .subscriptions(&["revoked".into()])
-            .unwrap()
-            .is_empty()
-    );
     assert_eq!(loaded.public_key().unwrap(), key);
-    assert_eq!(
-        loaded.subscriptions(&["alice".into()]).unwrap()[0].0,
-        subscription.0
-    );
+    assert_eq!(loaded.subscriptions().unwrap()[0].0, subscription.0);
     let (receiver, auth) = ece::generate_keypair_and_auth_secret().unwrap();
     let info = SubscriptionInfo::new(
         subscription.0.endpoint,
@@ -90,7 +81,7 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
     let mut info = subscription.0.clone();
     info.keys.auth = "invalid".into();
     assert!(Subscription::try_from(info).is_err());
-    assert_eq!(store.subscriptions(&["alice".into()]).unwrap().len(), 0);
+    assert_eq!(store.subscriptions().unwrap().len(), 0);
 }
 #[test]
 fn waiting_transitions_include_solo_without_repeating_or_retaining_exited_sessions() {
@@ -133,11 +124,11 @@ fn prunes_only_gone_endpoints_and_propagates_other_failures() {
             WebPushError::EndpointNotValid(info)
         };
         finish_delivery(&store, &subscription, Err(error)).unwrap();
-        assert!(store.subscriptions(&["alice".into()]).unwrap().is_empty());
+        assert!(store.subscriptions().unwrap().is_empty());
     }
     store.save("alice".into(), subscription.clone()).unwrap();
     assert!(finish_delivery(&store, &subscription, Err(WebPushError::InvalidResponse)).is_err());
-    assert_eq!(store.subscriptions(&["alice".into()]).unwrap().len(), 1);
+    assert_eq!(store.subscriptions().unwrap().len(), 1);
 }
 #[tokio::test]
 async fn push_routes_authorize_validate_and_never_cache() {
@@ -147,11 +138,14 @@ async fn push_routes_authorize_validate_and_never_cache() {
     };
     use tower::ServiceExt;
     let (_root, store, subscription) = fixture();
-    let mut state = AppState::new(vec!["alice".into()], Arc::new(|| Ok(vec![]))).unwrap();
+    let mut state = AppState::new(super::super::tests::relay(), Arc::new(|| Ok(vec![])));
     state.push = Some(Arc::new(store));
     let app = super::super::router(state);
     let request = |method, path, login, body: String| {
         Request::builder()
+            .extension(axum::extract::ConnectInfo(
+                "100.64.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+            ))
             .method(method)
             .uri(path)
             .header("Tailscale-User-Login", login)
@@ -161,7 +155,7 @@ async fn push_routes_authorize_validate_and_never_cache() {
     };
     let forbidden = app
         .clone()
-        .oneshot(request("GET", "/api/push/vapid", "mallory", String::new()))
+        .oneshot(request("GET", "/api/push/vapid", "", String::new()))
         .await
         .unwrap();
     assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
@@ -204,12 +198,9 @@ async fn push_routes_authorize_validate_and_never_cache() {
 async fn polling_failure_is_reported_without_any_browser_connection() {
     let (_root, store, _) = fixture();
     let source: Source = Arc::new(|| anyhow::bail!("catalog failure"));
-    let error = tokio::time::timeout(
-        Duration::from_secs(3),
-        watch(source, Arc::new(store), Arc::new(vec!["alice".into()])),
-    )
-    .await
-    .unwrap()
-    .unwrap_err();
+    let error = tokio::time::timeout(Duration::from_secs(3), watch(source, Arc::new(store)))
+        .await
+        .unwrap()
+        .unwrap_err();
     assert!(error.to_string().contains("catalog failure"));
 }

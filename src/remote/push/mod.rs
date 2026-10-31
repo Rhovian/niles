@@ -54,11 +54,7 @@ fn newly_waiting(previous: &mut HashSet<String>, sessions: Vec<Session>) -> Vec<
     *previous = waiting.into_iter().map(|session| session.id).collect();
     changed
 }
-pub(super) async fn watch(
-    source: Source,
-    store: Arc<Store>,
-    users: Arc<Vec<String>>,
-) -> Result<()> {
+pub(super) async fn watch(source: Source, store: Arc<Store>) -> Result<()> {
     let client = IsahcWebPushClient::from(
         HttpClient::builder()
             .timeout(SEND_TIMEOUT)
@@ -78,8 +74,7 @@ pub(super) async fn watch(
                 &serde_json::json!({"session_id":session.id,"project":session.project,"reason":"Agent waiting for your input"}),
             )?;
             let list_store = store.clone();
-            let users = users.clone();
-            for subscription in blocking(move || list_store.subscriptions(&users)).await? {
+            for subscription in blocking(move || list_store.subscriptions()).await? {
                 let message = store.message(&subscription, &payload)?;
                 finish_delivery(&store, &subscription, client.send(message).await)?;
             }

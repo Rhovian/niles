@@ -4,8 +4,6 @@ use anyhow::{Context, Result, ensure};
 use camino::Utf8Path;
 use serde::{Deserialize, de::IgnoredAny};
 
-use crate::config::user;
-
 mod preflight;
 mod service;
 #[cfg(test)]
@@ -41,7 +39,7 @@ pub(crate) fn uninstall() -> Result<()> {
             )?;
         }
     }
-    println!("Remote service and Serve mounts removed; allowlist and push state retained.");
+    println!("Remote service and Serve mounts removed; push state retained.");
     Ok(())
 }
 
@@ -52,13 +50,11 @@ pub(crate) fn doctor() -> Result<()> {
 
 pub(crate) fn run(
     web_dir: &Utf8Path,
-    users: Vec<String>,
     subject: Option<&str>,
     port: std::num::NonZeroU16,
 ) -> Result<()> {
-    user::validate_users(&users)?;
     let plan = Plan::prepare(web_dir, port)?;
-    plan.apply(users, subject).context(RECOVERY)?;
+    plan.apply(subject).context(RECOVERY)?;
     // Host self-resolution/identity can fail on a valid setup; verification is advisory by policy.
     match plan.verify() {
         Ok(()) => println!("Verified {}/api/sessions", plan.origin),
@@ -113,17 +109,12 @@ impl Plan {
         })
     }
 
-    fn apply(&self, users: Vec<String>, subject: Option<&str>) -> Result<()> {
-        let path = user::path()?;
-        let mut config = user::FileConfig::load(&path)?;
-        merge_users(&mut config, users);
-        user::validate_users(&config.remote.allowed_users)?;
+    fn apply(&self, subject: Option<&str>) -> Result<()> {
         if let Some(subject) = subject
             && super::push::Store::load_optional()?.is_none()
         {
             super::push::init(subject)?;
         }
-        config.save(&path)?;
         self.service.install()?;
         // The Serve CLI accepts one mount per invocation; it owns TCP/Funnel conflict handling.
         // https://github.com/tailscale/tailscale/blob/v1.96.2/cmd/tailscale/cli/serve_v2.go
@@ -175,16 +166,6 @@ pub(super) fn command(program: &str, args: &[&str]) -> Result<String> {
         String::from_utf8_lossy(&output.stdout)
     );
     Ok(String::from_utf8(output.stdout)?)
-}
-
-// serde-saphyr serializes whole typed values; additive allowlist policy belongs here.
-// https://docs.rs/serde-saphyr/1.3.0/serde_saphyr/
-fn merge_users(config: &mut user::FileConfig, users: Vec<String>) {
-    for user in users {
-        if !config.remote.allowed_users.contains(&user) {
-            config.remote.allowed_users.push(user);
-        }
-    }
 }
 
 fn check_version(text: &str) -> Result<()> {
