@@ -32,6 +32,7 @@ rollup.
 
 ```yaml
 entry: solo
+entry_agent: claude:sonnet:high
 tiers:
   standard:
     primary: claude:sonnet:high

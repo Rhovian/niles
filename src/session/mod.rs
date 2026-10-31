@@ -23,7 +23,11 @@ use foreground::launch_foreground_agent;
 ///
 /// Niles creates one session per project, named after its registry entry and tagged with its path.
 /// Its lead and workers run in that session.
-pub(crate) fn run(start: crate::tmux::LeadStart, selection: Option<SetupSelection>) -> Result<()> {
+pub(crate) fn run(
+    start: crate::tmux::LeadStart,
+    agent: Option<&str>,
+    selection: Option<SetupSelection>,
+) -> Result<()> {
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
@@ -35,7 +39,7 @@ pub(crate) fn run(start: crate::tmux::LeadStart, selection: Option<SetupSelectio
     else {
         return Ok(());
     };
-    launch_foreground_agent(&workspace, &manifest)
+    launch_foreground_agent(&workspace, &manifest, agent)
 }
 
 pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {

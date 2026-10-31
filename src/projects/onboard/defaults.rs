@@ -23,10 +23,13 @@ pub(super) fn manifest(installed: &[&str]) -> Result<WorkspaceManifest> {
             secondaries: agents.collect(),
         })
     };
+    let standard = tier(Standard).context("no standard agent installed")?;
     Ok(WorkspaceManifest {
         bindings: BTreeMap::new(),
+        // Onboarding writes the lead's agent out as an explicit, editable choice.
+        entry_agent: standard.primary.clone(),
         tiers: Tiers {
-            standard: tier(Standard).context("no standard agent installed")?,
+            standard,
             frontier: tier(Frontier),
             economy: tier(Economy),
             mechanical: tier(Mechanical),

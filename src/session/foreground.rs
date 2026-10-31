@@ -15,8 +15,19 @@ const SIGNAL_EXIT_LABEL: &str = "signal";
 pub(super) fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
+    agent: Option<&str>,
 ) -> Result<()> {
-    let agent = &manifest.tiers.standard.primary;
+    let agent = match agent {
+        Some(agent) => {
+            let config = load_project_config_from(workspace)?;
+            manifest
+                .tiers
+                .admit(agent, &config.models)
+                .context("invalid --agent")?;
+            agent
+        }
+        None => &manifest.entry_agent,
+    };
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
     let primary = skills::resolve(&manifest.entry, workspace, &skills::global_dir()?)?;
     let prepared = prepare_manager_session(

@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 
 fn manifest(agent: &str) -> String {
     format!(
-        "entry: lead\ntiers: {{standard: {{primary: {agent}, secondaries: [claude:sonnet:high]}}}}\n"
+        "entry: lead\nentry_agent: {agent}\ntiers: {{standard: {{primary: {agent}, secondaries: [claude:sonnet:high]}}}}\n"
     )
 }
 
@@ -95,7 +95,7 @@ fn assert_entry_setup(entry: &str) {
     fs::write(
         &setups.global,
         format!(
-            "entry: {entry}\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{skills: [guide], always: [guide]}}\n"
+            "entry: {entry}\nentry_agent: claude:sonnet:high\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{skills: [guide], always: [guide]}}\n"
         ),
     )
     .unwrap();

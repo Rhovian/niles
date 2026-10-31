@@ -1,4 +1,5 @@
 entry: lead
+entry_agent: claude:opus:high
 tiers:
   standard:
     primary: codex:gpt-6.1-sol:medium

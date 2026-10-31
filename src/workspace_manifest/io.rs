@@ -67,7 +67,10 @@ pub(crate) fn check(manifest: &WorkspaceManifest, models: &ModelRoster) -> Resul
     for agent in manifest.tiers.agents() {
         super::types::exact_spec(agent, models).context("invalid manifest agent")?;
     }
-    Ok(())
+    manifest
+        .tiers
+        .admit(&manifest.entry_agent, models)
+        .context("invalid entry_agent")
 }
 
 pub fn save(
@@ -110,8 +113,7 @@ mod tests {
 
     #[test]
     fn entry_needs_no_composition_binding() {
-        let body =
-            "entry: reviewer\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+        let body = "entry: reviewer\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
         let manifest = load_body("manifest-entry", body).unwrap().unwrap();
         assert_eq!(manifest.entry.as_str(), "reviewer");
         assert!(manifest.bindings.is_empty());
@@ -119,8 +121,7 @@ mod tests {
 
     #[test]
     fn unbound_missing_entry_fails_with_manifest_path() {
-        let body =
-            "entry: absent\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
+        let body = "entry: absent\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
         let error = format!("{:#}", load_body("missing-entry-skill", body).unwrap_err());
         assert!(error.contains("manifest.yaml"), "{error}");
         assert!(error.contains("skill `absent` has no SKILL.md"), "{error}");
@@ -186,7 +187,11 @@ mod tests {
             let error = format!("{:#}", load_body("skill-model-mapping", &body).unwrap_err());
             assert!(error.contains("unknown field"), "{error}");
         }
-        let error = load_body("missing-global-tiers", "entry: lead\n").unwrap_err();
+        let error = load_body(
+            "missing-global-tiers",
+            "entry: lead\nentry_agent: claude:sonnet:high\n",
+        )
+        .unwrap_err();
         assert!(format!("{error:#}").contains("missing field `tiers`"));
     }
 
@@ -226,7 +231,7 @@ mod tests {
             body.lines()
                 .filter(|line| !line.starts_with(' '))
                 .map(|line| line.split_once(':').unwrap().0)
-                .filter(|key| !["entry", "tiers"].contains(key))
+                .filter(|key| !["entry", "entry_agent", "tiers"].contains(key))
                 .is_sorted()
         );
         for gone in ["checkin:", "recheck:", "worktree:"] {
@@ -262,6 +267,14 @@ mod tests {
             (
                 body.replacen("    secondaries: [claude:sonnet:high]\n", "", 1),
                 "missing field `secondaries`",
+            ),
+            (
+                body.replacen("entry_agent: claude:opus:high\n", "", 1),
+                "missing field `entry_agent`",
+            ),
+            (
+                body.replacen("entry_agent: claude:opus:high", "entry_agent: claude:opus:medium", 1),
+                "agent claude:opus:medium is not listed in the manifest tiers",
             ),
         ] {
             let error = format!(

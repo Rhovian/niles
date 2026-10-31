@@ -4,7 +4,7 @@ use super::support::*;
 fn manifest_tiers_bound_spawn_before_worker_state() {
     let env = TestEnv::with_manifest("niles-worker-groups", "claude");
     let path = state_dir(&env.root).join("manifest.yaml");
-    let body = "entry: lead\ntiers:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}\n  economy: {primary: claude:haiku, secondaries: []}\n";
+    let body = "entry: lead\nentry_agent: codex:gpt-6-sol:medium\ntiers:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}\n  economy: {primary: claude:haiku, secondaries: []}\n";
     fs::write(&path, body).unwrap();
     for (id, flags, agent) in [
         ("default", &[][..], "codex:gpt-6-sol:medium"),

@@ -246,7 +246,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     assert_command_success("listing", &listing);
     fs::write(
         &manifest,
-        "entry: pdf\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\npdf: {}\n",
+        "entry: pdf\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\npdf: {}\n",
     )
     .unwrap();
     assert!(stdout_of(&pack.run(&["skills"])).contains("skill: pdf (import github.com/"));
