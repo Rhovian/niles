@@ -35,20 +35,20 @@ libc = "0.2"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde-saphyr = "1"
+serde-saphyr = "2"
 uuid = { version = "1", features = ["v4"] }
 ratatui-themes = "0.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 web-push = { version = "0.11", optional = true }
 openssl = { version = "0.10", optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 url = { version = "2", optional = true }
 tempfile = "3"
-isahc = { version = "1", optional = true }
+isahc = { version = "2", optional = true }
 ece = { version = "2", optional = true }
 pulldown-cmark = { version = "0.13.5", default-features = false, optional = true }
 unicode-general-category = "1"
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 # The profile that 'dist' will build with
 [profile.dist]
