@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # cargo-dist owns the generated release workflow.
+    exclude-paths: [".github/workflows/release.yml"]
+    # Toolchain refs include the deliberate MSRV pin.
+    ignore:
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       all:
         patterns: ['*']
@@ -14,3 +19,7 @@ updates:
     groups:
       all:
         patterns: ['*']
+    # web-push 0.11 accepts an isahc 1.x client.
+    ignore:
+      - dependency-name: isahc
+        update-types: ["version-update:semver-major"]
