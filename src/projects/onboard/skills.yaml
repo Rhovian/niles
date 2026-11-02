@@ -1,1 +1,6 @@
-[lead, design, reviewer, worker, security, research]
+- [lead, Coordinates workers and reviews their reports]
+- [design, Turns a brief into a concrete implementation plan]
+- [reviewer, Reviews changes for correctness and maintainability]
+- [worker, Implements changes and verifies the result]
+- [security, Reviews changes for security risks]
+- [research, Investigates questions and reports evidence]

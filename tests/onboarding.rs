@@ -30,156 +30,379 @@ esac
         &env.bin.join("git"),
         "#!/bin/sh\necho unexpected import >&2\nexit 91\n",
     );
-    let editor = r#"#!/bin/sh
-[ "$1" != -w ] || shift
-ls -ld "$1" > "$HOME/mode"
-printf '%s' "$1" > "$HOME/draft"
-cp "$HOME/edit" "$1"
-[ ! -f "$HOME/next" ] || mv "$HOME/next" "$HOME/edit"
-[ ! -f "$HOME/winner" ] || cp "$HOME/winner" "$MANIFEST"
-"#;
-    for name in ["vi", "visual", "editor"] {
-        write_executable(&env.bin.join(name), editor);
-    }
+
     env
 }
 fn manifest(env: &TestEnv) -> std::path::PathBuf {
     state_dir_at(&env.home, &env.root).join("manifest.yaml")
 }
-fn terminal(env: &TestEnv, args: &[&str], input: &[u8], editors: &[(&str, &str)]) -> Output {
+fn terminal(
+    env: &TestEnv,
+    args: &[&str],
+    steps: &[(&str, &[u8])],
+    mut on_prompt: impl FnMut(usize),
+) -> (Output, String) {
+    use std::{
+        io::Read,
+        os::unix::process::CommandExt,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
     let (mut pty, mut tty) = (-1, -1);
-    let opened = unsafe { libc::openpty(&mut pty, &mut tty, null_mut(), null_mut(), null_mut()) };
-    assert_eq!(opened, 0);
-    let (mut pty, tty) = unsafe { (File::from_raw_fd(pty), File::from_raw_fd(tty)) };
-    pty.write_all(input).unwrap();
-    env.niles(&env.root, args)
-        .env("PATH", format!("{}:/usr/bin:/bin", env.bin.display()))
-        .env_remove("VISUAL")
-        .env_remove("EDITOR")
-        .envs(editors.iter().copied())
-        .env("MANIFEST", manifest(env))
-        .stdin(tty)
-        .output()
-        .unwrap()
-}
-fn clean_draft(env: &TestEnv) {
-    let path = fs::read_to_string(env.home.join("draft")).unwrap();
-    assert!(!std::path::Path::new(&path).exists());
-    assert!(std::path::Path::new(&path).starts_with(env.home.join(".niles/state")));
-    let mode = fs::read_to_string(env.home.join("mode")).unwrap();
-    assert!(mode.starts_with("-rw-------"));
-}
-const EDIT: &str = "# keep my text\nentry: solo\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}, economy: {primary: claude:sonnet:medium, secondaries: []}}\n";
-#[test]
-fn first_run_registers_then_setup_launches_without_picker_or_reimport() {
-    let env = environment();
-    let skill = env.home.join(".niles/skills/design");
-    fs::remove_file(skill.join("SKILL.md")).unwrap();
-    let pin = "github.com/Rhovian/niles/skills/design@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n";
-    fs::write(skill.join("SKILL.ref"), pin).unwrap();
-    assert!(terminal(&env, &[], b"\n", &[]).status.success());
-    let log = env.tmux_log();
-    assert!(log.contains(" start ;"));
-    assert!(!log.contains("--keep-skills"));
-    assert!(
-        log.lines()
-            .any(|s| s.starts_with("switch-client") && s.ends_with(":=niles"))
+    let mut size = libc::winsize {
+        ws_row: 45,
+        ws_col: 180,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    assert_eq!(
+        unsafe { libc::openpty(&mut pty, &mut tty, null_mut(), null_mut(), &mut size) },
+        0
     );
-    assert!(terminal(&env, &["start"], b"\n", &[]).status.success());
-    assert!(manifest(&env).exists());
+    let (mut pty, tty) = unsafe { (File::from_raw_fd(pty), File::from_raw_fd(tty)) };
+    let mut command = env.niles(&env.root, args);
+    command
+        .env("PATH", format!("{}:/usr/bin:/bin", env.bin.display()))
+        .env("VISUAL", "false")
+        .env("EDITOR", "false")
+        .stdin(tty.try_clone().unwrap())
+        .stdout(tty.try_clone().unwrap())
+        .stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    drop(command);
+    drop(tty);
+    let mut transcript = String::new();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    // ratatui 0.30.2's CrosstermBackend emits cursor moves between words and
+    // only changed cells on redraw; steps use complete, unique prompt tokens.
+    let mut step = 0;
+    let mut seen = String::new();
+    loop {
+        let mut poll = libc::pollfd {
+            fd: std::os::fd::AsRawFd::as_raw_fd(&pty),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut poll, 1, 50) } > 0 {
+            let mut buffer = [0; 16384];
+            match pty.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let text = String::from_utf8_lossy(&buffer[..count]);
+                    transcript.push_str(&text);
+                    seen.push_str(&text);
+                    if step < steps.len() && seen.contains(steps[step].0) {
+                        on_prompt(step);
+                        pty.write_all(steps[step].1).unwrap();
+                        step += 1;
+                        seen.clear();
+                    }
+                }
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(error) => panic!("{error}"),
+            }
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("wizard timed out at step {step}: {transcript}");
+        }
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(step, steps.len(), "{transcript}");
+    (output, transcript)
 }
 #[test]
-fn existing_registry_never_prompts_in_subdirectory_or_home() {
-    let mut env = environment();
+fn first_run_registration_confirms_and_can_cancel() {
+    for answer in [b"n".as_slice(), b"\x1b"] {
+        let env = environment();
+        let (output, _) = terminal(
+            &env,
+            &[],
+            &[("directory:", b"\r"), ("]:", b"\r"), ("Register?", answer)],
+            |_| {},
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert!(!env.home.join(".niles/projects").exists());
+    }
+    let env = environment();
+    let (output, _) = terminal(
+        &env,
+        &[],
+        &[("directory:", b"\r"), ("]:", b"\r"), ("Register?", b"y")],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(env.tmux_log().contains(" start ;"));
+}
+#[test]
+fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
+    let env = environment();
+    for name in ["design", "reviewer", "worker", "security", "research"] {
+        fs::remove_dir_all(env.home.join(".niles/skills").join(name)).unwrap();
+    }
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\r"),
+        ],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    let manifest = fs::read_to_string(manifest(&env)).unwrap();
+    assert!(manifest.contains("entry: solo"), "{manifest}");
+    assert!(!text.contains("lead's"));
+    assert!(text.contains("docs/security.md"));
+}
+#[test]
+fn lead_select_and_setup_cancellation_write_nothing() {
+    let env = environment();
+    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+    let (output, _) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b" \r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\x1b"),
+        ],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(!manifest(&env).exists());
+}
+#[test]
+fn missing_entry_fetch_failure_stops_before_manifest() {
+    let env = environment();
+    fs::remove_file(env.home.join(".niles/skills/solo/SKILL.md")).unwrap();
+    let (output, _) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\r"),
+        ],
+        |_| {},
+    );
+    assert!(!output.status.success());
+    assert!(!manifest(&env).exists());
+}
+
+#[test]
+fn existing_registry_does_not_start_first_run_registration() {
+    let env = environment();
     let registry = env.home.join(".niles/projects");
     fs::create_dir_all(&registry).unwrap();
     std::os::unix::fs::symlink(&env.root, registry.join("existing")).unwrap();
-    for cwd in [env.root.join("bin"), env.home.clone()] {
-        let root = std::mem::replace(&mut env.root, cwd);
-        let output = terminal(&env, &[], b"\x04", &[]);
-        assert!(output.status.success(), "{output:?}");
-        assert!(!String::from_utf8_lossy(&output.stdout).contains("No projects yet"));
-        env.root = root;
-    }
+    let (output, text) = terminal(&env, &[], &[], |_| {});
+    assert!(output.status.success(), "{output:?}");
+    assert!(!text.contains("register"));
 }
+
 #[test]
-fn skip_and_eof_leave_setup_or_registration_untouched() {
+fn taken_registration_name_can_be_replaced_after_confirmation() {
     let env = environment();
-    for args in [&[][..], &["start"]] {
-        for input in [b"junk\nn\n".as_slice(), b"\x04"] {
-            let output = terminal(&env, args, input, &[]);
-            assert_eq!(output.status.success(), input != b"\x04");
-            assert!(!manifest(&env).exists());
-            assert!(!env.home.join(".niles/projects").exists());
-        }
-    }
-    assert!(!env.run(&["start"]).status.success());
-    let unattended = terminal(&env, &["start", "--keep-skills"], b"\n", &[]);
-    assert!(!unattended.status.success());
-    for name in ["claude", "codex"] {
-        fs::remove_file(env.bin.join(name)).unwrap();
-    }
-    assert!(!terminal(&env, &["start"], b"n\n", &[]).status.success());
-}
-#[test]
-fn custom_preserves_text_and_editor_precedence() {
-    for editors in [
-        &[("VISUAL", "visual -w"), ("EDITOR", "false")][..],
-        &[("EDITOR", "editor -w")],
+    let registry = env.home.join(".niles/projects");
+    let other = env.root.join("other");
+    fs::create_dir(&other).unwrap();
+    let (output, text) = terminal(
+        &env,
         &[],
-    ] {
-        let env = environment();
-        fs::write(env.home.join("edit"), EDIT).unwrap();
-        assert!(terminal(&env, &["start"], b"c\n", editors).status.success());
-        assert_eq!(fs::read_to_string(manifest(&env)).unwrap(), EDIT);
-        clean_draft(&env);
-    }
+        &[
+            ("directory:", b"\r"),
+            ("]:", b"taken\r"),
+            ("Register?", b"y"),
+            ("taken.", b"replacement\r"),
+            ("Register?", b"y"),
+        ],
+        |step| {
+            if step == 2 {
+                fs::create_dir_all(&registry).unwrap();
+                std::os::unix::fs::symlink(&other, registry.join("taken")).unwrap();
+            }
+        },
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    assert_eq!(
+        fs::read_link(registry.join("replacement")).unwrap(),
+        env.root
+    );
+    assert_eq!(fs::read_link(registry.join("taken")).unwrap(), other);
 }
+
 #[test]
-fn custom_validation_abort_retry_and_failed_pin() {
-    for (invalid, input) in [
-        ("[".to_owned(), "c\nq\n"),
-        ("[".to_owned(), "c\n\x04"),
-        (EDIT.replace("primary:", "unknown:"), "c\nq\n"),
-        (
-            EDIT.replace("claude:sonnet:high", "unknown:model:high"),
-            "c\nq\n",
-        ),
-        (EDIT.replace("solo", "unavailable"), "c\n"),
-    ] {
-        let env = environment();
-        fs::write(env.home.join("edit"), invalid).unwrap();
-        let output = terminal(&env, &["start"], input.as_bytes(), &[]);
-        assert_eq!(output.status.success(), input.ends_with("q\n"));
-        assert!(!manifest(&env).exists());
-        assert!(!env.home.join(".niles/projects").exists());
-        clean_draft(&env);
-    }
+fn lead_saves_chosen_entry_and_edited_standard_tier() {
     let env = environment();
-    fs::write(env.home.join("edit"), "[").unwrap();
-    fs::write(env.home.join("next"), EDIT).unwrap();
-    assert!(terminal(&env, &["start"], b"c\n\n", &[]).status.success());
-    assert_eq!(fs::read_to_string(manifest(&env)).unwrap(), EDIT);
+    let skills = env.home.join(".niles/skills");
+    fs::remove_dir_all(&skills).unwrap();
+    fs::create_dir_all(skills.join("custom-entry")).unwrap();
+    fs::write(
+        skills.join("custom-entry/SKILL.md"),
+        "---\nname: custom-entry\ndescription: Coordinates this project\n---\nDo the work.\n",
+    )
+    .unwrap();
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\x1b[B\r"),
+            ("TIERS", b"\x1b[C"),
+            ("Editing", b"\r\r\x1b[A\r\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\r"),
+        ],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    let value: serde_json::Value =
+        serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
+    assert_eq!(value["entry"], "custom-entry");
+    assert_eq!(
+        value["tiers"]["standard"]["primary"],
+        "claude:sonnet:medium"
+    );
+    assert_eq!(value["entry_agent"], "claude:sonnet:medium");
+    assert_eq!(
+        value["tiers"]["standard"]["secondaries"][0],
+        "codex:gpt-6.1-sol:medium"
+    );
 }
+
+#[test]
+fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
+    let env = environment();
+    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+    fs::write(
+        env.home.join("skill.md"),
+        "---\nname: design\ndescription: Plans changes\n---\nPlan the work.\n",
+    )
+    .unwrap();
+    write_executable(
+        &env.bin.join("git"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$HOME/git.log"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    ls-remote) case "$*" in *' HEAD '*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tHEAD\n'; exit 0 ;; *) exit 91 ;; esac ;;
+    init) mkdir .git; exit 0 ;;
+    fetch|sparse-checkout) exit 0 ;;
+    ls-tree) printf '040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tskills/design\n'; exit 0 ;;
+    checkout) mkdir -p skills/design; cp "$HOME/skill.md" skills/design/SKILL.md; exit 0 ;;
+    *) shift ;;
+  esac
+done
+exit 91
+"#,
+    );
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\x1b[B \r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\r"),
+        ],
+        |step| {
+            if step == 4 {
+                assert!(!env.home.join("git.log").exists());
+            }
+        },
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert_eq!(
+        fs::read_to_string(env.home.join(".niles/skills/design/SKILL.ref")).unwrap(),
+        format!("github.com/Rhovian/niles/skills/design@{sha}\n")
+    );
+    let log = fs::read_to_string(env.home.join("git.log")).unwrap();
+    assert!(
+        log.contains("ls-remote -- https://github.com/Rhovian/niles.git HEAD "),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!(
+            "fetch --depth 1 --filter=blob:none -- https://github.com/Rhovian/niles.git {sha}"
+        )),
+        "{log}"
+    );
+    assert!(
+        env.home
+            .join(format!(
+                ".niles/cache/skills/github.com/Rhovian/niles/{sha}/skills/design/@skill/SKILL.md"
+            ))
+            .exists()
+    );
+}
+
 #[test]
 fn concurrent_manifest_is_kept() {
     let env = environment();
-    fs::write(env.home.join("edit"), EDIT).unwrap();
     let winner = common::setup_manifest_body();
-    fs::write(env.home.join("winner"), winner).unwrap();
-    assert!(terminal(&env, &["start"], b"c\n", &[]).status.success());
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\r"),
+        ],
+        |step| {
+            if step == 4 {
+                fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
+                fs::write(manifest(&env), winner).unwrap();
+            }
+        },
+    );
+    assert!(output.status.success(), "{output:?} {text}");
     assert_eq!(fs::read_to_string(manifest(&env)).unwrap(), winner);
 }
+
 #[test]
-fn invalid_name_reprompts() {
-    let mut env = environment();
-    let root = env.root.clone();
-    let path = root.join("invalid name");
-    fs::create_dir(&path).unwrap();
-    env.root = path;
-    let output = terminal(&env, &[], b"\nreplacement\n", &[]);
-    assert!(output.status.success(), "{output:?}");
-    let target = fs::read_link(env.home.join(".niles/projects/replacement")).unwrap();
-    assert_eq!(target, env.root);
-    env.root = root;
+fn lead_only_skips_entry_picker_and_reviews_default_entry() {
+    let env = environment();
+    fs::remove_dir_all(env.home.join(".niles/skills")).unwrap();
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+            ("writes", b"\x1b"),
+        ],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    assert!(!text.contains("lead's"));
+    let summary = text.rsplit_once("Entry").unwrap().1;
+    assert!(summary.contains("lead"), "{summary}");
+    assert!(!manifest(&env).exists());
 }

@@ -20,12 +20,19 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         Screen::Editing { tier, .. } => format!("NILES / TIERS / {}", tier.as_str()),
         Screen::Tiers | Screen::Review => "NILES / TIERS".to_owned(),
     };
-    let (body, footer) = chrome(frame, theme, &format!("{title} — {}", clamp(root, 120)));
+    let heading = if form.setup {
+        format!("Setting up Niles in {} — {title}", clamp(root, 120))
+    } else {
+        format!("{title} — {}", clamp(root, 120))
+    };
+    let (body, footer) = chrome(frame, theme, &heading);
     let mut warning = None;
     let hints = match &form.screen {
         Screen::Tiers => {
             tiers(frame, body, form, theme, false);
-            if form.can_save() {
+            if form.setup {
+                "↑↓ tier · → edit primary · ↵ continue"
+            } else if form.can_save() {
                 "↑↓ tier · ↵ edit primary · s save"
             } else {
                 "↑↓ tier · ↵ edit primary"

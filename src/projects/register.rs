@@ -1,3 +1,4 @@
+pub(super) mod prompt;
 use super::registry::{self, ProjectName};
 use crate::util::utf8_path;
 use anyhow::{Context, Result, bail};

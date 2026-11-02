@@ -49,9 +49,11 @@ with the version):
    cd <repo> && niles
    ```
 
-   Register the folder when prompted, then choose defaults or edit the full manifest in the
-   project pane. Niles detects your agent CLIs, pins release-matched skills from GitHub, and starts
-   the entry agent there. Registration is optional; `r` in the home view registers later projects.
+   Confirm the folder and name, then follow the picker: lead or solo, a lead entry skill
+   when alternatives are installed, model tiers preselected from detected CLIs, and optional
+   starter skills (none checked).
+   Review the safety warning and summary; Enter writes the manifest and starts the entry agent.
+   Registration is optional; `r` in the home view registers later projects.
 
 Detach with `Ctrl-b d`; agents keep running. See the [interface reference](docs/setup.md) for keys and
 the status bar.
@@ -65,8 +67,9 @@ itself. The manifest defines project-wide model tiers (`family:model:effort`) us
 
 ## Skills in this repository
 
-The binary embeds no skill text. Setup in the project pane pins the default set from this
-repository, at the binary's release tag, into `~/.niles/skills`; copy or pin others with
+The binary embeds no skill text. Setup fetches the entry skill and selected starter skills from
+this repository’s latest Git HEAD into `~/.niles/skills`, recording the resolved commit SHA.
+Existing skills are kept; copy or pin others with
 `niles skills import Rhovian/niles/skills/<name>@<rev>`.
 
 - `lead` coordinates: talks to you, spawns agents, forwards their work.
@@ -80,7 +83,7 @@ repository, at the binary's release tag, into `~/.niles/skills`; copy or pin oth
 ## What Niles changes on your machine
 
 Niles writes under `~/.niles/` (state, project list, skill cache, config, worktrees, remote keys),
-pins skills from GitHub at the binary's release tag on first setup,
+fetches selected skills from GitHub’s latest Git HEAD on first setup and records their commit SHAs,
 creates one tmux session per project, and creates branches for worktree spawns. It doesn't touch your agent CLIs' or tmux's
 config. To remove it, close its projects in the home view (`c`), uninstall the binary, and delete `~/.niles` and
 any `.niles/` in your repositories. See

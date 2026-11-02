@@ -173,7 +173,7 @@ fn finish_fetch(staging: &Utf8Path, result: Result<()>) -> Result<()> {
     }
 }
 
-fn check_size(root: &Utf8Path) -> Result<()> {
+pub(super) fn check_size(root: &Utf8Path) -> Result<()> {
     let mut total = 0;
     let mut pending = vec![root.to_owned()];
     // std::fs::read_dir (Rust 1.89 std/fs.rs) is nonrecursive and has no byte limit.

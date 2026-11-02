@@ -100,12 +100,12 @@ pub(crate) fn locate(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) 
 
 pub(crate) fn resolve(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Skill> {
     let source = locate(name, workspace, global)?;
-    read(name, source, global)
+    fetch_and_read(name, source, global)
 }
 
 pub(crate) fn imported(reference: &PinnedRef, global: &Utf8Path) -> Result<Skill> {
     let path = super::cache::directory(reference, global).join("SKILL.md");
-    read(
+    fetch_and_read(
         &reference.reference().name,
         Source::Import {
             reference: reference.clone(),
@@ -115,13 +115,25 @@ pub(crate) fn imported(reference: &PinnedRef, global: &Utf8Path) -> Result<Skill
     )
 }
 
-fn read(name: &SkillName, source: Source, global: &Utf8Path) -> Result<Skill> {
+pub(crate) fn inspect(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Skill> {
+    let source = locate(name, workspace, global)?;
+    if let Source::Import { reference, .. } = &source {
+        super::cache::check_size(&super::cache::directory(reference, global))?;
+    }
+    read(name, source)
+}
+
+fn fetch_and_read(name: &SkillName, source: Source, global: &Utf8Path) -> Result<Skill> {
+    if let Source::Import { reference, .. } = &source {
+        super::cache::fetch(reference, global)?;
+    }
+    read(name, source)
+}
+
+fn read(name: &SkillName, source: Source) -> Result<Skill> {
     let text = match &source {
         Source::Local { origin, path } => super::files::read(path, *origin)?,
-        Source::Import { reference, path } => {
-            super::cache::fetch(reference, global)?;
-            super::files::read(path, Origin::Workspace)?
-        }
+        Source::Import { path, .. } => super::files::read(path, Origin::Workspace)?,
     };
     let (description, body) =
         parse(name, &text).with_context(|| format!("invalid skill {name} ({source})"))?;

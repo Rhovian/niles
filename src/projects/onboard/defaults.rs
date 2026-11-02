@@ -4,10 +4,9 @@ use crate::workspace_manifest::{TierBinding, Tiers, WorkspaceManifest};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 pub(super) const REPOSITORY: &str = "github.com/Rhovian/niles";
-pub(super) const RELEASE: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 pub(super) const SKILLS: &str = include_str!("skills.yaml");
 pub(super) fn reference(name: &SkillName) -> Result<GithubRef> {
-    format!("{REPOSITORY}/skills/{name}@{RELEASE}").parse()
+    format!("{REPOSITORY}/skills/{name}").parse()
 }
 pub(super) fn manifest(installed: &[&str]) -> Result<WorkspaceManifest> {
     let families: Vec<(String, BTreeMap<Tier, String>)> =
