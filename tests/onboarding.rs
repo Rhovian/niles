@@ -65,7 +65,7 @@ fn terminal(env: &TestEnv, args: &[&str], input: &[u8], editors: &[(&str, &str)]
 fn clean_draft(env: &TestEnv) {
     let path = fs::read_to_string(env.home.join("draft")).unwrap();
     assert!(!std::path::Path::new(&path).exists());
-    assert!(std::path::Path::new(&path).starts_with(env.home.join(".niles/state/v2")));
+    assert!(std::path::Path::new(&path).starts_with(env.home.join(".niles/state")));
     let mode = fs::read_to_string(env.home.join("mode")).unwrap();
     assert!(mode.starts_with("-rw-------"));
 }

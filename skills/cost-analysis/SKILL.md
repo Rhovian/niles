@@ -39,7 +39,7 @@ cannot be interpreted confidently, report it as unsupported rather than inventin
 
 Current layout:
 
-- State roots are under `~/.niles/state/v2/`, ending at `@state`. Workspace UTF-8 bytes are
+- State roots are under `~/.niles/state/`, ending at `@state`. Workspace UTF-8 bytes are
   hex encoded in chunks of at most 120 bytes; long paths have multiple key components.
 - Closed workers: `@state/worker/archive/<id>-<archive-time>/meta.json`.
   Unclosed workers: `@state/worker/<id>/meta.json`.

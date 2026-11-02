@@ -88,7 +88,7 @@ any `.niles/` in your repositories. See
 
 ## Configuration
 
-Each project's manifest lives at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml`
+Each project's manifest lives at `~/.niles/state/<workspace key>/@state/manifest.yaml`
 (see [state layout](docs/configuration.md#state-layout) for the encoding). First-run setup
 generates it from your installed agent CLIs. It names the entry skill and the agent it runs on, and defines project-wide tiers with a `primary`
 and ordered fallback `secondaries`:

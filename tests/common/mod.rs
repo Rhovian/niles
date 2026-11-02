@@ -345,7 +345,7 @@ pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
         .bytes()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    let mut dir = home.join(".niles/state/v2");
+    let mut dir = home.join(".niles/state");
     for chunk in hex.as_bytes().chunks(240) {
         dir.push(std::str::from_utf8(chunk).unwrap());
     }

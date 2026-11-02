@@ -115,11 +115,11 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 
 ## State layout
 
-- `~/.niles/state/v2/<workspace key>/@state/`: the manifest, sessions, worker briefs, status
+- `~/.niles/state/<workspace key>/@state/`: the manifest, sessions, worker briefs, status
   logs and reports. Encode the entire absolute workspace path's UTF-8 bytes (including `/`)
   as lowercase hexadecimal, then split that string into directory components of at most
-  240 characters. For example, `/code/my-app` becomes `v2/2f636f64652f6d792d617070/@state`,
-  while `/code/my/app` becomes `v2/2f636f64652f6d792f617070/@state`. This reversible encoding
+  240 characters. For example, `/code/my-app` becomes `2f636f64652f6d792d617070/@state`,
+  while `/code/my/app` becomes `2f636f64652f6d792f617070/@state`. This reversible encoding
   distinguishes separators, hyphens, case and Unicode bytes even on case-insensitive filesystems.
   The reserved `@state` leaf keeps prefix keys' state directories disjoint. Individual key
   components stay below the usual 255-byte name limit; the filesystem's total path limit still
