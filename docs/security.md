@@ -35,7 +35,7 @@ What Niles launches:
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
-The global project manifest at `~/.niles/state/v2/<workspace key>/@state/manifest.yaml` is yours, not the
+The global project manifest at `~/.niles/state/<workspace key>/@state/manifest.yaml` is yours, not the
 repository's. Its `worktree.setup` and `gates.post` run with your permissions, so only put
 commands there you would run yourself. Model spending approval is project-wide:
 only exact agents in the manifest's `tiers` list may be selected by `spawn --agent`, and
@@ -51,7 +51,7 @@ there is no legacy lookup that could share another workspace's state.
 ### Project deregistration
 
 The explorer's `d` action requires confirmation before deleting a project's
-`~/.niles/state/v2/<workspace key>/@state/` folder (including archives and saved configuration)
+`~/.niles/state/<workspace key>/@state/` folder (including archives and saved configuration)
 and managed worktrees, including uncommitted files. It rechecks the registry link and refuses
 while any worker metadata remains live, including workers whose tmux windows were lost. A matching tagged project session is closed; unrelated
 sessions and the original checkout are preserved. Git removes only registered worktrees of

@@ -170,7 +170,7 @@ mod tests {
             path: project.clone(),
         };
         let state = store::paths::project_dir(&project).unwrap();
-        assert!(state.starts_with(crate::util::home_dir().unwrap().join(".niles/state/v2")));
+        assert!(state.starts_with(crate::util::home_dir().unwrap().join(".niles/state")));
         assert_eq!(state.file_name(), Some("@state"));
         let dir = store::workers_dir(&project).unwrap().join("w");
         fs::create_dir_all(&dir).unwrap();

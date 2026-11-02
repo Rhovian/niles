@@ -16,7 +16,7 @@ pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     if !home.is_absolute() {
         bail!("HOME must be absolute: {home}");
     }
-    let mut dir = home.join(".niles/state/v2");
+    let mut dir = home.join(".niles/state");
     // Encode bytes rather than path components to preserve case and Unicode distinctions.
     // Camino exposes UTF-8, but has no filesystem key encoding:
     // https://docs.rs/camino/1.2.6/camino/struct.Utf8Path.html#method.as_str
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn keys_encode_workspace_bytes() {
-        let root = crate::util::home_dir().unwrap().join(".niles/state/v2");
+        let root = crate::util::home_dir().unwrap().join(".niles/state");
         for (workspace, key) in [
             ("/", "2f"),
             ("/code/my-app", "2f636f64652f6d792d617070"),
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn keys_separate_separators_case_and_reserved_names() {
-        let workspaces = ["/a-b", "/a/b", "/A-b", "/a/@state", "/a", "/a/v2"];
+        let workspaces = ["/a-b", "/a/b", "/A-b", "/a/@state", "/a", "/a/state"];
         let dirs: Vec<_> = workspaces
             .iter()
             .map(|path| project_dir(Utf8Path::new(path)).unwrap())
@@ -82,9 +82,9 @@ mod tests {
         let child = project_dir(Utf8Path::new(&format!("{workspace}/é"))).unwrap();
         assert!(!child.starts_with(&parent));
         assert!(!parent.starts_with(&child));
-        let root = crate::util::home_dir().unwrap().join(".niles/state/v2");
+        let root = crate::util::home_dir().unwrap().join(".niles/state");
         for dir in [parent, child] {
-            assert!(dir.starts_with(&root), "key must use the v2 namespace");
+            assert!(dir.starts_with(&root), "key must use the state root");
             let key = dir.strip_prefix(&root).unwrap();
             assert!(key.iter().all(|component| component.len() <= 240));
             assert_eq!(key.file_name(), Some("@state"));
