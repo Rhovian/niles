@@ -15,6 +15,7 @@ pub(super) enum Screen {
 }
 
 pub(super) struct Form {
+    pub setup: bool,
     pub original: WorkspaceManifest,
     pub draft: WorkspaceManifest,
     pub screen: Screen,
@@ -25,6 +26,7 @@ pub(super) struct Form {
 impl Form {
     pub fn new(manifest: WorkspaceManifest, config: &ProjectConfig) -> Result<Self> {
         Ok(Self {
+            setup: false,
             original: manifest.clone(),
             draft: manifest,
             screen: Screen::Tiers,
@@ -48,6 +50,9 @@ impl Form {
                 return Ok(Some(Choice::Keep));
             }
             KeyCode::Char('q') => return Ok(Some(Choice::Quit)),
+            KeyCode::Esc if self.setup && matches!(self.screen, Screen::Tiers | Screen::Review) => {
+                return Ok(Some(Choice::Quit));
+            }
             _ => {}
         }
         match &mut self.screen {
@@ -70,7 +75,11 @@ impl Form {
                     self.selected = (self.selected + 1).min(self.draft.tiers.iter().count() - 1)
                 }
                 KeyCode::Char('s') if self.can_save() => self.screen = Screen::Review,
-                KeyCode::Enter => {
+                KeyCode::Enter if self.setup => {
+                    return Ok(Some(Choice::Save(Box::new(self.draft.clone()))));
+                }
+                KeyCode::Right if !self.setup => {}
+                KeyCode::Right | KeyCode::Enter => {
                     let (tier, binding) = self
                         .draft
                         .tiers

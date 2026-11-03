@@ -1,18 +1,17 @@
 mod defaults;
 #[cfg(test)]
 mod tests;
+mod ui;
 use super::{register, registry};
 use crate::{skills, workspace_manifest as manifest};
 use anyhow::{Context, Result, ensure};
 use camino::Utf8Path;
-use defaults::{RELEASE, REPOSITORY};
 use manifest::WorkspaceManifest;
 use std::{
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
-    process::Command,
 };
-const DEFAULT_EDITOR: &str = "vi";
+
 pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     let installed: Vec<_> = crate::agents::profiles()
         .filter(|p| crate::util::find_on_path(p.binary).is_some())
@@ -22,33 +21,92 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         !installed.is_empty(),
         "no CLI found; install claude, codex or pi"
     );
-    let found = installed.join(", ");
-    let global = skills::global_dir()?;
-
-    let notice = format!(
-        "Niles isn't set up in {cwd}. Found: {found}.\nMissing skills will be pinned from {REPOSITORY}@{RELEASE} into {global}/skills. Existing skills are kept.\nWorkers run with approval prompts bypassed and no sandbox (docs/security.md).\n[Enter] default · [c] custom (edit the manifest yourself) · [n] skip"
+    let header = format!(
+        "Setting up Niles in {cwd}\nDetected CLIs: {}",
+        installed.join(", ")
     );
-    let answer = ask(&notice, &["", "c", "n"])?;
-    if answer == "n" {
+    let global = skills::global_dir()?;
+    let mut modes = ui::Options::new(
+        crate::store::parse_yaml(include_str!("onboard/modes.yaml"))?,
+        false,
+    );
+    if !modes.pick(&header, "How do you work?")? {
         return Ok(None);
     }
-    let models = crate::config::spec::load_project_config_from(cwd)?.models;
-    let generated = defaults::manifest(&installed)?;
-    let body = serde_saphyr::to_string(&generated)?;
-    let (body, manifest) = if answer == "c" {
-        let Some(edited) = custom(cwd, &body, &models)? else {
-            return Ok(None);
-        };
-        edited
-    } else {
-        manifest::check(&generated, &models)?;
-        (body, generated)
+    let mut generated = defaults::manifest(&installed)?;
+    let mode = modes.chosen();
+    generated.entry = mode.0.parse()?;
+    if mode.0 == "lead" {
+        let (rows, warnings) = entry_skills(mode, cwd, &global);
+        if rows.len() > 1 {
+            let question = format!("Choose the lead's entry skill\n{}", warnings.join("\n"));
+            let mut entries = ui::Options::new(rows, false);
+            if !entries.pick(&header, &question)? {
+                return Ok(None);
+            }
+            generated.entry = entries.chosen().0.parse()?;
+        } else {
+            for warning in warnings {
+                eprintln!("warning: {warning}");
+            }
+        }
+    }
+    let config = crate::config::spec::load_project_config_from(cwd)?;
+    let mut manifest = match crate::agents::picker::setup_tiers(cwd, generated.clone(), &config)? {
+        crate::agents::picker::Choice::Save(draft) => *draft,
+        crate::agents::picker::Choice::Keep => generated,
+        crate::agents::picker::Choice::Quit => return Ok(None),
     };
-    let starter_skills = if answer == "c" {
-        Vec::new()
-    } else {
-        crate::store::parse_yaml::<Vec<skills::SkillName>>(defaults::SKILLS)?
-    };
+    // The entry agent follows the accepted standard tier, including edits made in the picker.
+    manifest.entry_agent = manifest.tiers.standard.primary.clone();
+    let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS)?;
+    let mut starters = ui::Options::new(
+        rows.into_iter()
+            .filter(|(name, _)| name != manifest.entry.as_str())
+            .collect(),
+        true,
+    );
+    let question = format!(
+        "Optional starter skills — instructions that give agents a role. None selected by default.\n\
+         Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Existing skills are kept.",
+        defaults::REPOSITORY,
+    );
+    if !starters.pick(&header, &question)? {
+        return Ok(None);
+    }
+    if !ui::confirm(
+        &header,
+        "Warning: Workers bypass approval prompts and run without a sandbox. See https://github.com/Rhovian/niles/blob/main/docs/security.md for details.",
+    )? {
+        return Ok(None);
+    }
+    let starter_skills = starters
+        .selected()
+        .map(str::parse)
+        .collect::<Result<Vec<skills::SkillName>>>()?;
+    let tiers = manifest
+        .tiers
+        .iter()
+        .map(|(tier, binding)| {
+            format!(
+                "{}: {} (secondaries: {})",
+                tier.as_str(),
+                binding.primary,
+                binding.secondaries.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let summary = format!(
+        "Project: {cwd}\nEntry skill: {}\n{tiers}\nOptional skills: {}\n\nEnter writes the manifest and starts.",
+        manifest.entry,
+        starters.selected().collect::<Vec<_>>().join(", ")
+    );
+    if !ui::confirm(&header, &summary)? {
+        return Ok(None);
+    }
+    manifest::check(&manifest, &config.models)?;
+    let body = serde_saphyr::to_string(&manifest)?;
     let names: std::collections::BTreeSet<_> = manifest
         .bindings
         .iter()
@@ -58,7 +116,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         .collect();
     for name in names {
         if skills::find(name, cwd, &global)?.is_none() {
-            println!("pinning {name}");
+            println!("fetching {name} from latest");
             skills::import(defaults::reference(name)?, skills::Origin::Global)?;
         }
     }
@@ -71,82 +129,42 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     }
     manifest::load(cwd, None)
 }
-fn ask(text: &str, choices: &[&str]) -> Result<String> {
-    // std 1.89 read_line frames input; it does not implement choices or EOF policy.
-    loop {
-        print!("{text} ");
-        io::stdout().flush()?;
-        let mut line = String::new();
-        ensure!(io::stdin().read_line(&mut line)? != 0, "setup input ended");
-        let answer = line.trim().to_owned();
-        if choices.is_empty() || choices.contains(&answer.as_str()) {
-            return Ok(answer);
-        }
-        println!("Unrecognised answer.");
-    }
-}
-fn custom(
-    cwd: &Utf8Path,
-    generated: &str,
-    models: &crate::agents::ModelRoster,
-) -> Result<Option<(String, WorkspaceManifest)>> {
-    let dir = crate::store::paths::project_dir(cwd)?;
-    fs::create_dir_all(&dir)?;
-    // tempfile 3.27.0 file/imp/unix.rs: exclusive creation, mode 0600; Drop removes the draft.
-    let file = tempfile::NamedTempFile::new_in(dir)?;
-    writeln!(
-        file.as_file(),
-        "# Configuration: https://github.com/Rhovian/niles/blob/main/docs/configuration.md\n{generated}"
-    )?;
-    let path = Utf8Path::from_path(file.path()).context("draft path is not UTF-8")?;
-    loop {
-        edit(path)?;
-        let body = fs::read_to_string(path)?;
-        let parsed = crate::store::parse_yaml(&body).and_then(|manifest| {
-            manifest::check(&manifest, models)?;
-            Ok(manifest)
-        });
-        let error = match parsed {
-            Ok(manifest) => return Ok(Some((body, manifest))),
-            Err(error) => error,
-        };
-        let retry = format!("{error:#}\n[Enter] edit again · [q] abort");
-        if ask(&retry, &["", "q"])? == "q" {
-            return Ok(None);
-        }
-    }
-}
 pub(super) fn first_run(cwd: &Utf8Path) -> Result<Option<registry::Entry>> {
     if !io::stdin().is_terminal() || !registry::entries()?.is_empty() {
         return Ok(None);
     }
-    let (path, mut name) = match register::directory("", cwd)? {
-        register::Directory::Registered(entry) => return Ok(Some(entry)),
-        register::Directory::Unregistered { path, default } => (path, default),
-    };
-    let notice = format!(
-        "No projects yet. Register {path} as {name:?} and set it up now?\nRegistering is optional: press r in the home view to register any folder later.\n[Enter] register and set up · [n] not now"
-    );
-    if ask(&notice, &["", "n"])? == "n" {
-        return Ok(None);
-    }
-    loop {
-        match register::register(&name, &path) {
-            Ok(entry) => return Ok(Some(entry)),
-            Err(error) if error.downcast_ref::<io::Error>().is_some() => return Err(error),
-            Err(error) => name = ask(&format!("{error:#}\nname:"), &[])?,
+    ui::register(cwd)
+}
+
+fn entry_skills(
+    mode: &(String, String),
+    cwd: &Utf8Path,
+    global: &Utf8Path,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let discovery = skills::available(cwd, global);
+    let mut rows = vec![mode.clone()];
+    let mut warnings = discovery
+        .warnings
+        .into_iter()
+        .map(|error| format!("Skipping skill: {error:#}"))
+        .collect::<Vec<_>>();
+    for name in discovery.names {
+        if name.as_str() == mode.0 {
+            continue;
+        }
+        let candidate = skills::inspect(&name, cwd, global).and_then(|skill| {
+            skill.primary_body()?;
+            Ok(skill)
+        });
+        // Discovery follows the skills-list policy: warn about unusable candidates;
+        // only the operator's chosen entry is required to be launchable.
+        match candidate {
+            Ok(skill) => rows.push((
+                name.to_string(),
+                skills::display_description(&skill.description),
+            )),
+            Err(error) => warnings.push(format!("Skipping {name}: {error:#}")),
         }
     }
-}
-fn edit(path: &Utf8Path) -> Result<()> {
-    let editor = std::env::var_os("VISUAL")
-        .or_else(|| std::env::var_os("EDITOR"))
-        .unwrap_or_else(|| DEFAULT_EDITOR.into());
-    let editor = editor.to_str().context("editor command is not UTF-8")?;
-    let status = Command::new("sh")
-        .args(["-c", &format!("{editor} \"$1\""), "sh", path.as_str()])
-        .status()
-        .context("failed to run manifest editor")?;
-    ensure!(status.success(), "manifest editor exited with {status}");
-    Ok(())
+    (rows, warnings)
 }

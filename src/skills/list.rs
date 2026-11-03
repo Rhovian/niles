@@ -9,7 +9,13 @@ pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
     let global = global_dir()?;
     let manifest = crate::workspace_manifest::load_for_skill_listing(&workspace, selection)?
         .context("skills requires a workspace manifest")?;
-    let mut names = installed(&workspace, &global);
+    let Discovery {
+        mut names,
+        warnings,
+    } = available(&workspace, &global);
+    for error in warnings {
+        warn(&error);
+    }
     names.extend(manifest.bindings.keys().cloned());
     for name in
         std::iter::once(&manifest.entry).chain(names.iter().filter(|name| **name != manifest.entry))
@@ -28,15 +34,21 @@ pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
     Ok(())
 }
 
-fn installed(workspace: &Utf8Path, global: &Utf8Path) -> BTreeSet<SkillName> {
+pub(crate) struct Discovery {
+    pub names: BTreeSet<SkillName>,
+    pub warnings: Vec<anyhow::Error>,
+}
+
+pub(crate) fn available(workspace: &Utf8Path, global: &Utf8Path) -> Discovery {
     let mut names = BTreeSet::new();
+    let mut warnings = Vec::new();
     // Rust 1.89 std/fs.rs: read_dir enumerates entries; resolve owns precedence and symlink rules.
     for root in [workspace.join(".niles/skills"), global.join("skills")] {
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == ErrorKind::NotFound => continue,
             Err(error) => {
-                warn(&anyhow::Error::new(error).context(format!("failed to list {root}")));
+                warnings.push(anyhow::Error::new(error).context(format!("failed to list {root}")));
                 continue;
             }
         };
@@ -46,11 +58,11 @@ fn installed(workspace: &Utf8Path, global: &Utf8Path) -> BTreeSet<SkillName> {
                     names.insert(name);
                 }
                 Ok(None) => {}
-                Err(error) => warn(&error),
+                Err(error) => warnings.push(error),
             }
         }
     }
-    names
+    Discovery { names, warnings }
 }
 
 fn candidate(entry: std::io::Result<fs::DirEntry>) -> Result<Option<SkillName>> {

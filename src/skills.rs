@@ -84,7 +84,7 @@ impl From<Origin> for String {
 
 mod cache;
 mod list;
-pub(crate) use list::list;
+pub(crate) use list::{available, list};
 mod import;
 pub(crate) mod reference;
 pub(crate) use import::{SkillsCommand, import};
@@ -92,7 +92,7 @@ pub(crate) mod files;
 mod resolve;
 pub(crate) use cache::pin;
 pub(crate) use resolve::imported;
-pub(crate) use resolve::{Skill, find, global_dir, locate, resolve};
+pub(crate) use resolve::{Skill, find, global_dir, inspect, locate, resolve};
 
 pub(crate) fn display_description(text: &str) -> String {
     text.split_whitespace()

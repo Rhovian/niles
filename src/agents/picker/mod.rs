@@ -30,8 +30,26 @@ pub(crate) fn tiers(
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<Choice> {
+    tiers_with_mode(root, manifest, config, false)
+}
+
+pub(crate) fn setup_tiers(
+    root: &Utf8Path,
+    manifest: WorkspaceManifest,
+    config: &ProjectConfig,
+) -> Result<Choice> {
+    tiers_with_mode(root, manifest, config, true)
+}
+
+fn tiers_with_mode(
+    root: &Utf8Path,
+    manifest: WorkspaceManifest,
+    config: &ProjectConfig,
+    setup: bool,
+) -> Result<Choice> {
     let theme = Theme::load()?;
     let mut form = Form::new(manifest, config)?;
+    form.setup = setup;
     let mut terminal = ratatui::init();
     let result = run_form(&mut terminal, root, &mut form, config, &theme);
     ratatui::restore();

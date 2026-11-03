@@ -157,19 +157,25 @@ Niles runs your existing tools with your permissions in repositories you have ch
 
 ## First-run setup
 
-Bare `niles` offers registration only when no projects are registered. An attended terminal
-start of a project without a manifest offers setup in its pane. Before
-consent it names GitHub (`Rhovian/niles`), the binary’s release tag, and workers’ bypassed approval
-prompts and absent sandbox. Enter accepts. Missing skills are fetched using the existing Git
-import mechanism and pinned globally to a commit at `v{CARGO_PKG_VERSION}`; existing skills are
-kept. Trust in these agent instructions rests on the release repository and tag. Once installed,
-a moved tag cannot change a pinned skill. Missing revisions, malformed references and fetch
-failures stop setup before the manifest is written; the registered project can be started again.
+Bare `niles` starts with fixed-root directory input, a folder-name default and a path/name
+confirmation when no projects are registered. An attended start without a manifest opens the
+setup wizard: lead or solo, an entry skill for lead when alternatives are installed (solo uses
+its own entry skill), model tiers,
+and optional starter skills with none checked. The lead selector includes `lead` and installed
+skills with valid, nonempty bodies; the operator decides which instructions can coordinate workers.
+Unusable candidates are skipped with a warning; the selected entry must still be launchable.
+When only `lead` is available, its picker screen is skipped and the summary shows that entry.
 
-Custom setup runs the operator’s `$VISUAL`, `$EDITOR`, or `vi` command on a uniquely named,
-0600 draft in the project’s user-owned state directory. The draft path is a separate shell
-argument. The file is read once per edit, parsed, and its entry and agents resolved before skill
-imports. The exact validated text is written with exclusive creation, preserving a manifest
-that appeared concurrently. This matters because manifest worktree setup commands execute with
-the user’s permissions. Drafts are removed on success, abort, and error; a crash may leave a draft
-in the state directory, which deregistration removes.
+Before writing, a single warning links here and explains that workers bypass approval prompts
+and run without a sandbox. A final summary shows the project, entry skill, tiers and selections.
+Cancelling setup writes no manifest and installs no new skills; registration is a separate
+confirmation. Listing entry candidates reads only local files and existing pinned caches; uncached imports are
+skipped with a warning and never fetched before confirmation.
+
+Missing selected skills and the entry skill are fetched from `github.com/Rhovian/niles` at Git
+HEAD, using the existing import mechanism. This trusts the repository’s current default branch,
+rather than the binary’s release tag. The resolved full commit SHA is recorded in each global
+`SKILL.ref`; subsequent runs use that immutable revision. Existing local and imported skills are
+kept. Missing revisions, invalid skill references and fetch failures stop setup before writing
+the manifest. The validated manifest is written with exclusive creation, preserving a manifest
+that appeared concurrently. No editor or external setup command is launched by the wizard.

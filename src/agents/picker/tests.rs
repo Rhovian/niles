@@ -187,3 +187,26 @@ fn picker_rows_follow_project_tiers() {
     }
     assert_eq!(form.draft, form.original);
 }
+
+#[test]
+fn setup_accepts_unchanged_detected_tiers_with_enter() {
+    let config = config();
+    let manifest = crate::test_support::manifest();
+    let mut form = Form::new(manifest.clone(), &config).unwrap();
+    form.setup = true;
+    assert!(!form.can_save());
+    assert!(
+        matches!(form.key(KeyCode::Enter, &config).unwrap(), Some(Choice::Save(saved)) if *saved == manifest)
+    );
+}
+
+#[test]
+fn right_arrow_edits_only_in_setup() {
+    let config = config();
+    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
+    form.key(KeyCode::Right, &config).unwrap();
+    assert!(matches!(form.screen, Screen::Tiers));
+    form.setup = true;
+    form.key(KeyCode::Right, &config).unwrap();
+    assert!(matches!(form.screen, Screen::Editing { .. }));
+}

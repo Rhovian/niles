@@ -122,12 +122,7 @@ fn modified(binary: &Path) -> Result<SystemTime> {
 
 enum Mode {
     Browse,
-    Directory(String),
-    Name {
-        path: Utf8PathBuf,
-        default: String,
-        input: String,
-    },
+    Register(register::prompt::Prompt),
     Close(Closing),
     Deregister(registry::Entry),
 }
@@ -215,7 +210,9 @@ impl Explorer {
                     self.footer = shown(self.open());
                 }
             }
-            (Mode::Browse, KeyCode::Char('r')) => self.mode = Mode::Directory(String::new()),
+            (Mode::Browse, KeyCode::Char('r')) => {
+                self.mode = Mode::Register(register::prompt::Prompt::new())
+            }
             (Mode::Browse, KeyCode::Char('d')) => match self.tree.selected() {
                 Some(Item::Project(project)) => {
                     self.mode = Mode::Deregister(project.row.entry.clone());
@@ -252,50 +249,28 @@ impl Explorer {
                     self.footer = Some(error);
                 }
             }
-            (Mode::Directory(input) | Mode::Name { input, .. }, KeyCode::Char(c)) => input.push(c),
-            (Mode::Directory(input) | Mode::Name { input, .. }, KeyCode::Backspace) => {
-                input.pop();
-            }
-            (Mode::Directory(input), KeyCode::Enter) => match register::directory(input, &self.cwd)
-            {
-                Ok(register::Directory::Registered(entry)) => {
-                    self.footer = Some(format!("already registered as {}", entry.name.as_str()));
-                }
-                Ok(register::Directory::Unregistered { path, default }) => {
-                    self.mode = Mode::Name {
-                        path,
-                        default,
-                        input: String::new(),
-                    }
-                }
-                Err(error) => self.footer = Some(format!("{error:#}")),
-            },
-            (
-                Mode::Name {
-                    path,
-                    default,
-                    input,
-                },
-                KeyCode::Enter,
-            ) => {
-                let name = if input.is_empty() { default } else { input };
-                match register::register(name, path) {
-                    Ok(_) => {
-                        self.footer = Some(format!("registered {name}"));
-                        self.mode = Mode::Browse;
-                        self.refresh();
-                        if let Some(error) = shown(panels::open(Panel::Help).map(|_| None)) {
-                            self.footer = Some(error);
+            (Mode::Register(prompt), code) => {
+                use register::prompt::Action;
+                match prompt.key(code, &self.cwd) {
+                    Ok(Action::Pending) => {}
+                    Ok(Action::Cancel) => self.mode = Mode::Browse,
+                    Ok(Action::Register { path, name }) => match register::register(&name, &path) {
+                        Ok(entry) => {
+                            self.mode = Mode::Browse;
+                            self.footer =
+                                shown(start_project(&entry, &self.theme).and_then(|window| {
+                                    tmux::show_in_view(&self.pane, &window)?;
+                                    Ok(Some(format!("registered {name}")))
+                                }));
+                            self.refresh();
                         }
-                    }
+                        Err(error) => self.footer = Some(format!("{error:#}")),
+                    },
                     Err(error) => self.footer = Some(format!("{error:#}")),
                 }
             }
-            (Mode::Close { .. } | Mode::Deregister(_), _)
-            | (Mode::Directory(_) | Mode::Name { .. }, KeyCode::Esc) => {
-                self.mode = Mode::Browse;
-            }
-            (Mode::Browse | Mode::Directory(_) | Mode::Name { .. }, _) => {}
+            (Mode::Close { .. } | Mode::Deregister(_), _) => self.mode = Mode::Browse,
+            (Mode::Browse, _) => {}
         }
         Ok(())
     }
@@ -380,8 +355,7 @@ impl Explorer {
     fn draw(&mut self, frame: &mut Frame) {
         let prompt = match &self.mode {
             Mode::Browse => None,
-            Mode::Directory(input) => Some(format!("directory [{}]: {input}", self.cwd)),
-            Mode::Name { default, input, .. } => Some(format!("name [{default}]: {input}")),
+            Mode::Register(prompt) => Some(prompt.text(&self.cwd)),
             Mode::Deregister(entry) => Some(format!(
                 "deregister {}? deletes all state and managed worktrees (including uncommitted files); closes its session. y/n",
                 entry.name.as_str()
