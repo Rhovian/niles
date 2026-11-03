@@ -55,8 +55,9 @@ fn terminal(
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    // libc 0.2.191 takes *const winsize on Linux and *mut winsize on macOS.
     assert_eq!(
-        unsafe { libc::openpty(&mut pty, &mut tty, null_mut(), null_mut(), &mut size) },
+        unsafe { libc::openpty(&mut pty, &mut tty, null_mut(), null_mut(), &raw mut size) },
         0
     );
     let (mut pty, tty) = unsafe { (File::from_raw_fd(pty), File::from_raw_fd(tty)) };

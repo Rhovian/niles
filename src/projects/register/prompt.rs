@@ -33,7 +33,6 @@ impl Prompt {
             Self::Confirm { path, name } => format!("Path: {path}\nName: {name}\nRegister? y/N"),
         }
     }
-    #[expect(clippy::wildcard_enum_match_arm, reason = "ignore unbound prompt keys")]
     pub fn key(&mut self, code: KeyCode, root: &Utf8Path) -> Result<Action> {
         if code == KeyCode::Esc {
             return Ok(Action::Cancel);
