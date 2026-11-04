@@ -23,6 +23,10 @@ Funnel, public listeners or extra authentication headers are needed.
    conflict instead of overwriting services, Serve mounts, push keys or tailnet policy.
    An occupied Serve root, chosen port or service path is also a conflict, even if unrelated.
    Preserve unrelated config. Do not use `tailscale serve reset`.
+   Existing path/Unix-socket mounts gate the whole Serve config: even step 13's HTTP
+   proxy may need sudo. Preserve those mounts and report missing privileges.
+   [Tailscale #22117](https://github.com/tailscale/tailscale/pull/22117) makes root
+   mandatory for configs containing these mounts; operator privileges no longer suffice.
 3. Verify `type -a niles tailscale`, `niles --version`, `niles remote --help`,
    `tailscale version --daemon --json`, `tailscale status --json`, and
    `tailscale ip -4` on each machine. Require a remote-enabled Niles binary, matching
@@ -35,7 +39,9 @@ Funnel, public listeners or extra authentication headers are needed.
    as a user-owned device: tagged clients have no Serve login header.
    Use open-source Homebrew tailscaled on macOS. Check the LaunchDaemon's PATH
    includes the directory containing the tailscale CLI; Homebrew service regeneration
-   can undo this. Check Tailscale operator privileges for the service account; if
+   can undo this. Keep this PATH check until the relay includes Tailscale #22117,
+   which removes the daemon's `sudo --list` check.
+   Check Tailscale operator privileges for the service account; if
    needed, give the operator the exact `sudo tailscale set --operator=<user>` fix.
    Report privileged prerequisites that authorized access cannot complete.
 5. Install matching remote-enabled Niles binaries on all hosts and built PWA assets
