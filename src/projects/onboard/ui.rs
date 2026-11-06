@@ -24,6 +24,15 @@ pub(super) fn key() -> Result<KeyCode> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Action {
+    Next,
+    Back,
+    Quit,
+}
+
+const FIRST_OPTION: usize = 0;
+
 // crossterm 0.29.0 event::read supplies key events, not selection or checklist state.
 pub(super) struct Options {
     rows: Vec<(String, String)>,
@@ -42,14 +51,15 @@ impl Options {
         }
     }
     #[expect(clippy::wildcard_enum_match_arm, reason = "ignore unbound picker keys")]
-    pub fn key(&mut self, key: KeyCode) -> Option<bool> {
+    pub fn key(&mut self, key: KeyCode) -> Option<Action> {
         match key {
-            KeyCode::Esc => Some(false),
+            KeyCode::Esc | KeyCode::Left => Some(Action::Back),
+            KeyCode::Char('q') => Some(Action::Quit),
             KeyCode::Enter => {
                 if !self.checklist {
                     self.checked[self.cursor] = true;
                 }
-                Some(true)
+                Some(Action::Next)
             }
             KeyCode::Up => {
                 self.cursor = self.cursor.saturating_sub(1);
@@ -66,7 +76,7 @@ impl Options {
             _ => None,
         }
     }
-    pub fn pick(&mut self, header: &str, question: &str) -> Result<bool> {
+    pub fn pick(&mut self, header: &str, question: &str) -> Result<Action> {
         let theme = crate::theme::Theme::load()?;
         let mut state = ListState::default();
         screen(|terminal| {
@@ -117,7 +127,9 @@ impl Options {
                         &mut state,
                     );
                     frame.render_widget(
-                        Paragraph::new(format!("↑↓ move{hint} · Enter continue · Esc cancel")),
+                        Paragraph::new(format!(
+                            "↑↓ move{hint} · Enter continue · ←/Esc back · q quit"
+                        )),
                         footer,
                     );
                 })?;
@@ -126,6 +138,23 @@ impl Options {
                 }
             }
         })
+    }
+    pub fn replace_rows(&mut self, rows: Vec<(String, String)>) {
+        let cursor = self.rows[self.cursor].0.clone();
+        self.checked = rows
+            .iter()
+            .map(|(name, _)| {
+                self.rows
+                    .iter()
+                    .position(|(old, _)| old == name)
+                    .is_some_and(|i| self.checked[i])
+            })
+            .collect();
+        self.cursor = match rows.iter().position(|(name, _)| name == &cursor) {
+            Some(i) => i,
+            None => FIRST_OPTION,
+        };
+        self.rows = rows;
     }
     pub fn chosen(&self) -> &(String, String) {
         debug_assert!(!self.checklist);
@@ -139,19 +168,17 @@ impl Options {
             .map(|((name, _), _)| name.as_str())
     }
 }
-pub(super) fn confirm(header: &str, text: &str) -> Result<bool> {
-    let mut options = Options::new(
-        vec![
-            ("Continue".into(), "Accept and continue".into()),
-            (
-                "Cancel".into(),
-                "Leave setup without writing a manifest".into(),
-            ),
-        ],
-        false,
-    );
-    Ok(options.pick(header, text)? && options.chosen().0 == "Continue")
+pub(super) fn confirm(options: &mut Options, header: &str, text: &str) -> Result<Action> {
+    let action = options.pick(header, text)?;
+    Ok(
+        if action == Action::Next && options.chosen().0 == "Cancel" {
+            Action::Quit
+        } else {
+            action
+        },
+    )
 }
+
 pub(super) fn register(root: &Utf8Path) -> Result<Option<super::registry::Entry>> {
     let mut prompt = super::register::prompt::Prompt::new();
     let mut error = String::new();
@@ -180,4 +207,27 @@ pub(super) fn register(root: &Utf8Path) -> Result<Option<super::registry::Entry>
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::defaults;
+    use super::*;
+    #[test]
+    fn checklist_rebuild_keeps_other_checks_and_cursor() {
+        use ratatui::crossterm::event::KeyCode;
+        let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS).unwrap();
+        let mut options = Options::new(rows.clone(), true);
+        options.key(KeyCode::Down);
+        options.key(KeyCode::Char(' '));
+        options.replace_rows(
+            rows.into_iter()
+                .filter(|(name, _)| name != "lead")
+                .collect(),
+        );
+        assert_eq!(options.selected().collect::<Vec<_>>(), ["design"]);
+        assert_eq!(options.cursor, 0);
+        options.key(KeyCode::Char(' '));
+        assert_eq!(options.selected().count(), 0);
+    }
 }

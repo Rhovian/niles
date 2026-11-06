@@ -5,7 +5,7 @@ mod tiers_table;
 mod types;
 mod worktree;
 
-pub(crate) use interactive::ensure_interactive;
+pub(crate) use interactive::{ensure_interactive, save_changes};
 pub(crate) use io::{check, load_for_skill_listing};
 pub use io::{load, manifest_path, save};
 pub(crate) use tiers_table::{MISSING, clamp, manifest_tiers};

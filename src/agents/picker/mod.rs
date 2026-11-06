@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use ratatui::{
     DefaultTerminal,
-    crossterm::event::{self, Event, KeyEventKind},
+    crossterm::event::{self, Event, KeyCode, KeyEventKind},
 };
 
 use crate::{config::spec::ProjectConfig, theme::Theme, workspace_manifest::WorkspaceManifest};
@@ -13,9 +13,7 @@ mod form;
 #[cfg(test)]
 mod tests;
 
-use crate::agents::roster::Tier;
-use columns::{Columns, Pick};
-use form::Form;
+use form::{Decision, Form, Screen};
 
 pub(crate) enum Choice {
     Save(Box<WorkspaceManifest>),
@@ -30,70 +28,95 @@ pub(crate) fn tiers(
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
 ) -> Result<Choice> {
-    tiers_with_mode(root, manifest, config, false)
-}
-
-pub(crate) fn setup_tiers(
-    root: &Utf8Path,
-    manifest: WorkspaceManifest,
-    config: &ProjectConfig,
-) -> Result<Choice> {
-    tiers_with_mode(root, manifest, config, true)
-}
-
-fn tiers_with_mode(
-    root: &Utf8Path,
-    manifest: WorkspaceManifest,
-    config: &ProjectConfig,
-    setup: bool,
-) -> Result<Choice> {
-    let theme = Theme::load()?;
     let mut form = Form::new(manifest, config)?;
-    form.setup = setup;
+    let decision = screen(root, &mut form, |form, key| form.key(key, config))?;
+    Ok(choice(&form, decision))
+}
+
+fn choice(form: &Form, decision: Decision) -> Choice {
+    match decision {
+        Decision::Save => Choice::Save(Box::new(form.draft.clone())),
+        Decision::Keep => Choice::Keep,
+        Decision::Quit => Choice::Quit,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SetupAction {
+    Next,
+    Back,
+    Quit,
+}
+
+pub(crate) struct SetupTiers(Form);
+impl SetupTiers {
+    pub(crate) fn new(manifest: WorkspaceManifest, config: &ProjectConfig) -> Result<Self> {
+        let mut form = Form::new(manifest, config)?;
+        form.setup = true;
+        Ok(Self(form))
+    }
+    pub(crate) fn draft(&self) -> &WorkspaceManifest {
+        &self.0.draft
+    }
+
+    fn key(form: &mut Form, key: KeyCode, config: &ProjectConfig) -> Result<Option<SetupAction>> {
+        if matches!(key, KeyCode::Esc | KeyCode::Left) && matches!(form.screen, Screen::Tiers) {
+            return Ok(Some(SetupAction::Back));
+        }
+        Ok(form.key(key, config)?.map(|decision| match decision {
+            Decision::Save | Decision::Keep => SetupAction::Next,
+            Decision::Quit => SetupAction::Quit,
+        }))
+    }
+
+    pub(crate) fn pick(&mut self, root: &Utf8Path, config: &ProjectConfig) -> Result<SetupAction> {
+        screen(root, &mut self.0, |form, key| Self::key(form, key, config))
+    }
+}
+
+fn screen<T>(
+    root: &Utf8Path,
+    form: &mut Form,
+    on_key: impl FnMut(&mut Form, KeyCode) -> Result<Option<T>>,
+) -> Result<T> {
+    let theme = Theme::load()?;
     let mut terminal = ratatui::init();
-    let result = run_form(&mut terminal, root, &mut form, config, &theme);
+    let result = run_form(&mut terminal, root, form, &theme, on_key);
     ratatui::restore();
     result
 }
 
-fn run_form(
+fn run_form<T>(
     terminal: &mut DefaultTerminal,
     root: &Utf8Path,
     form: &mut Form,
-    config: &ProjectConfig,
     theme: &Theme,
-) -> Result<Choice> {
+    mut on_key: impl FnMut(&mut Form, KeyCode) -> Result<Option<T>>,
+) -> Result<T> {
     loop {
         terminal.draw(|frame| draw::form(frame, form, theme, root.as_str()))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
-            && let Some(choice) = form.key(key.code, config)?
+            && let Some(choice) = on_key(form, key.code)?
         {
             return Ok(choice);
         }
     }
 }
 
-/// Uses the caller's terminal, including CONFIG's existing raw mode and alternate screen.
-pub(crate) fn tier(
+/// Reuses CONFIG's terminal and the same editable form as setup and startup.
+pub(crate) fn configure(
     terminal: &mut DefaultTerminal,
-    tier: &Tier,
-    manifest: &WorkspaceManifest,
+    root: &Utf8Path,
+    manifest: WorkspaceManifest,
     config: &ProjectConfig,
     theme: &Theme,
-) -> Result<Option<String>> {
-    let families = columns::families(config)?;
-    let mut columns = Columns::new(&families, &manifest.tiers.tier(*tier)?.primary, config)?;
-    loop {
-        terminal.draw(|frame| draw::single(frame, &columns, tier, theme))?;
-        if let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            match columns.key(key.code) {
-                Pick::Pending => {}
-                Pick::Cancelled => return Ok(None),
-                Pick::Selected(value) => return Ok(Some(value)),
-            }
-        }
-    }
+    tier: crate::agents::roster::Tier,
+) -> Result<Choice> {
+    let mut form = Form::new(manifest, config)?;
+    form.selected = form.rows().iter().position(|row| matches!(row, form::Row::Agent { tier: candidate, index: 0 } if *candidate == tier)).context("tier row is missing")?;
+    let decision = run_form(terminal, root, &mut form, theme, |form, key| {
+        form.key(key, config)
+    })?;
+    Ok(choice(&form, decision))
 }

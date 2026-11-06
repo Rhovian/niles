@@ -33,7 +33,10 @@ seconds, under a header that counts projects, agents and tokens.
 The explorer also has three panels:
 
 - CONFIG shows each setting with its value and where it comes from. ← → change simple values in
-  place, and Enter opens the skill picker for a skill's model; other settings are read-only.
+  place. Enter on a tier opens the same flat form used at startup: edit primaries and ordered
+  secondaries, add absent tiers, or choose `entry_agent` from the listed agents. In that form,
+  `a` adds a secondary, `d` removes one, `[`/`]` reorder them, and `s` reviews changes to save;
+  other settings are read-only.
 - TELEMETRY shows tokens spent today, over 7 days or over 30 days, by project, by model and over
   time, with live sessions' context use.
 - HELP shows the key reference.

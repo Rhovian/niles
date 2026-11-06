@@ -115,14 +115,6 @@ pub(crate) fn imported(reference: &PinnedRef, global: &Utf8Path) -> Result<Skill
     )
 }
 
-pub(crate) fn inspect(name: &SkillName, workspace: &Utf8Path, global: &Utf8Path) -> Result<Skill> {
-    let source = locate(name, workspace, global)?;
-    if let Source::Import { reference, .. } = &source {
-        super::cache::check_size(&super::cache::directory(reference, global))?;
-    }
-    read(name, source)
-}
-
 fn fetch_and_read(name: &SkillName, source: Source, global: &Utf8Path) -> Result<Skill> {
     if let Source::Import { reference, .. } = &source {
         super::cache::fetch(reference, global)?;

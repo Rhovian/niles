@@ -159,22 +159,28 @@ Niles runs your existing tools with your permissions in repositories you have ch
 
 Bare `niles` starts with fixed-root directory input, a folder-name default and a path/name
 confirmation when no projects are registered. An attended start without a manifest opens the
-setup wizard: lead or solo, an entry skill for lead when alternatives are installed (solo uses
-its own entry skill), model tiers,
-and optional starter skills with none checked. The lead selector includes `lead` and installed
-skills with valid, nonempty bodies; the operator decides which instructions can coordinate workers.
-Unusable candidates are skipped with a warning; the selected entry must still be launchable.
-When only `lead` is available, its picker screen is skipped and the summary shows that entry.
+setup wizard: lead or solo, a lead entry skill (`lead` or Custom; solo uses its own skill),
+model tiers and entry agent, and optional starter skills with none checked. Only designated lead
+candidates appear; unrelated installed skills are neither inspected nor offered. Custom accepts
+the same GitHub reference syntax as `niles skills import`, including an optional `@rev`.
+It refuses an already installed name. A custom lead's instructions can come from any repository
+the operator names, and that lead runs workers unsandboxed. Review its source as executable
+instructions; the final summary shows that custom reference.
 
-Before writing, a single warning links here and explains that workers bypass approval prompts
-and run without a sandbox. A final summary shows the project, entry skill, tiers and selections.
-Cancelling setup writes no manifest and installs no new skills; registration is a separate
-confirmation. Listing entry candidates reads only local files and existing pinned caches; uncached imports are
-skipped with a warning and never fetched before confirmation.
+One final screen puts the safety warning and this documentation link above the summary of the
+project, entry skill, entry agent, tiers and skills. One confirmation accepts the warning, fetches
+skills, writes the manifest and starts.
+Use ←/Esc to go back with answers retained and `q` to quit; in custom text input, Esc goes back
+and F10 quits. Back from the first mode step leaves setup. Registration is a separate confirmation
+outside that back stack, and remains committed. Back or quit writes no manifest and fetches no
+skills.
 
 Missing selected skills and the entry skill are fetched from `github.com/Rhovian/niles` at Git
 HEAD, using the existing import mechanism. This trusts the repository’s current default branch,
-rather than the binary’s release tag. The resolved full commit SHA is recorded in each global
+rather than the binary’s release tag. Custom leads are fetched from their own reference only after
+final confirmation and must have a usable, nonempty body before the manifest is written.
+A failed custom setup removes its new skill reference so that the same URL can be retried.
+The resolved full commit SHA is recorded in each global
 `SKILL.ref`; subsequent runs use that immutable revision. Existing local and imported skills are
 kept. Missing revisions, invalid skill references and fetch failures stop setup before writing
 the manifest. The validated manifest is written with exclusive creation, preserving a manifest

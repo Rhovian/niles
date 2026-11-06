@@ -25,7 +25,7 @@ fn generated_defaults_match_literal_expectations() {
         for (tier, agents) in generated.tiers.iter() {
             let families = std::iter::once(&agents.primary)
                 .chain(&agents.secondaries)
-                .map(|agent| agent.split_once(':').unwrap().0)
+                .map(String::as_str)
                 .collect::<Vec<_>>()
                 .join(",");
             actual.push(format!("{}={families}", tier.as_str()));
@@ -45,7 +45,7 @@ fn starter_picker_starts_empty_and_toggles_independently() {
     assert_eq!(picker.selected().collect::<Vec<_>>(), ["lead", "design"]);
     picker.key(KeyCode::Char(' '));
     assert_eq!(picker.selected().collect::<Vec<_>>(), ["lead"]);
-    assert_eq!(picker.key(KeyCode::Esc), Some(false));
+    assert_eq!(picker.key(KeyCode::Esc), Some(ui::Action::Back));
 }
 
 #[test]
@@ -74,38 +74,27 @@ fn registration_preserves_root_and_requires_yes() {
 }
 
 #[test]
-fn entry_candidates_skip_broken_empty_and_uncached_skills_without_fetching() {
+fn custom_refs_use_import_grammar_and_refuse_existing_names_without_fetching() {
     let dir = tempfile::tempdir().unwrap();
     let root = Utf8Path::from_path(dir.path()).unwrap();
-    let workspace = root.join("project");
-    for (name, text) in [
-        (
-            "good",
-            "---\nname: good\ndescription: Good instructions\n---\nCoordinate the work.\n",
-        ),
-        (
-            "empty",
-            "---\nname: empty\ndescription: No instructions\n---\n",
-        ),
-        ("broken", "broken YAML"),
+    for text in [
+        "https://github.com/o/r/skill",
+        "gitlab.com/o/r/skill",
+        "invalid",
+        "github.com/o/r/../skill",
     ] {
-        let folder = root.join("skills").join(name);
-        fs::create_dir_all(&folder).unwrap();
-        fs::write(folder.join("SKILL.md"), text).unwrap();
+        assert!(custom::reference(text, root, root).is_err(), "{text}");
     }
-    let uncached = root.join("skills/uncached");
-    fs::create_dir_all(&uncached).unwrap();
+    let reference = custom::reference("github.com/o/r/skills/custom@branch", root, root).unwrap();
+    assert_eq!(reference.name.as_str(), "custom");
+    assert_eq!(reference.rev, "branch");
+    fs::create_dir_all(root.join("skills/custom")).unwrap();
     fs::write(
-        uncached.join("SKILL.ref"),
-        "github.com/Rhovian/niles/skills/uncached@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        root.join("skills/custom/SKILL.md"),
+        "broken unrelated skill",
     )
     .unwrap();
-    let invalid = root.join("skills/invalid name");
-    fs::create_dir_all(&invalid).unwrap();
-    fs::write(invalid.join("SKILL.md"), "invalid").unwrap();
-    let mode = ("lead".into(), "Reuse this YAML description".into());
-    let (rows, warnings) = entry_skills(&mode, &workspace, root);
-    assert_eq!(rows, [mode, ("good".into(), "Good instructions".into())]);
-    assert_eq!(warnings.len(), 4, "{warnings:?}");
+    let error = custom::reference(&reference.to_string(), root, root).unwrap_err();
+    assert!(error.to_string().contains("already installed"));
     assert!(!root.join("cache").exists());
 }

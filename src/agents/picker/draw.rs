@@ -2,22 +2,24 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
 };
 
 use super::{
     columns::{Column, Columns},
-    form::{Form, Screen},
+    form::{Form, Row as FormRow, Screen},
 };
 use crate::{
-    agents::roster::Tier,
     theme::{StyleKey, Theme},
     workspace_manifest::clamp,
 };
 
+const ABSENT_TIER: &str = "(absent — → add)";
+
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
         Screen::Editing { tier, .. } => format!("NILES / TIERS / {}", tier.as_str()),
+        Screen::Entry { .. } => "NILES / TIERS / entry_agent".to_owned(),
         Screen::Tiers | Screen::Review => "NILES / TIERS".to_owned(),
     };
     let heading = if form.setup {
@@ -26,25 +28,53 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
         format!("{title} — {}", clamp(root, 120))
     };
     let (body, footer) = chrome(frame, theme, &heading);
-    let mut warning = None;
+    let mut warning = if !form.error.is_empty() {
+        Some(form.error.as_str())
+    } else if !form
+        .entry_choices()
+        .contains(&form.draft.entry_agent.as_str())
+    {
+        Some("Entry agent is no longer listed; choose entry_agent before continuing.")
+    } else {
+        None
+    };
     let hints = match &form.screen {
         Screen::Tiers => {
             tiers(frame, body, form, theme, false);
             if form.setup {
-                "↑↓ tier · → edit primary · ↵ continue"
+                "↑↓ row · → edit · a add secondary · d remove · [/] reorder · ↵ continue · ←/Esc back"
             } else if form.can_save() {
-                "↑↓ tier · ↵ edit primary · s save"
+                "↑↓ row · →/↵ edit · a add secondary · d remove · [/] reorder · s save"
             } else {
-                "↑↓ tier · ↵ edit primary"
+                "↑↓ row · →/↵ edit · a add secondary · d remove · [/] reorder"
             }
         }
         Screen::Review => {
             tiers(frame, body, form, theme, true);
             "↵ save · esc back"
         }
+        Screen::Entry { selected } => {
+            let items = form
+                .entry_choices()
+                .into_iter()
+                .map(ListItem::new)
+                .collect();
+            list(
+                frame,
+                body,
+                "ENTRY AGENT — choose from tier agents",
+                items,
+                *selected,
+                true,
+                theme,
+            );
+            "↑↓ move · ↵ choose · ←/Esc back"
+        }
         Screen::Editing { columns, .. } => {
             columns.draw(frame, body, theme);
-            warning = Some("Editing the tier primary; other tiers and secondaries are kept.");
+            if warning.is_none() {
+                warning = Some("Editing agent: family, model, effort");
+            }
             COLUMN_KEYS
         }
     };
@@ -65,20 +95,13 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     footer_text(frame, footer, theme, warning, hints);
 }
 
-pub(super) fn single(frame: &mut Frame, columns: &Columns, tier: &Tier, theme: &Theme) {
-    let (body, footer) = chrome(frame, theme, &format!("CONFIG / {}", tier.as_str()));
-    columns.draw(frame, body, theme);
-    let hints = Line::styled(COLUMN_KEYS, theme.style(StyleKey::Muted));
-    footer_text(frame, footer, theme, None, hints);
-}
-
 const COLUMN_KEYS: &str = "↑↓ move · →/↵ pick · ←/esc back";
 
 fn chrome(frame: &mut Frame, theme: &Theme, title: &str) -> (Rect, Rect) {
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(5),
     ])
     .areas(frame.area());
     frame.render_widget(
@@ -96,23 +119,36 @@ fn footer_text(
     hints: Line<'_>,
 ) {
     let mut lines = Vec::new();
+    lines.push(hints);
     if let Some(warning) = warning {
         lines.push(Line::styled(warning, theme.style(StyleKey::Accent)));
     }
-    lines.push(hints);
     let rule = Block::new()
         .borders(Borders::TOP)
         .border_style(theme.style(StyleKey::Guide));
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(rule), area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .block(rule),
+        area,
+    );
 }
 
 fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
     let mut rows = Vec::new();
-    for (tier, binding) in form.draft.tiers.iter() {
-        let changed = form.original.tiers.get(tier) != Some(binding);
-        let value = clamp(&binding.primary, 120);
+    for row in form.rows() {
+        let label = match row {
+            FormRow::Entry => "entry_agent".to_owned(),
+            FormRow::Agent { tier, index: 0 } => tier.as_str().to_owned(),
+            FormRow::Agent { index, .. } => format!("  secondary {index}"),
+        };
+        let value = match row.value(&form.draft) {
+            Some(value) => value,
+            None => ABSENT_TIER,
+        };
+        let changed = row.value(&form.draft) != row.value(&form.original);
         let status = if changed { "changed" } else { "kept" };
-        let row = Row::new([tier.as_str().to_owned(), value, status.to_owned()]);
+        let row = Row::new([label, value.to_owned(), status.to_owned()]);
         rows.push(if changed {
             row.style(theme.style(StyleKey::Accent))
         } else {
@@ -122,7 +158,7 @@ fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool
     let table = Table::new(
         rows,
         [
-            Constraint::Length(10),
+            Constraint::Length(16),
             Constraint::Fill(1),
             Constraint::Length(10),
         ],

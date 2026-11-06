@@ -1,128 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
-use common::{TestEnv, state_dir_at, write_executable};
-use std::{
-    fs::{self, File},
-    io::Write,
-    os::fd::FromRawFd,
-    process::Output,
-    ptr::null_mut,
-};
-fn environment() -> TestEnv {
-    let mut env = TestEnv::with_tmux(
-        "onboard",
-        r#"#!/bin/sh
-[ "$1" != -u ] || shift
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$1" in
-has-session) printf "can't find session\n" >&2; exit 1 ;;
-display-message) case "$3" in *client_width*) printf '160 45\n' ;; *) printf 'onboard\n' ;; esac ;;
-display) case "$*" in *pane_id*) printf '%%0\n' ;; *) printf '/tmp/onboard.sock\n' ;; esac ;;
-list-panes) if [ -f "$HOME/view" ]; then printf '1\t%%2\t/dev/tty2\n'; fi ;;
-split-window) touch "$HOME/view"; printf '%%2\t/dev/tty2\n' ;;
-esac
-"#,
-    );
-    let home = env.root.join("home with space");
-    fs::rename(&env.home, &home).unwrap();
-    env.home = home;
-    write_executable(
-        &env.bin.join("git"),
-        "#!/bin/sh\necho unexpected import >&2\nexit 91\n",
-    );
-
-    env
-}
-fn manifest(env: &TestEnv) -> std::path::PathBuf {
-    state_dir_at(&env.home, &env.root).join("manifest.yaml")
-}
-fn terminal(
-    env: &TestEnv,
-    args: &[&str],
-    steps: &[(&str, &[u8])],
-    mut on_prompt: impl FnMut(usize),
-) -> (Output, String) {
-    use std::{
-        io::Read,
-        os::unix::process::CommandExt,
-        process::Stdio,
-        time::{Duration, Instant},
-    };
-    let (mut pty, mut tty) = (-1, -1);
-    let mut size = libc::winsize {
-        ws_row: 45,
-        ws_col: 180,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // libc 0.2.191 takes *const winsize on Linux and *mut winsize on macOS.
-    assert_eq!(
-        unsafe { libc::openpty(&mut pty, &mut tty, null_mut(), null_mut(), &raw mut size) },
-        0
-    );
-    let (mut pty, tty) = unsafe { (File::from_raw_fd(pty), File::from_raw_fd(tty)) };
-    let mut command = env.niles(&env.root, args);
-    command
-        .env("PATH", format!("{}:/usr/bin:/bin", env.bin.display()))
-        .env("VISUAL", "false")
-        .env("EDITOR", "false")
-        .stdin(tty.try_clone().unwrap())
-        .stdout(tty.try_clone().unwrap())
-        .stderr(Stdio::piped());
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let mut child = command.spawn().unwrap();
-    drop(command);
-    drop(tty);
-    let mut transcript = String::new();
-    let deadline = Instant::now() + Duration::from_secs(90);
-    // ratatui 0.30.2's CrosstermBackend emits cursor moves between words and
-    // only changed cells on redraw; steps use complete, unique prompt tokens.
-    let mut step = 0;
-    let mut seen = String::new();
-    loop {
-        let mut poll = libc::pollfd {
-            fd: std::os::fd::AsRawFd::as_raw_fd(&pty),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        if unsafe { libc::poll(&mut poll, 1, 50) } > 0 {
-            let mut buffer = [0; 16384];
-            match pty.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => {
-                    let text = String::from_utf8_lossy(&buffer[..count]);
-                    transcript.push_str(&text);
-                    seen.push_str(&text);
-                    if step < steps.len() && seen.contains(steps[step].0) {
-                        on_prompt(step);
-                        pty.write_all(steps[step].1).unwrap();
-                        step += 1;
-                        seen.clear();
-                    }
-                }
-                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
-                Err(error) => panic!("{error}"),
-            }
-        }
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        if Instant::now() > deadline {
-            child.kill().unwrap();
-            panic!("wizard timed out at step {step}: {transcript}");
-        }
-    }
-    let output = child.wait_with_output().unwrap();
-    assert_eq!(step, steps.len(), "{transcript}");
-    (output, transcript)
-}
+#[path = "onboarding/retry.rs"]
+mod retry;
+#[path = "onboarding/support.rs"]
+mod support;
+use std::fs;
+use support::{environment, manifest, terminal};
 #[test]
 fn first_run_registration_confirms_and_can_cancel() {
     for answer in [b"n".as_slice(), b"\x1b"] {
@@ -160,7 +43,6 @@ fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
             ("TIERS", b"\r"),
             ("Optional", b"\r"),
             ("Warning:", b"\r"),
-            ("writes", b"\r"),
         ],
         |_| {},
     );
@@ -182,8 +64,7 @@ fn lead_select_and_setup_cancellation_write_nothing() {
             ("lead's", b"\r"),
             ("TIERS", b"\r"),
             ("Optional", b" \r"),
-            ("Warning:", b"\r"),
-            ("writes", b"\x1b"),
+            ("Warning:", b"q"),
         ],
         |_| {},
     );
@@ -202,7 +83,6 @@ fn missing_entry_fetch_failure_stops_before_manifest() {
             ("TIERS", b"\r"),
             ("Optional", b"\r"),
             ("Warning:", b"\r"),
-            ("writes", b"\r"),
         ],
         |_| {},
     );
@@ -253,42 +133,37 @@ fn taken_registration_name_can_be_replaced_after_confirmation() {
 }
 
 #[test]
-fn lead_saves_chosen_entry_and_edited_standard_tier() {
+fn lead_saves_secondary_edits_and_independent_entry_agent() {
     let env = environment();
-    let skills = env.home.join(".niles/skills");
-    fs::remove_dir_all(&skills).unwrap();
-    fs::create_dir_all(skills.join("custom-entry")).unwrap();
-    fs::write(
-        skills.join("custom-entry/SKILL.md"),
-        "---\nname: custom-entry\ndescription: Coordinates this project\n---\nDo the work.\n",
-    )
-    .unwrap();
     let (output, text) = terminal(
         &env,
         &["start"],
         &[
             ("work?", b"\r"),
-            ("lead's", b"\x1b[B\r"),
-            ("TIERS", b"\x1b[C"),
-            ("Editing", b"\r\r\x1b[A\r\r"),
+            ("lead's", b"\r"),
+            ("TIERS", b"a"),
+            ("Editing", b"\r\r\x1b[B\r\r"),
             ("Optional", b"\r"),
             ("Warning:", b"\r"),
-            ("writes", b"\r"),
         ],
         |_| {},
     );
     assert!(output.status.success(), "{output:?} {text}");
     let value: serde_json::Value =
         serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
-    assert_eq!(value["entry"], "custom-entry");
+    assert_eq!(value["entry"], "lead");
     assert_eq!(
         value["tiers"]["standard"]["primary"],
-        "claude:sonnet:medium"
-    );
-    assert_eq!(value["entry_agent"], "claude:sonnet:medium");
-    assert_eq!(
-        value["tiers"]["standard"]["secondaries"][0],
         "codex:gpt-6.1-sol:medium"
+    );
+    assert_eq!(value["entry_agent"], "codex:gpt-6.1-sol:medium");
+    assert_eq!(
+        value["tiers"]["standard"]["secondaries"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap(),
+        "codex:gpt-6.1-sol:high"
     );
 }
 
@@ -296,27 +171,10 @@ fn lead_saves_chosen_entry_and_edited_standard_tier() {
 fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
     let env = environment();
     fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
-    fs::write(
-        env.home.join("skill.md"),
+    support::import_fixture(
+        &env,
+        "design",
         "---\nname: design\ndescription: Plans changes\n---\nPlan the work.\n",
-    )
-    .unwrap();
-    write_executable(
-        &env.bin.join("git"),
-        r#"#!/bin/sh
-printf '%s\n' "$*" >> "$HOME/git.log"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    ls-remote) case "$*" in *' HEAD '*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tHEAD\n'; exit 0 ;; *) exit 91 ;; esac ;;
-    init) mkdir .git; exit 0 ;;
-    fetch|sparse-checkout) exit 0 ;;
-    ls-tree) printf '040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tskills/design\n'; exit 0 ;;
-    checkout) mkdir -p skills/design; cp "$HOME/skill.md" skills/design/SKILL.md; exit 0 ;;
-    *) shift ;;
-  esac
-done
-exit 91
-"#,
     );
     let (output, text) = terminal(
         &env,
@@ -326,10 +184,9 @@ exit 91
             ("TIERS", b"\r"),
             ("Optional", b"\x1b[B \r"),
             ("Warning:", b"\r"),
-            ("writes", b"\r"),
         ],
         |step| {
-            if step == 4 {
+            if step == 3 {
                 assert!(!env.home.join("git.log").exists());
             }
         },
@@ -372,10 +229,9 @@ fn concurrent_manifest_is_kept() {
             ("TIERS", b"\r"),
             ("Optional", b"\r"),
             ("Warning:", b"\r"),
-            ("writes", b"\r"),
         ],
         |step| {
-            if step == 4 {
+            if step == 3 {
                 fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
                 fs::write(manifest(&env), winner).unwrap();
             }
@@ -386,7 +242,7 @@ fn concurrent_manifest_is_kept() {
 }
 
 #[test]
-fn lead_only_skips_entry_picker_and_reviews_default_entry() {
+fn lead_picker_always_offers_custom_and_reviews_default_entry() {
     let env = environment();
     fs::remove_dir_all(env.home.join(".niles/skills")).unwrap();
     let (output, text) = terminal(
@@ -394,16 +250,208 @@ fn lead_only_skips_entry_picker_and_reviews_default_entry() {
         &["start"],
         &[
             ("work?", b"\r"),
+            ("lead's", b"\r"),
             ("TIERS", b"\r"),
             ("Optional", b"\r"),
-            ("Warning:", b"\r"),
-            ("writes", b"\x1b"),
+            ("Warning:", b"q"),
         ],
         |_| {},
     );
     assert!(output.status.success(), "{output:?} {text}");
-    assert!(!text.contains("lead's"));
-    let summary = text.rsplit_once("Entry").unwrap().1;
+    assert!(text.contains("lead's"));
+    assert!(text.contains("Custom"));
+    let summary = text.rsplit_once("Warning:").unwrap().1;
     assert!(summary.contains("lead"), "{summary}");
     assert!(!manifest(&env).exists());
+}
+
+#[test]
+fn back_walk_preserves_edits_and_checks_and_skips_lead_for_solo() {
+    let env = environment();
+    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+    support::import_fixture(
+        &env,
+        "design",
+        "---\nname: design\ndescription: Design\n---\nPlan work.\n",
+    );
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\r"),
+            ("TIERS", b"a"),
+            ("Editing", b"\r\r\x1b[B\r\r"),
+            ("starter", b" \r"),
+            ("Warning:", b"\x1b"),
+            ("starter", b"\x1b"),
+            ("TIERS", b"\x1b"),
+            ("lead's", b"\x1b"),
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\x1b"),
+            ("work?", b"\r"),
+            ("TIERS", b"\r"),
+            ("starter", b"\r"),
+            ("Warning:", b"\r"),
+        ],
+        |_| {
+            assert!(!manifest(&env).exists());
+            assert!(!env.home.join("git.log").exists());
+        },
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    let value: serde_json::Value =
+        serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
+    assert_eq!(value["entry"], "solo");
+    assert_eq!(
+        value["tiers"]["standard"]["secondaries"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap(),
+        "codex:gpt-6.1-sol:high"
+    );
+    assert!(env.home.join(".niles/skills/design/SKILL.ref").exists());
+}
+
+#[test]
+fn custom_input_errors_stay_on_input_and_collisions_never_fetch() {
+    let env = environment();
+    let before = fs::read(env.home.join(".niles/skills/lead/SKILL.md")).unwrap();
+    let mut collision = vec![0x7f; "gitlab.com/o/r/lead".len()];
+    collision.extend_from_slice(b"github.com/o/r/lead\r");
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\x1b[B\r"),
+            ("URL", b"gitlab.com/o/r/lead\r"),
+            ("only", &collision),
+            ("already", b"\x1b[21~"),
+        ],
+        |_| {},
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    assert_eq!(
+        fs::read(env.home.join(".niles/skills/lead/SKILL.md")).unwrap(),
+        before
+    );
+    assert!(!manifest(&env).exists());
+    assert!(!env.home.join("git.log").exists());
+}
+
+#[test]
+fn custom_lead_imports_its_own_repository_only_after_confirmation() {
+    for body in ["Coordinate the work.", ""] {
+        let env = environment();
+        support::import_fixture(
+            &env,
+            "custom",
+            &format!("---\nname: custom\ndescription: Custom lead\n---\n{body}\n"),
+        );
+        let (output, text) = terminal(
+            &env,
+            &["start"],
+            &[
+                ("work?", b"\r"),
+                ("lead's", b"\x1b[B\r"),
+                ("URL", b"github.com/other/repository/skills/custom\r"),
+                ("TIERS", b"\r"),
+                ("Optional", b"\r"),
+                ("Warning:", b"\r"),
+            ],
+            |_| {
+                assert!(!env.home.join("git.log").exists());
+            },
+        );
+        assert_eq!(
+            output.status.success(),
+            !body.is_empty(),
+            "{output:?} {text}"
+        );
+        assert_eq!(manifest(&env).exists(), !body.is_empty());
+        assert!(text.contains("other/repository"), "{text}");
+        let pointer = env.home.join(".niles/skills/custom/SKILL.ref");
+        assert_eq!(pointer.exists(), !body.is_empty());
+        if !body.is_empty() {
+            assert_eq!(
+                fs::read_to_string(pointer).unwrap(),
+                "github.com/other/repository/skills/custom@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+            );
+        }
+        let log = fs::read_to_string(env.home.join("git.log")).unwrap();
+        assert!(log.contains("https://github.com/other/repository.git"));
+        assert!(!log.contains("Rhovian/niles"));
+        if !body.is_empty() {
+            assert!(
+                fs::read_to_string(manifest(&env))
+                    .unwrap()
+                    .contains("entry: custom")
+            );
+        }
+    }
+}
+
+#[test]
+fn custom_fetch_failure_writes_no_manifest() {
+    let env = environment();
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\x1b[B\r"),
+            ("URL", b"github.com/other/repository/skills/custom\r"),
+            ("TIERS", b"\r"),
+            ("Optional", b"\r"),
+            ("Warning:", b"\r"),
+        ],
+        |_| {},
+    );
+    assert!(!output.status.success(), "{output:?} {text}");
+    assert!(!manifest(&env).exists());
+}
+
+#[test]
+fn custom_back_keeps_text_and_switching_to_solo_fetches_the_selected_source() {
+    let env = environment();
+    fs::remove_dir_all(env.home.join(".niles/skills/solo")).unwrap();
+    support::import_fixture(
+        &env,
+        "solo",
+        "---\nname: solo\ndescription: Solo\n---\nDo the work.\n",
+    );
+    let (output, text) = terminal(
+        &env,
+        &["start"],
+        &[
+            ("work?", b"\r"),
+            ("lead's", b"\x1b[B\r"),
+            ("URL", b"github.com/other/repository/skills/solo\x1b"),
+            ("lead's", b"\r"),
+            ("URL", b"\r"),
+            ("TIERS", b"\x1b"),
+            ("URL", b"\x1b"),
+            ("lead's", b"\x1b"),
+            ("work?", b"\x1b[B\r"),
+            ("TIERS", b"\r"),
+            ("starter", b"\r"),
+            ("Warning:", b"\r"),
+        ],
+        |_| {
+            assert!(!env.home.join("git.log").exists());
+        },
+    );
+    assert!(output.status.success(), "{output:?} {text}");
+    let log = fs::read_to_string(env.home.join("git.log")).unwrap();
+    assert!(log.contains("https://github.com/Rhovian/niles.git"));
+    assert!(!log.contains("other/repository"));
+    let summary = text.rsplit_once("Warning:").unwrap().1;
+    assert!(!summary.contains("Custom"));
+    assert!(
+        fs::read_to_string(manifest(&env))
+            .unwrap()
+            .contains("entry: solo")
+    );
 }

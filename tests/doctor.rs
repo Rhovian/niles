@@ -30,14 +30,13 @@ fn doctor_reports_manifest_binaries_once_with_versions() {
         "niles-doctor-agents",
         "#!/bin/sh\nprintf 'tmux 3.5\\nsecond line\\n'\n",
     );
-    write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    let path = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&path).unwrap().replacen(
-        "primary: claude:sonnet:high",
-        "primary: pi:z-ai/glm-5.3-flash:high",
-        1,
+    write_workspace_manifest(
+        &env.root,
+        "pi:z-ai/glm-5.3-flash:high",
+        "codex",
+        "claude:opus:high",
+        "claude",
     );
-    fs::write(&path, body).unwrap();
     write_executable(
         &env.bin.join("claude"),
         "#!/bin/sh\nprintf 'Claude CLI 1.0.0\\nsecond line\\n'\n",

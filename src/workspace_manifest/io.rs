@@ -58,6 +58,10 @@ pub(crate) fn load_for_skill_listing(
             manifest.source = Some(source.clone());
         }
         let config = crate::config::spec::load_project_config_from(root)?;
+        manifest
+            .tiers
+            .dedup(&config.models)
+            .with_context(|| format!("invalid manifest {path}"))?;
         check(manifest, &config.models).with_context(|| format!("invalid manifest {path}"))?;
     }
     Ok(manifest)
