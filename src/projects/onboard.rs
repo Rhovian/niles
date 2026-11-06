@@ -81,7 +81,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                 Back | Quit => return Ok(None),
                 Next if modes.chosen().0 == "lead" => Step::Entry,
                 Next => {
-                    entry_skill = EntrySkill::Named("solo".parse()?);
+                    entry_skill = EntrySkill::Named(modes.chosen().0.parse()?);
                     Step::Tiers
                 }
             },
@@ -105,7 +105,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
             Step::Tiers => match tiers.pick(cwd, &config)? {
                 crate::agents::picker::SetupAction::Quit => return Ok(None),
                 crate::agents::picker::SetupAction::Back => {
-                    if modes.chosen().0 == "solo" {
+                    if modes.chosen().0 != "lead" {
                         Step::Mode
                     } else if entries.chosen().0 == "Custom" {
                         Step::Custom
