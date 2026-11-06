@@ -249,3 +249,29 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
         crate::test_support::remove_workspace(&root).unwrap();
     }
 }
+
+#[test]
+fn config_tier_edit_saves_secondaries_and_entry_agent_on_the_latest_manifest() {
+    let root = project("config-picker-save", Some(manifest_body()), None);
+    let before = load_manifest(&root).unwrap();
+    let mut draft = before.clone();
+    draft
+        .tiers
+        .standard
+        .secondaries
+        .push("claude:fable:medium".into());
+    draft.entry_agent = "claude:fable:medium".into();
+    edit_tiers(&root, Tier::Standard, |received, config, tier| {
+        assert_eq!(received, before);
+        assert_eq!(tier, Tier::Standard);
+        crate::workspace_manifest::check(&draft, &config.models).unwrap();
+        let mut concurrent = received;
+        concurrent.checkin = Some("1h".into());
+        workspace_manifest::save(&root, &concurrent).unwrap();
+        Ok(picker::Choice::Save(Box::new(draft.clone())))
+    })
+    .unwrap();
+    draft.checkin = Some("1h".into());
+    assert_eq!(load_manifest(&root).unwrap(), draft);
+    crate::test_support::remove_workspace(&root).unwrap();
+}

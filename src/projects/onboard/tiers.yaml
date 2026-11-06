@@ -1,3 +1,26 @@
-- [claude, {standard: claude:sonnet:high, frontier: claude:opus:high, economy: claude:sonnet:medium, mechanical: claude:sonnet:low}]
-- [codex, {standard: codex:gpt-6.1-sol:medium, frontier: codex:gpt-6-astra:high, economy: codex:gpt-6-luna:medium, mechanical: codex:gpt-6-luna:low}]
-- [pi, {standard: pi:z-ai/glm-5.3-flash:high, economy: pi:z-ai/glm-5.3-flash:high, mechanical: pi:z-ai/glm-5.3-flash:low}]
+frontier:
+  - claude:fable:high
+  - codex:gpt-6-astra:high
+  - claude:fable:medium
+  - codex:gpt-6-astra:medium
+  - claude:opus:high
+standard:
+  - codex:gpt-6.1-sol:medium
+  - claude:opus:medium
+  - pi:deepseek/deepseek-v4.1-flash:high
+  - pi:z-ai/glm-5.3-flash:high
+  - claude:sonnet:high
+economy:
+  - claude:sonnet:medium
+  - codex:gpt-6-luna:high
+  - codex:gpt-5.6-terra:xhigh
+  - codex:gpt-6.1-sol:low
+  - claude:opus:low
+mechanical:
+  - claude:sonnet:low
+  - pi:z-ai/glm-5.3-flash:low
+  - codex:gpt-6-luna:medium
+  - codex:gpt-5.6-terra:high
+  - pi:deepseek/deepseek-v4.1-flash:low
+  - codex:gpt-6-luna:low
+  - claude:haiku

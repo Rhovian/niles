@@ -34,12 +34,12 @@ pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) struct Discovery {
-    pub names: BTreeSet<SkillName>,
-    pub warnings: Vec<anyhow::Error>,
+struct Discovery {
+    names: BTreeSet<SkillName>,
+    warnings: Vec<anyhow::Error>,
 }
 
-pub(crate) fn available(workspace: &Utf8Path, global: &Utf8Path) -> Discovery {
+fn available(workspace: &Utf8Path, global: &Utf8Path) -> Discovery {
     let mut names = BTreeSet::new();
     let mut warnings = Vec::new();
     // Rust 1.89 std/fs.rs: read_dir enumerates entries; resolve owns precedence and symlink rules.

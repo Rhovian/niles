@@ -257,7 +257,7 @@ pub fn write_manifest<'a>(
     copy_skills(&fixture_home(workspace).join(".niles"));
     fs::create_dir_all(&state).unwrap();
     let bindings = bindings.into_iter().collect::<Vec<_>>();
-    let agents = bindings
+    let mut agents = bindings
         .iter()
         .map(|(_, agent)| match *agent {
             "claude" => "claude:sonnet:high",
@@ -265,13 +265,15 @@ pub fn write_manifest<'a>(
             _ => *agent,
         })
         .collect::<Vec<_>>();
+    let mut seen = std::collections::HashSet::new();
+    agents.retain(|agent| seen.insert(*agent));
     let primary = agents[0];
     let composition = bindings
         .iter()
         .map(|(skill, _)| format!("{skill}: {{}}\n"))
         .collect::<String>();
     fs::write(state.join("manifest.yaml"), format!(
-        "entry: lead\nentry_agent: {primary}\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents.join(", ")
+        "entry: lead\nentry_agent: {primary}\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents[1..].join(", ")
     )).unwrap();
 }
 

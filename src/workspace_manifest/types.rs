@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::skills::SkillName;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{AgentSpec, ModelRoster, roster::Tier};
@@ -227,16 +227,37 @@ impl Binding {
 }
 
 impl Tiers {
-    pub(crate) fn set_primary(&mut self, tier: Tier, primary: String) -> Result<()> {
-        match tier {
-            Tier::Standard => Some(&mut self.standard),
-            Tier::Frontier => self.frontier.as_mut(),
-            Tier::Economy => self.economy.as_mut(),
-            Tier::Mechanical => self.mechanical.as_mut(),
+    pub(crate) fn dedup(&mut self, models: &ModelRoster) -> Result<()> {
+        for binding in [
+            Some(&mut self.standard),
+            self.frontier.as_mut(),
+            self.economy.as_mut(),
+            self.mechanical.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut seen = vec![exact_spec(&binding.primary, models)?];
+            let mut secondaries = Vec::new();
+            for agent in std::mem::take(&mut binding.secondaries) {
+                let spec = exact_spec(&agent, models)?;
+                if !seen.contains(&spec) {
+                    seen.push(spec);
+                    secondaries.push(agent);
+                }
+            }
+            binding.secondaries = secondaries;
         }
-        .with_context(|| format!("manifest does not list tier {}", tier.as_str()))?
-        .primary = primary;
         Ok(())
+    }
+
+    pub(crate) fn set(&mut self, tier: Tier, binding: TierBinding) {
+        match tier {
+            Tier::Standard => self.standard = binding,
+            Tier::Frontier => self.frontier = Some(binding),
+            Tier::Economy => self.economy = Some(binding),
+            Tier::Mechanical => self.mechanical = Some(binding),
+        }
     }
 
     pub fn get(&self, tier: Tier) -> Option<&TierBinding> {

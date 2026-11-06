@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 
 use super::{
-    WorkspaceManifest, load, manifest_path, save, setup::SetupSelection,
+    WorkspaceManifest, check, load, manifest_path, save, setup::SetupSelection,
     tiers_table::print_manifest_tiers,
 };
 use crate::{
@@ -60,9 +60,9 @@ fn ensure(
     }
 }
 
-/// Re-read before setting tier primaries. Race accepted: concurrent edits of the same tier
+/// Re-read before setting edited tiers and entry agent. Race accepted: concurrent edits of the same tier
 /// inside the save window are lost, last writer wins.
-fn save_changes(
+pub(crate) fn save_changes(
     root: &Utf8Path,
     selection: Option<&SetupSelection>,
     before: &WorkspaceManifest,
@@ -73,11 +73,16 @@ fn save_changes(
     let mut changed = false;
     for (tier, binding) in draft.tiers.iter() {
         if before.tiers.get(tier) != Some(binding) {
-            latest.tiers.set_primary(tier, binding.primary.clone())?;
+            latest.tiers.set(tier, binding.clone());
             changed = true;
         }
     }
+    if draft.entry_agent != before.entry_agent {
+        latest.entry_agent = draft.entry_agent.clone();
+        changed = true;
+    }
     if changed {
+        check(&latest, &load_project_config_from(root)?.models)?;
         save(root, &latest, selection)?;
     }
     Ok(latest)

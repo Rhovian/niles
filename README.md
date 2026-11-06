@@ -50,9 +50,11 @@ with the version):
    ```
 
    Confirm the folder and name, then follow the picker: lead or solo, a lead entry skill
-   when alternatives are installed, model tiers preselected from detected CLIs, and optional
-   starter skills (none checked).
-   Review the safety warning and summary; Enter writes the manifest and starts the entry agent.
+   (`lead` or a custom skill import reference), model tiers and entry agent preselected from
+   detected CLIs, and optional starter skills (none checked). Edit primaries and ordered secondaries
+   in the tier form. Use ←/Esc back and `q` quit; in text input, use Esc back and F10 quit.
+   Review the safety warning above the summary on one final screen; Enter accepts the warning,
+   writes the manifest and starts the entry agent.
    Registration is optional; `r` in the home view registers later projects.
 
 Detach with `Ctrl-b d`; agents keep running. See the [interface reference](docs/setup.md) for keys and
@@ -98,10 +100,12 @@ and ordered fallback `secondaries`:
 
 ```yaml
 entry: lead
-entry_agent: claude:opus:high
+entry_agent: codex:gpt-6.1-sol:medium
 tiers:
-  standard: {primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}
-  frontier: {primary: claude:opus:high, secondaries: [codex:gpt-6-astra:high]}
+  standard: {primary: codex:gpt-6.1-sol:medium, secondaries: [claude:opus:medium, pi:deepseek/deepseek-v4.1-flash:high, pi:z-ai/glm-5.3-flash:high, claude:sonnet:high]}
+  frontier: {primary: claude:fable:high, secondaries: [codex:gpt-6-astra:high, claude:fable:medium, codex:gpt-6-astra:medium, claude:opus:high]}
+  economy: {primary: claude:sonnet:medium, secondaries: [codex:gpt-6-luna:high, codex:gpt-5.6-terra:xhigh, codex:gpt-6.1-sol:low, claude:opus:low]}
+  mechanical: {primary: claude:sonnet:low, secondaries: [pi:z-ai/glm-5.3-flash:low, codex:gpt-6-luna:medium, codex:gpt-5.6-terra:high, pi:deepseek/deepseek-v4.1-flash:low, codex:gpt-6-luna:low, claude:haiku]}
 ```
 
 The manifest's worktree `setup` runs with your permissions, so keep it trusted. See

@@ -1,7 +1,10 @@
-use crate::agents::roster::Tier::{self, Economy, Frontier, Mechanical, Standard};
+use crate::agents::{
+    AgentSpec, ModelRoster,
+    roster::Tier::{self, Economy, Frontier, Mechanical, Standard},
+};
 use crate::skills::{SkillName, reference::GithubRef};
 use crate::workspace_manifest::{TierBinding, Tiers, WorkspaceManifest};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use std::collections::BTreeMap;
 pub(super) const REPOSITORY: &str = "github.com/Rhovian/niles";
 pub(super) const SKILLS: &str = include_str!("skills.yaml");
@@ -9,14 +12,13 @@ pub(super) fn reference(name: &SkillName) -> Result<GithubRef> {
     format!("{REPOSITORY}/skills/{name}").parse()
 }
 pub(super) fn manifest(installed: &[&str]) -> Result<WorkspaceManifest> {
-    let families: Vec<(String, BTreeMap<Tier, String>)> =
-        crate::store::parse_yaml(include_str!("tiers.yaml"))?;
+    let ordered = candidates(include_str!("tiers.yaml"), &ModelRoster::builtin()?)?;
     let tier = |tier| {
-        let mut agents = families
+        let mut agents = ordered
+            .get(&tier)?
             .iter()
-            .filter(|(family, _)| installed.contains(&family.as_str()))
-            .filter_map(|(_, agents)| agents.get(&tier))
-            .cloned();
+            .filter(|(_, spec)| installed.contains(&spec.family()))
+            .map(|(agent, _)| agent.clone());
         Some(TierBinding {
             primary: agents.next()?,
             secondaries: agents.collect(),
@@ -39,4 +41,43 @@ pub(super) fn manifest(installed: &[&str]) -> Result<WorkspaceManifest> {
         recheck: None,
         worktree: None,
     })
+}
+
+fn candidates(
+    data: &str,
+    roster: &ModelRoster,
+) -> Result<BTreeMap<Tier, Vec<(String, AgentSpec)>>> {
+    let ordered: BTreeMap<Tier, Vec<String>> = crate::store::parse_yaml(data)?;
+    let mut parsed = BTreeMap::new();
+    for (tier, agents) in ordered {
+        let mut candidates = Vec::new();
+        for agent in agents {
+            let spec = AgentSpec::parse(&agent, roster)?;
+            let entry = roster.entry(
+                spec.family(),
+                spec.model().context("setup agent needs a model")?,
+                spec.effort(),
+            )?;
+            ensure!(
+                entry.tier == tier,
+                "setup agent {agent} has the wrong roster tier"
+            );
+            candidates.push((agent, spec));
+        }
+        parsed.insert(tier, candidates);
+    }
+    Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn setup_candidates_require_roster_existence_and_matching_tier() {
+        let roster = ModelRoster::builtin().unwrap();
+        let error = candidates("standard: [claude:opus:high]", &roster).unwrap_err();
+        assert!(error.to_string().contains("wrong roster tier"));
+        let error = candidates("standard: [claude:unknown:high]", &roster).unwrap_err();
+        assert!(error.to_string().contains("no registry metadata"));
+    }
 }

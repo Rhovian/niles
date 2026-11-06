@@ -269,14 +269,27 @@ fn pick_tier(
     tier: &Tier,
     theme: &Theme,
 ) -> Result<()> {
+    edit_tiers(root, *tier, |manifest, config, tier| {
+        picker::configure(terminal, root, manifest, config, theme, tier)
+    })
+}
+
+fn edit_tiers(
+    root: &Utf8Path,
+    tier: Tier,
+    pick: impl FnOnce(
+        WorkspaceManifest,
+        &crate::config::spec::ProjectConfig,
+        Tier,
+    ) -> Result<picker::Choice>,
+) -> Result<()> {
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;
-    if let Some(value) = picker::tier(terminal, tier, &manifest, &config, theme)?
-        && value != manifest.tiers.tier(*tier)?.primary
-    {
-        let mut latest = load_manifest(root)?;
-        latest.tiers.set_primary(*tier, value)?;
-        workspace_manifest::save(root, &latest, None)?;
+    match pick(manifest.clone(), &config, tier)? {
+        picker::Choice::Save(draft) => {
+            workspace_manifest::save_changes(root, None, &manifest, &draft)?;
+        }
+        picker::Choice::Keep | picker::Choice::Quit => {}
     }
     Ok(())
 }

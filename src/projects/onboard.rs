@@ -1,3 +1,4 @@
+mod custom;
 mod defaults;
 #[cfg(test)]
 mod tests;
@@ -30,141 +31,184 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         crate::store::parse_yaml(include_str!("onboard/modes.yaml"))?,
         false,
     );
-    if !modes.pick(&header, "How do you work?")? {
-        return Ok(None);
+    let config = crate::config::spec::load_project_config_from(cwd)?;
+    let generated = defaults::manifest(&installed)?;
+    let entry = generated.entry.clone();
+    let mut tiers = crate::agents::picker::SetupTiers::new(generated, &config)?;
+    let mut entries = ui::Options::new(
+        crate::store::parse_yaml(include_str!("onboard/leads.yaml"))?,
+        false,
+    );
+    let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS)?;
+    let mut starters = ui::Options::new(rows.clone(), true);
+    let mut confirmation = ui::Options::new(
+        vec![
+            ("Continue".into(), "Accept, write manifest and start".into()),
+            (
+                "Cancel".into(),
+                "Leave setup without writing a manifest".into(),
+            ),
+        ],
+        false,
+    );
+    let mut custom_text = String::new();
+    enum EntrySkill {
+        Named(skills::SkillName),
+        Custom(skills::reference::GithubRef),
     }
-    let mut generated = defaults::manifest(&installed)?;
-    let mode = modes.chosen();
-    generated.entry = mode.0.parse()?;
-    if mode.0 == "lead" {
-        let (rows, warnings) = entry_skills(mode, cwd, &global);
-        if rows.len() > 1 {
-            let question = format!("Choose the lead's entry skill\n{}", warnings.join("\n"));
-            let mut entries = ui::Options::new(rows, false);
-            if !entries.pick(&header, &question)? {
-                return Ok(None);
-            }
-            generated.entry = entries.chosen().0.parse()?;
-        } else {
-            for warning in warnings {
-                eprintln!("warning: {warning}");
+    impl EntrySkill {
+        fn name(&self) -> &skills::SkillName {
+            match self {
+                Self::Named(name) => name,
+                Self::Custom(reference) => &reference.name,
             }
         }
     }
-    let config = crate::config::spec::load_project_config_from(cwd)?;
-    let mut manifest = match crate::agents::picker::setup_tiers(cwd, generated.clone(), &config)? {
-        crate::agents::picker::Choice::Save(draft) => *draft,
-        crate::agents::picker::Choice::Keep => generated,
-        crate::agents::picker::Choice::Quit => return Ok(None),
-    };
-    // The entry agent follows the accepted standard tier, including edits made in the picker.
-    manifest.entry_agent = manifest.tiers.standard.primary.clone();
-    let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS)?;
-    let mut starters = ui::Options::new(
-        rows.into_iter()
-            .filter(|(name, _)| name != manifest.entry.as_str())
-            .collect(),
-        true,
-    );
-    let question = format!(
-        "Optional starter skills — instructions that give agents a role. None selected by default.\n\
-         Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Existing skills are kept.",
-        defaults::REPOSITORY,
-    );
-    if !starters.pick(&header, &question)? {
-        return Ok(None);
+    let mut entry_skill = EntrySkill::Named(entry);
+    enum Step {
+        Mode,
+        Entry,
+        Custom,
+        Tiers,
+        Starters,
+        Final,
     }
-    if !ui::confirm(
-        &header,
-        "Warning: Workers bypass approval prompts and run without a sandbox. See https://github.com/Rhovian/niles/blob/main/docs/security.md for details.",
-    )? {
-        return Ok(None);
+    let mut step = Step::Mode;
+    loop {
+        use ui::Action::{Back, Next, Quit};
+        step = match step {
+            Step::Mode => match modes.pick(&header, "How do you work?")? {
+                Back | Quit => return Ok(None),
+                Next if modes.chosen().0 == "lead" => Step::Entry,
+                Next => {
+                    entry_skill = EntrySkill::Named("solo".parse()?);
+                    Step::Tiers
+                }
+            },
+            Step::Entry => match entries.pick(&header, "Choose the lead's entry skill")? {
+                Quit => return Ok(None),
+                Back => Step::Mode,
+                Next if entries.chosen().0 == "Custom" => Step::Custom,
+                Next => {
+                    entry_skill = EntrySkill::Named(entries.chosen().0.parse()?);
+                    Step::Tiers
+                }
+            },
+            Step::Custom => match custom::input(&mut custom_text, &header, cwd, &global)? {
+                custom::Choice::Quit => return Ok(None),
+                custom::Choice::Back => Step::Entry,
+                custom::Choice::Next(reference) => {
+                    entry_skill = EntrySkill::Custom(reference);
+                    Step::Tiers
+                }
+            },
+            Step::Tiers => match tiers.pick(cwd, &config)? {
+                crate::agents::picker::SetupAction::Quit => return Ok(None),
+                crate::agents::picker::SetupAction::Back => {
+                    if modes.chosen().0 == "solo" {
+                        Step::Mode
+                    } else if entries.chosen().0 == "Custom" {
+                        Step::Custom
+                    } else {
+                        Step::Entry
+                    }
+                }
+                crate::agents::picker::SetupAction::Next => Step::Starters,
+            },
+            Step::Starters => {
+                starters.replace_rows(
+                    rows.iter()
+                        .filter(|(name, _)| name != entry_skill.name().as_str())
+                        .cloned()
+                        .collect(),
+                );
+                let question = format!(
+                    "Optional starter skills — instructions that give agents a role. None selected by default.\n\
+                     Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Existing skills are kept.",
+                    defaults::REPOSITORY,
+                );
+                match starters.pick(&header, &question)? {
+                    Quit => return Ok(None),
+                    Back => Step::Tiers,
+                    Next => Step::Final,
+                }
+            }
+            Step::Final => {
+                let manifest = tiers.draft();
+                let tiers = manifest
+                    .tiers
+                    .iter()
+                    .map(|(tier, binding)| {
+                        format!(
+                            "{}: {} (secondaries: {})",
+                            tier.as_str(),
+                            binding.primary,
+                            binding.secondaries.join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let source = match &entry_skill {
+                    EntrySkill::Custom(reference) => format!("\nCustom URL: {reference}"),
+                    EntrySkill::Named(_) => String::new(),
+                };
+                let summary = format!(
+                    "Warning: Workers bypass approval prompts and run without a sandbox. See https://github.com/Rhovian/niles/blob/main/docs/security.md for details.\n\nProject: {cwd}\nEntry skill: {}{source}\nEntry agent: {}\n{tiers}\nOptional skills: {}\n\nEnter writes the manifest and starts.",
+                    entry_skill.name(),
+                    manifest.entry_agent,
+                    starters.selected().collect::<Vec<_>>().join(", ")
+                );
+                match ui::confirm(&mut confirmation, &header, &summary)? {
+                    Quit => return Ok(None),
+                    Back => Step::Starters,
+                    Next => break,
+                }
+            }
+        };
     }
+    let mut manifest = tiers.draft().clone();
+    manifest.entry = entry_skill.name().clone();
     let starter_skills = starters
         .selected()
         .map(str::parse)
         .collect::<Result<Vec<skills::SkillName>>>()?;
-    let tiers = manifest
-        .tiers
-        .iter()
-        .map(|(tier, binding)| {
-            format!(
-                "{}: {} (secondaries: {})",
-                tier.as_str(),
-                binding.primary,
-                binding.secondaries.join(", ")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let summary = format!(
-        "Project: {cwd}\nEntry skill: {}\n{tiers}\nOptional skills: {}\n\nEnter writes the manifest and starts.",
-        manifest.entry,
-        starters.selected().collect::<Vec<_>>().join(", ")
-    );
-    if !ui::confirm(&header, &summary)? {
-        return Ok(None);
-    }
-    manifest::check(&manifest, &config.models)?;
-    let body = serde_saphyr::to_string(&manifest)?;
-    let names: std::collections::BTreeSet<_> = manifest
-        .bindings
-        .iter()
-        .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
-        .chain(&starter_skills)
-        .chain(std::iter::once(&manifest.entry))
-        .collect();
-    for name in names {
-        if skills::find(name, cwd, &global)?.is_none() {
-            println!("fetching {name} from latest");
-            skills::import(defaults::reference(name)?, skills::Origin::Global)?;
+    let finish = || {
+        manifest::check(&manifest, &config.models)?;
+        let body = serde_saphyr::to_string(&manifest)?;
+        let names: std::collections::BTreeSet<_> = manifest
+            .bindings
+            .iter()
+            .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
+            .chain(&starter_skills)
+            .chain(std::iter::once(&manifest.entry))
+            .collect();
+        for name in names {
+            if skills::find(name, cwd, &global)?.is_none() {
+                println!("fetching {name} from latest");
+                skills::import(
+                    defaults::reference(name)?,
+                    skills::Origin::Global,
+                    skills::ImportMode::Replace,
+                )?;
+            }
         }
+        let path = manifest::manifest_path(cwd, None)?;
+        fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => file.write_all(body.as_bytes())?,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        manifest::load(cwd, None)
+    };
+    match entry_skill {
+        EntrySkill::Custom(reference) => custom::install(reference, cwd, &global, finish),
+        EntrySkill::Named(_) => finish(),
     }
-    let path = manifest::manifest_path(cwd, None)?;
-    fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => file.write_all(body.as_bytes())?,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(error.into()),
-    }
-    manifest::load(cwd, None)
 }
 pub(super) fn first_run(cwd: &Utf8Path) -> Result<Option<registry::Entry>> {
     if !io::stdin().is_terminal() || !registry::entries()?.is_empty() {
         return Ok(None);
     }
     ui::register(cwd)
-}
-
-fn entry_skills(
-    mode: &(String, String),
-    cwd: &Utf8Path,
-    global: &Utf8Path,
-) -> (Vec<(String, String)>, Vec<String>) {
-    let discovery = skills::available(cwd, global);
-    let mut rows = vec![mode.clone()];
-    let mut warnings = discovery
-        .warnings
-        .into_iter()
-        .map(|error| format!("Skipping skill: {error:#}"))
-        .collect::<Vec<_>>();
-    for name in discovery.names {
-        if name.as_str() == mode.0 {
-            continue;
-        }
-        let candidate = skills::inspect(&name, cwd, global).and_then(|skill| {
-            skill.primary_body()?;
-            Ok(skill)
-        });
-        // Discovery follows the skills-list policy: warn about unusable candidates;
-        // only the operator's chosen entry is required to be launchable.
-        match candidate {
-            Ok(skill) => rows.push((
-                name.to_string(),
-                skills::display_description(&skill.description),
-            )),
-            Err(error) => warnings.push(format!("Skipping {name}: {error:#}")),
-        }
-    }
-    (rows, warnings)
 }

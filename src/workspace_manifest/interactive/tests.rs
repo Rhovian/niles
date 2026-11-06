@@ -112,20 +112,11 @@ fn changes_are_applied_to_latest_manifest() {
     .unwrap();
     let mut latest = before.clone();
     latest.checkin = Some("1h".to_owned());
-    latest
-        .tiers
-        .set_primary(Tier::Mechanical, "pi:z-ai/glm-5.3-flash:high".into())
-        .unwrap();
+    latest.tiers.mechanical.as_mut().unwrap().primary = "pi:z-ai/glm-5.3-flash:high".into();
     super::save(&root, &latest, Some(&selection)).unwrap();
     let mut draft = before.clone();
-    draft
-        .tiers
-        .set_primary(Tier::Standard, "claude:sonnet:high".into())
-        .unwrap();
-    draft
-        .tiers
-        .set_primary(Tier::Economy, "claude:sonnet:high".into())
-        .unwrap();
+    draft.tiers.standard.primary = "claude:opus:medium".into();
+    draft.tiers.economy.as_mut().unwrap().primary = "claude:sonnet:high".into();
     let result = save_changes(&root, Some(&selection), &before, &draft).unwrap();
     latest.tiers.standard = draft.tiers.standard;
     latest.tiers.economy = draft.tiers.economy;
@@ -175,14 +166,68 @@ fn save_write_failure_stops_launch() {
     let root = root("picker-write-failure", crate::test_support::manifest_body());
     let mut output = vec![];
     let error = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
-        draft
-            .tiers
-            .set_primary(Tier::Standard, "claude:sonnet:high".into())?;
+        draft.tiers.standard.primary = "claude:sonnet:high".into();
         fs::remove_file(manifest_path(&root).unwrap()).unwrap();
         fs::create_dir(manifest_path(&root).unwrap()).unwrap();
         Ok(Choice::Save(Box::new(draft)))
     })
     .unwrap_err();
     assert!(error.to_string().contains("manifest.yaml"), "{error:#}");
+    crate::test_support::remove_workspace(&root).unwrap();
+}
+
+#[test]
+fn secondaries_new_tiers_and_entry_agent_persist_together() {
+    let root = root("picker-full-edit", crate::test_support::manifest_body());
+    let mut before = load(&root).unwrap().unwrap();
+    before.tiers.frontier = None;
+    before.entry_agent = before.tiers.standard.primary.clone();
+    super::save(&root, &before, None).unwrap();
+    let mut draft = before.clone();
+    draft.tiers.standard.secondaries =
+        vec!["claude:fable:medium".into(), "claude:opus:medium".into()];
+    draft.tiers.set(
+        Tier::Frontier,
+        crate::workspace_manifest::TierBinding {
+            primary: "claude:fable:high".into(),
+            secondaries: vec![],
+        },
+    );
+    draft.entry_agent = "claude:fable:medium".into();
+    let saved = save_changes(&root, None, &before, &draft).unwrap();
+    assert_eq!(saved, draft);
+    assert_eq!(load(&root).unwrap().unwrap(), draft);
+    let mut empty = draft.clone();
+    empty.tiers.standard.secondaries.clear();
+    empty.entry_agent = empty.tiers.standard.primary.clone();
+    save_changes(&root, None, &draft, &empty).unwrap();
+    assert_eq!(load(&root).unwrap().unwrap(), empty);
+    crate::test_support::remove_workspace(&root).unwrap();
+}
+
+#[test]
+fn loading_deduplicates_primary_and_secondary_aliases_in_order() {
+    let mut manifest = crate::test_support::manifest();
+    manifest.tiers.standard.secondaries = vec![
+        "codex:gpt-6.1-sol:med".into(),
+        "claude:sonnet:high".into(),
+        "claude:sonnet:high".into(),
+        "claude:fable:medium".into(),
+    ];
+    let body = serde_saphyr::to_string(&manifest).unwrap();
+    let root = root("dedup-existing-manifest", &body);
+    let loaded = load(&root).unwrap().unwrap();
+    assert_eq!(
+        loaded.tiers.standard.primary,
+        manifest.tiers.standard.primary
+    );
+    assert_eq!(
+        loaded.tiers.standard.secondaries,
+        ["claude:sonnet:high", "claude:fable:medium"]
+    );
+    assert_eq!(
+        fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
+        body
+    );
     crate::test_support::remove_workspace(&root).unwrap();
 }

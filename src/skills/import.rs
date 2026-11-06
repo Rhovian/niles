@@ -4,7 +4,8 @@ use super::{
     resolve,
 };
 use anyhow::{Context, Result, ensure};
-use std::fs;
+use camino::Utf8PathBuf;
+use std::{fs, io::Write};
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum SkillsCommand {
@@ -23,11 +24,21 @@ impl SkillsCommand {
         } else {
             Origin::Workspace
         };
-        import(reference, origin)
+        import(reference, origin, ImportMode::Replace).map(|_| ())
     }
 }
 
-pub(crate) fn import(reference: GithubRef, origin: Origin) -> Result<()> {
+#[derive(Clone, Copy)]
+pub(crate) enum ImportMode {
+    Replace,
+    NewPrimary,
+}
+
+pub(crate) fn import(
+    reference: GithubRef,
+    origin: Origin,
+    mode: ImportMode,
+) -> Result<Utf8PathBuf> {
     let home = global_dir()?;
     let root = match origin {
         Origin::Global => home.clone(),
@@ -41,6 +52,10 @@ pub(crate) fn import(reference: GithubRef, origin: Origin) -> Result<()> {
         "local skill already exists: {markdown}"
     );
     let previous: Option<PinnedRef> = if files::exists(&pointer, origin)? {
+        ensure!(
+            matches!(mode, ImportMode::Replace),
+            "skill already installed: {pointer}"
+        );
         // Invalid persisted state requires explicit removal rather than an
         // implicit repair that cannot report the old commit reliably.
         Some(
@@ -53,15 +68,22 @@ pub(crate) fn import(reference: GithubRef, origin: Origin) -> Result<()> {
     };
     let pinned = super::cache::pin(reference)?;
     let skill = resolve::imported(&pinned, &home)?;
+    if matches!(mode, ImportMode::NewPrimary) {
+        skill.primary_body()?;
+    }
     fs::create_dir_all(&dir)?;
-    // Rust 1.89 std/fs.rs: write follows symlinks and exposes partial pointers; publish a complete
-    // sibling with rename, after the same origin checks used by the resolver.
-    let temporary = dir.join(format!(".SKILL.ref-{}", uuid::Uuid::new_v4()));
-    fs::write(&temporary, format!("{pinned}\n"))?;
-    fs::rename(&temporary, &pointer).with_context(|| format!("failed to write {pointer}"))?;
+    let mut staged = tempfile::NamedTempFile::new_in(&dir)?;
+    writeln!(staged, "{pinned}")?;
+    // tempfile 3.27.0 NamedTempFile::persist and persist_noclobber publish complete files
+    // with the requested replacement policy: docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html.
+    match mode {
+        ImportMode::Replace => staged.persist(&pointer),
+        ImportMode::NewPrimary => staged.persist_noclobber(&pointer),
+    }
+    .with_context(|| format!("failed to write {pointer}"))?;
     if let Some(previous) = previous {
         println!("{} → {}", previous.reference().rev, pinned.reference().rev);
     }
     println!("skill: {skill}");
-    Ok(())
+    Ok(pointer)
 }

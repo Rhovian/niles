@@ -1,14 +1,33 @@
-claude codex: |
-  standard=claude,codex
-  frontier=claude,codex
-  economy=claude,codex
-  mechanical=claude,codex
+claude: |
+  standard=claude:opus:medium,claude:sonnet:high
+  frontier=claude:fable:high,claude:fable:medium,claude:opus:high
+  economy=claude:sonnet:medium,claude:opus:low
+  mechanical=claude:sonnet:low,claude:haiku
+codex: |
+  standard=codex:gpt-6.1-sol:medium
+  frontier=codex:gpt-6-astra:high,codex:gpt-6-astra:medium
+  economy=codex:gpt-6-luna:high,codex:gpt-5.6-terra:xhigh,codex:gpt-6.1-sol:low
+  mechanical=codex:gpt-6-luna:medium,codex:gpt-5.6-terra:high,codex:gpt-6-luna:low
 pi: |
-  standard=pi
-  economy=pi
-  mechanical=pi
+  standard=pi:deepseek/deepseek-v4.1-flash:high,pi:z-ai/glm-5.3-flash:high
+  mechanical=pi:z-ai/glm-5.3-flash:low,pi:deepseek/deepseek-v4.1-flash:low
+claude codex: |
+  standard=codex:gpt-6.1-sol:medium,claude:opus:medium,claude:sonnet:high
+  frontier=claude:fable:high,codex:gpt-6-astra:high,claude:fable:medium,codex:gpt-6-astra:medium,claude:opus:high
+  economy=claude:sonnet:medium,codex:gpt-6-luna:high,codex:gpt-5.6-terra:xhigh,codex:gpt-6.1-sol:low,claude:opus:low
+  mechanical=claude:sonnet:low,codex:gpt-6-luna:medium,codex:gpt-5.6-terra:high,codex:gpt-6-luna:low,claude:haiku
 claude pi: |
-  standard=claude,pi
-  frontier=claude
-  economy=claude,pi
-  mechanical=claude,pi
+  standard=claude:opus:medium,pi:deepseek/deepseek-v4.1-flash:high,pi:z-ai/glm-5.3-flash:high,claude:sonnet:high
+  frontier=claude:fable:high,claude:fable:medium,claude:opus:high
+  economy=claude:sonnet:medium,claude:opus:low
+  mechanical=claude:sonnet:low,pi:z-ai/glm-5.3-flash:low,pi:deepseek/deepseek-v4.1-flash:low,claude:haiku
+codex pi: |
+  standard=codex:gpt-6.1-sol:medium,pi:deepseek/deepseek-v4.1-flash:high,pi:z-ai/glm-5.3-flash:high
+  frontier=codex:gpt-6-astra:high,codex:gpt-6-astra:medium
+  economy=codex:gpt-6-luna:high,codex:gpt-5.6-terra:xhigh,codex:gpt-6.1-sol:low
+  mechanical=pi:z-ai/glm-5.3-flash:low,codex:gpt-6-luna:medium,codex:gpt-5.6-terra:high,pi:deepseek/deepseek-v4.1-flash:low,codex:gpt-6-luna:low
+claude codex pi: |
+  standard=codex:gpt-6.1-sol:medium,claude:opus:medium,pi:deepseek/deepseek-v4.1-flash:high,pi:z-ai/glm-5.3-flash:high,claude:sonnet:high
+  frontier=claude:fable:high,codex:gpt-6-astra:high,claude:fable:medium,codex:gpt-6-astra:medium,claude:opus:high
+  economy=claude:sonnet:medium,codex:gpt-6-luna:high,codex:gpt-5.6-terra:xhigh,codex:gpt-6.1-sol:low,claude:opus:low
+  mechanical=claude:sonnet:low,pi:z-ai/glm-5.3-flash:low,codex:gpt-6-luna:medium,codex:gpt-5.6-terra:high,pi:deepseek/deepseek-v4.1-flash:low,codex:gpt-6-luna:low,claude:haiku
