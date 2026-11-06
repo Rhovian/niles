@@ -14,6 +14,8 @@ use crate::{
     workspace_manifest::clamp,
 };
 
+const ABSENT_TIER: &str = "(absent — → add)";
+
 pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
     let title = match &form.screen {
         Screen::Editing { tier, .. } => format!("NILES / TIERS / {}", tier.as_str()),
@@ -142,7 +144,7 @@ fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool
         };
         let value = match row.value(&form.draft) {
             Some(value) => value,
-            None => "(absent — → add)",
+            None => ABSENT_TIER,
         };
         let changed = row.value(&form.draft) != row.value(&form.original);
         let status = if changed { "changed" } else { "kept" };
