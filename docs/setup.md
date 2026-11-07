@@ -41,10 +41,16 @@ The explorer also has three panels:
   time, with live sessions' context use.
 - HELP shows the key reference.
 
-Typing in the view pane goes to the agent shown there. Click a pane to focus it, or return to the
-explorer with `Ctrl-b ←`. The home session turns on tmux's `mouse` for itself only, so a drag
+Typing in the view pane goes to the agent shown there. With `tmux.bindings` enabled,
+`M-\` (Alt/Option + backslash, without a tmux prefix) toggles focus between the explorer and
+view. You can also click a pane. While the view is focused, your tmux prefix goes directly to
+the shown project's session: splits and new shell windows belong to that project and swap out
+when you show another project. Shells use the directory selected by your existing tmux bindings.
+
+To detach home from the view, press `M-\` to focus the explorer, then your tmux prefix and `d`
+(`Ctrl-b d` by default). The home session turns on tmux's `mouse` for itself only, so a drag
 selects in tmux; hold Option (macOS) or Shift (most Linux terminals) for your terminal's own
-selection. Leave with tmux's detach (`Ctrl-b d`) or by switching sessions.
+selection. With `tmux.bindings` disabled, click the explorer before detaching.
 
 ## Settings
 
@@ -64,11 +70,12 @@ tmux:
 
 `tmux.bindings`, off by default, adds keys that work from any tmux session:
 
+- `M-\` toggles focus between the explorer and view pane in home.
 - `M-n` opens the home view in a popup.
 - `M-[` and `M-]` show the previous or next running project.
 - `M-;` and `M-'` show the previous or next window of the shown project.
 
-In `niles+home` the four cycling keys act like their plain versions in the explorer; elsewhere
-they pass through to the current pane. Running `niles` installs the bindings, replacing any of
-yours on those five keys. Turning the setting off doesn't remove them; they stay until tmux
+In `niles+home` the four cycling keys act like their plain versions in the explorer. Outside
+home, the cycling and focus keys pass through to the current pane. Running `niles` installs the
+bindings, replacing any of yours on those six keys. Turning the setting off doesn't remove them; they stay until tmux
 restarts.

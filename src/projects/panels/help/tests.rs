@@ -9,12 +9,12 @@ fn resizing_scales_the_whole_lockup_and_preserves_help() {
     let text = help_text(false, &theme);
     let mut terminal = Terminal::new(TestBackend::new(129, 36)).unwrap();
     for (width, height, help_row) in [
-        (129, 36, 24),
-        (129, 40, 28),
+        (129, 36, 23),
+        (129, 40, 27),
         (91, 40, 23),
         (37, 40, 10),
         (129, 13, 0),
-        (129, 36, 24),
+        (129, 36, 23),
     ] {
         terminal.backend_mut().resize(width, height);
         terminal
@@ -44,8 +44,8 @@ fn first_run_help_stays_visible_with_the_scaled_lockup() {
         .draw(|frame| draw(frame, &text, &splash, &theme))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(0, 27)].symbol(), "n");
-    assert_help(buffer, 0, 27, &text);
+    assert_eq!(buffer[(0, 24)].symbol(), "n");
+    assert_help(buffer, 0, 24, &text);
 }
 
 fn assert_help(buffer: &ratatui::buffer::Buffer, x: u16, y: u16, text: &Text<'_>) {
