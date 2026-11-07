@@ -53,13 +53,13 @@ it('shows catching up until snapshot, reconnects, and fails closed on bad events
   Stream.latest.emit('snapshot', emptySnapshot);
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe('live'));
   Stream.latest.onerror?.();
-  await screen.findByText(/Check that you’re connected/);
+  await screen.findByText(/Reconnect Tailscale/);
   Stream.latest.onopen?.();
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe('catching up'));
   Stream.latest.emit('snapshot', { turns: 'invalid' });
   await screen.findByText(/Invalid event/);
   expect(screen.getByRole('status').textContent).toBe('disconnected');
-  expect(screen.queryByText(/Check that you’re connected/)).toBeNull();
+  expect(screen.queryByText(/Reconnect Tailscale/)).toBeNull();
   expect(Stream.latest.close).toHaveBeenCalled();
 });
 it.each(['turn', 'snapshot'] as const)('keeps sent text until its %s echo without matching older identical messages', async event => {
@@ -102,13 +102,15 @@ it('surfaces a terminal stream failure and allows explicit reconnection', async 
   Stream.latest.onerror?.();
   await screen.findByText(/Session stream closed/);
   expect(screen.getByRole('status').textContent).toBe('disconnected');
-  expect(screen.queryByText(/Check that you’re connected/)).toBeNull();
+  expect(screen.queryByText(/Reconnect Tailscale/)).toBeNull();
   const previous = Stream.latest;
   fireEvent.click(screen.getByText('Reconnect'));
   await waitFor(() => expect(Stream.latest).not.toBe(previous));
 });
-it('rejects form submission before a snapshot and clears stale send errors on recovery', async () => {
-  const fetch = vi.fn().mockResolvedValueOnce({ status: 403 }).mockResolvedValue({ status: 200 });
+it.each([403, 'network'])('rejects premature submission and clears send failure %s on recovery', async failure => {
+  const fetch = vi.fn().mockResolvedValue({ status: 200 });
+  if (failure === 'network') fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  else fetch.mockResolvedValueOnce({ status: failure });
   vi.stubGlobal('fetch', fetch);
   const { container } = renderChat();
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello' } });
@@ -119,7 +121,7 @@ it('rejects form submission before a snapshot and clears stale send errors on re
   fireEvent.submit(container.querySelector('form')!);
   await screen.findByText(/Draft restored/);
   expect((screen.getByLabelText('Message agent') as HTMLTextAreaElement).value).toBe('hello');
-  expect(screen.getByRole('alert').textContent).toContain('403');
+  expect(screen.getByRole('alert').textContent).toContain(failure === 'network' ? 'Reconnect Tailscale' : '403');
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull();
   fireEvent.submit(container.querySelector('form')!);

@@ -15,7 +15,7 @@ export const telemetrySchema = z.object({
   })),
 });
 export type Snapshot = z.infer<typeof telemetrySchema>;
-type Availability = { state: 'loading' | 'ready' | 'asleep' } | { state: 'error'; error: string } | Incompatible;
+type Availability = { state: 'loading' | 'ready' | 'asleep' | 'unreachable' } | { state: 'error'; error: string } | Incompatible;
 export type Machine = Host & Availability & { snapshot?: Snapshot; cacheWarning?: string };
 const cacheKey = (host: Host) => `niles.telemetry.v${API_VERSION}:${host.id}`;
 

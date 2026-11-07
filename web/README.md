@@ -29,7 +29,8 @@ no transcript or outgoing message is saved in browser storage.
 
 Updates install in the background and activate when existing app windows close;
 close all Niles tabs/app windows, then reopen to load a newer shell. An API mismatch
-blocks chat and shows an update banner. Offline mode shows the shell and a tailnet
+blocks chat and shows an update banner. Once the service worker has installed the built
+shell and assets, offline navigation serves that cached shell and shows a tailnet
 connection banner; it does not replay transcripts or queue messages for later.
 
 ## API v1 contract

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { type Connection, type Session, type Turn, RECENT_TURN_LIMIT, sendMessage, sessionSchema, snapshotSchema, turnSchema } from './api';
+import { type Connection, type Session, type Turn, RECENT_TURN_LIMIT, TAILNET_UNREACHABLE, connectionError, sendMessage, sessionSchema, snapshotSchema, turnSchema } from './api';
 import { createPortal } from 'preact/compat';
 import { Markdown } from './Markdown';
 
@@ -114,7 +114,7 @@ export function Chat({ base, id, title, subtitle, pane, headerTarget, working, o
       setWaitingForReply(false);
       // Preserve anything typed while this request was in flight.
       setDraft(current => current ? `${current}\n${message.text}` : message.text);
-      setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${String(cause)}`);
+      setSendError(`Send was not confirmed. Draft restored; check the transcript before sending again. ${connectionError(cause)}`);
     }
   }
   const replying = (working ?? waitingForReply) && connection === 'live';
@@ -122,7 +122,7 @@ export function Chat({ base, id, title, subtitle, pane, headerTarget, working, o
     <span class={`pill ${connection === 'live' ? 'live' : ''}`} role="status">{connection}</span></>;
   return <section class="chat" aria-label={`Chat with ${title}`}>
     {headerTarget ? createPortal(heading, headerTarget) : <header>{heading}</header>}
-    {connection === 'reconnecting' && <p class="banner" role="alert">Cannot reach Niles. Check that you’re connected to your tailnet.</p>}
+    {connection === 'reconnecting' && <p class="banner" role="alert">{TAILNET_UNREACHABLE}</p>}
     {streamError && <p class="banner" role="alert">{streamError} <button onClick={() => setAttempt(old => old + 1)}>Reconnect</button></p>}
     {sendError && <p class="banner" role="alert">{sendError}</p>}
     {history.truncated && !historyNoticeDismissed && <p class="banner">Showing the most recent {RECENT_TURN_LIMIT} turns. Earlier history is available at the desk.</p>}

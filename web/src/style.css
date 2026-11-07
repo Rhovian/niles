@@ -1,6 +1,6 @@
 :root {
   font-family: system-ui, sans-serif; color: #e8f2ee; background: #12201e;
-  --surface: #1b2d29; --line: #3c514b; --accent: #a8e6ce; --muted: #b7c8c1; --warning: #f5d395;
+  --surface: #1b2d29; --line: #3c514b; --accent: #a8e6ce; --muted: #b7c8c1; --warning: #f5d395; --success: #9ece6a;
   color-scheme: dark; font-synthesis: none;
 }
 * { box-sizing: border-box; }
@@ -36,7 +36,20 @@ aside { overflow-y: auto; border-right: 1px solid var(--line); }
 header { padding: 1.2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); }
 nav { display: grid; gap: .5rem; padding: .8rem; }
 .session { display: flex; align-items: center; gap: .5rem; text-align: left; overflow-wrap: anywhere; }
-.project-live { margin-left: auto; color: var(--accent); }
+.project-live, .workers .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.agent-state { margin-left: auto; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.agent-state { color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+.state-working { color: var(--success); }
+.state-live { color: var(--accent); }
+.project-live .state-working { font-size: 0; }
+.project-live .state-working::before { content: '⣾'; font-size: 1.1rem; animation: agent-working .96s step-end infinite; }
+@keyframes agent-working {
+  0% { content: '⣾'; } 12.5% { content: '⣽'; } 25% { content: '⣻'; } 37.5% { content: '⢿'; }
+  50% { content: '⡿'; } 62.5% { content: '⣟'; } 75% { content: '⣯'; } 87.5% { content: '⣷'; }
+}
+@media (prefers-reduced-motion: reduce) { .project-live .state-working::before { animation: none; } }
+.state-waiting { color: var(--warning); }
 .session.selected { border-color: var(--accent); }
 .badge { display: block; }
 .chat { min-height: 0; display: flex; flex-direction: column; }

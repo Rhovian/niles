@@ -50,5 +50,5 @@ it.each([401, 403, 500, 'network'] as const)('reports list failure %s with the a
   render(<App />);
   const alert = await screen.findByRole('alert');
   if (failure !== 'network') expect(alert.textContent).toContain(String(failure));
-  expect(alert.textContent?.includes('tailnet')).toBe(failure === 'network');
+  expect(alert.textContent?.includes('Reconnect Tailscale')).toBe(failure === 'network');
 });

@@ -1,6 +1,10 @@
 import { type Project, startProject, stopProject, closeWorker } from './api';
 import { useState } from 'preact/hooks';
 
+const stateGlyphs = { working: '●', starting: '◌', idle: '○', waiting: '⚠', live: '●' } as const;
+function StateIcon({ state = 'live', id }: { state?: keyof typeof stateGlyphs; id?: string }) {
+  return <span id={id} class={`agent-state state-${state}`} role="img" aria-label={state} title={state}><span aria-hidden="true">{stateGlyphs[state]}</span><span class="sr-only">{state}</span></span>;
+}
 const liveStates = new Set<Project['state']>(['running', 'starting', 'waiting']);
 export function Navigation({ projects, selected, openProject, openWorker, refresh, help, prefix = '' }: {
   prefix?: string; projects: Project[]; selected?: string; openProject: (name: string) => void; openWorker: (project: string, id: string) => void; refresh: () => void; help?: () => void;
@@ -24,10 +28,10 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
         aria-expanded={expanded === project.name} aria-controls={`project-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}
         onClick={() => { setExpanded(expanded === project.name ? undefined : project.name); setExpandedWorker(undefined); }}>
         <span aria-hidden="true">{expanded === project.name ? '▾' : '▸'}</span><strong>{project.name}</strong>
-        {liveStates.has(project.state) && <span class="badge project-live" id={`live-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}>Live</span>}
+        {liveStates.has(project.state) && <span class="badge project-live" id={`live-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}><StateIcon state={project.lead_state} /></span>}
       </button>
       {expanded === project.name && <div class="project-details" id={`project-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}>
-        <p class="badge">{project.state}</p>
+        {!liveStates.has(project.state) && <p class="badge">{project.state}</p>}
         <button onClick={() => openProject(project.name)}>Open {project.name} lead chat</button>
         {project.state !== 'missing' && <button disabled={pending} onClick={() => {
           if (project.state === 'not running') void act(() => startProject(project.name, prefix));
@@ -40,11 +44,12 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
               const workerExpanded = expandedWorker === worker.id;
               const panelId = `worker-${encodeURIComponent(JSON.stringify([prefix, project.name, worker.id]))}`;
               return <li key={worker.id}>
-                <button class="session" aria-label={worker.id} aria-describedby={`${panelId}-skill`}
+                <button class="session" aria-label={worker.id} aria-describedby={`${panelId}-skill${!worker.lost && worker.state ? ` ${panelId}-state` : ''}`}
                   aria-expanded={workerExpanded} aria-controls={panelId}
                   onClick={() => setExpandedWorker(workerExpanded ? undefined : worker.id)}>
                   <span aria-hidden="true">{workerExpanded ? '▾' : '▸'}</span>{worker.id}
                   <span class="badge" id={`${panelId}-skill`}>{skill}{worker.lost ? ' · Lost' : ''}</span>
+                  {!worker.lost && worker.state && <StateIcon id={`${panelId}-state`} state={worker.state} />}
                 </button>
                 {workerExpanded && <div class="worker-actions" id={panelId}>
                   <button onClick={() => openWorker(project.name, worker.id)}>Open {worker.id} chat</button>

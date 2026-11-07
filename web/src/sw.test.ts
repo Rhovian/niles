@@ -60,3 +60,65 @@ it('always displays a visible notification and opens only an encoded same-origin
   await click({ session_id: 'project:session' });
   expect(openWindow).toHaveBeenCalledWith('https://niles.test/#/sessions/project%3Asession');
 });
+
+it('serves the installed shell offline through Workbox and leaves every API request on the network', async () => {
+  vi.doUnmock('workbox-precaching'); vi.doUnmock('workbox-routing'); vi.resetModules();
+  class LifetimeEvent extends Event {
+    work: Promise<unknown>[] = [];
+    waitUntil(promise: Promise<unknown>) { this.work.push(promise); }
+  }
+  class RequestEvent extends LifetimeEvent {
+    response?: Promise<Response>;
+    constructor(readonly request: Request) { super('fetch'); }
+    respondWith(response: Promise<Response>) { this.response = Promise.resolve(response); }
+  }
+  vi.stubGlobal('__WB_DISABLE_DEV_LOGS', true);
+  const origin = location.origin;
+  const BrowserRequest = Request;
+  vi.stubGlobal('Request', class extends BrowserRequest {
+    constructor(input: RequestInfo | URL, options?: RequestInit) {
+      super(typeof input === 'string' ? new URL(input, location.href) : input, options);
+    }
+  });
+  const stored = new Map<string, Map<string, Response>>();
+  const cache = (name: string) => {
+    if (!stored.has(name)) stored.set(name, new Map());
+    const entries = stored.get(name)!;
+    const key = (input: RequestInfo | URL) => new URL(input instanceof Request ? input.url : String(input), origin).href;
+    return {
+      match: async (input: RequestInfo | URL) => entries.get(key(input))?.clone(),
+      put: async (input: RequestInfo | URL, response: Response) => { entries.set(key(input), response.clone()); },
+    };
+  };
+  vi.stubGlobal('caches', {
+    open: async (name: string) => cache(name),
+    match: async (input: RequestInfo | URL, options: MultiCacheQueryOptions) => cache(options.cacheName!).match(input),
+  });
+  vi.stubGlobal('ExtendableEvent', LifetimeEvent); vi.stubGlobal('FetchEvent', RequestEvent);
+  const worker = Object.assign(new EventTarget(), {
+    __WB_MANIFEST: [{ url: '/index.html', revision: 'shell' }, { url: '/assets/app.js', revision: 'script' }],
+    __WB_DISABLE_DEV_LOGS: true, caches, location, registration: { scope: `${origin}/` },
+  });
+  vi.stubGlobal('self', worker);
+  const network = vi.fn<typeof fetch>(async input => new Response(new URL(input instanceof Request ? input.url : String(input), origin).pathname));
+  vi.stubGlobal('fetch', network);
+  await import('./sw');
+  const install = new LifetimeEvent('install'); worker.dispatchEvent(install);
+  await Promise.all(install.work);
+  network.mockRejectedValue(new TypeError('Tailnet disconnected'));
+  for (const [path, mode, expected] of [['/', 'navigate', '/index.html'], ['/chat', 'navigate', '/index.html'], ['/assets/app.js', 'cors', '/assets/app.js']] as const) {
+    const request = new Request(`${origin}${path}`);
+    Object.defineProperty(request, 'mode', { value: mode });
+    const event = new RequestEvent(request); worker.dispatchEvent(event);
+    expect(await (await event.response!).text()).toBe(expected);
+    await Promise.all(event.work);
+  }
+  const apiPaths = ['/hosts.json', '/hosts.json?refresh=1', '/api?refresh=1', '/h?refresh=1', '/api/sessions', '/api/telemetry', '/h/desk/api/sessions'];
+  for (const [path, mode, method] of [...apiPaths.map(path => [path, 'navigate', 'GET']), ['/api/sessions', 'cors', 'GET'], ['/api/sessions/solo/message', 'cors', 'POST']]) {
+    const request = new Request(`${origin}${path}`, { method });
+    Object.defineProperty(request, 'mode', { value: mode });
+    const event = new RequestEvent(request); worker.dispatchEvent(event);
+    expect(event.response, `${mode} ${path}`).toBeUndefined();
+    await expect(fetch(request)).rejects.toThrow('Tailnet disconnected');
+  }
+});
