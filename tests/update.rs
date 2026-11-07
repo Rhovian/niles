@@ -79,3 +79,41 @@ fn update_reports_package_manager_or_missing_updater() {
     );
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn update_channel_selects_updater_arguments() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = installed_update(root.path(), "bin");
+    common::write_executable(
+        &root.path().join("bin/niles-update"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
+    );
+    for (args, expected) in [
+        (vec![], "\n"),
+        (vec!["--channel", "nightly"], "--prerelease\n"),
+    ] {
+        let output = command.args(&args).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        assert!(output.stderr.is_empty());
+        command = installed_update(root.path(), "bin");
+    }
+}
+
+#[test]
+fn nightly_requires_shell_updater() {
+    let root = tempfile::tempdir().unwrap();
+    for layout in ["Cellar/niles/1.0/bin", ".cargo/bin", "bin"] {
+        let mut command = installed_update(root.path(), layout);
+        if layout.starts_with("Cellar/") {
+            common::write_executable(
+                &root.path().join(layout).join("niles-update"),
+                "#!/bin/sh\nexit 0\n",
+            );
+        }
+        let output = command.args(["--channel", "nightly"]).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("nightly updates require"));
+    }
+}
