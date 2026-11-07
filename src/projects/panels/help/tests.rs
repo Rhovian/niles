@@ -6,22 +6,27 @@ use super::*;
 fn resizing_scales_the_whole_lockup_and_preserves_help() {
     let theme = Theme::parse(None).unwrap();
     let splash = Splash::load().unwrap();
-    let text = help_text(false, &theme);
     let mut terminal = Terminal::new(TestBackend::new(129, 36)).unwrap();
-    for (width, height, help_row) in [
-        (129, 36, 23),
-        (129, 40, 27),
-        (91, 40, 23),
-        (37, 40, 10),
-        (129, 13, 0),
-        (129, 36, 23),
+    for (first_run, width, height, help_row, first_char) in [
+        (false, 129, 36, 23, "C"),
+        (false, 129, 40, 27, "C"),
+        (false, 91, 40, 23, "C"),
+        (false, 37, 40, 10, "C"),
+        (false, 129, 13, 0, "C"),
+        (false, 129, 36, 23, "C"),
+        (true, 129, 36, 24, "n"),
     ] {
+        let text = help_text(first_run, &theme);
         terminal.backend_mut().resize(width, height);
         terminal
             .draw(|frame| draw(frame, &text, &splash, &theme))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, help_row)].symbol(), "C", "{width}x{height}");
+        assert_eq!(
+            buffer[(0, help_row)].symbol(),
+            first_char,
+            "{width}x{height}"
+        );
         if help_row > 0 {
             let art = splash.text(width, help_row - 1);
             for (y, line) in art.lines.iter().enumerate() {
@@ -32,20 +37,6 @@ fn resizing_scales_the_whole_lockup_and_preserves_help() {
         }
         assert_help(buffer, 0, help_row, &text);
     }
-}
-
-#[test]
-fn first_run_help_stays_visible_with_the_scaled_lockup() {
-    let theme = Theme::parse(None).unwrap();
-    let splash = Splash::load().unwrap();
-    let text = help_text(true, &theme);
-    let mut terminal = Terminal::new(TestBackend::new(129, 36)).unwrap();
-    terminal
-        .draw(|frame| draw(frame, &text, &splash, &theme))
-        .unwrap();
-    let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(0, 24)].symbol(), "n");
-    assert_help(buffer, 0, 24, &text);
 }
 
 fn assert_help(buffer: &ratatui::buffer::Buffer, x: u16, y: u16, text: &Text<'_>) {

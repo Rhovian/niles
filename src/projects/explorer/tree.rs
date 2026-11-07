@@ -352,4 +352,4 @@ fn wrapped<T>(items: &[T], index: Option<usize>, steps: isize) -> Option<&T> {
 mod render;
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

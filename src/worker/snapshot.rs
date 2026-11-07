@@ -214,39 +214,26 @@ mod tests {
     }
 
     #[test]
-    fn the_last_actionable_line_carries_its_end_offset() {
-        let log = "done: one\nworking: more\ndone: shipped\n";
-        let wake = snapshot("impl", log).last_actionable.unwrap();
-
-        assert_eq!(wake.kind, WakeKind::Done);
-        assert_eq!(wake.end, log.len() as u64);
-        assert!(wake.end > "done: one\n".len() as u64);
-    }
-
-    #[test]
-    fn actionable_lines_tolerate_carriage_returns() {
-        let wake = snapshot("impl", "done: shipped\r\n")
-            .last_actionable
-            .unwrap();
-
-        assert_eq!(wake.kind, WakeKind::Done);
-    }
-
-    /// The newline is what finishes a line: without it, the worker is still saying it.
-    #[test]
-    fn a_trailing_partial_line_is_not_actionable_yet() {
-        assert_eq!(snapshot("impl", "done: shipped").last_actionable, None);
-        assert!(
-            snapshot("impl", "done: shipped\n")
-                .last_actionable
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn working_lines_are_not_actionable() {
-        assert_eq!(snapshot("impl", "working: launch\n").last_actionable, None);
-        assert_eq!(snapshot("impl", "note: launch\n").last_actionable, None);
+    fn actionable_lines_carry_their_exact_end_offset() {
+        for (log, expected) in [
+            (
+                "done: one\nworking: more\ndone: shipped\n",
+                Some((WakeKind::Done, 38)),
+            ),
+            ("done: shipped\r\n", Some((WakeKind::Done, 15))),
+            ("done: shipped", None),
+            ("done: shipped\n", Some((WakeKind::Done, 14))),
+            ("working: launch\n", None),
+            ("note: launch\n", None),
+        ] {
+            assert_eq!(
+                snapshot("impl", log)
+                    .last_actionable
+                    .map(|wake| (wake.kind, wake.end)),
+                expected,
+                "{log:?}"
+            );
+        }
     }
 
     #[test]

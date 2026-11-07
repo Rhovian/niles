@@ -206,12 +206,11 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use super::*;
-    use crate::test_support::temp_test_path;
+    use crate::test_support::temp_dir;
 
     #[test]
     fn appending_through_a_symlink_fails() {
-        let dir = temp_test_path("append-symlink");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir("append-symlink");
         let target = dir.join("target");
         let link = dir.join("status.log");
         fs::write(&target, "working: safe\n").unwrap();
@@ -219,28 +218,19 @@ mod tests {
 
         assert!(append_line(&link, "done: redirected").is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "working: safe\n");
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn read_dir_utf8_paths_sorts_entries() {
-        let dir = temp_test_path("read-dir-sorted");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir("read-dir-sorted");
+        let missing = dir.join("missing");
+        assert!(read_dir_utf8_paths(&missing).unwrap().is_empty());
         fs::write(dir.join("b"), "").unwrap();
         fs::write(dir.join("a"), "").unwrap();
 
         let paths = read_dir_utf8_paths(&dir).unwrap();
 
         assert_eq!(paths, vec![dir.join("a"), dir.join("b")]);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn read_dir_utf8_paths_treats_missing_directory_as_empty() {
-        let dir = temp_test_path("read-dir-missing");
-
-        assert!(read_dir_utf8_paths(&dir).unwrap().is_empty());
     }
 
     #[test]
@@ -252,10 +242,7 @@ mod tests {
             ),
             "id=auth-fix task=ship {id} again=auth-fix"
         );
-    }
 
-    #[test]
-    fn render_template_preserves_unknown_and_unclosed_placeholders() {
         assert_eq!(
             render_template("known={id} unknown={missing} tail={", &[("{id}", "run")]),
             "known=run unknown={missing} tail={"
@@ -267,10 +254,7 @@ mod tests {
         let now = DateTime::<Utc>::from_timestamp(0, 42).expect("valid timestamp");
 
         assert_eq!(timestamp_id(&now), "19700101T000000000000042Z");
-    }
-
-    #[test]
-    fn timestamp_id_round_trips() {
+        assert_eq!(parse_timestamp_id(&timestamp_id(&now)), Some(now));
         let now = DateTime::<Utc>::from_timestamp(1_758_341_218, 290_814_000).unwrap();
         assert_eq!(parse_timestamp_id(&timestamp_id(&now)), Some(now));
         assert_eq!(parse_timestamp_id("latest"), None);

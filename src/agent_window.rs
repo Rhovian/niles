@@ -135,19 +135,17 @@ mod tests {
 
     #[test]
     fn opening_briefs_reach_every_family() {
-        use std::{os::unix::fs::PermissionsExt, process::Command};
+        use crate::test_support::{temp_dir, write_executable_script};
+        use std::process::Command;
 
         let models = agents::ModelRoster::builtin().unwrap();
         for profile in agents::profiles() {
-            let temp = tempfile::tempdir().unwrap();
-            let dir = Utf8Path::from_path(temp.path()).unwrap();
+            let dir = temp_dir("opening-briefs");
             let binary = dir.join(profile.binary);
-            fs::write(
+            write_executable_script(
                 &binary,
                 "#!/bin/sh\nfor arg do :; done\nprintf '%s' \"$arg\"\n",
-            )
-            .unwrap();
-            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+            );
             let brief = dir.join("brief.md");
             let text = "line one\n'$(exit 99)' \"quoted\"\nline two";
             fs::write(&brief, text).unwrap();
@@ -162,7 +160,7 @@ mod tests {
             .unwrap();
             let output = Command::new("/bin/sh")
                 .arg(&launch)
-                .env("PATH", format!("{dir}:/usr/bin:/bin"))
+                .env("PATH", format!("{}:/usr/bin:/bin", dir.as_str()))
                 .output()
                 .unwrap();
             assert!(output.status.success(), "{}: {output:?}", profile.id);

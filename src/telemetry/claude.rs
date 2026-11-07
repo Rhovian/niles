@@ -239,51 +239,30 @@ mod background_tests {
     use super::*;
 
     #[test]
-    fn compact_summary_preserves_ended_turn_and_prompt_timestamp() {
+    fn background_events_preserve_ended_turn_and_prompt_timestamp() {
         let start =
             r#"{"type":"user","timestamp":"2026-10-13T19:00:00Z","message":{"content":"build"}}"#;
+        let structured_start = start.replace(r#""build""#, r#"[{"type":"text","text":"build"}]"#);
         let ended = r#"{"type":"assistant","timestamp":"2026-10-13T19:00:35Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
         let boundary = r#"{"type":"system","subtype":"compact_boundary"}"#;
         let summary = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","isCompactSummary":true,"message":{"content":"This session is being continued from a previous conversation…"}}"#;
-        let turn = claude_session(&format!("{start}\n{ended}\n{boundary}\n{summary}\n"), &[])
-            .unwrap()
-            .turn
-            .unwrap();
-        assert!(matches!(turn.state, TurnState::Ended));
-        assert_eq!(
-            turn.started_at.unwrap().to_rfc3339(),
-            "2026-10-13T19:00:00+00:00"
-        );
-    }
-
-    #[test]
-    fn halcyon_notification_before_tool_result_does_not_keep_a_turn_active() {
-        let start = r#"{"type":"user","timestamp":"2026-10-13T19:00:00Z","message":{"content":[{"type":"text","text":"build"}]}}"#;
         let completed = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-13T19:00:33.090Z","content":"<task-notification><task-id>binqo6ddq</task-id><status>completed</status></task-notification>"}"#;
         let removed = r#"{"type":"queue-operation","operation":"remove","timestamp":"2026-10-13T19:00:34.208Z","reason":"absorbed_mid_turn"}"#;
         let result = r#"{"type":"user","timestamp":"2026-10-13T19:00:32.647Z","message":{"content":[{"type":"tool_result"}]},"toolUseResult":{"backgroundTaskId":"binqo6ddq"}}"#;
-        let ended = r#"{"type":"assistant","timestamp":"2026-10-13T19:00:35Z","message":{"id":"a","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
-        for events in [
-            format!("{completed}\n{removed}\n{result}"),
-            result.to_owned(),
+        let interrupted = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+        for body in [
+            format!("{start}\n{ended}\n{boundary}\n{summary}\n"),
+            format!("{structured_start}\n{completed}\n{removed}\n{result}\n{ended}\n"),
+            format!("{structured_start}\n{result}\n{ended}\n"),
+            format!("{structured_start}\n{interrupted}\n"),
         ] {
-            let record = claude_session(&format!("{start}\n{events}\n{ended}\n"), &[]).unwrap();
-            let turn = record.turn.unwrap();
-            assert!(matches!(turn.state, TurnState::Ended));
+            let turn = claude_session(&body, &[]).unwrap().turn.unwrap();
+            assert!(matches!(turn.state, TurnState::Ended), "{body}");
             assert_eq!(
                 turn.started_at.unwrap().to_rfc3339(),
-                "2026-10-13T19:00:00+00:00"
+                "2026-10-13T19:00:00+00:00",
+                "{body}"
             );
         }
-        let interrupted = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
-        let turn = claude_session(&format!("{start}\n{interrupted}\n"), &[])
-            .unwrap()
-            .turn
-            .unwrap();
-        assert!(matches!(turn.state, TurnState::Ended));
-        assert_eq!(
-            turn.started_at.unwrap().to_rfc3339(),
-            "2026-10-13T19:00:00+00:00"
-        );
     }
 }

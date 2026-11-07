@@ -172,26 +172,21 @@ mod tests {
     }
 
     #[test]
-    fn a_newline_cannot_forge_an_extra_row() {
-        let rendered = render(&manifest("claude\nreviewer  totally  fake  max"));
-
-        // Continuation lines are indented, so a tier row is one that starts at column zero.
-        let tier_rows = rendered
-            .lines()
-            .filter(|line| !line.starts_with(' '))
-            .count();
-        assert_eq!(tier_rows, 4, "{rendered}");
-        assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
-    }
-
-    #[test]
-    fn escape_sequences_cannot_rewrite_rows_already_printed() {
-        let rendered = render(&manifest(
+    fn injected_text_cannot_forge_or_rewrite_rows() {
+        for input in [
+            "claude\nreviewer  totally  fake  max",
             "\u{1b}[1A\u{1b}[2Klead  claude  opus  max\u{1b}]0;pwned\u{7}",
-        ));
-
-        assert!(!rendered.contains('\u{1b}'), "{rendered}");
-        assert!(!rendered.contains('\u{7}'), "{rendered}");
+        ] {
+            let rendered = render(&manifest(input));
+            let tier_rows = rendered
+                .lines()
+                .filter(|line| !line.starts_with(' '))
+                .count();
+            assert_eq!(tier_rows, 4, "{rendered}");
+            assert!(!rendered.contains("\nreviewer  totally"), "{rendered}");
+            assert!(!rendered.contains('\u{1b}'), "{rendered}");
+            assert!(!rendered.contains('\u{7}'), "{rendered}");
+        }
     }
 
     #[test]

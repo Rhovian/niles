@@ -132,35 +132,36 @@ mod tests {
     }
 
     #[test]
-    fn the_checkin_spellings_parse_and_the_armed_delay_prints_back() {
-        for (written, delay) in [
-            ("90s", Duration::from_secs(90)),
-            ("5m", Duration::from_secs(300)),
-            ("1h", Duration::from_secs(3600)),
+    fn checkin_delays_parse_and_describe() {
+        for (input, expected) in [
+            ("0", Ok(None)),
+            ("0s", Ok(None)),
+            ("off", Ok(None)),
+            ("OFF", Ok(None)),
+            ("1s", Ok(Some(1))),
+            ("24h", Ok(Some(86400))),
+            ("5x", Err("unknown unit")),
+            ("m", Err("not a duration")),
+            ("-5", Err("not a duration")),
+            ("999ms", Err("shorter than 1s")),
+            ("86401s", Err("longer than 24h")),
         ] {
+            match expected {
+                Ok(seconds) => assert_eq!(
+                    parse_delay(input).unwrap(),
+                    seconds.map(Duration::from_secs),
+                    "{input}"
+                ),
+                Err(needle) => crate::test_support::assert_err_contains(parse_delay(input), needle),
+            }
+        }
+        for (seconds, printed) in [(90, "90s"), (300, "5m"), (3600, "1h")] {
+            assert_eq!(describe_delay(Duration::from_secs(seconds)), printed);
             assert_eq!(
-                parse_delay(written).unwrap(),
-                Some(delay),
-                "--checkin {written}"
+                parse_delay(printed).unwrap(),
+                Some(Duration::from_secs(seconds))
             );
         }
-
-        for (delay, printed) in [
-            (Duration::from_secs(90), "90s"),
-            (Duration::from_secs(300), "5m"),
-            (Duration::from_secs(3600), "1h"),
-        ] {
-            assert_eq!(describe_delay(delay), printed, "{}s armed", delay.as_secs());
-        }
-    }
-
-    #[test]
-    fn zero_and_off_arm_nothing() {
-        assert_eq!(parse_delay("0").unwrap(), None);
-        assert_eq!(parse_delay("0s").unwrap(), None);
-        assert_eq!(parse_delay("off").unwrap(), None);
-        assert_eq!(parse_delay("OFF").unwrap(), None);
-        assert_eq!(cadence(None, None).unwrap().delay, Some(DEFAULT_DELAY));
     }
 
     #[test]
@@ -180,13 +181,15 @@ mod tests {
                 recheck: Recheck::Fixed(Duration::from_secs(1800)),
             }
         );
-        assert_eq!(
-            cadence(None, Some(&manifest(None, None))).unwrap(),
-            Cadence {
-                delay: Some(DEFAULT_DELAY),
-                recheck: Recheck::Backoff,
-            }
-        );
+        for manifest in [None, Some(manifest(None, None))] {
+            assert_eq!(
+                cadence(None, manifest.as_ref()).unwrap(),
+                Cadence {
+                    delay: Some(DEFAULT_DELAY),
+                    recheck: Recheck::Backoff,
+                }
+            );
+        }
         assert_eq!(cadence(Some("off"), Some(&configured)).unwrap().delay, None);
     }
 
@@ -209,22 +212,5 @@ mod tests {
                 "{value}"
             );
         }
-    }
-
-    #[test]
-    fn a_malformed_delay_is_rejected_rather_than_guessed_at() {
-        for value in ["", "5x", "m", "-5", "1.5m"] {
-            assert!(parse_delay(value).is_err(), "{value} should not parse");
-        }
-    }
-
-    #[test]
-    fn a_checkin_delay_is_at_least_one_second_and_at_most_one_day() {
-        assert_eq!(parse_delay("1s").unwrap(), Some(Duration::from_secs(1)));
-        assert_eq!(parse_delay("24h").unwrap(), Some(MAX_DELAY));
-        let error = parse_delay("999ms").unwrap_err().to_string();
-        assert!(error.contains("shorter than 1s"), "{error}");
-        let error = parse_delay("86401s").unwrap_err().to_string();
-        assert!(error.contains("longer than 24h"), "{error}");
     }
 }

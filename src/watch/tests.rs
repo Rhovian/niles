@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     telemetry::SessionState,
-    test_support::{at, temp_test_path},
+    test_support::{TempDir, assert_err_contains, at, temp_dir, temp_test_path, write_worker_meta},
     tmux::TmuxTarget,
     worker::worker_snapshot,
 };
@@ -96,11 +96,11 @@ pub(super) fn workspace(label: &str) -> Utf8PathBuf {
     path
 }
 
-pub(super) fn worker_dir(workspace: &Utf8PathBuf, id: &str) -> Utf8PathBuf {
+pub(super) fn worker_dir(workspace: &camino::Utf8Path, id: &str) -> Utf8PathBuf {
     crate::store::workers_dir(workspace).unwrap().join(id)
 }
 
-fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
+fn write_worker(workspace: &camino::Utf8Path, id: &str, log: &str) {
     write_meta(
         workspace,
         id,
@@ -111,24 +111,18 @@ fn write_worker(workspace: &Utf8PathBuf, id: &str, log: &str) {
     fs::write(dir.join("status.log"), log).unwrap();
 }
 
-fn write_meta(workspace: &Utf8PathBuf, id: &str, created_at: DateTime<Utc>, session: &str) {
-    let dir = worker_dir(workspace, id);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("meta.json"),
-        format!(
-            "{{\"id\":\"{id}\",\"skill\":\"worker\",\"agent\":\"claude\",\"created_at\":\"{}\",\
-             \"project\":\"{workspace}\",\"window\":\"{session}:niles-{id}\",\
-             \"brief\":\"{workspace}/brief.md\",\
-             \"launch\":\"{workspace}/launch.sh\"}}",
-            created_at.to_rfc3339()
-        ),
-    )
-    .unwrap();
+fn write_meta(workspace: &camino::Utf8Path, id: &str, created_at: DateTime<Utc>, session: &str) {
+    write_worker_meta(
+        workspace,
+        id,
+        &format!("{session}:niles-{id}"),
+        created_at,
+        None,
+    );
 }
 
 pub(super) fn write_starting_worker(
-    workspace: &Utf8PathBuf,
+    workspace: &camino::Utf8Path,
     id: &str,
     log: &str,
     now: DateTime<Utc>,
@@ -137,13 +131,13 @@ pub(super) fn write_starting_worker(
     fs::write(worker_dir(workspace, id).join("status.log"), log).unwrap();
 }
 
-fn append_log(workspace: &Utf8PathBuf, id: &str, line: &str) {
+fn append_log(workspace: &camino::Utf8Path, id: &str, line: &str) {
     let path = worker_dir(workspace, id).join("status.log");
     let body = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("{body}{line}")).unwrap();
 }
 
-fn status(workspace: &Utf8PathBuf, id: &str) -> String {
+fn status(workspace: &camino::Utf8Path, id: &str) -> String {
     fs::read_to_string(worker_dir(workspace, id).join("status.log")).unwrap()
 }
 
@@ -222,142 +216,130 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
     append_log(&root, "armed", DONE);
     sink = RecordingSink::default();
     tick(&root, at(1_091), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent, ["niles: armed reported (done) — check workers"]);
+    assert_eq!(sink.sent, [reported("armed", "done")]);
     assert_eq!(Checkin::read(&armed_dir).unwrap(), None);
 
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
-#[test]
-fn a_failed_nudge_is_retried_on_the_next_tick() {
-    let root = workspace("retry");
+fn due_checkin() -> Checkin {
+    armed_checkin(300, WINDOW.len() as u64, at(1_000))
+}
+
+fn one_worker(label: &str, checkin: Option<Checkin>) -> (TempDir, WatchMemory) {
+    let root = temp_dir(label);
     write_worker(&root, "impl", WINDOW);
-    let now = at(1_000);
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    append_log(&root, "impl", DONE);
+    if let Some(checkin) = checkin {
+        checkin.write(&worker_dir(&root, "impl")).unwrap();
+    }
+    let memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
+    (root, memory)
+}
 
-    let mut failing = RecordingSink {
-        fail: true,
-        ..RecordingSink::default()
-    };
-    tick(&root, now, &mut memory, &mut failing, &running());
-    assert_eq!(failing.attempts.len(), 1);
-    assert!(failing.sent.is_empty(), "a failed nudge is not a nudge");
-
-    let mut working = RecordingSink::default();
-    tick(&root, at(1001), &mut memory, &mut working, &running());
-    assert_eq!(
-        working.sent,
-        vec!["niles: impl reported (done) — check workers"]
-    );
-
-    let mut quiet_tick = RecordingSink::default();
-    tick(&root, at(1002), &mut memory, &mut quiet_tick, &running());
-    assert!(quiet_tick.attempts.is_empty(), "{quiet_tick:?}");
-
-    crate::test_support::remove_workspace(&root).unwrap();
+pub(super) fn reported(id: &str, kind: &str) -> String {
+    format!("niles: {id} reported ({kind}) — check workers")
 }
 
 #[test]
-fn the_tick_deletes_the_arm_state_when_the_worker_answers() {
-    let root = workspace("disarm");
-    write_worker(&root, "impl", WINDOW);
-    let now = at(1_000);
-    let dir = worker_dir(&root, "impl");
-    armed_checkin(300, WINDOW.len() as u64, now)
-        .write(&dir)
-        .unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    append_log(&root, "impl", DONE);
-
-    let mut sink = RecordingSink::default();
-    tick(&root, at(1060), &mut memory, &mut sink, &running());
-
-    assert!(!dir.join("checkin").exists(), "the arm state must go");
-    assert_eq!(
-        sink.sent,
-        vec!["niles: impl reported (done) — check workers"]
-    );
-
-    crate::test_support::remove_workspace(&root).unwrap();
+fn failed_or_stopping_ticks_leave_reports_for_the_next_tick() {
+    for stop in [false, true] {
+        let (root, mut memory) = one_worker("retry-or-stop", None);
+        append_log(&root, "impl", DONE);
+        let mut sink = RecordingSink {
+            fail: !stop,
+            ..RecordingSink::default()
+        };
+        tick(
+            &root,
+            at(1_000),
+            &mut memory,
+            &mut sink,
+            &AtomicBool::new(stop),
+        );
+        assert_eq!(sink.attempts.len(), usize::from(!stop));
+        assert!(sink.sent.is_empty(), "{sink:?}");
+        sink.fail = false;
+        tick(&root, at(1_001), &mut memory, &mut sink, &running());
+        assert_eq!(sink.sent, [reported("impl", "done")]);
+        let attempts = sink.attempts.len();
+        tick(&root, at(1_002), &mut memory, &mut sink, &running());
+        assert_eq!(sink.attempts.len(), attempts, "{sink:?}");
+        crate::test_support::remove_workspace(&root).unwrap();
+    }
 }
 
 #[test]
-fn the_tick_rearms_a_fired_check_in_on_disk() {
-    let root = workspace("rearm");
-    write_worker(&root, "impl", WINDOW);
-    let now = at(1_000);
-    let dir = worker_dir(&root, "impl");
-    armed_checkin(300, WINDOW.len() as u64, now)
-        .write(&dir)
-        .unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-
-    let mut sink = RecordingSink {
-        activity: Some(SessionState::Starting),
-        ..RecordingSink::default()
-    };
-    tick(&root, at(1300), &mut memory, &mut sink, &running());
-
-    assert_eq!(
-        sink.sent,
-        vec!["niles: no report from impl — check workers"]
-    );
-    let rearmed = Checkin::read(&dir).unwrap().unwrap();
-    assert_eq!(rearmed.deadline, at(1_900));
-    assert_eq!(rearmed.delay, 600);
-
-    let mut next = RecordingSink::default();
-    tick(&root, at(1301), &mut memory, &mut next, &running());
-    assert!(next.attempts.is_empty(), "{next:?}");
-
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn the_tick_disarms_a_check_in_fired_at_an_idle_worker_on_disk() {
-    let root = workspace("idle-disarm");
-    write_worker(&root, "impl", WINDOW);
-    let dir = worker_dir(&root, "impl");
-    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
-    checkin.write(&dir).unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    let mut sink = RecordingSink {
-        activity: Some(SessionState::Waiting),
-        ..RecordingSink::default()
-    };
-    tick(&root, at(1300), &mut memory, &mut sink, &running());
-
-    assert_eq!(
-        sink.sent,
-        vec!["niles: impl stopped without a report — check workers"]
-    );
-    assert_eq!(Checkin::read(&dir).unwrap(), None, "{sink:?}");
-
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn a_failed_check_in_nudge_leaves_the_check_in_armed_and_overdue() {
-    let root = workspace("rearm-failed");
-    write_worker(&root, "impl", WINDOW);
-    let now = at(1_000);
-    let dir = worker_dir(&root, "impl");
-    armed_checkin(300, WINDOW.len() as u64, now)
-        .write(&dir)
-        .unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-
-    let mut failing = RecordingSink {
-        fail: true,
-        activity: Some(SessionState::Starting),
-        ..RecordingSink::default()
-    };
-    tick(&root, at(1300), &mut memory, &mut failing, &running());
-
-    assert_eq!(Checkin::read(&dir).unwrap().unwrap().deadline, at(1_300));
-
-    crate::test_support::remove_workspace(&root).unwrap();
+fn ticks_persist_checkins_only_after_successful_delivery() {
+    let armed = due_checkin();
+    for (label, report, now, activity, fail, expected, sent) in [
+        (
+            "disarm",
+            DONE,
+            1_060,
+            None,
+            false,
+            None,
+            reported("impl", "done"),
+        ),
+        (
+            "rearm",
+            "",
+            1_300,
+            Some(SessionState::Starting),
+            false,
+            Some(Checkin {
+                deadline: at(1_900),
+                delay: 600,
+                ..armed
+            }),
+            "niles: no report from impl — check workers".into(),
+        ),
+        (
+            "idle-disarm",
+            "",
+            1_300,
+            Some(SessionState::Waiting),
+            false,
+            None,
+            "niles: impl stopped without a report — check workers".into(),
+        ),
+        (
+            "rearm-failed",
+            "",
+            1_300,
+            Some(SessionState::Starting),
+            true,
+            Some(armed),
+            String::new(),
+        ),
+        (
+            "gone-report",
+            "gone: window exited\n",
+            1_300,
+            None,
+            false,
+            None,
+            reported("impl", "gone"),
+        ),
+    ] {
+        let (root, mut memory) = one_worker(label, Some(armed));
+        let dir = worker_dir(&root, "impl");
+        append_log(&root, "impl", report);
+        let mut sink = RecordingSink {
+            activity,
+            fail,
+            ..RecordingSink::default()
+        };
+        tick(&root, at(now), &mut memory, &mut sink, &running());
+        assert_eq!(Checkin::read(&dir).unwrap(), expected, "{label}: {sink:?}");
+        assert_eq!(dir.join("checkin").exists(), expected.is_some(), "{label}");
+        assert_eq!(sink.sent, if fail { vec![] } else { vec![sent] }, "{label}");
+        if matches!(label, "rearm" | "gone-report") {
+            tick(&root, at(1_301), &mut memory, &mut sink, &running());
+            assert_eq!(sink.attempts.len(), 1, "{label}: {sink:?}");
+        }
+        crate::test_support::remove_workspace(&root).unwrap();
+    }
 }
 
 #[test]
@@ -403,129 +385,72 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
 
 #[test]
 fn quiet_is_a_lead_command_and_needs_a_worker_that_exists() {
-    let err = quiet("no-such-worker").unwrap_err();
-
-    assert!(err.to_string().contains("unknown worker id"), "{err}");
+    assert_err_contains(quiet("no-such-worker"), "unknown worker id");
 }
 
 #[test]
-fn a_session_with_no_lead_pane_starts_no_watcher() {
-    let session = workspace("no-pane-session");
-    let root = workspace("no-pane-workspace");
-    write_worker(&root, "impl", &format!("{WINDOW}{DONE}"));
-
-    drop(super::start(&session, &root, None, None));
-
-    let log = fs::read_to_string(session.join("watch.log")).unwrap();
-    assert!(log.contains("recorded no lead pane"), "{log}");
-    assert!(!log.contains("watcher started"), "{log}");
-
-    crate::test_support::remove_workspace(&root).unwrap();
-    fs::remove_dir_all(&session).unwrap();
+fn watcher_start_follows_the_recorded_lead_pane() {
+    for (pane, required, forbidden) in [
+        (None, vec!["recorded no lead pane"], vec!["watcher started"]),
+        (
+            Some("%7"),
+            vec![
+                "watcher started: pane=%7",
+                "watcher stopped: the foreground agent exited",
+            ],
+            vec![],
+        ),
+    ] {
+        let session = temp_dir("pane-session");
+        let root = workspace("pane-workspace");
+        write_worker(&root, "impl", &format!("{WINDOW}{DONE}"));
+        drop(super::start(&session, &root, pane, None));
+        let log = fs::read_to_string(session.join("watch.log")).unwrap();
+        for phrase in required {
+            assert!(log.contains(phrase), "{log}");
+        }
+        for phrase in forbidden {
+            assert!(!log.contains(phrase), "{log}");
+        }
+        crate::test_support::remove_workspace(&root).unwrap();
+    }
 }
 
 #[test]
-fn the_watcher_starts_on_the_recorded_pane_and_stops_with_the_process() {
-    let session = workspace("pane-session");
-    let root = workspace("pane-workspace");
-
-    let watcher = super::start(&session, &root, Some("%7"), None);
-    drop(watcher);
-
-    let log = fs::read_to_string(session.join("watch.log")).unwrap();
-    assert!(log.contains("watcher started: pane=%7"), "{log}");
-    assert!(
-        log.contains("watcher stopped: the foreground agent exited"),
-        "{log}"
-    );
-
-    crate::test_support::remove_workspace(&root).unwrap();
-    fs::remove_dir_all(&session).unwrap();
-}
-
-#[test]
-fn a_stopping_tick_delivers_nothing_and_leaves_the_state_for_next_time() {
-    let root = workspace("stopping");
-    write_worker(&root, "impl", WINDOW);
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    append_log(&root, "impl", DONE);
-
-    let stop = AtomicBool::new(true);
-    let mut stopping = RecordingSink::default();
-    tick(&root, at(1_000), &mut memory, &mut stopping, &stop);
-    assert!(stopping.attempts.is_empty(), "{stopping:?}");
-
-    let mut later = RecordingSink::default();
-    tick(&root, at(1_001), &mut memory, &mut later, &running());
-    assert_eq!(
-        later.sent,
-        vec!["niles: impl reported (done) — check workers"]
-    );
-
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn a_check_in_armed_while_a_disarm_is_delivering_is_left_alone() {
-    let root = workspace("re-read-disarm");
-    write_worker(&root, "impl", WINDOW);
-    let dir = worker_dir(&root, "impl");
-    armed_checkin(300, 0, at(1_000)).write(&dir).unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    append_log(&root, "impl", DONE);
-
-    let snapshot = worker_snapshot(&root).unwrap();
-    let mut sink = RecordingSink::default();
-    let checkins = read_checkins(&snapshot, &mut sink);
-    let plan = memory.plan(&snapshot, &checkins, at(1_060));
-    assert_eq!(
-        plan.disarms.len(),
-        1,
-        "the report answers the armed check-in"
-    );
-
-    // The lead dispatches again while the tick is still delivering.
-    let fresh = armed_checkin(300, (WINDOW.len() + DONE.len()) as u64, at(1_060));
-    fresh.write(&dir).unwrap();
-
-    apply(&plan, &mut memory, &mut sink, &running());
-
-    assert_eq!(
-        Checkin::read(&dir).unwrap(),
-        Some(fresh),
-        "the newer assignment must keep its check-in"
-    );
-    assert!(
-        sink.notes
-            .iter()
-            .any(|note| note.contains("left the check-in for impl alone")),
-        "{sink:?}"
-    );
-
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn a_check_in_armed_while_a_fired_nudge_is_delivering_is_not_overwritten() {
-    let root = workspace("re-read-rearm");
-    write_worker(&root, "impl", WINDOW);
-    let dir = worker_dir(&root, "impl");
-    armed_checkin(300, 0, at(1_000)).write(&dir).unwrap();
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-
-    let snapshot = worker_snapshot(&root).unwrap();
-    let mut sink = RecordingSink::default();
-    let checkins = read_checkins(&snapshot, &mut sink);
-    let plan = memory.plan(&snapshot, &checkins, at(1_300));
-    assert_eq!(plan.nudges.len(), 1, "the check-in is due");
-
-    // Re-armed in the middle of the nudge, because the worker reported and was dispatched again.
-    let fresh = armed_checkin(300, WINDOW.len() as u64, at(1_300));
-    fresh.write(&dir).unwrap();
-
-    apply(&plan, &mut memory, &mut sink, &running());
-
-    assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
-
-    crate::test_support::remove_workspace(&root).unwrap();
+fn a_checkin_rearmed_during_delivery_is_left_alone() {
+    for (report, plan_at, fresh_len) in [
+        (DONE, 1_060, WINDOW.len() + DONE.len()),
+        ("", 1_300, WINDOW.len()),
+    ] {
+        let (root, mut memory) = one_worker("re-read", Some(armed_checkin(300, 0, at(1_000))));
+        let dir = worker_dir(&root, "impl");
+        append_log(&root, "impl", report);
+        let snapshot = worker_snapshot(&root).unwrap();
+        let mut sink = RecordingSink::default();
+        let checkins = read_checkins(&snapshot, &mut sink);
+        let plan = memory.plan(&snapshot, &checkins, at(plan_at));
+        if report.is_empty() {
+            assert_eq!(plan.nudges.len(), 1, "the check-in is due");
+        } else {
+            assert_eq!(
+                plan.disarms.len(),
+                1,
+                "the report answers the armed check-in"
+            );
+        }
+        // A new dispatch lands while the old tick is delivering.
+        let fresh = armed_checkin(300, fresh_len as u64, at(plan_at));
+        fresh.write(&dir).unwrap();
+        apply(&plan, &mut memory, &mut sink, &running());
+        assert_eq!(Checkin::read(&dir).unwrap(), Some(fresh), "{sink:?}");
+        if !report.is_empty() {
+            assert!(
+                sink.notes
+                    .iter()
+                    .any(|note| note.contains("left the check-in for impl alone")),
+                "{sink:?}"
+            );
+        }
+        crate::test_support::remove_workspace(&root).unwrap();
+    }
 }

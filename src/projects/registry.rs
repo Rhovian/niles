@@ -127,10 +127,9 @@ mod tests {
     fn deregister_refuses_live_workers_then_deletes_state_and_dirty_managed_trees() {
         use crate::{
             store,
-            test_support::{remove_workspace, temp_test_path},
+            test_support::{remove_workspace, temp_dir, temp_test_path, write_worker_meta},
         };
-        let project = temp_test_path("deregister");
-        fs::create_dir_all(&project).unwrap();
+        let project = temp_dir("deregister");
         let git = |args: &[&str]| {
             let output = crate::util::git_command()
                 .current_dir(&project)
@@ -167,17 +166,14 @@ mod tests {
         register(&name, &project).unwrap();
         let entry = Entry {
             name,
-            path: project.clone(),
+            path: project.to_path_buf(),
         };
         let state = store::paths::project_dir(&project).unwrap();
         assert!(state.starts_with(crate::util::home_dir().unwrap().join(".niles/state")));
         assert_eq!(state.file_name(), Some("@state"));
         let dir = store::workers_dir(&project).unwrap().join("w");
-        fs::create_dir_all(&dir).unwrap();
-        store::write_json(&dir.join("meta.json"), &serde_json::json!({
-            "id":"w", "skill":"worker", "agent":"codex", "created_at":"2026-01-01T00:00:00Z",
-            "project":project, "window":"api:w", "brief":dir.join("brief.md"), "launch":dir.join("launch.sh")
-        })).unwrap();
+        let created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        write_worker_meta(&project, "w", "api:w", created_at, None);
         let link = directory().unwrap().join(entry.name.as_str());
         let error = deregister(&entry).unwrap_err().to_string();
         assert!(error.contains("live workers"), "{error}");

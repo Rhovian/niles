@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::{skill, temp_dir};
 use std::{fs, os::unix::fs::symlink};
 
 fn write(root: &Utf8Path, name: &str, text: &str) -> Utf8PathBuf {
@@ -15,8 +16,8 @@ fn document(name: &str, description: &str, body: &str) -> String {
 
 #[test]
 fn roots_override_without_reading_shadowed_content() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = Utf8Path::from_path(tmp.path()).unwrap();
+    let tmp = temp_dir("skills-resolve");
+    let root: &Utf8Path = &tmp;
     let workspace = root.join("workspace");
     let name = "worker".parse().unwrap();
     let error = resolve(&name, &workspace, root).unwrap_err();
@@ -51,7 +52,7 @@ fn roots_override_without_reading_shadowed_content() {
 
 #[test]
 fn frontmatter_checks_are_content_safe_and_preserve_the_body() {
-    let name = "example".parse().unwrap();
+    let name = skill("example");
     let secret = "SECRET_FRONTMATTER";
     for text in [
         "body only".into(),
@@ -74,8 +75,8 @@ fn frontmatter_checks_are_content_safe_and_preserve_the_body() {
 
 #[test]
 fn workspace_components_reject_symlinks_but_global_links_resolve() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = Utf8Path::from_path(tmp.path()).unwrap();
+    let tmp = temp_dir("skills-resolve");
+    let root: &Utf8Path = &tmp;
     let target = write(root, "example", &document("example", "valid", "body"));
     for (workspace_origin, directory_link) in
         [(true, true), (true, false), (false, true), (false, false)]
@@ -95,7 +96,7 @@ fn workspace_components_reject_symlinks_but_global_links_resolve() {
             fs::create_dir(&dir).unwrap();
             symlink(&target, dir.join("SKILL.md")).unwrap();
         }
-        let result = resolve(&"example".parse().unwrap(), &workspace, &global);
+        let result = resolve(&skill("example"), &workspace, &global);
         if workspace_origin {
             assert!(format!("{:#}", result.unwrap_err()).contains(dir.as_str()));
         } else {
@@ -105,69 +106,56 @@ fn workspace_components_reject_symlinks_but_global_links_resolve() {
 }
 
 #[test]
-fn oversized_documents_are_rejected_before_parsing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = Utf8Path::from_path(tmp.path()).unwrap();
-    let path = write(root, "example", &document("example", "valid", "body"));
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_len(8 * 1024 * 1024 * 1024)
-        .unwrap();
-    let error = format!(
-        "{:#}",
-        resolve(&"example".parse().unwrap(), root, root)
-            .map(|_| ())
-            .expect_err("oversized document accepted")
-    );
-    assert!(
-        error.contains(path.as_str())
-            && error.contains("maximum is 131072")
-            && error.contains("8589934592")
-            && error.contains("read 131073"),
-        "{error}"
-    );
-}
-
-#[test]
-fn global_special_files_are_rejected_without_blocking() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = Utf8Path::from_path(tmp.path()).unwrap();
+fn oversized_and_special_files_are_rejected_without_blocking() {
+    let tmp = temp_dir("skills-invalid-files");
+    let root: &Utf8Path = &tmp;
     let path = root.join("skills/example/SKILL.md");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for fifo in [false, true] {
-        if fifo {
-            assert!(
-                std::process::Command::new("mkfifo")
-                    .arg(&path)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
-        } else {
-            fs::create_dir(&path).unwrap();
-        }
+    for (create, remove, expected) in [
+        (
+            (|path: &Utf8Path| fs::create_dir(path)) as fn(&Utf8Path) -> std::io::Result<()>,
+            (|path: &Utf8Path| fs::remove_dir(path)) as fn(&Utf8Path) -> std::io::Result<()>,
+            &["regular file"][..],
+        ),
+        (
+            |path| {
+                assert!(
+                    std::process::Command::new("mkfifo")
+                        .arg(path)
+                        .status()?
+                        .success()
+                );
+                Ok(())
+            },
+            |path| fs::remove_file(path),
+            &["regular file"][..],
+        ),
+        (
+            |path| {
+                fs::write(path, document("example", "valid", "body"))?;
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open(path)?
+                    .set_len(8 * 1024 * 1024 * 1024)
+            },
+            |path| fs::remove_file(path),
+            &["maximum is 131072", "8589934592", "read 131073"][..],
+        ),
+    ] {
+        create(&path).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let root = root.to_owned();
-        std::thread::spawn(move || {
-            tx.send(resolve(&"example".parse().unwrap(), &root, &root))
-                .unwrap()
-        });
+        std::thread::spawn(move || tx.send(resolve(&skill("example"), &root, &root)).unwrap());
         let error = format!(
             "{:#}",
             rx.recv_timeout(std::time::Duration::from_secs(3))
                 .expect("skill read blocked")
                 .unwrap_err()
         );
-        assert!(
-            error.contains(path.as_str()) && error.contains("regular file"),
-            "{error}"
-        );
-        if fifo {
-            fs::remove_file(&path).unwrap();
-        } else {
-            fs::remove_dir(&path).unwrap();
+        assert!(error.contains(path.as_str()), "{error}");
+        for needle in expected {
+            assert!(error.contains(needle), "{error}");
         }
+        remove(&path).unwrap();
     }
 }

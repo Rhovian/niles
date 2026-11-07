@@ -3,8 +3,6 @@ mod brief;
 mod foreground;
 pub(crate) mod log;
 mod startup;
-#[cfg(test)]
-mod test_support;
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};

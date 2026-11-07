@@ -7,7 +7,7 @@ fn never(_: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
 }
 use crate::test_support::{
     default_manifest::{load, manifest_path},
-    temp_test_path,
+    manifest_body, remove_workspace, temp_test_path,
 };
 
 fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
@@ -19,10 +19,7 @@ fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
 
 #[test]
 fn changing_standard_preserves_composition_and_other_tiers() {
-    let root = root(
-        "picker-preserve-tiers",
-        crate::test_support::manifest_body(),
-    );
+    let root = root("picker-preserve-tiers", manifest_body());
     let before = load(&root).unwrap().unwrap();
     let mut output = vec![];
     let saved = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
@@ -37,12 +34,12 @@ fn changing_standard_preserves_composition_and_other_tiers() {
     standard.primary = "codex:gpt-6.1-sol:high".into();
     assert_eq!(after, expected);
     assert_eq!(after, saved);
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn continue_quit_and_unchanged_save_write_nothing() {
-    let root = root("picker-no-write", crate::test_support::manifest_body());
+    let root = root("picker-no-write", manifest_body());
     let path = manifest_path(&root).unwrap();
     let before = fs::metadata(&path).unwrap().modified().unwrap();
     let manifest = load(&root).unwrap();
@@ -53,13 +50,10 @@ fn continue_quit_and_unchanged_save_write_nothing() {
     ] {
         let result = ensure(&root, None, true, &mut vec![], never, |_, _, _| Ok(choice)).unwrap();
         assert_eq!(&result, launched);
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            crate::test_support::manifest_body()
-        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), manifest_body());
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -73,15 +67,12 @@ fn missing_manifest_uses_setup_only_when_interactive() {
     let error = ensure(&root, None, false, &mut vec![], never, |_, _, _| panic!()).unwrap_err();
     let message = error.to_string();
     assert!(message.contains("select the project in `niles` in a terminal"));
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn no_terminal_uses_existing_manifest_and_prints_skills() {
-    let root = root(
-        "picker-noninteractive",
-        crate::test_support::manifest_body(),
-    );
+    let root = root("picker-noninteractive", manifest_body());
     let mut output = Vec::new();
     let result = ensure(&root, None, false, &mut output, never, |_, _, _| {
         panic!("opened picker without terminal")
@@ -89,12 +80,12 @@ fn no_terminal_uses_existing_manifest_and_prints_skills() {
     .unwrap();
     assert_eq!(result, load(&root).unwrap());
     assert!(String::from_utf8(output).unwrap().contains("standard"));
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn changes_are_applied_to_latest_manifest() {
-    let root = root("picker-reread", crate::test_support::manifest_body());
+    let root = root("picker-reread", manifest_body());
     let name = uuid::Uuid::new_v4().simple().to_string();
     let selection = format!("global:{name}").parse().unwrap();
     let named = crate::skills::global_dir()
@@ -102,12 +93,12 @@ fn changes_are_applied_to_latest_manifest() {
         .join("setups")
         .join(format!("{name}.yaml"));
     fs::create_dir_all(named.parent().unwrap()).unwrap();
-    fs::write(&named, crate::test_support::manifest_body()).unwrap();
+    fs::write(&named, manifest_body()).unwrap();
     let before = super::load(&root, Some(&selection)).unwrap().unwrap();
     fs::create_dir_all(root.join(".niles/setups")).unwrap();
     fs::write(
         root.join(".niles/setups").join(format!("{name}.yaml")),
-        crate::test_support::manifest_body(),
+        manifest_body(),
     )
     .unwrap();
     let mut latest = before.clone();
@@ -123,47 +114,41 @@ fn changes_are_applied_to_latest_manifest() {
     assert_eq!(result, latest);
 
     fs::remove_file(named).unwrap();
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
-fn malformed_manifest_fails_without_replacement_in_any_terminal() {
-    let body = "lead: [\n";
-    let root = root("picker-malformed", body);
-    for interactive in [true, false] {
-        let error = ensure(
-            &root,
-            None,
-            interactive,
-            &mut vec![],
-            never,
-            |_, _, _| panic!(),
-        )
+fn manifest_failures_do_not_open_replacement() {
+    for (label, body, interactive) in [
+        ("picker-malformed-terminal", Some("lead: [\n"), true),
+        ("picker-malformed-no-terminal", Some("lead: [\n"), false),
+        ("picker-read-failure", None, true),
+    ] {
+        let root = temp_test_path(label);
+        let path = manifest_path(&root).unwrap();
+        match body {
+            Some(body) => {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, body).unwrap();
+            }
+            None => fs::create_dir_all(&path).unwrap(),
+        }
+        let error = ensure(&root, None, interactive, &mut vec![], never, |_, _, _| {
+            panic!("opened picker for invalid manifest")
+        })
         .unwrap_err();
         assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
-        assert_eq!(
-            fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
-            body
-        );
+        match body {
+            Some(body) => assert_eq!(fs::read_to_string(&path).unwrap(), body),
+            None => assert!(error.to_string().contains("failed to read"), "{error:#}"),
+        }
+        remove_workspace(&root).unwrap();
     }
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn manifest_read_failures_do_not_open_replacement() {
-    let root = temp_test_path("picker-read-failure");
-    fs::create_dir_all(manifest_path(&root).unwrap()).unwrap();
-    let error = ensure(&root, None, true, &mut vec![], never, |_, _, _| {
-        panic!("opened picker for a read failure")
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("failed to read"), "{error:#}");
-    crate::test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn save_write_failure_stops_launch() {
-    let root = root("picker-write-failure", crate::test_support::manifest_body());
+    let root = root("picker-write-failure", manifest_body());
     let mut output = vec![];
     let error = ensure(&root, None, true, &mut output, never, |_, mut draft, _| {
         draft.tiers.standard.primary = "claude:sonnet:high".into();
@@ -173,12 +158,12 @@ fn save_write_failure_stops_launch() {
     })
     .unwrap_err();
     assert!(error.to_string().contains("manifest.yaml"), "{error:#}");
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn secondaries_new_tiers_and_entry_agent_persist_together() {
-    let root = root("picker-full-edit", crate::test_support::manifest_body());
+    let root = root("picker-full-edit", manifest_body());
     let mut before = load(&root).unwrap().unwrap();
     before.tiers.frontier = None;
     before.entry_agent = before.tiers.standard.primary.clone();
@@ -202,7 +187,7 @@ fn secondaries_new_tiers_and_entry_agent_persist_together() {
     empty.entry_agent = empty.tiers.standard.primary.clone();
     save_changes(&root, None, &draft, &empty).unwrap();
     assert_eq!(load(&root).unwrap().unwrap(), empty);
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -229,5 +214,5 @@ fn loading_deduplicates_primary_and_secondary_aliases_in_order() {
         fs::read_to_string(manifest_path(&root).unwrap()).unwrap(),
         body
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    remove_workspace(&root).unwrap();
 }

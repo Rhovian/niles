@@ -125,17 +125,18 @@ fn exit_code_label(code: Option<i32>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::write_executable_script;
     use super::*;
-    use crate::{agent_window::shell_quote, test_support::temp_test_path};
+    use crate::{
+        agent_window::shell_quote,
+        test_support::{temp_dir, write_executable_script},
+    };
 
     use camino::Utf8PathBuf;
     use std::fs;
 
     #[test]
     fn foreground_invocation_accepts_a_project_model_override() {
-        let root = temp_test_path("foreground-model-override");
-        fs::create_dir_all(&root).unwrap();
+        let root = temp_dir("foreground-model-override");
         fs::write(
             root.join("niles.yaml"),
             "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }",
@@ -155,12 +156,11 @@ mod tests {
                 .args
                 .contains(&"model_reasoning_effort=\"xhigh\"".to_owned())
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn run_foreground_process_applies_cwd_and_env() {
-        let root = temp_test_path("foreground-process");
+        let root = temp_dir("foreground-process");
         let workspace = root.join("workspace");
         fs::create_dir_all(&workspace).unwrap();
         let script = root.join("manager");
@@ -196,14 +196,11 @@ mod tests {
             fs::read_to_string(env_log).unwrap().trim_end(),
             "from-invocation"
         );
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn run_foreground_process_returns_nonzero_child_status() {
-        let root = temp_test_path("foreground-nonzero-status");
-        fs::create_dir_all(&root).unwrap();
+        let root = temp_dir("foreground-nonzero-status");
         let script = root.join("manager");
         write_executable_script(&script, "#!/bin/sh\nexit 42\n");
 
@@ -213,8 +210,6 @@ mod tests {
                 .code(),
             Some(42)
         );
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

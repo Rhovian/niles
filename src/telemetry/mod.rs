@@ -317,38 +317,28 @@ mod tests {
     fn claude_main_lines_classify_both_states() {
         let assistant = r#"{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"id":"a","model":"opus","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
         let user = r#"{"type":"user","timestamp":"2026-10-01T00:01:00Z","message":{"role":"user","content":"next"}}"#;
-        assert_eq!(
-            state(claude::claude_session(&format!("{assistant}\n"), &[])),
-            Some(SessionState::Waiting)
-        );
-        assert_eq!(
-            state(claude::claude_session(
-                &format!("{assistant}\n{user}\n"),
-                &[]
-            )),
-            Some(SessionState::Working)
-        );
         let interrupted = r#"{"type":"user","timestamp":"2026-10-01T00:02:00Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
         let error = assistant.replace("end_turn", "stop_sequence");
         let tool_result = interrupted.replace("\"type\":\"text\"", "\"type\":\"tool_result\"");
-        assert_eq!(
-            state(claude::claude_session(
-                &format!("{assistant}\n{interrupted}\n"),
-                &[]
-            )),
-            Some(SessionState::Waiting)
-        );
-        assert_eq!(
-            state(claude::claude_session(&format!("{error}\n"), &[])),
-            Some(SessionState::Waiting)
-        );
-        assert_eq!(
-            state(claude::claude_session(
-                &format!("{assistant}\n{tool_result}\n"),
-                &[]
-            )),
-            Some(SessionState::Working)
-        );
+        for (body, expected) in [
+            (format!("{assistant}\n"), SessionState::Waiting),
+            (format!("{assistant}\n{user}\n"), SessionState::Working),
+            (
+                format!("{assistant}\n{interrupted}\n"),
+                SessionState::Waiting,
+            ),
+            (format!("{error}\n"), SessionState::Waiting),
+            (
+                format!("{assistant}\n{tool_result}\n"),
+                SessionState::Working,
+            ),
+        ] {
+            assert_eq!(
+                state(claude::claude_session(&body, &[])),
+                Some(expected),
+                "{body}"
+            );
+        }
     }
 
     #[test]
@@ -409,14 +399,14 @@ mod tests {
         let count = r#"{"type":"event_msg","timestamp":"2026-10-01T00:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":1,"cached_input_tokens":0,"reasoning_output_tokens":0}}}}"#;
         let started = r#"{"type":"event_msg","timestamp":"2026-10-01T00:01:00Z","payload":{"type":"task_started"}}"#;
         let complete = r#"{"type":"event_msg","timestamp":"2026-10-01T00:02:00Z","payload":{"type":"task_complete"}}"#;
-        let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n")).unwrap();
-        assert_eq!(
+        let codex_state = |lines: &[CodexLine]| {
             state(Some(SessionRecord {
-                turn: codex::codex_activity(&lines),
-                usage: None
-            })),
-            Some(SessionState::Working)
-        );
+                turn: codex::codex_activity(lines),
+                usage: None,
+            }))
+        };
+        let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n")).unwrap();
+        assert_eq!(codex_state(&lines), Some(SessionState::Working));
         let lines = parse_lines::<CodexLine>(&format!("{count}\n{started}\n{complete}\n")).unwrap();
         assert_eq!(
             codex::codex_activity(&lines)
@@ -426,12 +416,6 @@ mod tests {
                 .to_rfc3339(),
             "2026-10-01T00:01:00+00:00"
         );
-        assert_eq!(
-            state(Some(SessionRecord {
-                turn: codex::codex_activity(&lines),
-                usage: None
-            })),
-            Some(SessionState::Waiting)
-        );
+        assert_eq!(codex_state(&lines), Some(SessionState::Waiting));
     }
 }

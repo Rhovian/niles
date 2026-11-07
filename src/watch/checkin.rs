@@ -171,7 +171,7 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     use super::*;
-    use crate::test_support::{at, temp_test_path};
+    use crate::test_support::{assert_err_contains, at, temp_dir};
 
     #[test]
     fn working_holds_and_waiting_or_unknown_fires() {
@@ -188,61 +188,41 @@ mod tests {
         assert!(checkin.held(at(1_300), None).is_none());
     }
 
-    /// The re-check schedule: each fire arms at twice the delay that just fired, so the gap grows
-    /// instead of the nudge repeating.
     #[test]
-    fn arming_keeps_the_log_length_and_doubles_each_fire_up_to_the_cap() {
-        let now = at(1_000);
-        let mut armed = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 42, now);
-
-        assert_eq!(armed.deadline, at(1_300));
-        assert_eq!(armed.delay, 300);
-        assert_eq!(armed.armed_len, 42);
-
-        // deadline, delay, silence so far: 5m -> 10m -> 20m -> 40m -> 60m, then 60m forever.
-        for (deadline, delay) in [
-            (1_900, 600),
-            (3_100, 1_200),
-            (5_500, 2_400),
-            (9_100, 3_600),
-            (12_700, 3_600),
+    fn rearming_keeps_log_length_and_follows_the_schedule() {
+        for (first_delay, recheck, schedule) in [
+            (
+                300,
+                Recheck::Backoff,
+                &[
+                    (1_300, 300),
+                    (1_900, 600),
+                    (3_100, 1_200),
+                    (5_500, 2_400),
+                    (9_100, 3_600),
+                    (12_700, 3_600),
+                ][..],
+            ),
+            (
+                7_200,
+                Recheck::Backoff,
+                &[(8_200, 7_200), (15_400, 7_200)][..],
+            ),
+            (
+                300,
+                Recheck::Fixed(Duration::from_secs(600)),
+                &[(1_300, 300), (1_900, 600), (2_500, 600)][..],
+            ),
         ] {
-            let fired = armed;
-            armed = fired.rearmed(fired.deadline);
-
-            assert_eq!(armed.deadline, at(deadline), "{delay}s arm");
-            assert_eq!(armed.delay, delay);
+            let mut armed =
+                Checkin::armed(Duration::from_secs(first_delay), recheck, 42, at(1_000));
+            for &(deadline, delay) in schedule {
+                assert_eq!(armed.deadline, at(deadline));
+                assert_eq!(armed.delay, delay);
+                assert_eq!(armed.armed_len, 42);
+                armed = armed.rearmed(armed.deadline);
+            }
         }
-    }
-
-    /// A first delay already past the cap — an explicit `--checkin 2h` — is not shortened by it.
-    /// The cap bounds how far the gap grows; it does not re-write the delay the lead asked for.
-    #[test]
-    fn the_cap_never_shortens_a_delay_longer_than_it() {
-        let armed = Checkin::armed(
-            Duration::from_secs(2 * 60 * 60),
-            Recheck::Backoff,
-            0,
-            at(1_000),
-        );
-
-        assert_eq!(armed.rearmed(at(8_200)).delay, 2 * 60 * 60);
-    }
-
-    /// `recheck: 10m` in the manifest: the same delay after every fire.
-    #[test]
-    fn a_fixed_recheck_arms_the_same_delay_every_fire() {
-        let armed = Checkin::armed(
-            Duration::from_secs(300),
-            Recheck::Fixed(Duration::from_secs(600)),
-            0,
-            at(1_000),
-        );
-
-        let fired = armed.rearmed(at(1_300));
-        assert_eq!(fired.deadline, at(1_900));
-        assert_eq!(fired.delay, 600);
-        assert_eq!(fired.rearmed(at(1_900)).deadline, at(2_500));
     }
 
     #[test]
@@ -260,8 +240,7 @@ mod tests {
 
     #[test]
     fn arm_state_round_trips_through_the_worker_directory() {
-        let dir = temp_test_path("round-trip");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir("round-trip");
         let armed = Checkin::armed(
             Duration::from_secs(90),
             Recheck::Fixed(Duration::from_secs(600)),
@@ -287,14 +266,11 @@ mod tests {
         assert_eq!(Checkin::read(&dir).unwrap(), None);
         // Nothing to delete is a disarm that already happened, not a failure.
         assert!(!Checkin::disarm(&dir).unwrap());
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn a_write_replaces_the_file_whole_and_leaves_no_staging_file() {
-        let dir = temp_test_path("staging");
-        fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir("staging");
         Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 3, at(1_000))
             .write(&dir)
             .unwrap();
@@ -317,8 +293,6 @@ mod tests {
         // A staging file a crashed write left behind is not arm state, and the real file still reads.
         fs::write(dir.join(STAGING_FILE), "deadline=half-a-write").unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), Some(replacement));
-
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -335,14 +309,10 @@ mod tests {
                 "re-check",
             ),
         ] {
-            let dir = temp_test_path(label);
-            fs::create_dir_all(&dir).unwrap();
+            let dir = temp_dir(label);
             fs::write(dir.join(CHECKIN_FILE), body).unwrap();
 
-            let err = Checkin::read(&dir).unwrap_err();
-
-            assert!(err.to_string().contains(expected), "{err}");
-            fs::remove_dir_all(&dir).unwrap();
+            assert_err_contains(Checkin::read(&dir), expected);
         }
     }
 }
