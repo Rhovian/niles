@@ -8,6 +8,9 @@ use std::{
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
+mod process;
+pub(crate) use process::write_executable as write_executable_script;
+
 pub(crate) fn skill(name: &str) -> crate::skills::SkillName {
     name.parse().unwrap()
 }
@@ -95,12 +98,6 @@ pub(crate) fn render(w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame<'_>))
         .iter()
         .map(|cell| cell.symbol())
         .collect()
-}
-
-pub(crate) fn write_executable_script(path: &Utf8Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::ProjectConfig> {

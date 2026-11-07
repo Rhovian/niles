@@ -88,12 +88,15 @@ fn doctor_reports_missing_and_unavailable_builtin_versions() {
         .output()
         .unwrap();
 
-    assert_command_success("doctor unavailable", &output);
+    assert_success_contains(
+        "doctor unavailable",
+        &output,
+        &format!(
+            "agent claude: {} — version unavailable: version failed",
+            env.bin.join("claude").display()
+        ),
+    );
     let stdout = stdout_of(&output);
-    assert!(stdout.contains(&format!(
-        "agent claude: {} — version unavailable: version failed",
-        env.bin.join("claude").display()
-    )));
     assert!(stdout.contains("agent codex: not found on PATH"));
     assert!(!stdout.contains("agent lead:"));
 }
