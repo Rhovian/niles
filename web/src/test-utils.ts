@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/preact';
 import type { Project, Session } from './api';
+import type { Host } from './hosts';
 
 export class Stream extends EventTarget {
   static opened: Stream[] = [];
@@ -28,4 +29,26 @@ export function serveLocal({ projects, sessions }: { projects: Project[]; sessio
     : typeof sessions === 'function' ? sessions() : Promise.resolve(json({ api_version: 1, sessions })));
   vi.stubGlobal('fetch', fetcher);
   return fetcher;
+}
+
+type HostResponse = Error | Response | Promise<Response> | ((options?: RequestInit) => Response | Promise<Response>);
+export function fakeHosts({ hosts, defaults }: { hosts: Host[] | null; defaults: Record<string, unknown> }) {
+  const responses = new Map<string, HostResponse>();
+  const failures = new Map<string, HostResponse>();
+  const fetcher = vi.fn<typeof fetch>(async (input, options) => {
+    const url = String(input);
+    const host = hosts?.find(host => url.startsWith(`/h/${host.id}/`));
+    const response = responses.get(url) ?? (host && failures.get(host.id));
+    if (response instanceof Error) throw response;
+    if (response) return typeof response === 'function' ? response(options) : response;
+    if (url === '/hosts.json') return hosts ? json({ hosts }) : { status: 404 } as Response;
+    if (options?.method) return json({});
+    const endpoint = host ? url.slice(`/h/${host.id}`.length) : url;
+    if (!(endpoint in defaults)) throw new Error(`Unexpected request: ${url}`);
+    const body = defaults[endpoint];
+    return json(typeof body === 'function' ? body() : body);
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const failHost = (id: string, failure?: HostResponse) => failure ? failures.set(id, failure) : failures.delete(id);
+  return { fetcher, responses, failHost };
 }
