@@ -1,9 +1,10 @@
+import { deferred, fakeHosts, json, openMenu } from './test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { Telemetry } from './Telemetry';
 import { App } from './App';
 import { BUCKET_MS, telemetrySchema } from './telemetry-data';
-import { type Host, hostPrefix } from './hosts';
+import type { Host } from './hosts';
 
 const hosts = [{ id: 'desk', name: 'Desktop' }, { id: 'laptop', name: 'Laptop' }];
 const collected_at = new Date().toISOString();
@@ -12,40 +13,26 @@ const snapshot = { api_version: 1, collected_at, sessions: [{
   project: 'demo', id: 'same-id', entry: true, family: 'pi', model: 'test-model',
   created_at: collected_at, closed_at: null, buckets: { [bucket]: 42 },
 }] };
-const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response;
-type Override = Error | Response | Promise<Response> | ((options?: RequestInit) => Response | Promise<Response>);
-let failures: Map<string, Override>;
-let fetcher: ReturnType<typeof vi.fn<typeof fetch>>;
+let server: ReturnType<typeof fakeHosts>;
 const findRegion = async (name: string) => within(await screen.findByRole('region', { name: `${name} telemetry` }));
 function serve(configured: Host[] | null, body: unknown | (() => unknown)) {
-  failures.set('/hosts.json', configured ? json({ hosts: configured }) : { status: 404 } as Response);
-  for (const host of configured ?? [{ id: '', name: 'This host' }]) {
-    failures.set(`${hostPrefix(host)}/api/telemetry`, () => json(typeof body === 'function' ? body() : body));
-  }
+  server = fakeHosts({ hosts: configured, defaults: { '/api/telemetry': body } });
 }
 beforeEach(() => {
-  localStorage.clear(); failures = new Map();
-  fetcher = vi.fn(async (input, options) => {
-    const url = String(input), override = failures.get(url);
-    if (override instanceof Error) throw override;
-    if (override) return typeof override === 'function' ? override(options) : override;
-    if (url === '/hosts.json') return json({ hosts });
-    if (url.endsWith('/api/projects')) return json({ api_version: 1, projects: [] });
-    if (url.endsWith('/api/sessions')) return json({ api_version: 1, sessions: [] });
-    return json(snapshot);
-  });
-  vi.stubGlobal('fetch', fetcher);
+  server = fakeHosts({ hosts, defaults: {
+    '/api/projects': { api_version: 1, projects: [] }, '/api/sessions': { api_version: 1, sessions: [] }, '/api/telemetry': snapshot,
+  } });
 });
 it('fetches machines concurrently, isolates colliding sessions and opens from the PWA menu', async () => {
-  let finish!: (response: Response) => void;
-  failures.set('/h/laptop/api/telemetry', new Promise(done => { finish = done; }));
+  const { promise, resolve: finish } = deferred<Response>();
+  server.responses.set('/h/laptop/api/telemetry', promise);
   render(<App />);
-  fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+  openMenu();
   fireEvent.click(screen.getByRole('button', { name: 'Telemetry', exact: true }));
   const desktop = await findRegion('Desktop'), laptop = await findRegion('Laptop');
   await desktop.findByText('42 tokens');
   expect(laptop.getByText('Connecting…')).toBeDefined();
-  expect(fetcher).toHaveBeenCalledWith('/h/laptop/api/telemetry', expect.objectContaining({ cache: 'no-store' }));
+  expect(server.fetcher).toHaveBeenCalledWith('/h/laptop/api/telemetry', expect.objectContaining({ cache: 'no-store' }));
   await act(async () => { finish(json(snapshot)); });
   await laptop.findByText('42 tokens');
   expect(desktop.getByText('demo / same-id')).toBeDefined();
@@ -55,23 +42,23 @@ it('fetches machines concurrently, isolates colliding sessions and opens from th
 it('retains last good data and collection time across remount, failure and recovery', async () => {
   const app = render(<Telemetry />);
   await (await findRegion('Laptop')).findByText('42 tokens');
-  app.unmount(); failures.set('/h/laptop/api/telemetry', { ok: false, status: 502 } as Response);
+  app.unmount(); server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 502 } as Response);
   render(<Telemetry />);
   const laptop = await findRegion('Laptop');
   await laptop.findByText('Asleep or unreachable');
   expect(laptop.getByText('42 tokens')).toBeDefined();
   expect(laptop.getByText(new Date(collected_at).toLocaleString(), { selector: 'time' }).getAttribute('datetime')).toBe(collected_at);
-  failures.set('/h/laptop/api/telemetry', { ok: false, status: 500 } as Response);
+  server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 500 } as Response);
   fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
   expect((await laptop.findByRole('alert')).textContent).toContain('500');
   expect(laptop.getByText('42 tokens')).toBeDefined();
   expect(JSON.parse(localStorage.getItem('niles.telemetry.v1:laptop')!)).toEqual(snapshot);
-  failures.clear(); fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
+  server.responses.clear(); fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
   await laptop.findByText('Connected');
   expect(laptop.queryByRole('alert')).toBeNull();
 });
 it('keeps an HTTP 500 host visible without cached data', async () => {
-  failures.set('/h/laptop/api/telemetry', { ok: false, status: 500 } as Response);
+  server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 500 } as Response);
   render(<Telemetry />);
   expect((await (await findRegion('Laptop')).findByRole('alert')).textContent).toContain('500');
   expect((await findRegion('Laptop')).getByText('No cached usage.')).toBeDefined();
@@ -81,13 +68,13 @@ it.each([
   [{ api_version: 99, sessions: 'future schema' }, 'Update the web app. API version 99'],
   [{ ...snapshot, sessions: 'invalid' }, 'Failed:'],
 ])('distinguishes incompatible versions from malformed responses (%j)', async (data, message) => {
-  failures.set('/h/laptop/api/telemetry', json(data));
+  server.responses.set('/h/laptop/api/telemetry', json(data));
   render(<Telemetry />);
   expect((await (await findRegion('Laptop')).findByRole('alert')).textContent).toContain(message);
   expect(localStorage.getItem('niles.telemetry.v1:laptop')).toBeNull();
 });
 it('times out a hung host without blocking another host', async () => {
-  failures.set('/h/laptop/api/telemetry', options => new Promise((_, reject) =>
+  server.responses.set('/h/laptop/api/telemetry', options => new Promise((_, reject) =>
     options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason))));
   const timeout = new AbortController();
   vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
@@ -96,10 +83,10 @@ it('times out a hung host without blocking another host', async () => {
   await (await findRegion('Laptop')).findByText('Asleep or unreachable');
 });
 it('ignores a cancelled refresh and uses the newest response', async () => {
-  let finish!: (response: Response) => void;
-  failures.set('/h/desk/api/telemetry', new Promise(done => { finish = done; }));
+  const { promise, resolve: finish } = deferred<Response>();
+  server.responses.set('/h/desk/api/telemetry', promise);
   render(<Telemetry />); await (await findRegion('Laptop')).findByText('42 tokens');
-  failures.delete('/h/desk/api/telemetry');
+  server.responses.delete('/h/desk/api/telemetry');
   fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
   const desktop = await findRegion('Desktop');
   await desktop.findByText('42 tokens');
@@ -125,8 +112,8 @@ it('filters time buckets and rejects unaligned buckets at the boundary', async (
 it('uses the local backend only when the manifest is absent', async () => {
   serve(null, snapshot);
   render(<Telemetry />); await (await findRegion('This host')).findByText('42 tokens');
-  expect(fetcher).toHaveBeenCalledWith('/api/telemetry', expect.objectContaining({ cache: 'no-store' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  expect(server.fetcher).toHaveBeenCalledWith('/api/telemetry', expect.objectContaining({ cache: 'no-store' }));
+  await waitFor(() => expect(server.fetcher).toHaveBeenCalledTimes(2));
 });
 it('replaces incompatible and malformed cached snapshots from healthy hosts', async () => {
   localStorage.setItem('niles.telemetry.v1:desk', JSON.stringify({ ...snapshot, api_version: 99 }));

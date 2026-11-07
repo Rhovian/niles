@@ -1,16 +1,16 @@
-import { Stream, json, openMenu, deferred } from './test-utils';
+import { Stream, json, openMenu, deferred, fakeHosts } from './test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { App } from './App';
-import { configuredHosts, hostsSchema, qualified } from './hosts';
+import { configuredHosts, hostsSchema, qualified, HOST_TIMEOUT_MS, hostFailure } from './hosts';
 import { API_NAVIGATION_PATH } from './shell';
+import { ApiError } from './api';
 
 const hosts = [{ id: 'desk', name: 'Desktop' }, { id: 'laptop', name: 'Laptop' }];
 const session = { id: 'same/id', project: 'same project', agent: { family: 'codex', entry_skill: 'lead' }, waiting: false, worker_count: 1 };
 const project = { name: session.project, state: 'running', workers: [{ id: 'same/worker', skill: 'worker', lost: false }] };
 
-let failures: Map<string, Response | Error>;
-let fetcher: ReturnType<typeof vi.fn<typeof fetch>>;
+let server: ReturnType<typeof fakeHosts>;
 const hostMenu = (name: string) => within(screen.getByRole('region', { name }));
 async function openLead(name: string) {
   openMenu();
@@ -20,18 +20,9 @@ async function openLead(name: string) {
   await screen.findByRole('region', { name: `Chat with ${project.name}` });
 }
 beforeEach(() => {
-  failures = new Map();
-  fetcher = vi.fn(async (input, options) => {
-    const url = String(input);
-    if (url === '/hosts.json') return json({ hosts });
-    const host = hosts.find(host => url.startsWith(`/h/${host.id}/`))!;
-    const failure = failures.get(host?.id);
-    if (failure instanceof Error) throw failure;
-    if (failure) return failure;
-    if (options?.method) return json({});
-    return json(url.endsWith('/projects') ? { api_version: 1, projects: [project] } : { api_version: 1, sessions: [session] });
-  });
-  vi.stubGlobal('fetch', fetcher);
+  server = fakeHosts({ hosts, defaults: {
+    '/api/projects': { api_version: 1, projects: [project] }, '/api/sessions': { api_version: 1, sessions: [session] },
+  } });
 });
 it('merges colliding projects, qualifies selection and routes chat, sends and status by host', async () => {
   const app = render(<App />);
@@ -52,7 +43,7 @@ it('merges colliding projects, qualifies selection and routes chat, sends and st
   fireEvent.input(screen.getByLabelText('Message agent'), { target: { value: 'hello laptop' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false));
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/h/laptop/api/sessions/same%2Fid/message', expect.objectContaining({ method: 'POST' })));
+  await waitFor(() => expect(server.fetcher).toHaveBeenCalledWith('/h/laptop/api/sessions/same%2Fid/message', expect.objectContaining({ method: 'POST' })));
   second.emit('status', { ...session, agent: { ...session.agent, family: 'laptop-only' } });
   await screen.findByText('laptop-only');
   expect(Stream.opened).toHaveLength(2);
@@ -67,66 +58,60 @@ it('routes worker chats and lifecycle actions without leaking qualified IDs to s
   const menu = hostMenu('Laptop');
   fireEvent.click(menu.getByRole('button', { name: project.name, exact: true }));
   fireEvent.click(menu.getByRole('button', { name: 'Stop same project' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/h/laptop/api/projects/same%20project/session', { method: 'DELETE', cache: 'no-store' }));
+  await waitFor(() => expect(server.fetcher).toHaveBeenCalledWith('/h/laptop/api/projects/same%20project/session', { method: 'DELETE', cache: 'no-store' }));
   fireEvent.click(menu.getByRole('button', { name: 'same/worker', exact: true }));
   fireEvent.click(menu.getByRole('button', { name: 'Close same/worker' }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/h/laptop/api/projects/same%20project/workers/same%2Fworker', { method: 'DELETE', cache: 'no-store' }));
+  await waitFor(() => expect(server.fetcher).toHaveBeenCalledWith('/h/laptop/api/projects/same%20project/workers/same%2Fworker', { method: 'DELETE', cache: 'no-store' }));
   fireEvent.click(menu.getByRole('button', { name: 'Open same/worker chat' }));
   await waitFor(() => expect(Stream.opened.at(-1)?.url).toBe('/h/laptop/api/projects/same%20project/workers/same%2Fworker/events'));
 });
-it.each([new TypeError('Network down'), { ok: false, status: 502 }, { ok: false, status: 503 }, { ok: false, status: 504 }])('isolates an unreachable host and recovers on focus (%s)', async failure => {
-  failures.set('laptop', failure as Response | Error);
+it('isolates an unreachable host and recovers on focus', async () => {
+  server.failHost('laptop', new TypeError('Network down'));
   render(<App />); await screen.findByText(/Laptop: Asleep/); openMenu();
   const wake = hostMenu('Laptop').getByRole('button', { name: 'Wake Laptop' });
   expect(wake.hasAttribute('disabled')).toBe(false);
   expect(hostMenu('Desktop').getByRole('button', { name: project.name, exact: true })).toBeDefined();
-  failures.clear(); fireEvent(window, new Event('focus'));
+  server.failHost('laptop'); fireEvent(window, new Event('focus'));
   await hostMenu('Laptop').findByRole('button', { name: project.name, exact: true });
   expect(screen.queryByText(/Laptop: Asleep/)).toBeNull();
 });
-it.each([401, 403, 500])('reports HTTP %s as an error rather than asleep', async status => {
-  failures.set('laptop', { ok: false, status } as Response);
+it.each([
+  ['projects', { api_version: 99, projects: 'new schema' }, 'Laptop: Update the web app. API version 99'],
+  ['sessions', { api_version: 99, sessions: 'new schema' }, 'Laptop: Update the web app. API version 99'],
+  ['sessions', { api_version: 1, sessions: 'invalid' }, 'Laptop: Invalid API response'],
+] as const)('isolates incompatible or malformed %s payloads (%j)', async (endpoint, data, message) => {
+  server.responses.set(`/h/laptop/api/${endpoint}`, json(data));
   render(<App />);
-  const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain(String(status));
-  expect(alert.textContent).not.toContain('Asleep');
-});
-it.each(['projects', 'sessions'])('checks the %s API version per host before parsing incompatible payloads', async endpoint => {
-  const implementation = fetcher.getMockImplementation()!;
-  fetcher.mockImplementation((url, options) => String(url) === `/h/laptop/api/${endpoint}`
-    ? Promise.resolve(json({ api_version: 99, projects: 'new schema' })) : implementation(url, options));
-  render(<App />); await screen.findByText(/Laptop: Update the web app. API version 99/);
+  expect((await screen.findByRole('alert')).textContent).toContain(message);
   await openLead('Desktop');
   expect(Stream.opened.at(-1)?.url).toContain('/h/desk/');
 });
 it.each([json({ api_version: 99 }), new TypeError('Network down')])('clears stale chat when its host becomes unavailable (%s)', async failure => {
   render(<App />); await screen.findByText('Open projects on the sidebar.'); await openLead('Laptop');
   const stream = Stream.opened.at(-1)!;
-  failures.set('laptop', failure); fireEvent(window, new Event('focus'));
+  server.failHost('laptop', failure); fireEvent(window, new Event('focus'));
   await screen.findByRole('alert');
   expect(screen.queryByLabelText('Message agent')).toBeNull();
   await waitFor(() => expect(stream.close).toHaveBeenCalled());
 });
 it('does not let a slow host block another host or overlap its refresh', async () => {
-  const implementation = fetcher.getMockImplementation()!;
   const { promise, resolve: finish } = deferred<Response>();
-  fetcher.mockImplementation((url, options) => String(url) === '/h/laptop/api/sessions'
-    ? promise : implementation(url, options));
+  server.responses.set('/h/laptop/api/sessions', promise);
   render(<App />); await screen.findByText('Open projects on the sidebar.'); await openLead('Desktop');
   fireEvent(window, new Event('focus'));
-  expect(fetcher.mock.calls.filter(([url]) => url === '/h/laptop/api/sessions')).toHaveLength(1);
+  expect(server.fetcher.mock.calls.filter(([url]) => url === '/h/laptop/api/sessions')).toHaveLength(1);
   await act(async () => { finish(json({ api_version: 1, sessions: [session] })); });
 });
 it.each([{ hosts: [{ id: '../evil', name: 'Bad' }] }, { hosts: [hosts[0], hosts[0]] }, { hosts: [{ id: 'desk', name: '' }] }, { hosts: [] }, {}])('rejects malformed manifests without making host requests (%j)', async manifest => {
-  fetcher.mockResolvedValue(json(manifest));
+  server.fetcher.mockResolvedValue(json(manifest));
   render(<App />); await screen.findByRole('alert');
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(server.fetcher).toHaveBeenCalledTimes(1);
   expect(hostsSchema.safeParse(manifest).success).toBe(false);
 });
 it('only falls back to local mode on a manifest 404', async () => {
-  fetcher.mockResolvedValue({ status: 404 } as Response);
+  server.fetcher.mockResolvedValue({ status: 404 } as Response);
   expect(await configuredHosts(new AbortController().signal)).toEqual([{ id: '', name: 'This host' }]);
-  fetcher.mockResolvedValue({ status: 403 } as Response);
+  server.fetcher.mockResolvedValue({ status: 403 } as Response);
   await expect(configuredHosts(new AbortController().signal)).rejects.toThrow('403');
   expect(qualified(hosts[0], 'a/b')).not.toBe(qualified(hosts[1], 'a/b'));
   for (const path of ['/h/desk/api/sessions', '/hosts.json']) expect(API_NAVIGATION_PATH.test(path)).toBe(true);
@@ -140,12 +125,10 @@ it('opens a qualified session link on the correct host', async () => {
 });
 it('times out a hung host as asleep while keeping other hosts usable', async () => {
   const timer = vi.spyOn(globalThis, 'setTimeout');
-  const implementation = fetcher.getMockImplementation()!;
-  fetcher.mockImplementation((url, options) => String(url).startsWith('/h/laptop/')
-    ? new Promise((_, reject) => options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason)))
-    : implementation(url, options));
+  server.failHost('laptop', options => new Promise((_, reject) =>
+    options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason))));
   render(<App />); await screen.findByText('Open projects on the sidebar.');
-  const timeouts = timer.mock.calls.filter(([, delay]) => delay === 8_000);
+  const timeouts = timer.mock.calls.filter(([, delay]) => delay === HOST_TIMEOUT_MS);
   expect(timeouts).toHaveLength(2);
   await act(async () => { (timeouts[1][0] as () => void)(); });
   await screen.findByText(/Laptop: Asleep/);
@@ -154,20 +137,19 @@ it('times out a hung host as asleep while keeping other hosts usable', async () 
 });
 it('preserves newer SSE status only on its own host during concurrent refresh', async () => {
   render(<App />); await screen.findByText('Open projects on the sidebar.'); await openLead('Laptop');
-  const implementation = fetcher.getMockImplementation()!;
   const { promise, resolve: finish } = deferred<Response>();
-  fetcher.mockImplementation((url, options) => String(url) === '/h/laptop/api/sessions'
-    ? promise : implementation(url, options));
+  server.responses.set('/h/laptop/api/sessions', promise);
   fireEvent(window, new Event('focus'));
   Stream.opened.at(-1)!.emit('status', { ...session, agent: { ...session.agent, family: 'new-status' } });
   await screen.findByText('new-status');
   await act(async () => { finish(json({ api_version: 1, sessions: [session] })); });
   expect(screen.getByText('new-status')).toBeDefined();
 });
-it('reports malformed compatible host data without blocking the healthy host', async () => {
-  failures.set('laptop', json({ api_version: 1, sessions: 'invalid', projects: [] }));
-  render(<App />);
-  const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain('Laptop: Invalid API response');
-  await openLead('Desktop');
+it.each([
+  [new TypeError('Network down'), { state: 'asleep' }],
+  [new DOMException('timed out', 'TimeoutError'), { state: 'asleep' }],
+  ...[502, 503, 504].map(status => [new ApiError(status), { state: 'asleep' }]),
+  ...[401, 403, 500].map(status => [new ApiError(status), { state: 'error', error: `API request failed (${status})` }]),
+])('classifies host failure %s', (cause, expected) => {
+  expect(hostFailure(cause)).toEqual(expected);
 });
