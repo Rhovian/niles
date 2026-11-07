@@ -36,9 +36,20 @@ pub(crate) fn install_home_bindings() -> Result<()> {
         "-E".to_owned(),
         popup,
     ];
-    for key in ["[", "]", ";", "'"] {
+    let toggle = format!(
+        "if-shell -F '#{{==:#{{{VIEW_OPTION}}},1}}' {} {}",
+        shell_quote(&format!("select-pane -t '{}'", explorer_pane())),
+        shell_quote(&format!(
+            "select-pane -t '={HOME_SESSION}:{{start}}.{{right}}'"
+        )),
+    );
+    for key in ["[", "]", ";", "'", "\\"] {
         let meta = format!("M-{key}");
-        let send = format!("send-keys -t '{}' {}", explorer_pane(), shell_quote(key));
+        let send = if key == "\\" {
+            toggle.clone()
+        } else {
+            format!("send-keys -t '{}' {}", explorer_pane(), shell_quote(key))
+        };
         args.extend([
             ";".to_owned(),
             "bind-key".to_owned(),
@@ -98,6 +109,7 @@ pub(crate) fn open_home(cwd: &Utf8Path) -> Result<SessionName> {
 /// Draws the fleet header across the top of `home`, ticking every `refresh`, with a rule under it
 /// drawn by the panes' top borders.
 pub(crate) fn configure_home(home: &SessionName, theme: &Theme, refresh: Duration) -> Result<()> {
+    configure_view_prefix(home)?;
     let header = format!(
         "{}#[align=right]poll #{{status-interval}}s · %H:%M:%S %Z",
         session::status_command("home")?
@@ -118,6 +130,38 @@ pub(crate) fn configure_home(home: &SessionName, theme: &Theme, refresh: Duratio
             ("pane-active-border-style", rule_style.as_str()),
         ],
     )
+}
+
+fn configure_view_prefix(home: &SessionName) -> Result<()> {
+    let target = TmuxTarget::session(home);
+    let quoted = shell_quote(target.as_str());
+    let mut restore = Vec::new();
+    let mut disable = Vec::new();
+    for option in ["prefix", "prefix2"] {
+        restore.push(format!("set-option -u -t {quoted} {option}"));
+        disable.push(format!("set-option -t {quoted} {option} None"));
+    }
+    let update = format!(
+        "if-shell -F '#{{==:#{{{VIEW_OPTION}}},1}}' {} {}",
+        shell_quote(&disable.join(" ; ")),
+        shell_quote(&restore.join(" ; ")),
+    );
+    // Active-pane changes cover mouse selection and select-pane without global focus-events.
+    // tmux owns the routing: https://github.com/tmux/tmux/blob/3.8/tmux.1 (HOOKS, prefix).
+    let explorer = explorer_pane();
+    for (hook, scope) in [
+        ("window-pane-changed", explorer.as_str()),
+        ("session-window-changed", target.as_str()),
+    ] {
+        run(&["set-hook", "-t", scope, hook, &update])?;
+    }
+    run(&[
+        "set-hook",
+        "-R",
+        "-t",
+        target.as_str(),
+        "session-window-changed",
+    ])
 }
 
 /// The size of the client about to show the home session. A detached session otherwise starts at
@@ -197,7 +241,18 @@ pub(crate) fn show_in_view(explorer: &TmuxTarget, window: &WindowTarget) -> Resu
             id.to_owned()
         }
     };
-    run(&["select-pane", "-t", &view])
+    // Splitting selects the view before it is tagged; selecting it again fires no change hook.
+    run(&[
+        "select-pane",
+        "-t",
+        &view,
+        ";",
+        "set-hook",
+        "-R",
+        "-t",
+        &view,
+        "window-pane-changed",
+    ])
 }
 
 /// Closes the agent view next to `explorer` by showing fresh help, keeping focus where it is.
@@ -240,3 +295,6 @@ fn view_pane(explorer: &TmuxTarget) -> Result<Option<ViewPane>> {
         .next()
         .transpose()
 }
+
+#[cfg(test)]
+mod tests;

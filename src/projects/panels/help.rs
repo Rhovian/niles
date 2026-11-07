@@ -23,6 +23,9 @@ Get started
   r    register a project directory, in the explorer on the left
   ↵    start its lead and show it here
 
+With tmux.bindings enabled, M-\\ toggles explorer/view focus.
+Detach home from the explorer with prefix d (Ctrl-b d by default).
+
 Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
 ";
 
@@ -37,7 +40,8 @@ const KEYS: &str = "Choose a project on the left.
 
   {running} running   {waiting} waiting
 
-With the bindings in docs/setup.md, M-[ M-] M-; M-' do the same from any pane.
+With tmux.bindings enabled, M-[ M-] M-; M-' cycle from any pane.
+M-\\ toggles explorer/view focus; detach home from the explorer with prefix d.
 ";
 
 pub(super) fn run(first_run: bool, theme: &Theme) -> Result<()> {

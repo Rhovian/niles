@@ -151,6 +151,13 @@ fn home_bindings_install_on_a_real_server() {
             .unwrap_or_else(|| panic!("missing {key}: {keys}"))
     };
     assert!(line("M-n").contains(&popup), "{keys}");
+    let toggle = line(r"M-\\");
+    assert!(
+        toggle.contains("#{==:#{session_name},niles+home}"),
+        "{toggle}"
+    );
+    assert!(toggle.contains("select-pane"), "{toggle}");
+    assert!(toggle.contains("send-keys"), "{toggle}");
     for (meta, plain, pass) in [
         ("M-[", "'['", "'M-['"),
         ("M-]", "']'", "'M-]'"),
