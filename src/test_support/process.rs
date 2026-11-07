@@ -15,7 +15,7 @@ pub fn output_with_stdin(mut command: Command, input: &[u8]) -> Output {
     child.wait_with_output().unwrap()
 }
 
-pub fn write_executable(path: impl AsRef<Path>, body: &str) {
+pub fn write_executable(path: &(impl AsRef<Path> + ?Sized), body: &str) {
     // Keep the write fd out of the test process: concurrent forks can inherit it
     // and cause ETXTBSY when another test execs the script, even after we close it.
     let mut command = Command::new("/bin/sh");
