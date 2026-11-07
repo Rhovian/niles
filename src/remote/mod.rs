@@ -39,6 +39,9 @@ type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
 type ProjectSource =
     Arc<dyn Fn() -> Result<Vec<crate::projects::navigation::Project>> + Send + Sync>;
 
+type TelemetrySource =
+    Arc<dyn Fn() -> Result<Vec<crate::projects::telemetry::Session>> + Send + Sync>;
+
 #[derive(Clone)]
 struct AppState {
     relay: auth::Relay,
@@ -46,6 +49,7 @@ struct AppState {
     projects: ProjectSource,
     push: Option<Arc<push::Store>>,
     wake_hosts: Arc<wake::Hosts>,
+    telemetry: TelemetrySource,
 }
 
 impl AppState {
@@ -56,6 +60,7 @@ impl AppState {
             projects: Arc::new(crate::projects::navigation::collect),
             push: None,
             wake_hosts: Arc::new(wake::Hosts::new()),
+            telemetry: Arc::new(crate::projects::telemetry::collect),
         }
     }
 }
@@ -153,6 +158,7 @@ fn router(state: AppState) -> Router {
             post(push::subscribe).layer(DefaultBodyLimit::max(SUBSCRIPTION_BODY_BYTES)),
         )
         .route("/api/projects", get(projects))
+        .route("/api/telemetry", get(telemetry))
         .route(
             "/api/projects/{project}/session",
             put(control::start).delete(control::stop),
@@ -252,6 +258,14 @@ impl IntoResponse for ApiError {
 async fn projects(State(state): State<AppState>) -> Result<Response, ApiError> {
     let projects = blocking(move || (state.projects)()).await?;
     Ok(Json(serde_json::json!({"api_version": API_VERSION, "projects": projects})).into_response())
+}
+
+async fn telemetry(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let sessions = blocking(move || (state.telemetry)()).await?;
+    Ok(Json(serde_json::json!({
+        "api_version": API_VERSION, "collected_at": chrono::Utc::now(), "sessions": sessions,
+    }))
+    .into_response())
 }
 
 async fn sessions(State(state): State<AppState>) -> Result<Response, ApiError> {

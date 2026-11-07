@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, ApiError, connectionError, projects, sessions, type Project, type Session } from './api';
+import { API_VERSION, ApiError, connectionError, projects, sessions, type Project, type Session, type Incompatible } from './api';
 
 // Zod owns JSON validation; the refinement enforces our manifest's unique routing IDs.
 // https://github.com/colinhacks/zod/tree/v4.6.7/packages/zod/src/v4
@@ -8,14 +8,20 @@ export const hostsSchema = z.object({ hosts: z.array(z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/), name: z.string().trim().min(1),
 })).min(1).refine(hosts => new Set(hosts.map(host => host.id)).size === hosts.length, 'Duplicate host ID') });
 export type Host = z.infer<typeof hostsSchema>['hosts'][number];
-const HOST_TIMEOUT_MS = 8_000;
+export const HOST_TIMEOUT_MS = 8_000;
 const HOST_REFRESH_MS = 15_000;
 const LOCAL_HOST: Host = { id: '', name: 'This host' };
 export const hostPrefix = (host: Host) => host.id ? `/h/${host.id}` : '';
 export { qualified } from './notification';
 type Availability = { state: 'loading' | 'asleep' } | { state: 'error'; error: string } |
-  { state: 'incompatible'; version: number } | { state: 'ready'; projects: Project[]; sessions: Session[] };
+  Incompatible | { state: 'ready'; projects: Project[]; sessions: Session[] };
 export type HostState = Host & Availability;
+
+export function hostFailure(cause: unknown): { state: 'asleep' } | { state: 'error'; error: string } {
+  return cause instanceof TypeError || cause instanceof DOMException && cause.name === 'TimeoutError'
+    || cause instanceof ApiError && [502, 503, 504].includes(cause.status)
+    ? { state: 'asleep' } : { state: 'error', error: connectionError(cause) };
+}
 
 export async function configuredHosts(signal: AbortSignal): Promise<Host[]> {
   const response = await fetch('/hosts.json', { cache: 'no-store', signal });
@@ -59,8 +65,7 @@ export function useHosts() {
           sessions: revision !== revisions.current.get(host.id) && item.state === 'ready' ? item.sessions : response.sessions,
         } : item));
       } catch (cause) {
-        update(host, cause instanceof TypeError || cause instanceof DOMException && cause.name === 'TimeoutError' || cause instanceof ApiError && [502, 503, 504].includes(cause.status)
-          ? { state: 'asleep' } : { state: 'error', error: connectionError(cause) });
+        update(host, hostFailure(cause));
       } finally {
         clearTimeout(timeout); controller.signal.removeEventListener('abort', cancel);
         request.abort(); inFlight.delete(host.id);

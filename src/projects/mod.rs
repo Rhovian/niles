@@ -10,4 +10,6 @@ mod registry;
 mod rows;
 mod snapshot;
 pub(crate) mod status;
+#[cfg(feature = "remote")]
+pub(crate) mod telemetry;
 mod windows;

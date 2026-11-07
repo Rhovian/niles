@@ -64,5 +64,10 @@ label { display: block; font-size: .8rem; margin-bottom: .5rem; color: var(--mut
 textarea { flex: 1; width: 0; resize: vertical; color: inherit; background: #12201e; border: 1px solid var(--line); border-radius: .5rem; padding: .7rem; }
 .composer button { background: var(--accent); color: #12201e; font-weight: 600; }
 .empty { color: var(--muted); padding: 2rem; }
+.telemetry { overflow: auto; padding: 1rem; }
+.telemetry section { margin-block: 1rem; padding-block: 1rem; border-top: 1px solid var(--line); }
+.telemetry table { width: 100%; border-collapse: collapse; overflow-wrap: anywhere; }
+.telemetry th, .telemetry td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--line); }
+.telemetry select { margin: .5rem; font: inherit; }
 @media (max-width: 700px) { .bubble { max-width: 100%; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } .reply-wait span { animation: none; } }
