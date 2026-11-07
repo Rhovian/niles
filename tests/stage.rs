@@ -122,7 +122,7 @@ fn racing_stages_complete_exactly_one_round() {
     for output in outputs.iter().filter(|out| !out.status.success()) {
         assert!(stderr_of(output).contains("round limit 1"));
     }
-    let rounds = read_json(&worker.dir.join("gates.json"));
+    let rounds = read_json(worker.dir.join("gates.json"));
     assert_eq!(rounds.as_array().unwrap().len(), 1);
 }
 
@@ -198,7 +198,7 @@ fn spawn_snapshot_provenance_and_cap() {
     assert!(stdout_of(&output).contains("gate: check run [\"printf\",\"literal; $(false)\"]"));
     let workers = state_dir(&env.root).join("worker");
     let dir = workers.join("job");
-    let meta = read_json(&dir.join("meta.json"));
+    let meta = read_json(dir.join("meta.json"));
     assert_eq!(meta["on_stage"], serde_json::json!(["reviewer"]));
     assert_eq!(meta["gates"]["rounds"], 2);
     assert_eq!(
