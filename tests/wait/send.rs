@@ -69,6 +69,19 @@ fn send_wait_blocks_for_the_reply_that_follows_the_message() {
 fn send_exits_copy_mode_and_delivers_the_message_once() {
     let lab = Lab::start("niles-send-copy-mode");
     receiving_worker(&lab, b"");
+    let sent = lab
+        .niles(&["send", "auth-fix", "prefix\x1b[201~suffix"])
+        .output()
+        .unwrap();
+    assert!(!sent.status.success());
+    assert!(!stdout_of(&sent).contains("sent:"));
+    assert!(stderr_of(&sent).contains("escape character"));
+    assert!(
+        fs::read(lab.workspace.join("delivered"))
+            .unwrap()
+            .is_empty()
+    );
+
     let target = format!("{}:niles-auth-fix", lab.server.session);
 
     lab.server
@@ -149,15 +162,7 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
             .unwrap()
             .replace("\"agent\": \"codex\"", &format!("\"agent\": \"{family}\""));
         fs::write(meta_path, meta).unwrap();
-        let mut child = lab
-            .niles(&["send", "auth-fix", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        std::io::Write::write_all(&mut child.stdin.take().unwrap(), body.as_bytes()).unwrap();
-        let sent = child.wait_with_output().unwrap();
+        let sent = output_with_stdin(lab.niles(&["send", "auth-fix", "-"]), body.as_bytes());
         assert_command_success(family, &sent);
         assert_eq!(
             fs::read_to_string(lab.workspace.join("delivered")).unwrap(),
@@ -168,24 +173,6 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
             .run(&["kill-window", "-t", "niles:niles-auth-fix"]);
         fs::remove_file(lab.workspace.join("ready")).unwrap();
     }
-}
-
-#[test]
-fn send_rejects_an_embedded_paste_terminator() {
-    let lab = Lab::start("niles-send-escape");
-    receiving_worker(&lab, b"");
-    let sent = lab
-        .niles(&["send", "auth-fix", "prefix\x1b[201~suffix"])
-        .output()
-        .unwrap();
-    assert!(!sent.status.success());
-    assert!(!stdout_of(&sent).contains("sent:"));
-    assert!(stderr_of(&sent).contains("escape character"));
-    assert!(
-        fs::read(lab.workspace.join("delivered"))
-            .unwrap()
-            .is_empty()
-    );
 }
 
 #[test]
@@ -228,10 +215,9 @@ fn a_silent_followup_with_checkins_off_still_produces_one_gone_wake() {
     assert!(!dir.join("checkin").exists());
     lab.server
         .run(&["kill-window", "-t", "niles:niles-auth-fix"]);
-    let output = lab.niles(&["wait", "--timeout", "0"]).output().unwrap();
+    let output = lab.wait_now();
     assert_command_success("silent followup gone", &output);
     assert!(stdout_of(&output).starts_with("auth-fix gone:"));
-    let output = lab.niles(&["wait", "--timeout", "0"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(22));
-    assert!(stdout_of(&output).is_empty());
+    let output = lab.wait_now();
+    assert_drained(&output);
 }

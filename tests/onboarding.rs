@@ -4,11 +4,27 @@ mod common;
 mod retry;
 #[path = "onboarding/support.rs"]
 mod support;
+use common::register_project;
 use std::fs;
 use support::{environment, manifest, terminal};
+const SOLO_DEFAULTS: &[(&str, &[u8])] = &[
+    ("work?", b"\x1b[B\r"),
+    ("TIERS", b"\r"),
+    ("Optional", b"\r"),
+    ("Warning:", b"\r"),
+];
+const CUSTOM_URL: &[(&str, &[u8])] = &[
+    ("work?", b"\r"),
+    ("lead's", b"\x1b[B\r"),
+    ("URL", b"github.com/other/repository/skills/custom\r"),
+    ("TIERS", b"\r"),
+    ("starter", b"\r"),
+    ("Warning:", b"\r"),
+];
+
 #[test]
 fn first_run_registration_confirms_and_can_cancel() {
-    for answer in [b"n".as_slice(), b"\x1b"] {
+    for (answer, registers) in [(b"n".as_slice(), false), (b"\x1b", false), (b"y", true)] {
         let env = environment();
         let (output, _) = terminal(
             &env,
@@ -17,17 +33,11 @@ fn first_run_registration_confirms_and_can_cancel() {
             |_| {},
         );
         assert!(output.status.success(), "{output:?}");
-        assert!(!env.home.join(".niles/projects").exists());
+        assert_eq!(env.home.join(".niles/projects").exists(), registers);
+        if registers {
+            assert!(env.tmux_log().contains(" start ;"));
+        }
     }
-    let env = environment();
-    let (output, _) = terminal(
-        &env,
-        &[],
-        &[("directory:", b"\r"), ("]:", b"\r"), ("Register?", b"y")],
-        |_| {},
-    );
-    assert!(output.status.success(), "{output:?}");
-    assert!(env.tmux_log().contains(" start ;"));
 }
 #[test]
 fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
@@ -35,17 +45,7 @@ fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
     for name in ["design", "reviewer", "worker", "security", "research"] {
         fs::remove_dir_all(env.home.join(".niles/skills").join(name)).unwrap();
     }
-    let (output, text) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\x1b[B\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b"\r"),
-            ("Warning:", b"\r"),
-        ],
-        |_| {},
-    );
+    let (output, text) = terminal(&env, &["start"], SOLO_DEFAULTS, |_| {});
     assert!(output.status.success(), "{output:?} {text}");
     let manifest = fs::read_to_string(manifest(&env)).unwrap();
     assert!(manifest.contains("entry: solo"), "{manifest}");
@@ -53,39 +53,10 @@ fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
     assert!(text.contains("docs/security.md"));
 }
 #[test]
-fn lead_select_and_setup_cancellation_write_nothing() {
-    let env = environment();
-    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
-    let (output, _) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\r"),
-            ("lead's", b"\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b" \r"),
-            ("Warning:", b"q"),
-        ],
-        |_| {},
-    );
-    assert!(output.status.success(), "{output:?}");
-    assert!(!manifest(&env).exists());
-}
-#[test]
 fn missing_entry_fetch_failure_stops_before_manifest() {
     let env = environment();
     fs::remove_file(env.home.join(".niles/skills/solo/SKILL.md")).unwrap();
-    let (output, _) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\x1b[B\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b"\r"),
-            ("Warning:", b"\r"),
-        ],
-        |_| {},
-    );
+    let (output, _) = terminal(&env, &["start"], SOLO_DEFAULTS, |_| {});
     assert!(!output.status.success());
     assert!(!manifest(&env).exists());
 }
@@ -93,9 +64,7 @@ fn missing_entry_fetch_failure_stops_before_manifest() {
 #[test]
 fn existing_registry_does_not_start_first_run_registration() {
     let env = environment();
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
-    std::os::unix::fs::symlink(&env.root, registry.join("existing")).unwrap();
+    register_project(&env, "existing", &env.root);
     let (output, text) = terminal(&env, &[], &[], |_| {});
     assert!(output.status.success(), "{output:?}");
     assert!(!text.contains("register"));
@@ -119,8 +88,7 @@ fn taken_registration_name_can_be_replaced_after_confirmation() {
         ],
         |step| {
             if step == 2 {
-                fs::create_dir_all(&registry).unwrap();
-                std::os::unix::fs::symlink(&other, registry.join("taken")).unwrap();
+                register_project(&env, "taken", &other);
             }
         },
     );
@@ -221,48 +189,40 @@ fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
 fn concurrent_manifest_is_kept() {
     let env = environment();
     let winner = common::setup_manifest_body();
-    let (output, text) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\x1b[B\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b"\r"),
-            ("Warning:", b"\r"),
-        ],
-        |step| {
-            if step == 3 {
-                fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
-                fs::write(manifest(&env), winner).unwrap();
-            }
-        },
-    );
+    let (output, text) = terminal(&env, &["start"], SOLO_DEFAULTS, |step| {
+        if step == 3 {
+            fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
+            fs::write(manifest(&env), winner).unwrap();
+        }
+    });
     assert!(output.status.success(), "{output:?} {text}");
     assert_eq!(fs::read_to_string(manifest(&env)).unwrap(), winner);
 }
 
 #[test]
 fn lead_picker_always_offers_custom_and_reviews_default_entry() {
-    let env = environment();
-    fs::remove_dir_all(env.home.join(".niles/skills")).unwrap();
-    let (output, text) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\r"),
-            ("lead's", b"\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b"\r"),
-            ("Warning:", b"q"),
-        ],
-        |_| {},
-    );
-    assert!(output.status.success(), "{output:?} {text}");
-    assert!(text.contains("lead's"));
-    assert!(text.contains("Custom"));
-    let summary = text.rsplit_once("Warning:").unwrap().1;
-    assert!(summary.contains("lead"), "{summary}");
-    assert!(!manifest(&env).exists());
+    for (removed, optional) in [("skills/design", b" \r".as_slice()), ("skills", b"\r")] {
+        let env = environment();
+        fs::remove_dir_all(env.home.join(".niles").join(removed)).unwrap();
+        let (output, text) = terminal(
+            &env,
+            &["start"],
+            &[
+                ("work?", b"\r"),
+                ("lead's", b"\r"),
+                ("TIERS", b"\r"),
+                ("Optional", optional),
+                ("Warning:", b"q"),
+            ],
+            |_| {},
+        );
+        assert!(output.status.success(), "{output:?} {text}");
+        assert!(text.contains("lead's"));
+        assert!(text.contains("Custom"));
+        let summary = text.rsplit_once("Warning:").unwrap().1;
+        assert!(summary.contains("lead"), "{summary}");
+        assert!(!manifest(&env).exists());
+    }
 }
 
 #[test]
@@ -350,21 +310,9 @@ fn custom_lead_imports_its_own_repository_only_after_confirmation() {
             "custom",
             &format!("---\nname: custom\ndescription: Custom lead\n---\n{body}\n"),
         );
-        let (output, text) = terminal(
-            &env,
-            &["start"],
-            &[
-                ("work?", b"\r"),
-                ("lead's", b"\x1b[B\r"),
-                ("URL", b"github.com/other/repository/skills/custom\r"),
-                ("TIERS", b"\r"),
-                ("Optional", b"\r"),
-                ("Warning:", b"\r"),
-            ],
-            |_| {
-                assert!(!env.home.join("git.log").exists());
-            },
-        );
+        let (output, text) = terminal(&env, &["start"], CUSTOM_URL, |_| {
+            assert!(!env.home.join("git.log").exists());
+        });
         assert_eq!(
             output.status.success(),
             !body.is_empty(),
@@ -391,26 +339,6 @@ fn custom_lead_imports_its_own_repository_only_after_confirmation() {
             );
         }
     }
-}
-
-#[test]
-fn custom_fetch_failure_writes_no_manifest() {
-    let env = environment();
-    let (output, text) = terminal(
-        &env,
-        &["start"],
-        &[
-            ("work?", b"\r"),
-            ("lead's", b"\x1b[B\r"),
-            ("URL", b"github.com/other/repository/skills/custom\r"),
-            ("TIERS", b"\r"),
-            ("Optional", b"\r"),
-            ("Warning:", b"\r"),
-        ],
-        |_| {},
-    );
-    assert!(!output.status.success(), "{output:?} {text}");
-    assert!(!manifest(&env).exists());
 }
 
 #[test]

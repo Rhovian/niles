@@ -69,46 +69,43 @@ fn fixture(prefix: &str) -> Fixture {
 
 impl Fixture {
     fn niles(&self, args: &[&str]) -> Output {
-        self.env
+        let output = self
+            .env
             .niles(&self.env.root, args)
             .env("TMUX_PANE_FILE", &self.pane_file)
             .env("TMUX_PANE", "%9")
             // Where the stub tmux writes the report that lands mid-send.
             .env("TMUX_WORKER_STATUS", self.status_log("impl"))
             .output()
-            .unwrap()
+            .unwrap();
+        assert!(
+            !stdout_of(&output).contains("tmux chatter"),
+            "{args:?}: {}",
+            stdout_of(&output)
+        );
+        assert!(
+            !stderr_of(&output).contains("tmux chatter"),
+            "{args:?}: {}",
+            stderr_of(&output)
+        );
+        output
     }
 
-    /// `niles spawn <id>` with the default check-in: the dispatch most tests start from, and the
-    /// one whose output they read.
-    fn spawn(&self, id: &str) -> Output {
-        self.niles(&[
+    /// Keep `--checkin` after the worker id: clap hands that position over as task text.
+    fn spawn(&self, id: &str, delay: Option<&str>) -> Output {
+        let mut args = vec![
             "spawn",
             "--skill",
             "research",
             id,
             "--agent",
             "claude:sonnet:high",
-            "Fix",
-            "auth",
-        ])
-    }
-
-    /// The same dispatch with the `--checkin` spelling under test. The flag is written after the
-    /// worker id on purpose: that is where clap hands it over as trailing task text.
-    fn spawn_with_checkin(&self, id: &str, delay: &str) -> Output {
-        self.niles(&[
-            "spawn",
-            "--skill",
-            "research",
-            id,
-            "--agent",
-            "claude:sonnet:high",
-            "--checkin",
-            delay,
-            "Fix",
-            "auth",
-        ])
+        ];
+        if let Some(delay) = delay {
+            args.extend(["--checkin", delay]);
+        }
+        args.extend(["Fix", "auth"]);
+        self.niles(&args)
     }
 
     fn checkin_path(&self, id: &str) -> PathBuf {
@@ -123,9 +120,7 @@ impl Fixture {
     /// cadence a test is about, and nothing else changed.
     fn write_manifest(&self, keys: &str) {
         write_workspace_manifest(&self.env.root, "claude", "claude", "claude", "claude");
-        let path = state_dir(&self.env.root).join("manifest.yaml");
-        let body = fs::read_to_string(&path).unwrap();
-        fs::write(path, format!("{body}{keys}")).unwrap();
+        edit_manifest(&self.env.root, |body| format!("{body}{keys}"));
     }
 
     fn status_log(&self, id: &str) -> PathBuf {
@@ -142,7 +137,7 @@ impl Fixture {
 fn spawn_arms_a_check_in_and_quiet_disarms_it() {
     let fixture = fixture("niles-watch-quiet");
 
-    let spawn = fixture.spawn("impl");
+    let spawn = fixture.spawn("impl", None);
     assert_command_success("spawn", &spawn);
     let printed = stdout_of(&spawn);
     assert!(printed.contains("checkin: 5m"), "{printed}");
@@ -158,12 +153,7 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
     assert!(body.contains("recheck=backoff"), "{body}");
 
     let quiet = fixture.niles(&["quiet", "impl"]);
-    assert_command_success("quiet", &quiet);
-    assert!(
-        stdout_of(&quiet).contains("quiet: impl"),
-        "{}",
-        stdout_of(&quiet)
-    );
+    assert_success_contains("quiet", &quiet, "quiet: impl");
     assert!(
         !fixture.checkin_path("impl").exists(),
         "quiet is the lead disarming a check-in by hand"
@@ -171,12 +161,7 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
 
     // A second quiet has nothing to do and is not an error.
     let again = fixture.niles(&["quiet", "impl"]);
-    assert_command_success("quiet again", &again);
-    assert!(
-        stdout_of(&again).contains("quiet: impl (no check-in armed)"),
-        "{}",
-        stdout_of(&again)
-    );
+    assert_success_contains("quiet again", &again, "quiet: impl (no check-in armed)");
 }
 
 /// Every `--checkin` spelling the help offers, through the two commands that arm one.
@@ -184,13 +169,8 @@ fn spawn_arms_a_check_in_and_quiet_disarms_it() {
 fn the_checkin_flag_arms_the_delay_it_was_given() {
     let fixture = fixture("niles-watch-forms");
 
-    let seconds = fixture.spawn_with_checkin("impl", "90s");
-    assert_command_success("spawn --checkin 90s", &seconds);
-    assert!(
-        stdout_of(&seconds).contains("checkin: 90s"),
-        "{}",
-        stdout_of(&seconds)
-    );
+    let seconds = fixture.spawn("impl", Some("90s"));
+    assert_success_contains("spawn --checkin 90s", &seconds, "checkin: 90s");
     // The flag was written after the worker id, where clap hands it over as task text: it must not
     // reach the worker's brief.
     let brief =
@@ -213,14 +193,17 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
         "the flag must not reach the worker as message text:\n{log}"
     );
 
-    // And `off` arms none at all.
-    let off = fixture.spawn_with_checkin("docs", "off");
-    assert_command_success("spawn --checkin off", &off);
+    assert!(fixture.checkin_path("impl").exists());
+    let off = fixture.niles(&["send", "impl", "--checkin", "off", "never mind"]);
+    assert_success_contains("send --checkin off", &off, "checkin: off");
     assert!(
-        stdout_of(&off).contains("checkin: off"),
-        "{}",
-        stdout_of(&off)
+        !fixture.checkin_path("impl").exists(),
+        "the armed deadline must go with the printed `checkin: off`"
     );
+
+    // And `off` arms none at all.
+    let off = fixture.spawn("docs", Some("off"));
+    assert_success_contains("spawn --checkin off", &off, "checkin: off");
     assert!(!fixture.checkin_path("docs").exists());
 }
 
@@ -232,14 +215,20 @@ fn the_checkin_flag_arms_the_delay_it_was_given() {
 #[test]
 fn a_report_during_the_send_still_answers_the_assignment_it_belongs_to() {
     let fixture = fixture("niles-watch-race");
-    let spawn = fixture.spawn("impl");
+    let spawn = fixture.spawn("impl", None);
     assert_command_success("spawn", &spawn);
     let status = fixture.status_log("impl");
     fs::write(&status, "working: launch\n").unwrap();
     let baseline = fs::read_to_string(&status).unwrap().len();
 
-    let send = fixture.niles(&["send", "impl", "carry on"]);
-    assert_command_success("send", &send);
+    let send = fixture.niles(&["send", "impl", "continue"]);
+    assert_success_contains("send", &send, "sent: impl");
+    assert!(
+        fixture
+            .env
+            .tmux_log()
+            .contains("send-keys -t =niles-test-session:=niles-impl -l \x1b[200~continue")
+    );
 
     // The report did land while the send was in flight, and it is past the baseline.
     let body = fs::read_to_string(&status).unwrap();
@@ -258,93 +247,12 @@ fn a_report_during_the_send_still_answers_the_assignment_it_belongs_to() {
     );
 }
 
-/// `--checkin off` has to mean off: a printed `checkin: off` over a check-in that is still armed
-/// and due would be a lie the lead acts on.
-#[test]
-fn asking_for_no_check_in_takes_an_armed_one_with_it() {
-    let fixture = fixture("niles-watch-off");
-    let spawn = fixture.spawn("impl");
-    assert_command_success("spawn", &spawn);
-    assert!(fixture.checkin_path("impl").exists());
-
-    let off = fixture.niles(&["send", "impl", "--checkin", "off", "never mind"]);
-    assert_command_success("send --checkin off", &off);
-    assert!(
-        stdout_of(&off).contains("checkin: off"),
-        "{}",
-        stdout_of(&off)
-    );
-    assert!(
-        !fixture.checkin_path("impl").exists(),
-        "the armed deadline must go with the printed `checkin: off`"
-    );
-}
-
-/// The watcher types into the lead's pane from inside the lead's own process, so every tmux call
-/// niles makes on a worker's behalf has to keep its output to itself.
-#[test]
-fn a_chatty_tmux_never_reaches_the_lead_streams() {
-    let fixture = fixture("niles-watch-chatter");
-
-    let spawn = fixture.spawn("impl");
-    assert_command_success("spawn", &spawn);
-    // `spawn` drives tmux windows: every one of those calls is mergeable into the lead's screen.
-    assert!(
-        !stdout_of(&spawn).contains("tmux chatter"),
-        "tmux output reached stdout:\n{}",
-        stdout_of(&spawn)
-    );
-    assert!(
-        !String::from_utf8_lossy(&spawn.stderr).contains("tmux chatter"),
-        "tmux output reached stderr"
-    );
-
-    let send = fixture.niles(&["send", "impl", "continue"]);
-    assert_command_success("send", &send);
-    assert!(
-        !stdout_of(&send).contains("tmux chatter"),
-        "tmux output reached stdout:\n{}",
-        stdout_of(&send)
-    );
-    // The send still told the lead what it did.
-    assert!(
-        stdout_of(&send).contains("sent: impl"),
-        "{}",
-        stdout_of(&send)
-    );
-
-    // The message really was typed into the worker's pane, so the chatter test is not passing
-    // because nothing ran.
-    let log = fixture.env.tmux_log();
-    assert!(
-        log.contains("send-keys -t =niles-test-session:=niles-impl -l \x1b[200~continue"),
-        "{log}"
-    );
-}
-
-/// An unreadable `--checkin` is refused before anything is dispatched, rather than silently
-/// arming the default.
-#[test]
-fn a_malformed_checkin_flag_fails_the_dispatch() {
-    let fixture = fixture("niles-watch-bad-flag");
-
-    let spawn = fixture.spawn_with_checkin("impl", "soon");
-
-    assert!(!spawn.status.success());
-    let stderr = String::from_utf8_lossy(&spawn.stderr);
-    assert!(stderr.contains("invalid `--checkin`"), "{stderr}");
-    assert!(stderr.contains("is not a duration"), "{stderr}");
-    assert!(!fixture.checkin_path("impl").exists());
-}
-
-/// The manifest's `checkin:` is the workspace's default first delay. A dispatch that names no
-/// `--checkin` arms it, `recheck:` travels with the arm state, and the flag still wins over it.
 #[test]
 fn an_omitted_checkin_flag_arms_the_manifests_default() {
     let fixture = fixture("niles-watch-manifest-checkin");
     fixture.write_manifest("checkin: 15m\nrecheck: 30m\n");
 
-    let spawn = fixture.spawn("impl");
+    let spawn = fixture.spawn("impl", None);
     assert_command_success("spawn", &spawn);
     let printed = stdout_of(&spawn);
     assert!(printed.contains("checkin: 15m"), "{printed}");
@@ -355,60 +263,51 @@ fn an_omitted_checkin_flag_arms_the_manifests_default() {
 
     // The flag decides the delay and the manifest still decides the policy behind it.
     let flagged = fixture.niles(&["send", "impl", "--checkin", "90s", "carry on"]);
-    assert_command_success("send --checkin 90s", &flagged);
-    assert!(
-        stdout_of(&flagged).contains("checkin: 90s"),
-        "{}",
-        stdout_of(&flagged)
-    );
+    assert_success_contains("send --checkin 90s", &flagged, "checkin: 90s");
     let body = fixture.checkin("impl");
     assert!(body.contains("delay=90"), "{body}");
     assert!(body.contains("recheck=30m"), "{body}");
 }
 
-/// A malformed value in either check-in key fails the dispatch, naming the file to fix, rather than
-/// quietly arming the built-in cadence the workspace just tried to change — and it fails before a
-/// window is launched or a worker directory is written.
 #[test]
-fn a_malformed_manifest_checkin_key_fails_the_dispatch() {
-    for (key, manifest) in [
-        ("checkin", "checkin: soon\n"),
-        ("recheck", "recheck: soon\n"),
+fn malformed_checkin_values_fail_before_dispatch() {
+    for (label, manifest, flag, errors) in [
+        (
+            "flag",
+            "",
+            Some("soon"),
+            &["invalid `--checkin`", "is not a duration"] as &[&str],
+        ),
+        (
+            "checkin",
+            "checkin: soon\n",
+            None,
+            &["checkin", "manifest.yaml"],
+        ),
+        (
+            "recheck",
+            "recheck: soon\n",
+            None,
+            &["recheck", "manifest.yaml"],
+        ),
+        (
+            "bare",
+            "checkin: 15\n",
+            None,
+            &["`15` needs a unit: ms, s, m or h", "manifest.yaml"],
+        ),
     ] {
-        let fixture = fixture(&format!("niles-watch-manifest-bad-{key}"));
+        let fixture = fixture(label);
         fixture.write_manifest(manifest);
-
-        let spawn = fixture.spawn("impl");
-
-        assert!(!spawn.status.success(), "{key} was accepted");
-        let stderr = String::from_utf8_lossy(&spawn.stderr);
-        assert!(stderr.contains(key), "{stderr}");
-        assert!(
-            stderr.contains("manifest.yaml"),
-            "the error must name the file: {stderr}"
-        );
+        let spawn = fixture.spawn("impl", flag);
+        for error in errors {
+            assert_failure_contains(label, &spawn, error);
+        }
+        assert!(!fixture.checkin_path("impl").exists(), "{label}");
         assert!(
             !state_dir(&fixture.env.root).join("worker/impl").exists(),
-            "nothing was dispatched, so nothing was written"
+            "{label}"
         );
-        // Nothing reached tmux either: a spawn that never got as far as launching a window leaves
-        // no tmux log at all.
-        assert!(!fixture.env.tmux_log.exists());
+        assert!(!fixture.env.tmux_log.exists(), "{label}");
     }
-}
-
-#[test]
-fn a_bare_manifest_checkin_names_the_manifest_and_lists_the_units() {
-    let fixture = fixture("niles-watch-manifest-bare-checkin");
-    fixture.write_manifest("checkin: 15\n");
-
-    let spawn = fixture.spawn("impl");
-
-    assert!(!spawn.status.success(), "bare checkin was accepted");
-    let stderr = String::from_utf8_lossy(&spawn.stderr);
-    assert!(
-        stderr.contains("`15` needs a unit: ms, s, m or h"),
-        "{stderr}"
-    );
-    assert!(stderr.contains("manifest.yaml"), "{stderr}");
 }

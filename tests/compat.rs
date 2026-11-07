@@ -61,32 +61,28 @@ fn successful_sample_label_turn() {
 }
 
 #[test]
-fn missing_or_wrong_sample_label_fails() {
-    for body in [
-        "exit 0\n",
-        "printf wrong > \"$NILES_AGENT_DIR/status.log\"\n",
-    ] {
-        assert_failed_turn(
-            body,
+fn unsuccessful_turns_report_the_failure_and_keep_evidence() {
+    let changed = format!("{SAMPLE_LABEL}printf changed > \"$0.changed\"\n");
+    for (body, detail) in [
+        (
+            "exit 0\n",
             "sample label not written (tool use blocked or skipped)",
-        );
+        ),
+        (
+            "printf wrong > \"$NILES_AGENT_DIR/status.log\"\n",
+            "sample label not written (tool use blocked or skipped)",
+        ),
+        (
+            "printf 'first\\nrejected\\n\\n' >&2\nexit 3\n",
+            "exit 3: rejected",
+        ),
+        (
+            changed.as_str(),
+            "version changed during turn: Fake CLI 1.0.0 -> Fake CLI 2.0.0",
+        ),
+    ] {
+        assert_failed_turn(body, detail);
     }
-}
-
-#[test]
-fn nonzero_exit_reports_last_stderr_line() {
-    assert_failed_turn(
-        "printf 'first\\nrejected\\n\\n' >&2\nexit 3\n",
-        "exit 3: rejected",
-    );
-}
-
-#[test]
-fn version_change_fails() {
-    assert_failed_turn(
-        &format!("{SAMPLE_LABEL}printf changed > \"$0.changed\"\n"),
-        "version changed during turn: Fake CLI 1.0.0 -> Fake CLI 2.0.0",
-    );
 }
 
 #[test]
@@ -162,6 +158,9 @@ fn unused_family_is_skipped_and_missing_manifest_errors() {
     );
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "codex");
     let output = env.run(&["compat", "pi"]);
-    assert_command_success("unused family", &output);
-    assert!(stdout_of(&output).contains("pi\t-\tskip\tnot used by manifest"));
+    assert_success_contains(
+        "unused family",
+        &output,
+        "pi\t-\tskip\tnot used by manifest",
+    );
 }

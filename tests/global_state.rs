@@ -17,6 +17,13 @@ fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
     dir.join("decisions.log")
 }
 
+fn log(env: &TestEnv, pane: &str, args: &[&str]) -> std::process::Output {
+    env.niles(&env.root, args)
+        .env("TMUX_PANE", pane)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn new_state_and_manifest_stay_outside_the_repository() {
     let env = TestEnv::new("niles-global-new");
@@ -45,7 +52,10 @@ fn project_keys_isolate_previously_colliding_workspaces() {
             .unwrap();
         assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
         let expected = state_dir(workspace);
+        assert!(stdout_of(&output).is_empty());
         assert!(expected.join("worker/wait.lock").is_file());
+        assert!(expected.join("worker/wait.running").is_file());
+        assert!(!workspace.join(".niles").exists());
     }
     assert_ne!(state_dir(&a), state_dir(&b));
     fs::remove_dir_all(state_dir(&a)).unwrap();
@@ -57,21 +67,17 @@ fn project_keys_isolate_previously_colliding_workspaces() {
 fn log_appends_timestamped_decisions_to_the_current_lead() {
     let env = TestEnv::new("niles-global-log");
     let old = lead(&env, "a", "%8");
-    let log = lead(&env, "z", "%9");
-    fs::write(&log, "earlier decision").unwrap();
+    let log_path = lead(&env, "z", "%9");
+    fs::write(&log_path, "earlier decision").unwrap();
     for (id, decision) in [
         ("impl", "security commissioned: operator asked"),
         ("-", "red: fixed"),
     ] {
-        let output = env
-            .niles(&env.root, &["log", id, decision])
-            .env("TMUX_PANE", "%9")
-            .output()
-            .unwrap();
+        let output = log(&env, "%9", &["log", id, decision]);
         assert_command_success("log", &output);
         assert!(output.stdout.is_empty());
     }
-    let body = fs::read_to_string(log).unwrap();
+    let body = fs::read_to_string(log_path).unwrap();
     let mut lines = body.lines();
     assert_eq!(lines.next().unwrap(), "earlier decision");
     for expected in ["impl security commissioned: operator asked", "- red: fixed"] {
@@ -92,34 +98,22 @@ fn log_rejects_missing_or_foreign_sessions_and_invalid_lines() {
         &env.run(&["log", "-", "decision"]),
         "current lead session",
     );
-    let log = lead(&env, "lead", "%9");
-    let foreign = env
-        .niles(&env.root, &["log", "-", "decision"])
-        .env("TMUX_PANE", "%8")
-        .output()
-        .unwrap();
+    let log_path = lead(&env, "lead", "%9");
+    let foreign = log(&env, "%8", &["log", "-", "decision"]);
     assert_failure_contains("foreign lead", &foreign, "current lead session");
     for args in [
         ["log", "../escape", "decision"],
         ["log", "-", "two\nlines"],
         ["log", "-", "  "],
     ] {
-        let output = env
-            .niles(&env.root, &args)
-            .env("TMUX_PANE", "%9")
-            .output()
-            .unwrap();
+        let output = log(&env, "%9", &args);
         assert!(!output.status.success(), "{args:?}");
     }
-    assert!(!log.exists());
+    assert!(!log_path.exists());
     let target = env.root.join("target");
     fs::write(&target, "untouched").unwrap();
-    symlink(&target, &log).unwrap();
-    let output = env
-        .niles(&env.root, &["log", "-", "decision"])
-        .env("TMUX_PANE", "%9")
-        .output()
-        .unwrap();
+    symlink(&target, &log_path).unwrap();
+    let output = log(&env, "%9", &["log", "-", "decision"]);
     assert_failure_contains("log symlink", &output, "failed to append");
     assert_eq!(fs::read_to_string(target).unwrap(), "untouched");
 }
@@ -127,34 +121,18 @@ fn log_rejects_missing_or_foreign_sessions_and_invalid_lines() {
 #[test]
 fn log_rejects_a_session_id_that_escapes_its_directory() {
     let env = TestEnv::new("niles-global-log-escape");
-    let log = lead(&env, "lead", "%9");
-    let path = log.parent().unwrap().join("session.json");
-    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    meta["id"] = serde_json::json!(env.root);
-    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
-    let output = env
-        .niles(&env.root, &["log", "-", "decision"])
-        .env("TMUX_PANE", "%9")
-        .output()
-        .unwrap();
+    let log_path = lead(&env, "lead", "%9");
+    let path = log_path.parent().unwrap().join("session.json");
+    edit_json(&path, |meta| {
+        meta["id"] = serde_json::json!(env.root);
+    });
+    let output = log(&env, "%9", &["log", "-", "decision"]);
     assert_failure_contains(
         "escaping id",
         &output,
         "session id does not match directory",
     );
     assert!(!env.root.join("decisions.log").exists());
-}
-
-#[test]
-fn workspace_wait_locks_stay_in_global_project_state() {
-    let env = TestEnv::new("niles-global-wait");
-    let output = env.run(&["wait", "--timeout", "0"]);
-    assert_eq!(output.status.code(), Some(22), "{}", stderr_of(&output));
-    assert!(stdout_of(&output).is_empty());
-    let workers = state_dir(&env.root).join("worker");
-    assert!(workers.join("wait.lock").is_file());
-    assert!(workers.join("wait.running").is_file());
-    assert!(!env.root.join(".niles").exists());
 }
 
 #[test]

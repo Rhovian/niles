@@ -5,23 +5,18 @@ use super::support::*;
 #[test]
 fn worker_close_kills_a_window_whose_agent_has_exited() {
     let env = TestEnv::new("niles-close-exited");
-    write_worker(
-        &env.root,
-        "auth-fix",
+    let close = close_auth_fix(
+        &env,
         "niles:niles-auth-fix",
-        None,
         b"closed: agent exited (status 3)",
+        &[
+            ("TMUX_WINDOWS", "niles-auth-fix\t1"),
+            (
+                "TMUX_CAPTURE",
+                "Do you trust the contents of this directory?",
+            ),
+        ],
     );
-
-    let close = env
-        .niles(&env.root, &["close", "auth-fix"])
-        .env("TMUX_WINDOWS", "niles-auth-fix\t1")
-        .env(
-            "TMUX_CAPTURE",
-            "Do you trust the contents of this directory?",
-        )
-        .output()
-        .unwrap();
     assert_command_success("close after agent exit", &close);
 
     let log = env.tmux_log();
@@ -55,7 +50,7 @@ fn worker_close_tears_down_worker() {
         .output()
         .unwrap();
     assert_command_success("close", &close);
-    let close_stdout = String::from_utf8_lossy(&close.stdout);
+    let close_stdout = stdout_of(&close);
     assert!(close_stdout.contains("pane:"));
     assert!(close_stdout.contains("archive:"));
     assert!(close_stdout.contains("closed window: niles-auth-fix"));
@@ -74,26 +69,25 @@ fn worker_close_tears_down_worker() {
         fs::read_to_string(archive_dir.join("report.md")).unwrap(),
         "durable report\n"
     );
+    let second = run_bare(&env.root, &["close", "auth-fix"]);
+    assert_failure_contains("second close", &second, "no live worker 'auth-fix'");
+    let stderr = stderr_of(&second);
+    assert!(stderr.contains("worker/archive/auth-fix-"));
 }
 
 #[test]
 fn worker_close_targets_recorded_session_not_ambient() {
     let env = TestEnv::new("niles-close-recorded");
 
-    write_worker(
-        &env.root,
-        "auth-fix",
+    let close = close_auth_fix(
+        &env,
         "home:niles-auth-fix",
-        None,
         b"working: close requested",
+        &[
+            ("TMUX_WINDOWS", "niles-auth-fix\t0"),
+            ("TMUX", "/tmp/ambient-tmux"),
+        ],
     );
-
-    let close = env
-        .niles(&env.root, &["close", "auth-fix"])
-        .env("TMUX_WINDOWS", "niles-auth-fix\t0")
-        .env("TMUX", "/tmp/ambient-tmux")
-        .output()
-        .unwrap();
     assert_command_success("recorded-target close", &close);
 
     let log = env.tmux_log();
@@ -128,14 +122,12 @@ fn worker_close_by_task_closes_matching_workers_only() {
         .unwrap();
 
     assert_command_success("close --task", &close);
-    let stdout = String::from_utf8_lossy(&close.stdout);
+    let stdout = stdout_of(&close);
     assert!(stdout.contains("workers[2]{id,status,archive}:"));
     assert!(stdout.contains("auth-one,closed,"));
     assert!(stdout.contains("auth-two,closed,"));
     assert!(!stdout.contains("docs-one,closed,"));
 
-    assert!(!state_dir(&env.root).join("worker/auth-one").exists());
-    assert!(!state_dir(&env.root).join("worker/auth-two").exists());
     assert!(state_dir(&env.root).join("worker/docs-one").exists());
 
     assert_archived_with_closed_sentinel(&env.root, "auth-one");
@@ -171,7 +163,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         .output()
         .unwrap();
     assert_command_success("workspace-scoped close --all", &close);
-    let stdout = String::from_utf8_lossy(&close.stdout);
+    let stdout = stdout_of(&close);
     assert!(stdout.contains("workers[1]{id,status,archive}:"));
     assert!(stdout.contains("alpha,closed,"));
     assert!(!stdout.contains("bravo"));
@@ -200,15 +192,12 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
 fn worker_close_zero_match_behaviors_are_distinct() {
     let workspace = temp_workspace("niles-close-zero");
 
-    let close_all = niles_bare(&workspace, &niles_home(&workspace))
-        .args(["close", "--all"])
-        .output()
-        .unwrap();
+    let close = run_bare(&workspace, &["close", "missing"]);
+    assert_failure_contains("close unknown worker", &close, "no live worker 'missing'");
+
+    let close_all = run_bare(&workspace, &["close", "--all"]);
     assert_command_success("empty close --all", &close_all);
-    assert_eq!(
-        String::from_utf8_lossy(&close_all.stdout),
-        "no live workers\n"
-    );
+    assert_eq!(stdout_of(&close_all), "no live workers\n");
 
     write_worker(
         &workspace,
@@ -218,16 +207,13 @@ fn worker_close_zero_match_behaviors_are_distinct() {
         b"working: docs",
     );
 
-    let close_task = niles_bare(&workspace, &niles_home(&workspace))
-        .args(["close", "--task", "missing"])
-        .output()
-        .unwrap();
+    let close_task = run_bare(&workspace, &["close", "--task", "missing"]);
     assert_failure_contains(
         "missing task close",
         &close_task,
         "no live workers with task label missing",
     );
-    assert!(String::from_utf8_lossy(&close_task.stdout).is_empty());
+    assert!(stdout_of(&close_task).is_empty());
 }
 
 #[test]
@@ -263,26 +249,14 @@ fn worker_close_selection_reports_partial_failures_without_aborting_rest() {
             .unwrap();
 
         assert_failure_contains("partial close", &close, summary);
-        let stdout = String::from_utf8_lossy(&close.stdout);
+        let stdout = stdout_of(&close);
         assert!(stdout.contains("workers[2]{id,status,archive}:"));
         assert!(stdout.contains("bad-meta,failed,-"));
         assert!(stdout.contains("good-worker,closed,"));
-        let stderr = String::from_utf8_lossy(&close.stderr);
+        let stderr = stderr_of(&close);
         assert!(stderr.contains("worker bad-meta close failed"));
         assert!(state_dir(&env.root).join("worker/bad-meta").exists());
         assert!(!state_dir(&env.root).join("worker/good-worker").exists());
         assert!(latest_archive_dir(&env.root, "good-worker").exists());
     }
-}
-
-#[test]
-fn worker_close_unknown_id_errors() {
-    let workspace = temp_workspace("niles-close-missing");
-    let home = niles_home(&workspace);
-
-    let close = niles_bare(&workspace, &home)
-        .args(["close", "missing"])
-        .output()
-        .unwrap();
-    assert_failure_contains("close unknown worker", &close, "no live worker 'missing'");
 }

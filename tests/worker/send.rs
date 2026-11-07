@@ -1,8 +1,5 @@
 use super::support::*;
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::Command;
 
 #[test]
 fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
@@ -15,7 +12,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .output()
         .unwrap();
     assert_command_success("spawn", &spawn);
-    let spawn_stdout = String::from_utf8_lossy(&spawn.stdout);
+    let spawn_stdout = stdout_of(&spawn);
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles-auth-fix"));
     assert!(spawn_stdout.contains("task: auth"));
@@ -75,7 +72,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .output()
         .unwrap();
     assert!(peek.status.success());
-    assert_eq!(String::from_utf8_lossy(&peek.stdout), "pane output\n");
+    assert_eq!(stdout_of(&peek), "pane output\n");
 
     let send = env
         .niles(&env.root, &["send", "auth-fix", "continue", "please"])
@@ -83,7 +80,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .output()
         .unwrap();
     assert!(send.status.success());
-    let send_stdout = String::from_utf8_lossy(&send.stdout);
+    let send_stdout = stdout_of(&send);
     assert!(send_stdout.contains("sent: auth-fix"));
     // `wait` first, as spawn prints it: the send just armed a wake, and collecting it is the
     // next move.
@@ -121,24 +118,16 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 fn send_accepts_stdin_and_literal_flag_text() {
     let env = TestEnv::with_manifest("niles-worker-send message'input", "claude");
     let pane_file = env.root.join("pane.txt");
-    let spawn = env.spawn("research", &["worker", "task"]);
+    let spawn = env.spawn("research", &["worker", "--", "--wait"]);
     assert_command_success("fixture spawn", &spawn);
 
-    let mut child = env
-        .niles(&env.root, &["send", "worker", "-"])
-        .env("TMUX_PANE_FILE", &pane_file)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"  stdin first\nstdin second\n\n")
-        .unwrap();
-    let stdin = child.wait_with_output().unwrap();
+    let literal_brief =
+        fs::read_to_string(state_dir(&env.root).join("worker/worker/brief.md")).unwrap();
+    assert!(literal_brief.contains("\n--wait\n"), "{literal_brief}");
+    assert!(stdout_of(&spawn).contains("wait: niles wait"));
+    let mut command = env.niles(&env.root, &["send", "worker", "-"]);
+    command.env("TMUX_PANE_FILE", &pane_file);
+    let stdin = output_with_stdin(command, b"  stdin first\nstdin second\n\n");
     assert_command_success("send stdin", &stdin);
     let delivered = fs::read_to_string(&pane_file).unwrap();
     assert!(delivered.starts_with("composer: \x1b[200~  stdin first\nstdin second\n\x1b[201~"));

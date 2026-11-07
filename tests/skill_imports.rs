@@ -108,30 +108,13 @@ impl Pack {
         git(&self.repo, &["rev-parse", "HEAD"]).trim().to_owned()
     }
 }
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "core.hooksPath=/dev/null"])
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
-        .output()
-        .unwrap();
-    assert_command_success("fixture git", &output);
-    stdout_of(&output)
-}
 fn document(repo: &Path, path: &str, name: &str, body: &str) {
-    let dir = repo.join(path);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("SKILL.md"),
-        format!("---\nname: {name}\ndescription: Use when needed\n---\n{body}"),
-    )
-    .unwrap();
+    write_skill_document(
+        &repo.join(path).join("SKILL.md"),
+        name,
+        "Use when needed",
+        body,
+    );
 }
 
 #[test]
@@ -209,12 +192,12 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     let external = pack.env.root.join("global-pointer");
     fs::rename(&pointer, &external).unwrap();
     std::os::unix::fs::symlink(&external, &pointer).unwrap();
-    let manifest = state_dir(&pack.env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest).unwrap().replace(
-        "worker: {}\n",
-        "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_from: [pdf]\n  on_stage: [pdf]\n",
-    );
-    fs::write(&manifest, body).unwrap();
+    edit_manifest(&pack.env.root, |body| {
+        body.replace(
+            "worker: {}\n",
+            "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_from: [pdf]\n  on_stage: [pdf]\n",
+        )
+    });
     fs::remove_dir_all(pack.env.home.join(".niles/cache")).unwrap();
     let hidden = pack.remote.with_extension("offline");
     fs::rename(&pack.remote, &hidden).unwrap();
@@ -240,12 +223,11 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     )
     .unwrap();
     let staged = pack.discover("job", &["agent", "status", "stage", "ready"]);
-    assert_command_success("imported stage skill", &staged);
-    assert!(stdout_of(&staged).contains("pdf version one"));
+    assert_success_contains("imported stage skill", &staged, "pdf version one");
     let listing = pack.run(&["skills"]);
     assert_command_success("listing", &listing);
     fs::write(
-        &manifest,
+        state_dir(&pack.env.root).join("manifest.yaml"),
         "entry: pdf\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\npdf: {}\n",
     )
     .unwrap();
@@ -281,8 +263,7 @@ fn ephemeral_menu_remains_pinned_and_does_not_install_or_inject() {
     document(&pack.env.root.join(".niles"), "skills/pdf", "pdf", "shadow");
     fs::remove_dir_all(pack.cache("pdf")).unwrap();
     let output = pack.discover("job", &["agent", "skill", "pdf"]);
-    assert_command_success("pinned discovery refetch", &output);
-    assert!(stdout_of(&output).contains("pdf version one"));
+    assert_success_contains("pinned discovery refetch", &output, "pdf version one");
     assert!(!stdout_of(&output).contains("version two"));
     let output = pack.discover("job", &["agent", "skills"]);
     assert_command_success("pinned menu rows", &output);
@@ -326,9 +307,7 @@ fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
         &output,
         "local skill already exists",
     );
-    let manifest = state_dir(&pack.env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, format!("{body}pdf: {{}}\n")).unwrap();
+    edit_manifest(&pack.env.root, |body| format!("{body}pdf: {{}}\n"));
     let output = pack.run(&["models"]);
     assert_failure_contains("dual documents", &output, "has both");
     assert!(stderr_of(&output).contains("SKILL.md") && stderr_of(&output).contains("SKILL.ref"));

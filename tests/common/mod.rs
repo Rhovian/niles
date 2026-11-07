@@ -8,7 +8,7 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 const TEST_ENV_MARKER: &str = ".niles-test-env";
@@ -51,6 +51,13 @@ case "$1" in
     fi
     exit 0
     ;;
+  new-window)
+    if [ "${TMUX_FAIL_NEW_WINDOW:-}" = 1 ]; then
+      printf 'create window failed: index 1 in use\n' >&2
+      exit 1
+    fi
+    if [ -n "${META_PATH:-}" ]; then mkdir -p "$META_PATH"; fi
+    exit 0 ;;
   capture-pane)
     if [ "${TMUX_CAPTURE_EMPTY:-}" = 1 ]; then
       exit 0
@@ -163,6 +170,88 @@ pub fn niles_bare(cwd: &Path, home: &Path) -> Command {
     command
 }
 
+pub fn run_bare(cwd: &Path, args: &[&str]) -> Output {
+    niles_bare(cwd, &fixture_home(cwd))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+pub fn output_with_stdin(mut command: Command, input: &[u8]) -> Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+pub const GIT_ENV: [(&str, &str); 12] = [
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_AUTHOR_NAME", "Niles Test"),
+    ("GIT_AUTHOR_EMAIL", "test@example.com"),
+    ("GIT_COMMITTER_NAME", "Niles Test"),
+    ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ("GIT_CONFIG_COUNT", "2"),
+    ("GIT_CONFIG_KEY_0", "commit.gpgsign"),
+    ("GIT_CONFIG_VALUE_0", "false"),
+    ("GIT_CONFIG_KEY_1", "core.hooksPath"),
+    ("GIT_CONFIG_VALUE_1", "/dev/null"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+];
+
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .envs(GIT_ENV)
+        .output()
+        .unwrap();
+    assert_command_success(&format!("git {args:?}"), &output);
+    stdout_of(&output)
+}
+
+pub fn edit_manifest(ws: &Path, edit: impl FnOnce(String) -> String) -> String {
+    let path = state_dir(ws).join("manifest.yaml");
+    let original = fs::read_to_string(&path).unwrap();
+    fs::write(path, edit(original.clone())).unwrap();
+    original
+}
+
+pub fn edit_json(path: impl AsRef<Path>, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = path.as_ref();
+    let mut value = read_json(path);
+    edit(&mut value);
+    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+pub fn register_project(env: &TestEnv, name: &str, target: &Path) {
+    let projects = env.home.join(".niles/projects");
+    fs::create_dir_all(&projects).unwrap();
+    std::os::unix::fs::symlink(target, projects.join(name)).unwrap();
+}
+
+pub fn write_skill(root: &Path, name: &str, description: &str, body: &str) -> PathBuf {
+    let path = root.join("skills").join(name).join("SKILL.md");
+    write_skill_document(&path, name, description, body);
+    path
+}
+
+pub fn write_skill_document(path: &Path, name: &str, description: &str, body: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            "---\nname: {name}\ndescription: {}\n---\n{body}",
+            serde_json::to_string(description).unwrap()
+        ),
+    )
+    .unwrap();
+}
+
 pub fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
@@ -185,6 +274,15 @@ pub fn assert_command_success(label: &str, output: &Output) {
         "{label} stdout:\n{}\n{label} stderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn assert_success_contains(label: &str, output: &Output, needle: &str) {
+    assert_command_success(label, output);
+    assert!(
+        stdout_of(output).contains(needle),
+        "{label} stdout did not contain {needle:?}:\n{}",
+        stdout_of(output)
     );
 }
 

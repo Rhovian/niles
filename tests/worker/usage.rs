@@ -5,7 +5,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     let env = TestEnv::new("niles-usage");
     let worker = write_worker(&env.root, "impl", "niles:niles-impl", None, b"");
     let path = worker.join("meta.json");
-    let mut meta: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut meta = read_json(&path);
     meta["skill"] = "lead".into();
     meta["session_link"] = serde_json::json!({"family":"claude","session_id":"worker-session"});
     fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
@@ -30,7 +30,6 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     }
     let output = env
         .niles(&env.root, &["usage"])
-        .env("HOME", &env.home)
         .env("TMUX_PANE", "%9")
         .output()
         .unwrap();
@@ -58,7 +57,6 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     ] {
         let output = env
             .niles(&env.root, &["usage"])
-            .env("HOME", &env.home)
             .env("TMUX_PANE", "%9")
             .env(flag, "1")
             .output()

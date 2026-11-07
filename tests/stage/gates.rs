@@ -4,9 +4,9 @@ use serde_json::{Value, json};
 fn gated(rounds: u8, post: Value) -> Worker {
     let worker = Worker::new(Some(rounds), &[]);
     let path = worker.dir.join("meta.json");
-    let mut meta = read_json(&path);
-    meta["gates"]["post"] = post;
-    fs::write(path, meta.to_string()).unwrap();
+    edit_json(&path, |meta| {
+        meta["gates"]["post"] = post;
+    });
     worker.report();
     worker
 }
@@ -23,10 +23,10 @@ fn passing_retry_preserves_order_literal_argv_and_worker_cwd() {
     let tree = worker.env.root.join("tree");
     fs::create_dir(&tree).unwrap();
     let path = worker.dir.join("meta.json");
-    let mut meta = read_json(&path);
-    meta["tree"] = json!(tree);
-    meta["on_stage"] = json!(["reviewer"]);
-    fs::write(path, meta.to_string()).unwrap();
+    edit_json(&path, |meta| {
+        meta["tree"] = json!(tree);
+        meta["on_stage"] = json!(["reviewer"]);
+    });
     worker.succeeds("stage");
     worker.fails("done", "gates failing");
     fs::write(tree.join("fixed"), "").unwrap();

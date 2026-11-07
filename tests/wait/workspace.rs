@@ -137,19 +137,22 @@ fn busy_send_cursor_is_left_alone_and_other_workers_still_print() {
     writeln!(cursor_file, "19").unwrap();
     drop(cursor_file);
     let output = run_wait(&workspace, &["--timeout", "0"]);
-    assert_eq!(output.status.code(), Some(22));
-    assert!(stdout_of(&output).is_empty());
+    assert_drained(&output);
 }
 
 #[test]
 fn workspace_lock_symlinks_are_refused_and_old_cli_forms_are_rejected() {
-    for name in ["wait.lock", "wait.running"] {
+    for name in ["status.cursor", "wait.lock", "wait.running"] {
         let workspace = temp_workspace("niles-workspace-symlink");
         fs::create_dir_all(state_dir(&workspace).join("worker")).unwrap();
         let outside = workspace.join("outside");
         fs::write(&outside, "untouched").unwrap();
-        std::os::unix::fs::symlink(&outside, state_dir(&workspace).join("worker").join(name))
-            .unwrap();
+        let dir = if name == "status.cursor" {
+            worker_with_status(&workspace, "auth-fix", b"done: ready\n")
+        } else {
+            state_dir(&workspace).join("worker")
+        };
+        std::os::unix::fs::symlink(&outside, dir.join(name)).unwrap();
         let output = run_wait(&workspace, &["--timeout", "0"]);
         assert!(!output.status.success());
         assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");

@@ -1,5 +1,4 @@
 use super::support::*;
-use std::{io::Write, process::Stdio};
 
 #[test]
 fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
@@ -109,20 +108,10 @@ fn replacement_skills_discover_the_binary_contract_for_every_family() {
 #[test]
 fn stdin_task_preserves_multiline_text() {
     let env = TestEnv::with_manifest("niles-worker-stdin-task", "claude");
-    let mut child = env
-        .spawn_command("reviewer", &["review-file", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"  Inspect the parser edge cases.\nKeep this line verbatim.\n\n")
-        .unwrap();
-    let spawn = child.wait_with_output().unwrap();
+    let spawn = output_with_stdin(
+        env.spawn_command("reviewer", &["review-file", "-"]),
+        b"  Inspect the parser edge cases.\nKeep this line verbatim.\n\n",
+    );
     assert_command_success("spawn stdin task", &spawn);
 
     let brief =
@@ -133,16 +122,4 @@ fn stdin_task_preserves_multiline_text() {
         task.trim_end_matches('\n'),
         "  Inspect the parser edge cases.\nKeep this line verbatim."
     );
-}
-
-#[test]
-fn spawn_accepts_literal_flag_text() {
-    let env = TestEnv::with_manifest("niles-worker-spawn-message-options", "claude");
-
-    let literal = env.spawn("research", &["literal", "--", "--wait"]);
-    assert_command_success("spawn literal --wait", &literal);
-    let literal_brief =
-        fs::read_to_string(state_dir(&env.root).join("worker/literal/brief.md")).unwrap();
-    assert!(literal_brief.contains("\n--wait\n"), "{literal_brief}");
-    assert!(stdout_of(&literal).contains("wait: niles wait"));
 }

@@ -25,12 +25,15 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     fs::write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
     let status = worker_dir.join("status.log");
 
-    let foreign_workers = env.niles(&workspace_a, &["workers"]).output().unwrap();
+    let run =
+        |workspace: &std::path::Path, args: &[&str]| env.niles(workspace, args).output().unwrap();
+
+    let foreign_workers = run(&workspace_a, &["workers"]);
     assert_command_success("foreign workers", &foreign_workers);
     let foreign_workers_stdout = stdout_of(&foreign_workers);
     assert_eq!(foreign_workers_stdout, "{\"workers\":[]}\n");
 
-    let owner_workers = env.niles(&workspace_b, &["workers"]).output().unwrap();
+    let owner_workers = run(&workspace_b, &["workers"]);
     assert_command_success("owner workers", &owner_workers);
     let owner_workers_json: serde_json::Value =
         serde_json::from_slice(&owner_workers.stdout).unwrap();
@@ -39,44 +42,29 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert_eq!(owner_workers[0]["id"], "shared");
     let tmux_before = env.tmux_log();
 
-    let peek = env
-        .niles(&workspace_a, &["peek", "shared"])
-        .output()
-        .unwrap();
+    let peek = run(&workspace_a, &["peek", "shared"]);
     assert_failure_contains("foreign peek", &peek, "unknown worker id 'shared'");
-    assert!(String::from_utf8_lossy(&peek.stdout).is_empty());
+    assert!(stdout_of(&peek).is_empty());
 
-    let send = env
-        .niles(&workspace_a, &["send", "shared", "continue"])
-        .output()
-        .unwrap();
+    let send = run(&workspace_a, &["send", "shared", "continue"]);
     assert_failure_contains("foreign send", &send, "unknown worker id 'shared'");
 
-    let wait = env
-        .niles(
-            &workspace_a,
-            &["wait", "--interval", "10ms", "--timeout", "0"],
-        )
-        .output()
-        .unwrap();
+    let wait = run(
+        &workspace_a,
+        &["wait", "--interval", "10ms", "--timeout", "0"],
+    );
     assert_eq!(wait.status.code(), Some(22));
     assert!(stdout_of(&wait).is_empty());
 
-    let report = env
-        .niles(&workspace_a, &["report", "shared"])
-        .output()
-        .unwrap();
+    let report = run(&workspace_a, &["report", "shared"]);
     assert_failure_contains(
         "foreign report",
         &report,
         "no report found for worker 'shared'",
     );
-    assert!(String::from_utf8_lossy(&report.stdout).is_empty());
+    assert!(stdout_of(&report).is_empty());
 
-    let close = env
-        .niles(&workspace_a, &["close", "shared"])
-        .output()
-        .unwrap();
+    let close = run(&workspace_a, &["close", "shared"]);
     assert_failure_contains("foreign close", &close, "no live worker 'shared'");
 
     assert_eq!(env.tmux_log(), tmux_before);
@@ -86,51 +74,18 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert!(!worker_dir.join("status.cursor").exists());
     assert!(!state_dir(&workspace_b).join("worker/archive").exists());
     assert!(worker_dir.exists());
-}
-
-#[test]
-fn archived_reports_are_workspace_local() {
-    let env = TestEnv::new("niles-worker-scope-foreign-archive");
-    let workspace_a = env.root.join("workspace-a");
-    let workspace_b = env.root.join("workspace-b");
-    fs::create_dir_all(&workspace_a).unwrap();
-    fs::create_dir_all(&workspace_b).unwrap();
-    write_spawn_manifest(&workspace_b, "claude");
-    let spawn = env
-        .niles(
-            &workspace_b,
-            &["spawn", "--skill", "research", "closed", "Fix"],
-        )
-        .output()
-        .unwrap();
-    assert_command_success("spawn scoped worker", &spawn);
-    let worker_dir = state_dir(&workspace_b).join("worker/closed");
-    fs::write(worker_dir.join("report.md"), "closed worker report\n").unwrap();
-
-    let close = env
-        .niles(&workspace_b, &["close", "closed"])
-        .output()
-        .unwrap();
+    let close = run(&workspace_b, &["close", "shared"]);
     assert_command_success("close worker in owner workspace", &close);
 
-    let local_report = env
-        .niles(&workspace_b, &["report", "closed"])
-        .output()
-        .unwrap();
+    let local_report = run(&workspace_b, &["report", "shared"]);
     assert_command_success("local archived report", &local_report);
-    assert_eq!(
-        String::from_utf8_lossy(&local_report.stdout),
-        "closed worker report\n"
-    );
+    assert_eq!(stdout_of(&local_report), "workspace B report\n");
 
-    let foreign_report = env
-        .niles(&workspace_a, &["report", "closed"])
-        .output()
-        .unwrap();
+    let foreign_report = run(&workspace_a, &["report", "shared"]);
     assert_failure_contains(
         "foreign archived report",
         &foreign_report,
-        "no report found for worker 'closed'",
+        "no report found for worker 'shared'",
     );
-    assert!(String::from_utf8_lossy(&foreign_report.stdout).is_empty());
+    assert!(stdout_of(&foreign_report).is_empty());
 }

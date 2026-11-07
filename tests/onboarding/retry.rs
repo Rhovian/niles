@@ -1,9 +1,9 @@
-use super::{environment, manifest, support, terminal};
+use super::{CUSTOM_URL, environment, manifest, support, terminal};
 use std::fs;
 
 #[test]
 fn failed_custom_setup_can_retry_the_same_url() {
-    for failure in ["empty body", "starter fetch"] {
+    for failure in ["empty body", "starter fetch", "custom fetch"] {
         let env = environment();
         fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
         let body = if failure == "empty body" {
@@ -11,25 +11,22 @@ fn failed_custom_setup_can_retry_the_same_url() {
         } else {
             "Coordinate work."
         };
-        support::import_fixture(
-            &env,
-            "custom",
-            &format!("---\nname: custom\ndescription: Custom\n---\n{body}\n"),
-        );
+        if failure != "custom fetch" {
+            support::import_fixture(
+                &env,
+                "custom",
+                &format!("---\nname: custom\ndescription: Custom\n---\n{body}\n"),
+            );
+        }
         let optional = if failure == "starter fetch" {
             b"\x1b[B \r".as_slice()
         } else {
             b"\r"
         };
         let steps = |optional| {
-            [
-                ("work?", b"\r".as_slice()),
-                ("lead's", b"\x1b[B\r"),
-                ("URL", b"github.com/other/repository/skills/custom\r"),
-                ("TIERS", b"\r"),
-                ("starter", optional),
-                ("Warning:", b"\r"),
-            ]
+            let mut steps = CUSTOM_URL.to_vec();
+            steps[4].1 = optional;
+            steps
         };
         let (output, text) = terminal(&env, &["start"], &steps(optional), |_| {});
         assert!(!output.status.success(), "{failure}: {output:?} {text}");
@@ -53,6 +50,13 @@ fn failed_custom_setup_can_retry_the_same_url() {
                     .replace(&"a".repeat(40), &"b".repeat(40)),
             )
             .unwrap();
+        }
+        if failure == "custom fetch" {
+            support::import_fixture(
+                &env,
+                "custom",
+                "---\nname: custom\ndescription: Custom\n---\nCoordinate work.\n",
+            );
         }
         let (output, text) = terminal(&env, &["start"], &steps(b"\r"), |_| {});
         assert!(

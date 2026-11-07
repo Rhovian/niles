@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
+use common::{assert_command_success, stdout_of};
 
 use std::{fs, os::unix::fs::symlink, path::Path, process::Command};
 
@@ -17,6 +18,12 @@ fn installed_update(home: &Path, layout: &str) -> Command {
     let mut command = Command::new(bin.join("niles"));
     command.arg("update").env("HOME", home);
     command
+}
+
+fn assert_prints(output: &std::process::Output, expected: &str) {
+    assert_command_success("update", output);
+    assert_eq!(stdout_of(output), expected);
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -45,17 +52,13 @@ fn update_reports_package_manager_or_missing_updater() {
     let link = root.path().join("niles-link");
     symlink(brew.get_program(), &link).unwrap();
     let output = Command::new(link).arg("update").output().unwrap();
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"Run: brew upgrade niles\n");
-    assert!(output.stderr.is_empty());
+    assert_prints(&output, "Run: brew upgrade niles\n");
 
     let mut cargo = installed_update(root.path(), ".cargo/bin");
     let metadata = root.path().join(".cargo/.crates.toml");
     fs::write(&metadata, "[v1]\n'niles 1.0.0 (x)' = ['niles']\n").unwrap();
     let output = cargo.output().unwrap();
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"Run: cargo install niles --locked\n");
-    assert!(output.stderr.is_empty());
+    assert_prints(&output, "Run: cargo install niles --locked\n");
 
     fs::write(&metadata, "[v1]\n'other 1.0.0 (x)' = ['other']\n").unwrap();
     let output = cargo.output().unwrap();
@@ -75,15 +78,13 @@ fn update_reports_package_manager_or_missing_updater() {
     )
     .unwrap();
     let output = custom.output().unwrap();
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!(
+    assert_prints(
+        &output,
+        &format!(
             "Run: cargo install niles --locked --root '{}/cargo root'\\''s'\n",
             root.path().canonicalize().unwrap().display()
-        )
+        ),
     );
-    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -99,9 +100,7 @@ fn update_channel_selects_updater_arguments() {
             "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
         );
         let output = command.args(&args).output().unwrap();
-        assert!(output.status.success());
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
-        assert!(output.stderr.is_empty());
+        assert_prints(&output, expected);
     }
 }
 

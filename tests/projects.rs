@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{TestEnv, assert_command_success as assert_ok, stdout_of};
+use common::{TestEnv, assert_command_success as assert_ok, register_project, stdout_of};
 use std::{fs, process::Command};
 
 #[test]
@@ -18,9 +18,7 @@ fi
 if [ "$1" = display ]; then printf '%s\n' "$TMUX_PROJECT_TAG"; fi
 "#,
     );
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
-    std::os::unix::fs::symlink(&env.root, registry.join("race")).unwrap();
+    register_project(&env, "race", &env.root);
     for (query, args) in [
         ("display", vec!["status", "projects"]),
         ("list-windows", vec!["status", "projects"]),
@@ -28,7 +26,6 @@ if [ "$1" = display ]; then printf '%s\n' "$TMUX_PROJECT_TAG"; fi
     ] {
         let result = env
             .niles(&env.root, &args)
-            .env("HOME", &env.home)
             .env("TMUX_PROJECT_TAG", &env.root)
             .env("FAIL_QUERY", query)
             .output()
@@ -55,11 +52,7 @@ esac
 "#,
     );
     let result = env.niles(&env.root, &[]).output().unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    assert_ok("home session", &result);
     let log = env.tmux_log();
     let cwd = env.root.canonicalize().unwrap();
     let steps = [
@@ -91,11 +84,7 @@ fn existing_home_session_gets_the_header_and_switches() {
         .env("TMUX_SESSION_EXISTS", "1")
         .output()
         .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    assert_ok("home session", &result);
     let log = env.tmux_log();
     let header = log.find(
         "set-option -t =niles+home: status on ; set-option -t =niles+home: status-position top",
@@ -199,9 +188,7 @@ fn live_projects_survive_a_service_environment() {
             env.root.to_str().unwrap(),
         ]),
     );
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
-    std::os::unix::fs::symlink(&env.root, registry.join("api")).unwrap();
+    register_project(&env, "api", &env.root);
     common::write_executable(
         &env.bin.join("tmux"),
         &format!(
