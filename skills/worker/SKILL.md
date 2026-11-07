@@ -25,8 +25,9 @@ without multiplying the full workflow unless their interaction changes the resul
 
 During refactor, remove duplicate cases and temporary scaffolding. For each retained test whose
 name promises changed behaviour, trace one wrong implementation to a failing assertion. If
-another test already kills it, consolidate unless this test proves a distinct contract. A green
-suite or mutation score is not evidence that an additional test is useful.
+another test already kills it, consolidate. Consolidate near-identical bodies across the codebase
+even for distinct contracts: share setup, use table-driven cases, or assert several guarantees in
+one test. A green suite or mutation score does not justify an additional test.
 
 Report each failing test or check with its cause, one line each. A test written to fail first
 must fail because the behaviour is missing, not on an import, schema or routing error; fix such a
