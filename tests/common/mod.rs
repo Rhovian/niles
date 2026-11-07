@@ -6,10 +6,13 @@
 use std::{
     fs,
     io::Write,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Output},
 };
+
+#[path = "../../src/test_support/process.rs"]
+mod process;
+pub use process::*;
 
 const TEST_ENV_MARKER: &str = ".niles-test-env";
 
@@ -177,17 +180,6 @@ pub fn run_bare(cwd: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-pub fn output_with_stdin(mut command: Command, input: &[u8]) -> Output {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(input).unwrap();
-    child.wait_with_output().unwrap()
-}
-
 pub const GIT_ENV: [(&str, &str); 12] = [
     ("GIT_CONFIG_NOSYSTEM", "1"),
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -315,13 +307,6 @@ pub fn temp_workspace(prefix: &str) -> PathBuf {
 
 pub fn read_json(path: impl AsRef<Path>) -> serde_json::Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
-}
-
-pub fn write_executable(path: &Path, body: &str) {
-    fs::write(path, body).unwrap();
-    let mut permissions = fs::metadata(path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).unwrap();
 }
 
 const SKILLS: [&str; 6] = [
