@@ -106,6 +106,20 @@ The host requires exactly one nonempty, well-formed login header on every route,
 unknown routes. It accepts any login the relay forwards: there is no per-host user allowlist;
 tailnet ACLs are the user access gate. Use Serve, never Funnel.
 
+`GET /api/telemetry` uses the same relay-peer and forwarded-user checks. It exposes usage
+metadata for registered projects' current and archived sessions: project/session identifiers,
+lead/worker role, agent family/model, creation/closure times and token totals in UTC-aligned
+15-minute buckets. Collection bounds archived-session reads and exported buckets to the
+30 days before collection (including the overlapping start bucket). It returns no transcript
+text, prompts, tool output or filesystem paths.
+Like other API responses it is `no-store`. The authenticated PWA fetches hosts independently
+through the relay and retains each validated last successful snapshot in same-origin browser
+local storage, including its collection time. Sleeping hosts retain that snapshot; errors remain
+visible. Persistence without expiry is an accepted operator policy: snapshots remain across
+browser restarts until replaced or site data is cleared, so an unreachable host’s cached
+30-day window can become older than 30 days. Anyone with access to that browser profile can
+read it. No new machine identity, grant or CLI access is added.
+
 The relay is now trusted to assert user identity for every host. A compromised relay or a
 local process that can make connections as the relay can impersonate any user. Restrict
 access to its node credentials and local Caddy listener. A direct connection from a user's

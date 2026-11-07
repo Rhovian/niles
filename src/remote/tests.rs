@@ -141,6 +141,7 @@ fn configuration_requires_relay_node_and_survives_config_save() {
 async fn all_routes_require_one_forwarded_identity_and_never_cache() {
     let fixture = Fixture::new(0);
     for path in [
+        "/api/telemetry",
         "/api/projects",
         "/api/sessions",
         "/api/sessions/project:session/events",
@@ -471,6 +472,7 @@ async fn only_the_relay_peer_can_forward_any_user_login() {
         );
     }
     for path in [
+        "/api/telemetry",
         "/api/sessions",
         "/api/projects",
         "/api/push/vapid",
@@ -495,3 +497,5 @@ async fn only_the_relay_peer_can_forward_any_user_login() {
         }
     }
 }
+
+mod telemetry;

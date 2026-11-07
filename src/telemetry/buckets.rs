@@ -18,6 +18,11 @@ impl Buckets {
         *self.0.entry(at - into).or_default() += tokens;
     }
 
+    #[cfg(feature = "remote")]
+    pub(crate) fn since(mut self, start: DateTime<Utc>) -> Self {
+        Self(self.0.split_off(&start))
+    }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = (DateTime<Utc>, u64)> + '_ {
         self.0.iter().map(|(start, tokens)| (*start, *tokens))
     }

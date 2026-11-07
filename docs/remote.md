@@ -82,6 +82,29 @@ Tailscale off, but opening one needs Tailscale. See [notification behavior](../w
 
 ## Using it
 
+Open **Telemetry** in the PWA menu for token usage across the machines in `hosts.json`, grouped
+by machine, project, session and model over rolling windows of 1, 7 or 30 days. These are
+24-hour days, unlike the CLI panel’s local-midnight calendar ranges. The overlapping 15-minute
+bucket at the beginning of a window is included. **Refresh telemetry** fetches
+each machine independently. An unreachable machine retains its last successful snapshot with an
+“As of” timestamp; relay gateway failures (502/503/504) are classified as unreachable,
+while other API failures are shown as Failed alongside any cached usage. Totals include these stale
+snapshots, so check collection times when comparing machines. Snapshots persist in browser site
+data; clearing it removes the cache. Without a relay manifest the view uses the local backend.
+An outdated or malformed cache is discarded with a notice and refreshed from the server.
+Browser storage failures are reported explicitly while fresh fetched usage remains visible.
+The CLI TELEMETRY panel remains local-only.
+
+Each host serves `GET /api/telemetry` through the existing relay route. The versioned JSON contains
+`collected_at` and `sessions`; each session has `project`, `id`, `entry`, `family`, nullable `model`,
+`created_at`, nullable `closed_at`, and `buckets` mapping UTC 15-minute bucket starts to token counts.
+Token accounting follows the local TELEMETRY panel, including input, output and cache tokens.
+The endpoint bounds closed-session reads and exported buckets to the last 30 days, including
+the overlapping start bucket, rather than exporting all-time history. The `created_at` field
+distinguishes incarnations when a worker ID is reused. Historical coverage is limited to
+registered projects and retained Niles state/transcripts; no transcript
+text is returned. Run matching web/backend releases on every host.
+
 - Messages are sent even mid-turn. A failed send can still have been delivered, so check before
   resending.
 - Phone transcripts hide tool calls and code blocks, including diffs and file contents; the full
