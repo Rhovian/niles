@@ -1,3 +1,4 @@
+import { createHash, webcrypto } from 'node:crypto';
 import { Stream, deferred, serveLocal } from './test-utils';
 import { expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
@@ -145,14 +146,18 @@ it('dismisses the history notice after five seconds without live turns extending
   expect(screen.queryByText(/Showing the most recent 200 turns/)).toBeNull();
 });
 
-it.each(['/api/sessions/solo', '/api/projects/demo/workers/nav'])('animates waiting dots until a reply in %s', async base => {
+it.each(['/api/sessions/solo', '/api/projects/demo/workers/nav'].flatMap(base => [null, { endpoint: 'https://fcm.googleapis.com/device' }, { endpoint: 'https://wns.example/unregistered' }].map(subscription => ({ base, subscription }))))('animates waiting dots and identifies the sending subscription ($base, $subscription)', async ({ base, subscription }) => {
+  vi.stubGlobal('crypto', webcrypto);
+  const getRegistration = vi.fn(async () => ({ pushManager: { getSubscription: async () => subscription } }));
+  vi.stubGlobal('navigator', { serviceWorker: { getRegistration } });
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
   render(<Chat base={base} id="chat" title="chat" subtitle="" />);
   Stream.latest.emit('snapshot', emptySnapshot);
   expect(screen.queryByRole('status', { name: 'Waiting for reply' })).toBeNull();
   send('hello');
   const indicator = await screen.findByRole('status', { name: 'Waiting for reply' });
-  expect(fetch).toHaveBeenCalledWith(`${base}/message`, expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hello' }) }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith(`${base}/message`, expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hello', ...(subscription && base.includes('/api/sessions/') ? { sender_device: createHash('sha256').update(subscription.endpoint).digest('base64url') } : {}) }) })));
+  expect(getRegistration).toHaveBeenCalledTimes(base.includes('/api/sessions/') ? 1 : 0);
   expect(indicator.children).toHaveLength(3);
   await waitFor(() => expect(screen.queryByText('You · Sending…')).toBeNull());
   Stream.latest.emit('turn', { id: 'echo', role: 'user', text: 'hello' });

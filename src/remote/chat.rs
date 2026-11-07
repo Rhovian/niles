@@ -28,7 +28,7 @@ pub(super) fn worker(project: String, id: String) -> Lookup {
     })
 }
 impl Chat {
-    fn lead(record: &status::ForegroundSession) -> Result<Self> {
+    pub(super) fn lead(record: &status::ForegroundSession) -> Result<Self> {
         Ok(Self {
             id: session_id(record),
             transcript: TranscriptSource {

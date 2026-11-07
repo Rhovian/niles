@@ -112,12 +112,46 @@ fn interrupted_user_text_is_preserved_and_repeated_blocks_are_not_deduplicated()
     let turns = text(Family::Claude, &[repeated.clone(), repeated, user]);
     assert_eq!(turns.len(), 5);
     assert_eq!(turns[0], turns[3]);
-    assert_eq!(turns[4].role, TextRole::User);
+    assert_eq!(turns[4].role, TextRole::Injected);
     assert_eq!(
         turns[4].content,
         TextBlock::Text {
             text: "[Request interrupted by user]".into()
         }
+    );
+    for text in [
+        "niles: w1 reported (done) — check workers",
+        "niles: no report from w1 — check workers",
+        "<environment_context>cwd</environment_context>",
+        "<command-name>/clear</command-name>",
+        "<local-command-stdout>output</local-command-stdout>",
+        "<local-command-caveat>generated</local-command-caveat>",
+        "<system-reminder>hook output</system-reminder>",
+    ] {
+        for (family, line) in [
+            (
+                Family::Claude,
+                json!({"type":"user","message":{"content":text}}),
+            ),
+            (
+                Family::Codex,
+                json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}}),
+            ),
+            (
+                Family::Pi,
+                json!({"type":"message","message":{"role":"user","content":text}}),
+            ),
+        ] {
+            assert_eq!(
+                file_turns(family, line).unwrap()[0].role,
+                TextRole::Injected
+            );
+        }
+    }
+    let hook = json!({"type":"user","isMeta":true,"message":{"content":"hook output"}});
+    assert_eq!(
+        file_turns(Family::Claude, hook).unwrap()[0].role,
+        TextRole::Injected
     );
 }
 

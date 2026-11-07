@@ -27,8 +27,8 @@ it('always displays a visible notification and opens only an encoded same-origin
   };
   await deliver('s');
   expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ body: 'p: waiting', data: { session_id: 's' }, tag: 'session:s', renotify: false }));
-  await deliver('s', 'waiting again');
-  expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ body: 'p: waiting again', tag: 'session:s', renotify: false }));
+  await deliver('s', 'Operator sent a message');
+  expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ body: 'p: Operator sent a message', tag: 'session:s', renotify: false }));
   await deliver('other');
   expect(showNotification).toHaveBeenLastCalledWith('Niles · p', expect.objectContaining({ tag: 'session:other', data: { session_id: 'other' } }));
   await deliver('p:20261022T173949644004000Z');

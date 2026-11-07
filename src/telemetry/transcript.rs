@@ -44,6 +44,7 @@ pub(crate) struct TextTurn {
 #[serde(rename_all = "lowercase")]
 pub(crate) enum TextRole {
     User,
+    Injected,
     Assistant,
 }
 

@@ -47,6 +47,7 @@ mod checkin;
 pub(crate) mod composer;
 mod decide;
 mod digest;
+pub(crate) use digest::is_nudge;
 mod due;
 mod report;
 mod sink;

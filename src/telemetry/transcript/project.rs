@@ -24,11 +24,34 @@ fn message_turns(
             TextBlock::ToolUse { .. } => true,
         })
         .map(|content| TextTurn {
-            role,
+            role: if role == TextRole::User
+                && matches!(&content, TextBlock::Text { text } if injected(text))
+            {
+                TextRole::Injected
+            } else {
+                role
+            },
             timestamp,
             content,
         })
         .collect()
+}
+
+// Provider user-role envelopes also carry CLI-generated context, not operator input.
+// Codex protocol is pinned below; Claude Code 2.1.312 uses isMeta for hook messages.
+fn injected(text: &str) -> bool {
+    let text = text.trim();
+    crate::watch::is_nudge(text)
+        || [
+            "[Request interrupted by user",
+            "<command-name>",
+            "<local-command-stdout>",
+            "<local-command-caveat>",
+            "<environment_context>",
+            "<system-reminder>",
+        ]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
 }
 
 fn block(mut value: Value) -> Option<TextBlock> {
@@ -91,8 +114,11 @@ pub(super) fn file_turns(family: Family, mut line: Value) -> Result<Vec<TextTurn
             if line["isCompactSummary"] == true {
                 return Ok(Vec::new());
             }
-            let role = TextRole::parse(line["type"].as_str().context("Claude message type")?)
+            let mut role = TextRole::parse(line["type"].as_str().context("Claude message type")?)
                 .context("Claude message role")?;
+            if role == TextRole::User && line["isMeta"] == true {
+                role = TextRole::Injected;
+            }
             let content = match line["message"].get_mut("content") {
                 Some(content) => content.take(),
                 None => Value::Null,

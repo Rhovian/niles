@@ -5,7 +5,9 @@ use axum::response::sse::Event;
 use serde::Serialize;
 
 use super::chat::{Chat, Lookup};
-use crate::telemetry::transcript::{TextBlock, TextRole, TextTurn, TranscriptReader};
+use crate::telemetry::transcript::{
+    TextBlock, TextRole, TextTurn, TranscriptReader, TranscriptSource,
+};
 
 const RECENT_TURNS: usize = 200;
 
@@ -24,7 +26,7 @@ pub(super) struct Snapshot {
 
 pub(super) struct Feed {
     chat: Chat,
-    reader: Option<TranscriptReader>,
+    follower: Follower,
     next: u64,
     status_sent: bool,
 }
@@ -35,7 +37,7 @@ impl Feed {
     pub(super) fn open(chat: Chat) -> Result<(Self, Snapshot)> {
         let mut feed = Self {
             chat,
-            reader: None,
+            follower: Follower::default(),
             next: 0,
             status_sent: false,
         };
@@ -54,18 +56,12 @@ impl Feed {
     }
 
     fn read(&mut self) -> Result<Vec<Turn>> {
-        if self.reader.is_none() {
-            self.reader = self.chat.transcript.open()?;
-        }
-        let turns = match &mut self.reader {
-            Some(reader) => reader.read()?,
-            None => Vec::new(),
-        };
+        let turns = self.follower.read(&self.chat.transcript)?;
         Ok(turns
             .into_iter()
             .filter_map(|turn| {
                 let role = match turn.role {
-                    TextRole::User => "user",
+                    TextRole::User | TextRole::Injected => "user",
                     TextRole::Assistant => "agent",
                 };
                 let text = mobile_text(turn)?;
@@ -92,6 +88,26 @@ impl Feed {
             events.push(Event::default().event("turn").json_data(turn)?);
         }
         Ok(Some(events))
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Follower(Option<TranscriptReader>);
+impl Follower {
+    fn read(&mut self, source: &TranscriptSource) -> Result<Vec<TextTurn>> {
+        if self.0.is_none() {
+            self.0 = source.open()?;
+        }
+        match &mut self.0 {
+            Some(reader) => reader.read(),
+            None => Ok(Vec::new()),
+        }
+    }
+    pub(super) fn read_new(&mut self, source: &TranscriptSource) -> Result<Vec<TextTurn>> {
+        let baseline = self.0.is_none();
+        let turns = self.read(source)?;
+        // A rollout discovered late is a baseline, not a batch of new messages.
+        Ok(if baseline { Vec::new() } else { turns })
     }
 }
 

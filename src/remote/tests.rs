@@ -9,14 +9,14 @@ use std::{fs, io::Write, sync::Mutex};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
-struct Fixture {
-    root: TempDir,
-    records: Arc<Mutex<Vec<ForegroundSession>>>,
+pub(super) struct Fixture {
+    pub(super) root: TempDir,
+    pub(super) records: Arc<Mutex<Vec<ForegroundSession>>>,
     state: AppState,
 }
 
 impl Fixture {
-    fn new(count: usize) -> Self {
+    pub(super) fn new(count: usize) -> Self {
         let root = temp_dir("remote-api");
         fs::write(
             root.join("001.jsonl"),
@@ -72,7 +72,7 @@ impl Fixture {
             .into_data_stream()
     }
 
-    fn append(&self, text: &str) {
+    pub(super) fn append(&self, text: &str) {
         fs::OpenOptions::new()
             .append(true)
             .open(self.root.join("001.jsonl"))
@@ -81,7 +81,7 @@ impl Fixture {
             .unwrap();
     }
 }
-fn message(text: &str) -> String {
+pub(super) fn message(text: &str) -> String {
     format!(
         "{}\n",
         json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":text}]}})
