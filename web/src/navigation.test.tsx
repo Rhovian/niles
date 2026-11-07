@@ -48,7 +48,8 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   for (const text of ['demo', 'offline', 'waiting', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
   expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['custom-style', 'research', 'reviewer', 'security', 'worker']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
-  expect(screen.queryByText('Config')).toBeNull(); expect(screen.queryByText('Telemetry')).toBeNull();
+  expect(screen.queryByText('Config')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Telemetry', exact: true })).toBeDefined();
   expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
   expect(screen.queryByRole('button', { name: 'Start missing' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Help' }));

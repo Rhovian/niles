@@ -149,6 +149,7 @@ mod tests {
                     || name == "tests.rs"
                     || name.ends_with("_tests.rs")
                     || name == "test_support.rs"
+                    || name == "test_support"
                 {
                     continue;
                 }
