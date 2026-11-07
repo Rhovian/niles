@@ -3,6 +3,7 @@ import { act, cleanup } from '@testing-library/preact';
 import { Stream } from './test-utils';
 
 beforeEach(() => {
+  if (typeof window === 'undefined') return;
   window.history.replaceState(null, '', '/'); localStorage.clear();
   Element.prototype.scrollIntoView = vi.fn(); Stream.opened = [];
   vi.stubGlobal('EventSource', Stream);
