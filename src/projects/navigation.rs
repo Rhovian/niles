@@ -9,6 +9,8 @@ pub(crate) struct Project {
     name: String,
     state: ProjectState,
     workers: Vec<Worker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lead_state: Option<AgentState>,
 }
 
 #[derive(Clone, Serialize)]
@@ -29,6 +31,17 @@ struct Worker {
     id: String,
     skill: SkillName,
     lost: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<AgentState>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AgentState {
+    Working,
+    Starting,
+    Idle,
+    Waiting,
 }
 
 pub(crate) fn collect() -> Result<Vec<Project>> {
@@ -61,14 +74,29 @@ fn project(project: snapshot::Project) -> Project {
         State::Waiting(_) => ProjectState::Waiting,
     };
     let mut workers = Vec::new();
+    let mut lead_state = None;
     if let Some(agents) = project.agents {
         for window in agents.windows {
+            if matches!(window.kind, WindowKind::Lead) {
+                lead_state = Some(match window.segment.activity() {
+                    crate::theme::State::Running => AgentState::Working,
+                    crate::theme::State::Starting => AgentState::Starting,
+                    crate::theme::State::Idle | crate::theme::State::Waiting => AgentState::Waiting,
+                });
+            }
             if let WindowKind::Worker(id, skill) = window.kind {
                 workers.push(Worker {
                     model: None,
                     id,
                     skill,
                     lost: false,
+                    state: Some(match window.segment.activity() {
+                        crate::theme::State::Running => AgentState::Working,
+                        crate::theme::State::Starting => AgentState::Starting,
+                        crate::theme::State::Idle | crate::theme::State::Waiting => {
+                            AgentState::Idle
+                        }
+                    }),
                 });
             }
         }
@@ -77,12 +105,14 @@ fn project(project: snapshot::Project) -> Project {
             id,
             skill,
             lost: true,
+            state: None,
         }));
     }
     Project {
         name: project.row.entry.name.as_str().to_owned(),
         state,
         workers,
+        lead_state,
     }
 }
 
@@ -95,23 +125,32 @@ mod tests {
         status::Segment,
         windows::{AgentWindow, SessionAgents},
     };
+    use crate::theme::State as Activity;
     use serde_json::json;
 
     #[test]
-    fn projects_expose_all_states_and_only_worker_identity_skill_and_loss() {
-        for (state, label) in [
+    fn projects_expose_all_states_and_worker_activity_without_private_details() {
+        for ((state, label), (activity, expected)) in [
             (State::Missing, "missing"),
             (State::NotRunning, "not running"),
             (State::Running, "running"),
             (State::Starting, "starting"),
             (State::Waiting(None), "waiting"),
-        ] {
+        ]
+        .into_iter()
+        .zip([
+            (Some(Activity::Running), "working"),
+            (Some(Activity::Starting), "starting"),
+            (Some(Activity::Waiting), "idle"),
+            (Some(Activity::Idle), "idle"),
+            (None, "idle"),
+        ]) {
             let window = |kind| AgentWindow {
                 name: "private-window".into(),
                 kind,
                 segment: Segment {
                     label: "private-label".into(),
-                    state: None,
+                    state: activity,
                     tokens: None,
                     age: None,
                 },
@@ -136,8 +175,8 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(project).unwrap(),
                 json!({
-                    "name": "demo", "state": label, "workers": [
-                        {"id": "nav", "skill": "worker", "lost": false},
+                    "name": "demo", "state": label, "lead_state": if expected == "idle" { "waiting" } else { expected }, "workers": [
+                        {"id": "nav", "skill": "worker", "lost": false, "state": expected},
                         {"id": "review", "skill": "reviewer", "lost": true},
                     ]
                 })

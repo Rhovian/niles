@@ -5,6 +5,8 @@ import { API_NAVIGATION_PATH } from './shell';
 import { pushPayload, qualified, sessionHash } from './notification';
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: { url: string; revision: string | null }[] };
 
+// Workbox installs the built shell and registers its cache-backed fetch handler.
+// https://github.com/GoogleChrome/workbox/blob/v7.4.1/packages/workbox-precaching/src/precacheAndRoute.ts
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_NAVIGATION_PATH] }));

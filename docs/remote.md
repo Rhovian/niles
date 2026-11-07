@@ -87,7 +87,8 @@ by machine, project, session and model over rolling windows of 1, 7 or 30 days. 
 24-hour days, unlike the CLI panel’s local-midnight calendar ranges. The overlapping 15-minute
 bucket at the beginning of a window is included. **Refresh telemetry** fetches
 each machine independently. An unreachable machine retains its last successful snapshot with an
-“As of” timestamp; relay gateway failures (502/503/504) are classified as unreachable,
+“As of” timestamp; relay gateway failures (502/503/504) and request timeouts are classified as unreachable.
+A network failure reaching the relay shows one connection notice suggesting reconnecting Tailscale,
 while other API failures are shown as Failed alongside any cached usage. Totals include these stale
 snapshots, so check collection times when comparing machines. Snapshots persist in browser site
 data; clearing it removes the cache. Without a relay manifest the view uses the local backend.

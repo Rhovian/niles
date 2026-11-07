@@ -13,12 +13,13 @@ const HOST_REFRESH_MS = 15_000;
 const LOCAL_HOST: Host = { id: '', name: 'This host' };
 export const hostPrefix = (host: Host) => host.id ? `/h/${host.id}` : '';
 export { qualified } from './notification';
-type Availability = { state: 'loading' | 'asleep' } | { state: 'error'; error: string } |
+type Availability = { state: 'loading' | 'asleep' | 'unreachable' } | { state: 'error'; error: string } |
   Incompatible | { state: 'ready'; projects: Project[]; sessions: Session[] };
 export type HostState = Host & Availability;
 
-export function hostFailure(cause: unknown): { state: 'asleep' } | { state: 'error'; error: string } {
-  return cause instanceof TypeError || cause instanceof DOMException && cause.name === 'TimeoutError'
+export function hostFailure(cause: unknown): { state: 'asleep' | 'unreachable' } | { state: 'error'; error: string } {
+  if (cause instanceof TypeError) return { state: 'unreachable' };
+  return cause instanceof DOMException && cause.name === 'TimeoutError'
     || cause instanceof ApiError && [502, 503, 504].includes(cause.status)
     ? { state: 'asleep' } : { state: 'error', error: connectionError(cause) };
 }

@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { useTelemetry, BUCKET_MS, type Snapshot } from './telemetry-data';
-import { incompatibleMessage } from './api';
+import { TAILNET_UNREACHABLE, incompatibleMessage } from './api';
 
 const DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -22,12 +22,13 @@ export function Telemetry() {
     <label>Time range<select value={days} onInput={event => setDays(Number(event.currentTarget.value))}>
       {[1, 7, 30].map(days => <option key={days} value={days}>Last {days} {days === 1 ? 'day' : 'days'}</option>)}
     </select></label>
+    {machines.some(machine => machine.state === 'unreachable') && <p role="alert">{TAILNET_UNREACHABLE}</p>}
     {error && <p role="alert">{error}</p>}
     {summaries.map(({ machine, sessions, tokens }) => {
       return <section key={machine.id} aria-label={`${machine.name} telemetry`}>
         <h3>{machine.name}</h3>
         {machine.state === 'incompatible' ? <p role="alert">{incompatibleMessage(machine.version)}</p> : machine.state === 'error' ? <p role="alert">Failed: {machine.error}</p> :
-          machine.state === 'asleep' ? <p>Asleep or unreachable</p> : machine.state === 'loading' ? <p>Connecting…</p> : <p>Connected</p>}
+          machine.state === 'unreachable' ? <p>Connection unavailable</p> : machine.state === 'asleep' ? <p>Asleep or unreachable</p> : machine.state === 'loading' ? <p>Connecting…</p> : <p>Connected</p>}
         {machine.cacheWarning && <p role="status">{machine.cacheWarning}</p>}
         {machine.snapshot ? <>
           <p>As of <time dateTime={machine.snapshot.collected_at}>{new Date(machine.snapshot.collected_at).toLocaleString()}</time></p>

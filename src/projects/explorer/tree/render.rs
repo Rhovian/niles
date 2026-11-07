@@ -148,11 +148,7 @@ impl Tree {
                 ]);
                 match member {
                     Member::Window(window) => {
-                        let state = match window.segment.state {
-                            Some(ThemeState::Running) => ThemeState::Running,
-                            Some(ThemeState::Starting) => ThemeState::Starting,
-                            Some(ThemeState::Idle | ThemeState::Waiting) | None => ThemeState::Idle,
-                        };
+                        let state = window.segment.activity();
                         let (glyph, style) = theme.state(state);
                         line.spans.extend([
                             Span::styled(glyph, style),

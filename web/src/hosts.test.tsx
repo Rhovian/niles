@@ -65,15 +65,19 @@ it('routes worker chats and lifecycle actions without leaking qualified IDs to s
   fireEvent.click(menu.getByRole('button', { name: 'Open same/worker chat' }));
   await waitFor(() => expect(Stream.opened.at(-1)?.url).toBe('/h/laptop/api/projects/same%20project/workers/same%2Fworker/events'));
 });
-it('isolates an unreachable host and recovers on focus', async () => {
-  server.failHost('laptop', new TypeError('Network down'));
-  render(<App />); await screen.findByText(/Laptop: Asleep/); openMenu();
-  const wake = hostMenu('Laptop').getByRole('button', { name: 'Wake Laptop' });
-  expect(wake.hasAttribute('disabled')).toBe(false);
+it.each([new ApiError(502), new TypeError('Network down')])('isolates host failure %s and recovers on focus', async failure => {
+  server.failHost('laptop', failure);
+  render(<App />);
+  const asleep = failure instanceof ApiError;
+  expect((await screen.findByRole('alert')).textContent).toContain(asleep ? 'Laptop: Asleep' : 'Reconnect Tailscale');
+  openMenu();
+  const wake = hostMenu('Laptop').queryByRole('button', { name: 'Wake Laptop' });
+  expect(wake !== null).toBe(asleep);
+  expect(wake?.hasAttribute('disabled')).toBe(asleep ? false : undefined);
   expect(hostMenu('Desktop').getByRole('button', { name: project.name, exact: true })).toBeDefined();
   server.failHost('laptop'); fireEvent(window, new Event('focus'));
   await hostMenu('Laptop').findByRole('button', { name: project.name, exact: true });
-  expect(screen.queryByText(/Laptop: Asleep/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 it.each([
   ['projects', { api_version: 99, projects: 'new schema' }, 'Laptop: Update the web app. API version 99'],
@@ -146,10 +150,24 @@ it('preserves newer SSE status only on its own host during concurrent refresh', 
   expect(screen.getByText('new-status')).toBeDefined();
 });
 it.each([
-  [new TypeError('Network down'), { state: 'asleep' }],
+  [new TypeError('Network down'), { state: 'unreachable' }],
   [new DOMException('timed out', 'TimeoutError'), { state: 'asleep' }],
   ...[502, 503, 504].map(status => [new ApiError(status), { state: 'asleep' }] as const),
   ...[401, 403, 500].map(status => [new ApiError(status), { state: 'error', error: `API request failed (${status})` }] as const),
 ] as const)('classifies host failure %s', (cause, expected) => {
   expect(hostFailure(cause)).toEqual(expected);
+});
+
+it('shows one origin banner when every host loses its connection', async () => {
+  for (const host of hosts) server.failHost(host.id, new TypeError('Failed to fetch'));
+  render(<App />);
+  await screen.findByText(/Reconnect Tailscale/);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  openMenu(); fireEvent.click(screen.getByRole('button', { name: 'Telemetry', exact: true }));
+  await screen.findByText(/Reconnect Tailscale/);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  for (const host of hosts) server.failHost(host.id);
+  openMenu(); fireEvent.click(screen.getByRole('button', { name: 'Help', exact: true }));
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });

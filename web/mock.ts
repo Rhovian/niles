@@ -25,7 +25,7 @@ export function mockApi(): Plugin {
         response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(body));
       };
       if (path === '/api/projects' && request.method === 'GET') return json(200, { api_version: API_VERSION, projects: [
-        ...sessions.map(session => ({ name: session.project, state: session.waiting ? 'waiting' : 'running', workers: session.worker_count ? [{ id: 'nav', skill: 'worker', lost: false }, { id: 'review', skill: 'reviewer', lost: true }] : [] })),
+        ...sessions.map(session => ({ name: session.project, lead_state: session.waiting ? 'waiting' : 'working', state: session.waiting ? 'waiting' : 'running', workers: session.worker_count ? [{ id: 'nav', skill: 'worker', lost: false, state: 'working' }, { id: 'review', skill: 'reviewer', lost: true }] : [] })),
         { name: 'offline', state: 'not running', workers: [] },
       ] });
       if (path === '/api/sessions' && request.method === 'GET') return json(200, { api_version: API_VERSION, sessions });

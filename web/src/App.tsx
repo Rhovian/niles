@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { incompatibleMessage, leadBase, workerBase, type Session } from './api';
+import { TAILNET_UNREACHABLE, incompatibleMessage, leadBase, workerBase, type Session } from './api';
 import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
@@ -80,10 +80,11 @@ export function App() {
       <button onClick={() => { setHelp(true); setTelemetry(false); setMenu(false); }}>Help</button>
     </aside>}
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
+    {!telemetry && hosts.some(host => host.state === 'unreachable') && <p class="banner" role="alert">{TAILNET_UNREACHABLE}</p>}
     {error && <p class="banner" role="alert">{error}</p>}
     {hosts.map(host => host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: {incompatibleMessage(host.version)}</p> :
       host.state === 'error' ? <p key={host.id} class="banner" role="alert">{host.name}: {host.error}</p> :
-      host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep. Cannot reach Niles. Check your tailnet connection.</p> : null)}
+      host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep or unreachable. Check the host and try waking it.</p> : null)}
     {telemetry ? <Telemetry /> : help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by skill; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
       worker && workerHost?.state === 'ready' ? <Chat key={workerBase(worker.project, worker.id, hostPrefix(worker.host))} base={workerBase(worker.project, worker.id, hostPrefix(worker.host))} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${worker.host.id ? worker.host.name + ' · ' : ''}${member?.skill ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :

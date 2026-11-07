@@ -17,6 +17,16 @@ pub(crate) struct Segment {
     pub age: Option<String>,
 }
 
+impl Segment {
+    pub(crate) fn activity(&self) -> theme::State {
+        match self.state {
+            Some(theme::State::Running) => theme::State::Running,
+            Some(theme::State::Starting) => theme::State::Starting,
+            Some(theme::State::Idle | theme::State::Waiting) | None => theme::State::Idle,
+        }
+    }
+}
+
 pub(crate) fn run(line: StatusLine) -> Result<String> {
     let theme = Theme::load()?;
     match line {

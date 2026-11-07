@@ -6,9 +6,9 @@ import { Navigation } from './Navigation';
 import { projects, type Project, type Session } from './api';
 
 const registered: Project[] = [
-  { name: 'demo', state: 'waiting', workers: [
-    { id: 'nav', skill: 'worker', lost: false, model: 'gpt-6.1' }, { id: 'review', skill: 'reviewer', lost: true },
-    { id: 'audit', skill: 'security', lost: false }, { id: 'lookup', skill: 'research', lost: false },
+  { name: 'demo', state: 'waiting', lead_state: 'waiting', workers: [
+    { id: 'nav', skill: 'worker', lost: false, state: 'working', model: 'gpt-6.1' }, { id: 'review', skill: 'reviewer', lost: true },
+    { id: 'audit', skill: 'security', lost: false, state: 'idle' }, { id: 'lookup', skill: 'research', lost: false, state: 'starting' },
     { id: 'plan', skill: 'custom-style', lost: false },
   ] },
   { name: 'offline', state: 'not running', workers: [] },
@@ -21,6 +21,7 @@ const expandProject = (name: string) => {
   if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button);
 };
 beforeEach(() => {
+  registered[0].lead_state = 'waiting';
   leads = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
   serveLocal({ projects: registered, sessions: async () => json({ api_version: 1, sessions: leads }) });
 });
@@ -36,9 +37,20 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(screen.queryByRole('button', { name: 'Start offline' })).toBeNull();
   expect(menu.querySelectorAll('details')).toHaveLength(0);
   expandProject('demo');
-  for (const text of ['demo', 'offline', 'waiting', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
+  for (const text of ['demo', 'offline', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
   expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['custom-style', 'research', 'reviewer', 'security', 'worker']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
+  for (const [name, state, glyph] of [['demo', 'waiting', '⚠'], ['nav', 'working', '●'], ['audit', 'idle', '○'], ['lookup', 'starting', '◌']]) {
+    const icon = screen.getByRole('button', { name }).querySelector('[role="img"]')!;
+    expect([icon.getAttribute('aria-label'), icon.getAttribute('title'), icon.querySelector('[aria-hidden]')?.textContent]).toEqual([state, state, glyph]);
+    expect(icon.classList.contains(`state-${state}`)).toBe(true);
+  }
+  for (const state of ['starting', 'working'] as const) {
+    registered[0].lead_state = state;
+    fireEvent(window, new Event('focus'));
+    await screen.findByRole('button', { name: 'demo', description: state });
+  }
+  expect(menu.querySelector('.project-details > .badge')).toBeNull();
   expect(screen.queryByText('Config')).toBeNull();
   expect(screen.getByRole('button', { name: 'Telemetry', exact: true })).toBeDefined();
   expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
@@ -152,16 +164,17 @@ it.each(['running', 'starting', 'waiting', 'not running', 'missing'] as const)('
     openProject={vi.fn()} openWorker={vi.fn()} refresh={vi.fn()} help={vi.fn()} />);
   const button = screen.getByRole('button', { name: 'sample', expanded: false });
   const live = ['running', 'starting', 'waiting'].includes(state);
-  expect(button.textContent?.includes('Live')).toBe(live);
-  expect(screen.queryByRole('button', { name: 'sample', description: 'Live' }) !== null).toBe(live);
-  rerender(<Navigation projects={[{ name: 'sample', state: live ? 'not running' : 'running', workers: [] }]}
+  expect(button.querySelector('[role="img"]') !== null).toBe(live);
+  expect(screen.queryByRole('button', { name: 'sample', description: 'live' }) !== null).toBe(live);
+  rerender(<Navigation projects={[{ name: 'sample', state: live ? 'not running' : 'running', lead_state: 'starting', workers: [] }]}
     openProject={vi.fn()} openWorker={vi.fn()} refresh={vi.fn()} help={vi.fn()} />);
-  expect(button.textContent?.includes('Live')).toBe(!live);
+  expect(button.querySelector('[role="img"]') !== null).toBe(!live);
+  expect(screen.queryByRole('button', { name: 'sample', description: 'starting' }) !== null).toBe(!live);
 });
 
 it('nests worker actions one at a time, labels skills and loss, and resets on project changes', async () => {
   render(<App />); await screen.findByText('Open projects on the sidebar.'); openMenu(); expandProject('demo');
-  const nav = screen.getByRole('button', { name: 'nav', description: 'worker', expanded: false });
+  const nav = screen.getByRole('button', { name: 'nav', description: 'worker working', expanded: false });
   const review = screen.getByRole('button', { name: 'review', description: 'reviewer · Lost', expanded: false });
   expect(screen.queryByRole('button', { name: /Open nav chat|Close nav|Close review/ })).toBeNull();
   fireEvent.click(nav);

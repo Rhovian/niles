@@ -151,7 +151,10 @@ machine woke. The relay must share the target's LAN and remain awake.
 Whoever controls the app's JavaScript controls an instruction surface for your agents, so serve
 it only from the relay, on the API's origin. Transcript Markdown passes through DOMPurify,
 links open with `noopener noreferrer`, and the CSP allows scripts and connections from the
-same origin only. A meta CSP can't set `frame-ancestors`, and Tailscale
+same origin only. Workbox caches only the built shell and assets so an installed app can open
+without the tailnet. API and relay-host paths, including navigations with query strings, bypass
+the shell cache; service-worker caches contain no API responses or outgoing messages.
+A meta CSP can't set `frame-ancestors`, and Tailscale
 Serve can't add the header, so this deployment has no clickjacking protection.
 
 Push payloads carry a session ID, project name, generic reason and the host ID/name supplied
