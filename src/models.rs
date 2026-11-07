@@ -21,7 +21,6 @@ pub(crate) fn models(selection: Option<&SetupSelection>) -> Result<()> {
             "effort",
             "tier",
             "description",
-            "cost",
             "speed",
             "context_window",
         ],
@@ -33,7 +32,7 @@ pub(crate) fn models(selection: Option<&SetupSelection>) -> Result<()> {
 fn allowed_rows(
     models: &ModelRoster,
     manifest: Option<&WorkspaceManifest>,
-) -> Result<Vec<[String; 8]>> {
+) -> Result<Vec<[String; 7]>> {
     models.registry_rows(|family, model, effort| {
         let Some(manifest) = manifest else {
             return Ok(true);

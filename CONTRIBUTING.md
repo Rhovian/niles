@@ -117,9 +117,8 @@ that later evidence can change; the same research serves both targets.
    mechanical = smallest models at low or no effort. Give every row a specific reason;
    explain ambiguous cases and benchmark-driven departures rather than inventing tier cutoffs.
 5. Supply a one-line description and exact positive context-window token count. Rank relative
-   cost 1–4 (cheapest to most expensive) and speed 1–4 (fastest to slowest) only with comparable
-   evidence. Record the cost's input/output mix and price basis, and speed's latency/throughput
-   basis; label model-level proxies. Unverified cost/speed are `null`, never guessed. Missing
+   speed 1–4 (fastest to slowest) only with comparable evidence. Record its latency/throughput
+   basis; label model-level proxies. Unverified speed is `null`, never guessed. Missing
    context or unresolved effort support blocks that proposed row; report the gap explicitly.
 6. Return candidate YAML in the existing family → model → entry-list schema, an old/new table
    with each row's reason and sources, and unresolved gaps. Put source URLs, dates, rank basis

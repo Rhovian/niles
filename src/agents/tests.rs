@@ -63,7 +63,7 @@ fn model_names_may_contain_colons() {
     let models = roster::parse(
         r#"pi:
   nvidia/nemotron:free:
-    - &entry {effort: low, tier: economy, description: colon fixture, cost: null, speed: null, context_window: 1024}
+    - &entry {effort: low, tier: economy, description: colon fixture, speed: null, context_window: 1024}
     - {<<: *entry, effort: high, tier: standard}
 "#,
     )

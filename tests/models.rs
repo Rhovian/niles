@@ -15,8 +15,8 @@ fn models_prints_the_effective_workspace_roster() {
         home.join(".niles/roster.yaml"),
         r#"codex:
   gpt-5.5:
-    - {effort: high, tier: mechanical, description: local, cost: null, speed: 1, context_window: 42}
-    - {effort: low, tier: standard, description: other, cost: 2, speed: null, context_window: 99}
+    - {effort: high, tier: mechanical, description: local, speed: 1, context_window: 42}
+    - {effort: low, tier: standard, description: other, speed: null, context_window: 99}
 "#,
     )
     .unwrap();
@@ -41,9 +41,9 @@ fn models_prints_the_effective_workspace_roster() {
     assert_command_success("models", &output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with(
-        "models[3]{family,model,effort,tier,description,cost,speed,context_window}:\n"
+        "models[3]{family,model,effort,tier,description,speed,context_window}:\n"
     ));
-    assert!(stdout.contains("  codex,gpt-5.5,high,mechanical,\"local\",unknown,1,42\n"));
+    assert!(stdout.contains("  codex,gpt-5.5,high,mechanical,\"local\",1,42\n"));
     assert!(stdout.contains("  codex,gpt-6-sol,high,standard,"));
     assert!(stdout.contains("  claude,haiku,,mechanical,"));
     assert!(!stdout.contains("gpt-5.5,low,"));

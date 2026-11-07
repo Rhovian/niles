@@ -172,8 +172,8 @@ Only estimate dollars if the operator supplies a dated rate table. Record its ef
 currency, model/provider, units, input/output/cache categories and applicable billing rules.
 Map only supported categories and models; mark unmatched usage unpriced. Missing cache TTL,
 tier or model-switch attribution can prevent pricing. Label results estimates, with coverage;
-subscription allowances and invoices are not inferable from token counts. Never multiply
-tokens by roster cost labels or substitute current public prices for an operator rate table.
+subscription allowances and invoices are not inferable from token counts. Never substitute
+current public prices for an operator rate table.
 
 If retention blocks a decision, name the exact missing evidence. Historical usage commands,
 persisted full usage summaries, tier/parent-lead metadata, and rate infrastructure are possible

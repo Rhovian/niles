@@ -216,7 +216,7 @@ mod tests {
         for rule in [
             "Default to the standard primary",
             "`niles models`",
-            "reason and cost difference",
+            "in one line with the reason",
             "then wait for the operator's yes",
             "Propose stepping down when economical and appropriate",
         ] {

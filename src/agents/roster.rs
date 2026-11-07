@@ -50,7 +50,6 @@ pub struct RegistryEntry {
     pub effort: Option<String>,
     pub tier: Tier,
     pub description: String,
-    pub cost: Option<NonZeroU32>,
     pub speed: Option<NonZeroU32>,
     pub context_window: NonZeroU64,
 }
@@ -195,7 +194,7 @@ impl ModelRoster {
     pub(crate) fn registry_rows(
         &self,
         mut allows: impl FnMut(&str, &str, Option<&str>) -> Result<bool>,
-    ) -> Result<Vec<[String; 8]>> {
+    ) -> Result<Vec<[String; 7]>> {
         let mut rows = Vec::new();
         for family in families::known_agent_ids() {
             for name in self.model_names(family) {
@@ -216,7 +215,6 @@ impl ModelRoster {
                             effort.iter().copied().collect(),
                             entry.tier.as_str().to_owned(),
                             serde_json::to_string(&entry.description)?,
-                            relative_rank(entry.cost),
                             relative_rank(entry.speed),
                             entry.context_window.to_string(),
                         ]);
@@ -298,10 +296,10 @@ fn normalize_efforts(family: &str, model: &str, efforts: Vec<String>) -> Result<
 pub(crate) const FIXTURE_REGISTRY: &str = r#"
 codex:
   fixture:
-    - &entry {effort: med, tier: standard, description: 'bounded, "work"', cost: 2, speed: 3, context_window: 1000}
+    - &entry {effort: med, tier: standard, description: 'bounded, "work"', speed: 3, context_window: 1000}
     - {<<: *entry, effort: high, tier: frontier, context_window: 2000}
   spare:
-    - {<<: *entry, effort: low, tier: economy, cost: null, speed: null}
+    - {<<: *entry, effort: low, tier: economy, speed: null}
 claude:
   haiku:
     - {<<: *entry, effort: null, tier: mechanical}
@@ -322,9 +320,9 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert_eq!(
             rows[0].join(","),
-            r#"codex,fixture,medium,standard,"bounded, \"work\"",2,3,1000"#
+            r#"codex,fixture,medium,standard,"bounded, \"work\"",3,1000"#
         );
-        assert_eq!(rows[2][5..7], ["unknown", "unknown"]);
+        assert_eq!(rows[2][5], "unknown");
         assert_eq!(rows[3][2], "");
     }
 
@@ -332,10 +330,9 @@ mod tests {
     fn registry_fixture_rejects_invalid_entries_and_normalized_duplicates() {
         for (from, to, cause) in [
             ("tier: standard", "tier: unknown", "unknown variant"),
-            ("cost: 2", "cost: 0", "nonzero"),
             ("speed: 3", "speed: 0", "nonzero"),
             ("context_window: 1000", "context_window: 0", "nonzero"),
-            ("cost: 2", "extra: true, cost: 2", "unknown field"),
+            ("speed: 3", "cost: 2, speed: 3", "unknown field"),
             ("effort: med", "effort: 'bad effort'", "invalid effort"),
             ("effort: med", "effort: high", "duplicate effort"),
             ("effort: med", "effort: null", "without an effort"),
@@ -357,13 +354,13 @@ mod tests {
         let path = crate::test_support::temp_test_path("registry-override");
         let roster = parse(FIXTURE_REGISTRY).unwrap();
         assert_eq!(roster.clone().with_user_overrides(&path).unwrap(), roster);
-        std::fs::write(&path, "pi: {added: [{tier: economy, description: added, cost: 1, speed: 4, context_window: 3000}]}\ncodex: {fixture: [{effort: low, tier: mechanical, description: changed, cost: 4, speed: 1, context_window: 3000}]}").unwrap();
+        std::fs::write(&path, "pi: {added: [{tier: economy, description: added, speed: 4, context_window: 3000}]}\ncodex: {fixture: [{effort: low, tier: mechanical, description: changed, speed: 1, context_window: 3000}]}").unwrap();
         let changed = roster.clone().with_user_overrides(&path).unwrap();
         assert!(changed.entry("codex", "fixture", Some("medium")).is_err());
         let rows = changed.registry_rows(|_, _, _| Ok(true)).unwrap();
         assert_eq!(
             rows[0].join(","),
-            "codex,fixture,low,mechanical,\"changed\",4,1,3000"
+            "codex,fixture,low,mechanical,\"changed\",1,3000"
         );
         assert!(changed.entry("codex", "spare", Some("low")).is_ok());
         assert!(changed.entry("pi", "added", None).is_ok());
