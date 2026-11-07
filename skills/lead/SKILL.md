@@ -32,7 +32,7 @@ Agents produce artifacts: gated code, findings and research answers. Everything 
 
 All workers follow the binary's orchestration contract (`niles agent status --help`), regardless of skill name. The review workflow below is a convention of the shipped skills. With replacement skills, use their declared responsibilities and the operator's instructions to route artifacts; names and finding tags aren't orchestration requirements.
 
-The follow-on steps below — commissioning review or security, spawning, and touching branches, PRs or issues other than the ones named — apply only within work the operator asked for. A fix that implements a reviewer's findings, where that reviewer has committed to re-review, goes back to that reviewer and is not commissioned again.
+The follow-on steps below — commissioning review, spawning, and touching branches, PRs or issues other than the ones named — apply only within work the operator asked for. A fix that implements a reviewer's findings, where that reviewer has committed to re-review, goes back to that reviewer and is not commissioned again.
 
 A big project with an unclear way forward gets research and grilling first: you ask the operator questions, the operator decides, and an agent supplies facts. Its output is a destination and issues for the operator to settle before implementation.
 
@@ -40,7 +40,7 @@ A big project with an unclear way forward gets research and grilling first: you 
 
 For implementation, choose a suitable installed skill with `niles skills`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`. Give the worker the issue verbatim and a size target in production and test lines; when a review finds the diff over it, re-budget from the measured diff — its size minus the excess named line by line, not a new estimate.
 
-Reviews, re-reviews and security passes run only on the operator's request, even when a reviewer calls for one; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff.
+Security passes run only when the operator asks unprompted; never propose or ask for one, even when a reviewer calls for one. Reviews and re-reviews run only on the operator's request; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff.
 
 Finding tags are optional. Route untagged findings by their content and the commissioned responsibilities; ask the author to clarify only when the recipient is unclear. Anything forwarded to the operator carries the author's own caveats, quoted. Send implementation findings (`code` when tagged) word for word to the worker in one message; the worker handles overlap, not you. Send implementation choices to the worker and policy or product questions (`policy` when tagged) to the operator. A finding the worker disputes goes to the operator, never to you. Close agents only when the operator says so. A re-review goes to the live reviewer with the operator's chosen scope and the original finding plus the fix diff, never a description of the fix. An operator ruling settles whether it is wanted, not how it is built.
 
@@ -59,9 +59,7 @@ Commission research using that procedure; applying its candidate to `~/.niles/ro
 
 The gate belongs to the worker, who runs the focused checks CI does not cover before reporting `done:` and says what printed. CI runs the project's checks on push: never ask a worker to rerun them locally, do not commission a pass to re-run them, and do not re-run them yourself. When the evidence is stale or misses the changed code, send it back to the worker. When a worker hands back a running check, do not treat it as a pass or restart the check.
 
-Read a handback's reds before anything else. Each ends in one outcome: failing for the right reason; sent back to the live worker, even when green is already built on it; or shown pre-existing on base, or flaky, and reported to the operator. Ignored is not an outcome.
-
-Record each routing decision when you make it, so a later session can audit it: run `niles log <worker-id|-> '<decision>: <reason>'`, e.g. `niles log impl 'security commissioned: operator asked'`. Niles adds the UTC timestamp and appends to this lead session's decisions log. Log security commissioned or not and on whose word, and each red and its outcome.
+Read a handback's reds before anything else. Each ends in one outcome: failing for the right reason; sent back to the live worker, even when green is already built on it; or shown pre-existing on base, or flaky, and reported to the operator. Ignored is not an outcome. Record each red and its outcome and each routing decision when you make it, so a later session can audit it: run `niles log <worker-id|-> '<decision>: <reason>'`. Niles adds the UTC timestamp and appends to this lead session's decisions log.
 
 Keep your context lean. Status lines are the signal; read reports selectively, quote only what you need, and never paste large command output back into your own context.
 
