@@ -4,10 +4,16 @@ mod common;
 
 use std::{fs, os::unix::fs::symlink, path::Path, process::Command};
 
+fn install_root() -> tempfile::TempDir {
+    // Hard links require the fixture and built executable to share a filesystem.
+    tempfile::tempdir_in(Path::new(env!("CARGO_BIN_EXE_niles")).parent().unwrap()).unwrap()
+}
+
 fn installed_update(home: &Path, layout: &str) -> Command {
     let bin = home.join(layout);
     fs::create_dir_all(&bin).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_niles"), bin.join("niles")).unwrap();
+    // A concurrent fork can inherit a copy's write fd and cause ETXTBSY on exec.
+    fs::hard_link(env!("CARGO_BIN_EXE_niles"), bin.join("niles")).unwrap();
     let mut command = Command::new(bin.join("niles"));
     command.arg("update").env("HOME", home);
     command
@@ -15,7 +21,7 @@ fn installed_update(home: &Path, layout: &str) -> Command {
 
 #[test]
 fn update_executes_sibling_and_preserves_status() {
-    let root = tempfile::tempdir().unwrap();
+    let root = install_root();
     let mut command = installed_update(root.path(), "bin");
     common::write_executable(&root.path().join("niles-update"), "#!/bin/sh\nexit 99\n");
     common::write_executable(
@@ -34,7 +40,7 @@ fn update_executes_sibling_and_preserves_status() {
 
 #[test]
 fn update_reports_package_manager_or_missing_updater() {
-    let root = tempfile::tempdir().unwrap();
+    let root = install_root();
     let brew = installed_update(root.path(), "Cellar/niles/1.0/bin");
     let link = root.path().join("niles-link");
     symlink(brew.get_program(), &link).unwrap();
@@ -82,27 +88,26 @@ fn update_reports_package_manager_or_missing_updater() {
 
 #[test]
 fn update_channel_selects_updater_arguments() {
-    let root = tempfile::tempdir().unwrap();
-    let mut command = installed_update(root.path(), "bin");
-    common::write_executable(
-        &root.path().join("bin/niles-update"),
-        "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
-    );
     for (args, expected) in [
         (vec![], "\n"),
         (vec!["--channel", "nightly"], "--prerelease\n"),
     ] {
+        let root = install_root();
+        let mut command = installed_update(root.path(), "bin");
+        common::write_executable(
+            &root.path().join("bin/niles-update"),
+            "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
+        );
         let output = command.args(&args).output().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
         assert!(output.stderr.is_empty());
-        command = installed_update(root.path(), "bin");
     }
 }
 
 #[test]
 fn nightly_requires_shell_updater() {
-    let root = tempfile::tempdir().unwrap();
+    let root = install_root();
     for layout in ["Cellar/niles/1.0/bin", ".cargo/bin", "bin"] {
         let mut command = installed_update(root.path(), layout);
         if layout.starts_with("Cellar/") {
