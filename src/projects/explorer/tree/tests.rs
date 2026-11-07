@@ -18,7 +18,11 @@ const PANEL_LABELS: [&str; 8] = [
     "HELP",
 ];
 
-fn project(name: &str, state: State, agents: Option<SessionAgents>) -> Project {
+pub(in crate::projects::explorer) fn project(
+    name: &str,
+    state: State,
+    agents: Option<SessionAgents>,
+) -> Project {
     let entry = Entry {
         name: ProjectName::parse(name).unwrap(),
         path: "/tmp".into(),
@@ -39,6 +43,17 @@ fn window(name: &str, kind: WindowKind, label: &str) -> AgentWindow {
         kind,
         segment,
     }
+}
+
+fn lead_only() -> SessionAgents {
+    SessionAgents {
+        windows: vec![window("niles", WindowKind::Lead, "start")],
+        lost: Vec::new(),
+    }
+}
+
+fn with_panels<'a>(labels: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    labels.into_iter().chain(PANEL_LABELS).collect()
 }
 
 fn projects() -> Vec<Project> {
@@ -81,17 +96,14 @@ fn running_projects_and_role_folders_start_open() {
     let tree = tree();
     assert_eq!(
         labels(&tree),
-        [
+        with_panels([
             "PROJECTS",
             "├─ ▾ ⣾ api",
             "│  └─ ▾ worker 2",
             "│     ├─ ● parse",
             "│     └─ gone window lost",
             "└─     old",
-        ]
-        .into_iter()
-        .chain(PANEL_LABELS)
-        .collect::<Vec<_>>()
+        ])
     );
 }
 
@@ -118,10 +130,7 @@ fn selected_window(tree: &Tree, project: &str, window: &str) -> bool {
 #[test]
 fn cycling_projects_wraps_over_running_project_rows() {
     let mut tree = tree();
-    let lead = SessionAgents {
-        windows: vec![window("niles", WindowKind::Lead, "start")],
-        lost: Vec::new(),
-    };
+    let lead = lead_only();
     let mut projects = projects();
     projects.push(project("web", State::Running, Some(lead)));
     tree.replace(projects);
@@ -160,17 +169,6 @@ fn projects_without_agents_do_not_expand() {
     assert_eq!(tree.items().len(), 14);
     tree.down();
     assert_eq!(tree.cursor(), 6);
-}
-
-#[test]
-fn collapsing_a_child_moves_to_its_project() {
-    let mut tree = tree();
-    tree.down();
-    tree.collapse();
-    assert_eq!(tree.cursor(), 1);
-    assert_eq!(tree.items().len(), 11);
-    tree.up();
-    assert_eq!(tree.cursor(), 0);
 }
 
 #[test]
@@ -247,20 +245,11 @@ fn panels_keep_selection_and_cycle_only_to_windows() {
 
 #[test]
 fn waiting_project_shows_warning_and_spinner() {
-    let agents = SessionAgents {
-        windows: vec![window("niles", WindowKind::Lead, "start")],
-        lost: Vec::new(),
-    };
+    let agents = lead_only();
     let waiting_none = project("wait", State::Waiting(None), Some(agents));
     let mut tree = Tree::default();
     tree.replace(vec![waiting_none]);
-    assert_eq!(
-        labels(&tree),
-        ["PROJECTS", "└─   ⚠ wait",]
-            .into_iter()
-            .chain(PANEL_LABELS)
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(labels(&tree), with_panels(["PROJECTS", "└─   ⚠ wait"]));
     let now0 = DateTime::from_timestamp_millis(0).unwrap();
     let now120 = DateTime::from_timestamp_millis(120).unwrap();
     let now960 = DateTime::from_timestamp_millis(960).unwrap();
@@ -301,7 +290,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
     tree.select(Key::Folder("api", &"reviewer".parse().unwrap()));
     assert_eq!(
         labels(&tree),
-        [
+        with_panels([
             "PROJECTS",
             "├─ ▾ ⣾ api                        3m",
             "│  ├─ ▾ reviewer 2",
@@ -310,10 +299,7 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
             "│  └─ ▸ worker 2",
             "├─   ⚠ web",
             "└─     old",
-        ]
-        .into_iter()
-        .chain(PANEL_LABELS)
-        .collect::<Vec<_>>()
+        ])
     );
     let mut refreshed = self::projects();
     let agents = refreshed[0].agents.as_mut().unwrap();
@@ -327,8 +313,16 @@ fn exact_labels_with_two_folders_and_a_lost_reviewer() {
 }
 
 #[test]
-fn collapsing_a_member_moves_to_its_folder() {
+fn collapsing_children_moves_to_their_parent() {
     let mut tree = tree();
+    tree.down();
+    tree.collapse();
+    assert_eq!(tree.cursor(), 1);
+    assert_eq!(tree.items().len(), 11);
+    tree.up();
+    assert_eq!(tree.cursor(), 0);
+
+    tree = self::tree();
     assert!(tree.cycle_windows(1));
     tree.collapse();
     assert!(tree.selected().map(Item::key) == Some(Key::Folder("api", &"worker".parse().unwrap())));
@@ -339,7 +333,7 @@ fn collapsing_a_member_moves_to_its_folder() {
 }
 
 #[test]
-fn state_glyphs_and_lost_suffixes_carry_theme_styles() {
+fn tree_labels_carry_theme_styles() {
     let mut tree = tree();
     tree.projects[0].row.state = State::Waiting(None);
     let theme = Theme::parse(None).unwrap();
@@ -361,13 +355,6 @@ fn state_glyphs_and_lost_suffixes_carry_theme_styles() {
         line.spans.last().unwrap().style,
         theme.style(StyleKey::Lost)
     );
-}
-
-#[test]
-fn headings_guides_and_counts_carry_theme_styles() {
-    let tree = tree();
-    let theme = Theme::parse(None).unwrap();
-    let now = Utc::now();
     let heading = tree.label(Item::Header, now, &theme, 36);
     assert_eq!(heading.spans[0].style, theme.style(StyleKey::Heading));
     let folder = tree.label(tree.items()[2], now, &theme, 36);

@@ -85,58 +85,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn descendants_use_elapsed_time_and_current_liveness_not_row_order() {
+    fn descendant_liveness_respects_elapsed_time_and_exclusions() {
         let standing = "3 2 S 02:00 helper\n2 1 S 01:00:00 agent\n4 1 Z 00:01 sh\n7 6 S 00:01 sh\n";
-        assert!(!has_work(1, [80, 81], TimeDelta::seconds(59), standing).unwrap());
-        assert!(
-            has_work(
-                1,
-                [80, 81],
-                TimeDelta::seconds(59),
-                &format!("5 3 S 00:39 /bin/zsh\n{standing}")
-            )
-            .unwrap()
-        );
-        assert!(
-            !has_work(
-                1,
-                [80, 81],
-                TimeDelta::seconds(59),
-                &format!("5 3 Z 00:39 /bin/zsh\n{standing}")
-            )
-            .unwrap()
-        );
-        assert!(!has_work(1, [80, 81], TimeDelta::seconds(59), "5 1 S 2-00:00:39 sh\n").unwrap());
-        assert!(has_work(1, [80, 81], TimeDelta::seconds(59), "5 1 S 01:00 sh\n").unwrap());
-        assert!(!has_work(1, [80, 81], TimeDelta::seconds(59), "5 1 S 01:01 sh\n").unwrap());
-        assert!(has_work(1, [80, 81], TimeDelta::seconds(59), "broken\n").is_err());
-        assert!(has_work(1, [80, 81], TimeDelta::seconds(59), "5 1 S nope sh\n").is_err());
-    }
-
-    #[test]
-    fn querying_niles_branch_and_probe_are_excluded_but_root_children_are_not() {
         let inspection = "81 80 S 00:00 ps\n82 80 S 00:00 sh\n80 1 S 00:01 niles\n";
-        assert!(!has_work(1, [80, 81], TimeDelta::seconds(59), inspection).unwrap());
-        assert!(!has_work(80, [80, 81], TimeDelta::seconds(59), "81 80 S 00:00 ps\n").unwrap());
-        assert!(has_work(80, [80, 81], TimeDelta::seconds(59), inspection).unwrap());
-        assert!(
-            has_work(
+        let lazy = "84938 1 S 19:55 sh\n84951 84938 S 19:55 node\n\
+                    85064 84951 S 19:55 codex\n87278 85064 S 19:48 codex-code-mode-host\n";
+        for (root, elapsed, tree, expected) in [
+            (1, 59, standing.to_owned(), Some(false)),
+            (
                 1,
-                [80, 81],
-                TimeDelta::seconds(59),
-                &format!("3 1 S 00:01 sh\n{inspection}")
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
-    fn lazy_helpers_from_the_reported_codex_tree_are_not_work() {
-        let snapshot = "84938 1 S 19:55 sh\n84951 84938 S 19:55 node\n\
-                        85064 84951 S 19:55 codex\n87278 85064 S 19:48 codex-code-mode-host\n";
-        assert!(!has_work(84938, [80, 81], TimeDelta::seconds(1195), snapshot).unwrap());
-        let tree = format!("{snapshot}87279 87278 S 00:01 helper\n");
-        assert!(!has_work(84938, [80, 81], TimeDelta::seconds(1195), &tree).unwrap());
+                59,
+                format!("5 3 S 00:39 /bin/zsh\n{standing}"),
+                Some(true),
+            ),
+            (
+                1,
+                59,
+                format!("5 3 Z 00:39 /bin/zsh\n{standing}"),
+                Some(false),
+            ),
+            (1, 59, "5 1 S 2-00:00:39 sh\n".into(), Some(false)),
+            (1, 59, "5 1 S 01:00 sh\n".into(), Some(true)),
+            (1, 59, "5 1 S 01:01 sh\n".into(), Some(false)),
+            (1, 59, "broken\n".into(), None),
+            (1, 59, "5 1 S nope sh\n".into(), None),
+            (1, 59, inspection.into(), Some(false)),
+            (80, 59, "81 80 S 00:00 ps\n".into(), Some(false)),
+            (80, 59, inspection.into(), Some(true)),
+            (1, 59, format!("3 1 S 00:01 sh\n{inspection}"), Some(true)),
+            (84938, 1195, lazy.into(), Some(false)),
+            (
+                84938,
+                1195,
+                format!("{lazy}87279 87278 S 00:01 helper\n"),
+                Some(false),
+            ),
+        ] {
+            let result = has_work(root, [80, 81], TimeDelta::seconds(elapsed), &tree);
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected, "{tree}"),
+                None => assert!(result.is_err(), "{tree}"),
+            }
+        }
     }
 
     #[test]

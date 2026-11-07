@@ -263,14 +263,37 @@ mod tests {
     }
 
     #[test]
-    fn rendered_quiet_paste_is_submitted_and_confirmed() {
-        let pane = ScriptedPane::new(&["staged"], false, "changed");
-        let brief = "brief\nwith multiple lines";
-
-        send_line_to_pane(&pane, brief, &TEST_TIMINGS).unwrap();
-
-        assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));
-        assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
+    fn paste_rendering_and_submission() {
+        const SUBMIT: &[&str] = &["leave-mode", "paste", "submit"];
+        const PASTE: &[&str] = &["leave-mode", "paste"];
+        for (frames, cycle, submitted, error, actions) in [
+            (&["staged"][..], false, "changed", None, SUBMIT),
+            (
+                &["before"][..],
+                false,
+                "changed",
+                Some("never appeared"),
+                PASTE,
+            ),
+            (
+                &["staged"][..],
+                false,
+                "staged",
+                Some("`niles peek`"),
+                SUBMIT,
+            ),
+            (&["staged", "moving"][..], true, "changed", None, SUBMIT),
+        ] {
+            let pane = ScriptedPane::new(frames, cycle, submitted);
+            let brief = "brief\nwith multiple lines";
+            let result = send_line_to_pane(&pane, brief, &TEST_TIMINGS);
+            match error {
+                Some(needle) => crate::test_support::assert_err_contains(result, needle),
+                None => result.unwrap(),
+            }
+            assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));
+            assert_eq!(pane.actions(), actions);
+        }
     }
 
     #[test]
@@ -288,34 +311,5 @@ mod tests {
         let rendered_at = pane.rendered_at.get().expect("paste should render");
         let submit_at = pane.submit_at.get().expect("submit should be sent");
         assert!(submit_at.duration_since(rendered_at) >= timings.quiet_window);
-    }
-
-    #[test]
-    fn paste_that_never_renders_is_not_submitted() {
-        let pane = ScriptedPane::new(&["before"], false, "changed");
-
-        let error = send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap_err();
-
-        assert!(error.to_string().contains("never appeared"));
-        assert_eq!(pane.actions(), ["leave-mode", "paste"]);
-    }
-
-    #[test]
-    fn unchanged_pane_after_submit_reports_how_to_inspect_it() {
-        let pane = ScriptedPane::new(&["staged"], false, "staged");
-
-        let error = send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap_err();
-
-        assert!(error.to_string().contains("`niles peek`"));
-        assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
-    }
-
-    #[test]
-    fn rendered_paste_that_never_quiets_is_still_submitted() {
-        let pane = ScriptedPane::new(&["staged", "moving"], true, "changed");
-
-        send_line_to_pane(&pane, "hello", &TEST_TIMINGS).unwrap();
-
-        assert_eq!(pane.actions(), ["leave-mode", "paste", "submit"]);
     }
 }

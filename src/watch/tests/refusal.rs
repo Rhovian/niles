@@ -23,45 +23,44 @@ fn setup(label: &str, failure: Option<&str>, finished_at: DateTime<Utc>) -> Utf8
 }
 
 #[test]
-fn terminal_failure_becomes_a_report_disarms_and_nudges_once() {
-    let project = setup("provider-refusal", Some("Refused\nDetails"), at(1100));
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&project).unwrap());
-    let mut sink = RecordingSink::default();
-    tick(&project, at(1300), &mut memory, &mut sink, &running());
-    assert_eq!(
-        status(&project, "impl"),
-        "blocked: provider refused (pi:tencent/hy3): Refused\n"
-    );
-    assert_eq!(
-        sink.sent,
-        ["niles: impl reported (blocked) — check workers"]
-    );
-    assert!(
-        Checkin::read(&worker_dir(&project, "impl"))
-            .unwrap()
-            .is_none()
-    );
-    tick(&project, at(1600), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent.len(), 1);
-    assert!(sink.captures.is_empty());
-    crate::test_support::remove_workspace(&project).unwrap();
-}
-
-#[test]
-fn normal_idle_and_stale_failure_never_fabricate_a_report() {
-    for (label, failure, timestamp) in [
-        ("provider-normal", None, at(1100)),
-        ("provider-stale", Some("Refused"), at(999)),
+fn terminal_normal_and_stale_completions_disarm_and_nudge_once() {
+    for (label, failure, timestamp, status_line, nudge) in [
+        (
+            "provider-refusal",
+            Some("Refused\nDetails"),
+            at(1100),
+            "blocked: provider refused (pi:tencent/hy3): Refused\n",
+            reported("impl", "blocked"),
+        ),
+        (
+            "provider-normal",
+            None,
+            at(1100),
+            "",
+            "niles: impl stopped without a report — check workers".into(),
+        ),
+        (
+            "provider-stale",
+            Some("Refused"),
+            at(999),
+            "",
+            "niles: impl stopped without a report — check workers".into(),
+        ),
     ] {
         let project = setup(label, failure, timestamp);
         let mut memory = WatchMemory::at_start(&worker_snapshot(&project).unwrap());
         let mut sink = RecordingSink::default();
         tick(&project, at(1300), &mut memory, &mut sink, &running());
-        assert_eq!(status(&project, "impl"), "");
+        assert_eq!(status(&project, "impl"), status_line, "{label}");
+        assert_eq!(sink.sent, [nudge], "{label}");
         assert_eq!(
-            sink.sent,
-            ["niles: impl stopped without a report — check workers"]
+            Checkin::read(&worker_dir(&project, "impl")).unwrap(),
+            None,
+            "{label}"
         );
+        tick(&project, at(1600), &mut memory, &mut sink, &running());
+        assert_eq!(sink.sent.len(), 1, "{label}");
+        assert!(sink.captures.is_empty(), "{label}");
         crate::test_support::remove_workspace(&project).unwrap();
     }
 }

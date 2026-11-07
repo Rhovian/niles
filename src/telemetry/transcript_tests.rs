@@ -1,4 +1,4 @@
-use super::super::{claude, codex, parse_lines, pi};
+use super::super::{claude, codex, pi};
 use super::*;
 use serde_json::json;
 use std::io::Write;
@@ -73,39 +73,6 @@ fn codex_omits_developer_system_reasoning_and_event_mirrors() {
 }
 
 #[test]
-fn malformed_arguments_and_legacy_blocks_do_not_erase_codex_telemetry() {
-    let body = lines(&[
-        json!({"type":"session_meta","payload":{"cwd":"/w"}}),
-        json!({"type":"response_item","payload":{"type":"message","role":"user",
-            "content":[{"text":"# Niles worker brief /w/report.md"}]}}),
-        json!({"type":"response_item","payload":{"type":"function_call","name":"Bash","arguments":"{bad"}}),
-        json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"task_started"}}),
-        json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"token_count",
-            "info":{"total_token_usage":{"input_tokens":1,"output_tokens":2,"cached_input_tokens":0,"reasoning_output_tokens":0}}}}),
-    ]);
-    let parsed = parse_lines::<codex::CodexLine>(&body).unwrap();
-    assert!(codex::codex_matches(
-        &parsed,
-        Utf8Path::new("/w"),
-        Utf8Path::new("/w/report.md")
-    ));
-    assert_eq!(codex::codex_usage(&parsed).unwrap().output_tokens, 2);
-    assert!(codex::codex_activity(&parsed).is_some());
-    let turns = file_turns(
-        Family::Codex,
-        serde_json::from_str(body.lines().nth(2).unwrap()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        turns[0].content,
-        TextBlock::ToolUse {
-            name: "Bash".into(),
-            input: json!("{bad")
-        }
-    );
-}
-
-#[test]
 fn unknown_shapes_preserve_status_and_known_text() {
     for content in [
         Value::Null,
@@ -156,8 +123,7 @@ fn interrupted_user_text_is_preserved_and_repeated_blocks_are_not_deduplicated()
 
 #[test]
 fn jsonl_cursor_waits_for_complete_utf8_records_and_does_not_replay() {
-    let dir = crate::test_support::temp_test_path("transcript-tail");
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::temp_dir("transcript-tail");
     let path = dir.join("001.jsonl");
     let bytes = lines(&[assistant(json!([{"type":"text","text":"é"}]))]).into_bytes();
     let split = bytes.iter().position(|byte| *byte == 0xc3).unwrap() + 1;
@@ -175,12 +141,11 @@ fn jsonl_cursor_waits_for_complete_utf8_records_and_does_not_replay() {
     let before = file.stream_position().unwrap();
     assert!(read_jsonl(&mut file, Family::Claude).is_err());
     assert_eq!(file.stream_position().unwrap(), before);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
-    let home = crate::test_support::temp_test_path("transcript-open");
+    let home = crate::test_support::temp_dir("transcript-open");
     let session_dir = home.join("pi");
     std::fs::create_dir_all(&session_dir).unwrap();
     std::fs::write(session_dir.join("001.jsonl"), "bad\n").unwrap();
@@ -215,13 +180,11 @@ fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
     .unwrap()
     .unwrap();
     assert_eq!(claude.read().unwrap().len(), 1);
-    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
 fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
-    let temp = tempfile::tempdir().unwrap();
-    let home = Utf8Path::from_path(temp.path()).unwrap();
+    let home = crate::test_support::temp_dir("codex-compressed");
     let created_at = Utc::now();
     let local = created_at.with_timezone(&chrono::Local);
     let dir = home.join(format!(".codex/sessions/{}", local.format("%Y/%m/%d")));
@@ -234,7 +197,8 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
     let body = lines(&[
         json!({"type":"session_meta","payload":{"cwd":"/w"}}),
         json!({"type":"response_item","payload":{"type":"message","role":"user",
-            "content":[{"type":"input_text","text":"# Niles worker brief /w/report.md"}]}}),
+            "content":[{"text":"# Niles worker brief /w/report.md"}]}}),
+        json!({"type":"response_item","payload":{"type":"function_call","name":"Bash","arguments":"{bad"}}),
         json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"task_complete"}}),
         json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"token_count",
             "info":{"total_token_usage":{"input_tokens":1,"output_tokens":2,"cached_input_tokens":0,"reasoning_output_tokens":0}}}}),
@@ -244,7 +208,7 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
     let (workspace, needle) = (Utf8Path::new("/w"), Utf8Path::new("/w/report.md"));
     std::fs::write(plain.with_extension("jsonl.tmp"), &body).unwrap();
     assert!(
-        codex::read_codex_source(home, workspace, needle, created_at)
+        codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
             .is_none()
     );
@@ -254,7 +218,7 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
             std::fs::write(&plain, &body).unwrap();
             std::fs::write(&compressed, "corrupt stale duplicate").unwrap();
         }
-        let (path, parsed) = codex::read_codex_source(home, workspace, needle, created_at)
+        let (path, parsed) = codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
             .unwrap();
         assert_eq!(&path, expected);
@@ -264,16 +228,24 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
             super::super::TurnState::Ended
         ));
         let mut reader =
-            TranscriptReader::open_in(home, &SessionLink::Codex, workspace, needle, created_at)
+            TranscriptReader::open_in(&home, &SessionLink::Codex, workspace, needle, created_at)
                 .unwrap()
                 .unwrap();
-        assert_eq!(reader.read().unwrap().len(), 1);
+        let turns = reader.read().unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(
+            turns[1].content,
+            TextBlock::ToolUse {
+                name: "Bash".into(),
+                input: json!("{bad")
+            }
+        );
         assert!(reader.read().unwrap().is_empty());
     }
     std::fs::write(&plain, body.replace("report.md", "other.md")).unwrap();
     std::fs::write(&compressed, frames).unwrap();
     assert!(
-        codex::read_codex_source(home, workspace, needle, created_at)
+        codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
             .is_none()
     );
@@ -281,10 +253,8 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
 
 #[test]
 fn compressed_transcript_errors_include_the_path() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = Utf8Path::from_path(temp.path())
-        .unwrap()
-        .join("rollout.jsonl.zst");
+    let dir = crate::test_support::temp_dir("compressed-transcript-errors");
+    let path = dir.join("rollout.jsonl.zst");
     let valid = zstd::stream::encode_all(b"{}\n".as_slice(), 0).unwrap();
     for bytes in [
         b"not zstd".to_vec(),

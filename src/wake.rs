@@ -96,18 +96,16 @@ mod tests {
 
     #[test]
     fn parses_case_sensitive_wake_kind_prefixes() {
-        assert_eq!(WakeKind::parse_line("done: shipped"), Some(WakeKind::Done));
-        assert_eq!(
-            WakeKind::parse_line("needs-decision: choose"),
-            Some(WakeKind::NeedsDecision)
-        );
-        assert_eq!(
-            WakeKind::parse_line("working: launch"),
-            Some(WakeKind::Working)
-        );
-        assert_eq!(WakeKind::parse_line("Done: shipped"), None);
-        assert_eq!(WakeKind::parse_line("done shipped"), None);
-        assert_eq!(WakeKind::parse_line("done : shipped"), None);
+        for (line, expected) in [
+            ("done: shipped", Some(WakeKind::Done)),
+            ("needs-decision: choose", Some(WakeKind::NeedsDecision)),
+            ("working: launch", Some(WakeKind::Working)),
+            ("Done: shipped", None),
+            ("done shipped", None),
+            ("done : shipped", None),
+        ] {
+            assert_eq!(WakeKind::parse_line(line), expected, "{line}");
+        }
     }
 
     #[test]

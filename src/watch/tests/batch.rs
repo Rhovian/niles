@@ -9,7 +9,7 @@ fn mixed_batch_commits_all_items_only_after_one_successful_send() {
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
     append_log(&root, "a", DONE);
     append_log(&root, "b", "blocked: choose\n");
-    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
+    let checkin = due_checkin();
     for id in ["c", "d"] {
         checkin.write(&worker_dir(&root, id)).unwrap();
     }
@@ -78,14 +78,14 @@ fn reports_that_accumulate_behind_a_composer_draft_land_in_one_line() {
 #[test]
 fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     let root = workspace("wait-batch");
-    for id in ["a", "b", "c"] {
+    for id in ["a", "b", "c", "d"] {
         write_worker(&root, id, WINDOW);
     }
     let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
     for id in ["a", "b"] {
         append_log(&root, id, DONE);
     }
-    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
+    let checkin = due_checkin();
     checkin.write(&worker_dir(&root, "c")).unwrap();
     let wait = fs::File::create(
         crate::store::workers_dir(&root)
@@ -94,6 +94,7 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     )
     .unwrap();
     wait.lock_shared().unwrap();
+    append_log(&root, "d", "blocked: click OK\n");
     let mut sink = RecordingSink {
         activity: Some(SessionState::Starting),
         ..RecordingSink::default()
@@ -104,8 +105,9 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     tick(&root, at(1_301), &mut memory, &mut sink, &running());
     assert_eq!(
         sink.sent[1],
-        "niles: a reported (done), b reported (done) — check workers"
+        "niles: a reported (done), b reported (done), d reported (blocked) — check workers"
     );
+    assert_eq!(sink.sent.len(), 2);
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
@@ -129,23 +131,5 @@ fn watch_log_batches_feed_one_telemetry_report_per_worker() {
             ("c", crate::wake::WakeKind::Failed)
         ]
     );
-    crate::test_support::remove_workspace(&root).unwrap();
-}
-
-#[test]
-fn gone_reports_nudge_once_and_answer_the_armed_checkin() {
-    let root = workspace("gone-report");
-    write_worker(&root, "worker", WINDOW);
-    let mut memory = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
-    let checkin = armed_checkin(300, WINDOW.len() as u64, at(1_000));
-    let dir = worker_dir(&root, "worker");
-    checkin.write(&dir).unwrap();
-    append_log(&root, "worker", "gone: window exited\n");
-    let mut sink = RecordingSink::default();
-    tick(&root, at(1_300), &mut memory, &mut sink, &running());
-    assert_eq!(sink.sent, ["niles: worker reported (gone) — check workers"]);
-    assert_eq!(Checkin::read(&dir).unwrap(), None);
-    tick(&root, at(1_301), &mut memory, &mut sink, &running());
-    assert_eq!(sink.attempts.len(), 1);
     crate::test_support::remove_workspace(&root).unwrap();
 }

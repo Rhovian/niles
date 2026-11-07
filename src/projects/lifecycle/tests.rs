@@ -1,22 +1,18 @@
 use super::*;
 use crate::{
     store,
-    test_support::{remove_workspace, temp_test_path},
+    test_support::{remove_workspace, temp_dir, write_worker_meta},
 };
 use std::fs;
 
 #[test]
 fn concurrent_close_returns_not_found_only_after_metadata_disappears() {
-    let root = temp_test_path("concurrent-close");
-    fs::create_dir_all(&root).unwrap();
+    let root = temp_dir("concurrent-close");
     let name = registry::ProjectName::parse(root.file_name().unwrap()).unwrap();
     registry::register(&name, &root).unwrap();
     let dir = store::workers_dir(&root).unwrap().join("w");
-    fs::create_dir_all(&dir).unwrap();
-    store::write_json(&dir.join("meta.json"), &serde_json::json!({
-        "id":"w", "skill":"worker", "agent":"codex", "created_at":"2026-01-01T00:00:00Z",
-        "project":root, "window":"api:w", "brief":dir.join("brief.md"), "launch":dir.join("launch.sh")
-    })).unwrap();
+    let created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+    write_worker_meta(&root, "w", "api:w", created_at, None);
     assert!(close_worker(name.as_str(), "w", &|_, _| bail!("still live")).is_err());
     let closing_dir = dir.clone();
     assert!(matches!(

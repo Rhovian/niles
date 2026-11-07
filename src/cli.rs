@@ -301,6 +301,7 @@ mod tests {
     #[test]
     fn command_definition_is_consistent() {
         Cli::command().debug_assert();
+        assert!(Cli::try_parse_from(["niles"]).unwrap().command.is_none());
     }
 
     #[test]
@@ -350,13 +351,6 @@ mod tests {
         };
         assert_eq!(name.as_str(), "global");
         assert!(Cli::try_parse_from(["niles", "panel", "config", "--project", "a.b"]).is_err());
-    }
-
-    #[test]
-    fn bare_niles_has_no_subcommand() {
-        let cli = Cli::try_parse_from(["niles"]).unwrap();
-
-        assert!(cli.command.is_none());
     }
 
     #[test]

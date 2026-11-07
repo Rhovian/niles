@@ -1,5 +1,5 @@
 use crate::agents::roster::Tier;
-use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyCode};
+use ratatui::crossterm::event::KeyCode;
 
 use super::*;
 use crate::{agents::ModelRoster, config::spec::ProjectConfig};
@@ -56,13 +56,13 @@ fn current_value_is_selected_and_back_undoes_every_level() {
 
 #[test]
 fn picker_requires_exact_effort_and_skips_it_only_for_no_effort_models() {
-    let mut picker = columns("claude:opus:high");
-    picker.key(KeyCode::Enter);
-    picker.key(KeyCode::Enter);
-    assert_eq!(selected(picker.key(KeyCode::Enter)), "claude:opus:high");
-    let mut picker = columns("claude:haiku");
-    picker.key(KeyCode::Enter);
-    assert_eq!(selected(picker.key(KeyCode::Enter)), "claude:haiku");
+    for (value, enters) in [("claude:opus:high", 2), ("claude:haiku", 1)] {
+        let mut picker = columns(value);
+        for _ in 0..enters {
+            picker.key(KeyCode::Enter);
+        }
+        assert_eq!(selected(picker.key(KeyCode::Enter)), value);
+    }
 }
 
 #[test]
@@ -110,24 +110,23 @@ fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
     assert_eq!(*saved, form.draft);
 }
 
+fn assert_save_hidden(form: &mut Form) {
+    assert!(!render(form).contains("s save"));
+    assert!(form.key(KeyCode::Char('s'), &config()).unwrap().is_none());
+    assert!(matches!(form.screen, Screen::Tiers));
+}
+
 #[test]
-fn unchanged_draft_hides_and_ignores_save() {
+fn unchanged_and_restored_drafts_hide_and_ignore_save() {
     let config = config();
     let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-    assert!(!render(&form).contains("s save"));
-    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Tiers));
+    assert_save_hidden(&mut form);
     assert!(render(&form).contains("c continue"));
     assert!(matches!(
         form.key(KeyCode::Char('c'), &config).unwrap(),
         Some(Decision::Keep)
     ));
-}
 
-#[test]
-fn restoring_original_draft_hides_and_ignores_save() {
-    let config = config();
-    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
     form.draft.tiers.standard.primary = "claude:sonnet:medium".into();
     assert!(render(&form).contains("s save"));
     form.draft.entry_agent = form.draft.tiers.standard.primary.clone();
@@ -135,9 +134,7 @@ fn restoring_original_draft_hides_and_ignores_save() {
     assert!(matches!(form.screen, Screen::Review));
     form.key(KeyCode::Esc, &config).unwrap();
     form.draft = form.original.clone();
-    assert!(!render(&form).contains("s save"));
-    assert!(form.key(KeyCode::Char('s'), &config).unwrap().is_none());
-    assert!(matches!(form.screen, Screen::Tiers));
+    assert_save_hidden(&mut form);
 }
 
 #[test]
@@ -155,18 +152,8 @@ fn rendering_marks_uninstalled_families_and_shows_effort_hints() {
 }
 
 fn render(form: &Form) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(140, 24)).unwrap();
     let theme = Theme::parse(None).unwrap();
-    terminal
-        .draw(|frame| draw::form(frame, form, &theme, "/project"))
-        .unwrap();
-    terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
+    crate::test_support::render(140, 24, |frame| draw::form(frame, form, &theme, "/project"))
 }
 
 #[test]
@@ -179,19 +166,7 @@ fn picker_rows_follow_project_tiers() {
         .collect();
     manifest.entry = "zeta".parse().unwrap();
     let mut form = Form::new(manifest, &config()).unwrap();
-    form.selected = form
-        .rows()
-        .iter()
-        .position(|row| {
-            matches!(
-                row,
-                form::Row::Agent {
-                    tier: Tier::Frontier,
-                    index: 0
-                }
-            )
-        })
-        .unwrap();
+    select_agent(&mut form, Tier::Frontier, 0);
     form.key(KeyCode::Enter, &config()).unwrap();
     assert!(matches!(&form.screen, Screen::Editing { tier, .. } if *tier == Tier::Frontier));
     for _ in 0..3 {

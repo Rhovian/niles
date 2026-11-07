@@ -334,6 +334,7 @@ pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_err_contains;
 
     #[test]
     fn rounds_are_bounded_at_yaml_and_json_parse_boundaries() {
@@ -384,8 +385,7 @@ mod tests {
         let message = "gate timeout must be greater than zero";
         for timeout in ["0", "0ms"] {
             let body = format!("post: [{{run: [true], timeout: {timeout}}}]");
-            let error = crate::store::parse_yaml::<GateConfig>(&body).unwrap_err();
-            assert!(error.to_string().contains(message));
+            assert_err_contains(crate::store::parse_yaml::<GateConfig>(&body), message);
             let value = serde_json::json!({"post": [{"run": ["true"], "timeout": timeout}]});
             let error = serde_json::from_value::<GateConfig>(value).unwrap_err();
             assert!(error.to_string().contains(message));

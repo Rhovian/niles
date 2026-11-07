@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 
 pub(crate) fn skill(name: &str) -> crate::skills::SkillName {
@@ -32,13 +32,81 @@ pub(crate) fn temp_test_path(label: &str) -> Utf8PathBuf {
     .unwrap()
 }
 
+pub(crate) struct TempDir(Utf8PathBuf);
+
+impl std::ops::Deref for TempDir {
+    type Target = Utf8Path;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        self.0.as_std_path()
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        crate::util::remove_dir_all_if_exists(&self.0).unwrap();
+    }
+}
+
+pub(crate) fn temp_dir(label: &str) -> TempDir {
+    let path = temp_test_path(label);
+    std::fs::create_dir_all(&path).unwrap();
+    TempDir(path)
+}
+
+pub(crate) fn assert_err_contains<T: std::fmt::Debug>(result: anyhow::Result<T>, needle: &str) {
+    let error = format!("{:#}", result.unwrap_err());
+    assert!(error.contains(needle), "expected {needle:?} in {error}");
+}
+
+pub(crate) fn write_worker_meta(
+    workspace: &Utf8Path,
+    id: &str,
+    window: &str,
+    created_at: DateTime<Utc>,
+    session_link: Option<crate::telemetry::SessionLink>,
+) {
+    let dir = crate::store::workers_dir(workspace).unwrap().join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::store::write_json(
+        &dir.join("meta.json"),
+        &serde_json::json!({
+            "id": id, "skill": "worker", "agent": "codex", "created_at": created_at,
+            "project": workspace, "window": window, "brief": dir.join("brief.md"),
+            "launch": dir.join("launch.sh"), "session_link": session_link,
+        }),
+    )
+    .unwrap();
+}
+
+pub(crate) fn render(w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame<'_>)) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    terminal.draw(draw).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+pub(crate) fn write_executable_script(path: &Utf8Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, body).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::ProjectConfig> {
-    let root = temp_test_path("project-config");
-    std::fs::create_dir_all(&root)?;
+    let root = temp_dir("project-config");
     std::fs::write(root.join("niles.yaml"), body)?;
-    let result = crate::config::spec::load_project_config_from(&root);
-    std::fs::remove_dir_all(root)?;
-    result
+    crate::config::spec::load_project_config_from(&root)
 }
 
 /// Remove both the workspace fixture and its global orchestration state.

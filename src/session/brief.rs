@@ -168,7 +168,7 @@ fn recorded_lead_pane() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::temp_test_path;
+    use crate::test_support::{temp_dir, temp_test_path};
     static LEAD_BRIEF_TEMPLATE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let root = temp_test_path("lead-body");
         crate::skills::resolve(
@@ -181,83 +181,68 @@ mod tests {
     });
 
     #[test]
-    fn lead_brief_bounds_the_lead_to_the_request() {
-        for phrase in [
-            "The operator's request sets the scope of what you do",
-            "is not commissioned again",
-            "mean the named object only",
-            "only when the operator says so",
-        ] {
-            assert!(LEAD_BRIEF_TEMPLATE.contains(phrase), "missing {phrase:?}");
-        }
-    }
-
-    /// Designing, estimating and judging security belong to the designers now.
-    #[test]
-    fn lead_brief_coordinates() {
-        assert!(LEAD_BRIEF_TEMPLATE.contains("You coordinate"));
-        for moved in [
-            "economy pass",
-            "race accepted",
-            "outbound calls built from untrusted data",
-            "worker_planning",
-            "Lead decision",
-            "{review_instruction}",
-        ] {
+    fn lead_brief_coordinates_within_the_operators_scope() {
+        const REQUIRED: &[(&str, &str)] = &[
+            (
+                "scope",
+                "The operator's request sets the scope of what you do",
+            ),
+            ("scope", "is not commissioned again"),
+            ("scope", "mean the named object only"),
+            ("scope", "only when the operator says so"),
+            ("coordination", "You coordinate"),
+            ("tier routing", "Default to the standard primary"),
+            ("tier routing", "`niles models`"),
+            ("tier routing", "in one line with the reason"),
+            ("tier routing", "then wait for the operator's yes"),
+            (
+                "tier routing",
+                "Propose stepping down when economical and appropriate",
+            ),
+            ("command discovery", "`niles skills`"),
+            ("command discovery", "`niles spawn --help`"),
+            ("command discovery", "niles spawn <id> --skill <name> -"),
+        ];
+        const FORBIDDEN: &[(&str, &str)] = &[
+            ("designer scope", "economy pass"),
+            ("designer scope", "race accepted"),
+            ("designer scope", "outbound calls built from untrusted data"),
+            ("designer scope", "worker_planning"),
+            ("designer scope", "Lead decision"),
+            ("designer scope", "{review_instruction}"),
+            ("hardcoded model ladder", "opus"),
+            ("hardcoded model ladder", "sonnet"),
+            ("hardcoded model ladder", "gpt-5"),
+            ("hardcoded model ladder", "claude:"),
+            ("hardcoded model ladder", "codex:gpt"),
+            ("spawn/--help discovery", "niles peek <id>"),
+            ("spawn/--help discovery", "niles close <id>"),
+            ("spawn/--help discovery", "niles wait <id>"),
+            ("spawn/--help discovery", "niles wait --all"),
+        ];
+        for (reason, phrase) in REQUIRED {
             assert!(
-                !LEAD_BRIEF_TEMPLATE.contains(moved),
-                "lead brief still carries {moved:?}"
+                LEAD_BRIEF_TEMPLATE.contains(phrase),
+                "{reason}: missing {phrase:?}"
             );
         }
-    }
-
-    #[test]
-    fn lead_brief_routes_tiers_with_operator_approval_without_hardcoding_models() {
-        for rule in [
-            "Default to the standard primary",
-            "`niles models`",
-            "in one line with the reason",
-            "then wait for the operator's yes",
-            "Propose stepping down when economical and appropriate",
-        ] {
-            assert!(LEAD_BRIEF_TEMPLATE.contains(rule), "missing {rule:?}");
-        }
-        for model in ["opus", "sonnet", "gpt-5", "claude:", "codex:gpt"] {
+        for (reason, phrase) in FORBIDDEN {
             assert!(
-                !LEAD_BRIEF_TEMPLATE.contains(model),
-                "lead brief should not hardcode the model ladder, found {model:?}"
+                !LEAD_BRIEF_TEMPLATE.contains(phrase),
+                "{reason}: found {phrase:?}"
             );
         }
-    }
-
-    #[test]
-    fn lead_brief_discovers_commands_without_duplicating_instructions() {
-        assert!(LEAD_BRIEF_TEMPLATE.contains("`niles skills`"));
-        assert!(LEAD_BRIEF_TEMPLATE.contains("`niles spawn --help`"));
-        assert!(LEAD_BRIEF_TEMPLATE.contains("niles spawn <id> --skill <name> -"));
         for line in LEAD_BRIEF_TEMPLATE
             .lines()
             .filter(|line| line.contains("--skill "))
         {
             assert!(line.contains("--skill <name>"), "{line}");
         }
-        for command in [
-            "niles peek <id>",
-            "niles close <id>",
-            "niles wait <id>",
-            "niles wait --all",
-        ] {
-            assert!(
-                !LEAD_BRIEF_TEMPLATE.contains(command),
-                "{command} is available from spawn output and --help"
-            );
-        }
     }
 
     #[test]
     fn session_meta_records_the_lead_pane() {
-        let workspace = temp_test_path("session-lead-pane");
-        fs::create_dir_all(&workspace).unwrap();
+        let workspace = temp_dir("session-lead-pane");
         let mut meta = SessionMeta {
             setup: None,
             entry_skill: "lead".parse().unwrap(),
@@ -267,7 +252,7 @@ mod tests {
             model: None,
             effort: None,
             created_at: Utc::now(),
-            workspace: workspace.clone(),
+            workspace: workspace.to_path_buf(),
             brief: workspace.join("lead.md"),
             lead_pane: Some("%7".to_owned()),
             session_link: None,

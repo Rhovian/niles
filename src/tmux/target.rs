@@ -393,20 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn target_arg_anchors_both_components() {
-        // Unanchored, tmux resolves `-t niles:niles-auth` to `niles-auth-fix`
-        // once `niles-auth` is gone: exit 0, wrong window, no warning.
+    fn targets_anchor_tmux_arguments_and_round_trip_metadata() {
         let target = WindowTarget::parse("niles:niles-auth").unwrap();
-
         assert_eq!(target.target_arg(), "=niles:=niles-auth");
-    }
-
-    #[test]
-    fn the_stored_form_stays_free_of_target_syntax() {
-        // `render` lands in worker metadata and must round-trip through
-        // `parse`; anchoring it would corrupt every recorded worker.
-        let target = WindowTarget::parse("niles:niles-auth").unwrap();
-
         assert_eq!(target.render(), "niles:niles-auth");
         assert_eq!(
             WindowTarget::parse(&target.render()).unwrap().render(),
@@ -415,23 +404,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_target_separator() {
-        let err = WindowTarget::parse("niles-auth-fix").unwrap_err();
-
-        assert!(err.to_string().contains("session:window"));
-    }
-
-    #[test]
-    fn rejects_empty_session() {
-        let err = WindowTarget::parse(":niles-auth-fix").unwrap_err();
-
-        assert!(err.to_string().contains("session name cannot be empty"));
-    }
-
-    #[test]
-    fn rejects_empty_window() {
-        let err = WindowTarget::parse("aquila:").unwrap_err();
-        assert!(format!("{err:#}").contains("window name cannot be empty"));
+    fn rejects_invalid_window_targets() {
+        for (input, message) in [
+            ("niles-auth-fix", "session:window"),
+            (":niles-auth-fix", "session name cannot be empty"),
+            ("aquila:", "window name cannot be empty"),
+        ] {
+            crate::test_support::assert_err_contains(WindowTarget::parse(input), message);
+        }
     }
 
     #[test]

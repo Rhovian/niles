@@ -5,45 +5,29 @@ fn models() -> ModelRoster {
 }
 
 #[test]
-fn foreground_invocation_preserves_builtin_manager_defaults() {
-    let invocation =
-        invocation("claude:opus:max", InvocationDefaults::Foreground, &models()).unwrap();
-
-    assert_eq!(invocation.binary, "claude");
-    assert_eq!(
-        invocation.args,
-        ["--model", "opus", "--effort", "max"].map(str::to_owned)
-    );
-}
-
-#[test]
 fn parses_agent_model_effort_specs() {
-    let codex = AgentSpec::parse("codex:gpt-5.5:xhigh", &models()).unwrap();
-    assert_eq!(codex.canonical(), "codex:gpt-5.5:xhigh");
-    assert_eq!(codex.family(), "codex");
-    assert_eq!(codex.model(), Some("gpt-5.5"));
-    assert_eq!(codex.effort(), Some("xhigh"));
-
-    let claude = AgentSpec::parse("claude:sonnet:med", &models()).unwrap();
-    assert_eq!(claude.family(), "claude");
-    assert_eq!(claude.model(), Some("sonnet"));
-    assert_eq!(claude.effort(), Some("medium"));
-
-    let opus = AgentSpec::parse("Claude:Opus:MAX", &models()).unwrap();
-    assert_eq!(opus.family(), "claude");
-    assert_eq!(opus.model(), Some("opus"));
-    assert_eq!(opus.effort(), Some("max"));
-
-    let haiku = AgentSpec::parse("Claude:Haiku", &models()).unwrap();
-    assert_eq!(haiku.model(), Some("haiku"));
-    assert_eq!(haiku.effort(), None);
-
-    let uppercase = AgentSpec::parse("CODEX:GPT-5.6-LUNA:MAX", &models()).unwrap();
-    assert_eq!(uppercase.family(), "codex");
-    assert_eq!(uppercase.model(), Some("gpt-5.6-luna"));
-    assert_eq!(uppercase.effort(), Some("max"));
-
-    assert!(AgentSpec::parse("custom", &models()).is_err());
+    for (input, family, model, effort) in [
+        ("codex:gpt-5.5:xhigh", "codex", "gpt-5.5", Some("xhigh")),
+        ("claude:sonnet:med", "claude", "sonnet", Some("medium")),
+        ("Claude:Opus:MAX", "claude", "opus", Some("max")),
+        ("Claude:Haiku", "claude", "haiku", None),
+        (
+            "CODEX:GPT-5.6-LUNA:MAX",
+            "codex",
+            "gpt-5.6-luna",
+            Some("max"),
+        ),
+    ] {
+        let spec = AgentSpec::parse(input, &models()).unwrap();
+        assert_eq!(
+            (spec.family(), spec.model(), spec.effort()),
+            (family, Some(model), effort),
+            "{input}"
+        );
+        if input == "codex:gpt-5.5:xhigh" {
+            assert_eq!(spec.canonical(), input);
+        }
+    }
 }
 
 #[test]
@@ -102,84 +86,80 @@ fn effort_is_checked_against_the_model_not_the_family() {
 fn a_model_off_the_roster_is_rejected_whatever_it_looks_like() {
     // A full id, a plausible sibling, a future slug: the roster is the whole rule, so none of them
     // are launchable until they are a line in it.
-    for (family, model) in [
-        ("claude", "claude-opus-5"),
-        ("codex", "gpt-5.5-codex"),
-        ("codex", "gpt-5.4"),
-        ("codex", "omega"),
-        ("codex", "anthropic/claude-opus-5"),
-        ("pi", "anthropic/claude-opus-5"),
-        ("pi", "x-ai/grok-4.6"),
-        ("pi", "hy3"),
+    for (family, model, effort) in [
+        ("claude", "claude-opus-5", ""),
+        ("codex", "gpt-5.5-codex", ""),
+        ("codex", "gpt-5.4", ""),
+        ("codex", "omega", ""),
+        ("codex", "anthropic/claude-opus-5", ""),
+        ("pi", "anthropic/claude-opus-5", ""),
+        ("pi", "x-ai/grok-4.6", ""),
+        ("pi", "hy3", ""),
+        ("codex", "gpt-5.5-codex", ":turbo"),
     ] {
-        let spec = AgentSpec::parse(&format!("{family}:{model}"), &models()).unwrap();
+        let spec = AgentSpec::parse(&format!("{family}:{model}{effort}"), &models()).unwrap();
         let error = validate_model(&spec, &models()).unwrap_err().to_string();
         assert!(
-            error.contains(&format!("unsupported {family} model")),
+            error.contains(&format!("unsupported {family} model `{model}`")),
             "{error}"
         );
     }
 }
 
 #[test]
-fn an_effort_on_a_model_off_the_roster_reports_the_model() {
-    // The model is what is wrong with the spec; saying `turbo` is unsupported would name the half
-    // that is beside the point.
-    let spec = AgentSpec::parse("codex:gpt-5.5-codex:turbo", &models()).unwrap();
-    let error = validate_model(&spec, &models()).unwrap_err().to_string();
-
-    assert!(
-        error.contains("unsupported codex model `gpt-5.5-codex`"),
-        "{error}"
-    );
-}
-
-#[test]
 fn rejects_invalid_agent_specs() {
-    assert!(AgentSpec::parse("codex:gpt-5.5:xhigh:extra", &models()).is_err());
-    assert!(AgentSpec::parse("codex::xhigh", &models()).is_err());
-    assert!(AgentSpec::parse("custom:model:high", &models()).is_err());
-    assert!(AgentSpec::parse("claude:opus:turbo", &models()).is_err());
-    assert!(AgentSpec::parse("codex:gpt-5.5:turbo", &models()).is_err());
-    assert!(AgentSpec::parse("codex:not a model:high", &models()).is_err());
+    for spec in [
+        "custom",
+        "codex:gpt-5.5:xhigh:extra",
+        "codex::xhigh",
+        "custom:model:high",
+        "claude:opus:turbo",
+        "codex:gpt-5.5:turbo",
+        "codex:not a model:high",
+    ] {
+        assert!(AgentSpec::parse(spec, &models()).is_err(), "{spec}");
+    }
 }
 
 #[test]
-fn invocation_maps_codex_model_effort_flags() {
-    let invocation =
-        invocation("codex:gpt-5.5:xhigh", InvocationDefaults::Worker, &models()).unwrap();
-
-    assert_eq!(invocation.binary, "codex");
-    assert_eq!(
-        invocation.args,
-        [
-            "--no-daemon",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--model",
-            "gpt-5.5",
-            "--config",
-            "model_reasoning_effort=\"xhigh\""
-        ]
-        .map(str::to_owned)
-    );
-}
-
-#[test]
-fn invocation_maps_claude_model_effort_flags() {
-    let invocation = invocation("claude:opus:max", InvocationDefaults::Worker, &models()).unwrap();
-
-    assert_eq!(invocation.binary, "claude");
-    assert_eq!(
-        invocation.args,
-        [
-            "--dangerously-skip-permissions",
-            "--model",
-            "opus",
-            "--effort",
-            "max"
-        ]
-        .map(str::to_owned)
-    );
+fn invocations_map_models_efforts_and_manager_defaults() {
+    for (spec, defaults, binary, args) in [
+        (
+            "claude:opus:max",
+            InvocationDefaults::Foreground,
+            "claude",
+            vec!["--model", "opus", "--effort", "max"],
+        ),
+        (
+            "codex:gpt-5.5:xhigh",
+            InvocationDefaults::Worker,
+            "codex",
+            vec![
+                "--no-daemon",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--model",
+                "gpt-5.5",
+                "--config",
+                "model_reasoning_effort=\"xhigh\"",
+            ],
+        ),
+        (
+            "claude:opus:max",
+            InvocationDefaults::Worker,
+            "claude",
+            vec![
+                "--dangerously-skip-permissions",
+                "--model",
+                "opus",
+                "--effort",
+                "max",
+            ],
+        ),
+    ] {
+        let invocation = invocation(spec, defaults, &models()).unwrap();
+        assert_eq!(invocation.binary, binary, "{spec}");
+        assert_eq!(invocation.args, args, "{spec}");
+    }
 }
 
 #[test]
@@ -191,7 +171,7 @@ fn headless_invocation_orders_worker_headless_and_tier_args() {
         let invocation = invocation(
             &format!("{family}:{model}:low"),
             InvocationDefaults::Headless,
-            &models(),
+            &roster,
         )
         .unwrap();
         let expected: Vec<String> = profile

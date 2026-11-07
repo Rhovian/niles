@@ -93,11 +93,12 @@ pub fn save(
 mod tests {
     use super::*;
     use crate::test_support::default_manifest::{load, manifest_path, save};
-    use crate::test_support::skill;
-    use crate::test_support::temp_test_path;
+    use crate::test_support::{manifest_body, skill, temp_dir};
+
+    const TIERS: &str = "tiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
-        let root = temp_test_path(label);
+        let root = temp_dir(label);
         fs::create_dir_all(crate::store::paths::project_dir(&root)?)?;
         fs::write(manifest_path(&root).unwrap(), body)?;
         let result = load(&root);
@@ -106,67 +107,69 @@ mod tests {
     }
 
     #[test]
-    fn entry_is_required_by_setup() {
-        let error = load_body(
-            "manifest-no-entry",
-            "tiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n",
-        )
-        .unwrap_err();
-        assert!(format!("{error:#}").contains("missing field `entry`"));
-    }
-
-    #[test]
-    fn entry_needs_no_composition_binding() {
-        let body = "entry: reviewer\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
-        let manifest = load_body("manifest-entry", body).unwrap().unwrap();
-        assert_eq!(manifest.entry.as_str(), "reviewer");
-        assert!(manifest.bindings.is_empty());
-    }
-
-    #[test]
-    fn unbound_missing_entry_fails_with_manifest_path() {
-        let body = "entry: absent\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
-        let error = format!("{:#}", load_body("missing-entry-skill", body).unwrap_err());
-        assert!(error.contains("manifest.yaml"), "{error}");
-        assert!(error.contains("skill `absent` has no SKILL.md"), "{error}");
-    }
-
-    #[test]
-    fn reserved_settings_cannot_be_binding_keys() {
+    fn invalid_manifests_report_the_path_and_cause() {
+        let body = manifest_body();
+        let mut cases = vec![
+            ("no-entry", TIERS.to_owned(), "missing field `entry`"),
+            ("absent-entry", format!("entry: absent\nentry_agent: claude:sonnet:high\n{TIERS}"), "skill `absent` has no SKILL.md"),
+            ("missing-tiers", "entry: lead\nentry_agent: claude:sonnet:high\n".to_owned(), "missing field `tiers`"),
+            ("unknown-tier", body.replacen("standard:", "unknown:", 1), "unknown field `unknown`"),
+            ("no-effort", body.replacen("claude:sonnet:high", "claude:sonnet", 1), "must name an exact effort"),
+            ("bad-effort", body.replacen("claude:sonnet:high", "claude:sonnet:invalid", 1), "invalid"),
+            ("no-model", body.replacen("claude:sonnet:high", "claude", 1), "must name an exact"),
+            ("legacy", "lead: claude\nworker: codex\n".to_owned(), "missing field `entry`"),
+            ("missing-standard", body.replacen("  standard:\n    primary: codex:gpt-6.1-sol:medium\n    secondaries: [claude:sonnet:high]\n", "", 1), "missing field `standard`"),
+            ("unknown-field", body.replacen("primary:", "when:", 1), "unknown field `when`"),
+            ("missing-secondaries", body.replacen("    secondaries: [claude:sonnet:high]\n", "", 1), "missing field `secondaries`"),
+            ("missing-entry-agent", body.replacen("entry_agent: claude:opus:high\n", "", 1), "missing field `entry_agent`"),
+            ("unlisted-entry-agent", body.replacen("entry_agent: claude:opus:high", "entry_agent: claude:opus:medium", 1), "agent claude:opus:medium is not listed in the manifest tiers"),
+        ];
         for (name, cause) in [
             ("entry", "expected string scalar"),
             ("checkin", "expected string scalar"),
             ("recheck", "expected string scalar"),
             ("worktree", "unknown field `standard`"),
         ] {
-            let body = format!(
-                "{name}: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n{}",
-                crate::test_support::manifest_body()
-            );
-            let error = format!("{:#}", load_body("manifest-reserved", &body).unwrap_err());
+            cases.push((
+                name,
+                format!(
+                    "{name}: {{standard: {{primary: claude:sonnet:high, secondaries: []}}}}\n{body}"
+                ),
+                cause,
+            ));
+        }
+        for fields in [
+            "standard: {primary: claude:sonnet:high, secondaries: []}",
+            "default_tier: economy",
+            "tiers: {}",
+        ] {
+            cases.push((
+                "skill-model",
+                format!("{body}custom: {{{fields}}}\n"),
+                "unknown field",
+            ));
+        }
+        for (label, body, cause) in cases {
+            let error = format!("{:#}", load_body(label, &body).unwrap_err());
             assert!(
                 error.contains("manifest.yaml") && error.contains(cause),
-                "{name}: {error}"
+                "{label}: {error}"
             );
         }
     }
 
     #[test]
-    fn invalid_schema_and_inexact_agents_error_with_path() {
-        let root = temp_test_path("manifest-invalid-tiers");
+    fn entry_needs_no_composition_binding() {
+        let body = format!("entry: reviewer\nentry_agent: claude:sonnet:high\n{TIERS}");
+        let manifest = load_body("manifest-entry", &body).unwrap().unwrap();
+        assert_eq!(manifest.entry.as_str(), "reviewer");
+        assert!(manifest.bindings.is_empty());
+    }
+
+    #[test]
+    fn exact_agents_and_cadence_round_trip() {
+        let root = temp_dir("manifest-invalid-tiers");
         fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
-        let body = crate::test_support::manifest_body();
-        for invalid in [
-            body.replacen("standard:", "unknown:", 1),
-            body.replacen("claude:sonnet:high", "claude:sonnet", 1),
-            body.replacen("claude:sonnet:high", "claude:sonnet:invalid", 1),
-            body.replacen("claude:sonnet:high", "claude", 1),
-            "lead: claude\nworker: codex\n".to_owned(),
-        ] {
-            fs::write(manifest_path(&root).unwrap(), invalid).unwrap();
-            let error = format!("{:#}", load(&root).unwrap_err());
-            assert!(error.contains("manifest.yaml"), "{error}");
-        }
         let mut manifest = crate::test_support::manifest();
         manifest.tiers.standard.secondaries =
             vec!["claude:haiku".into(), "claude:sonnet:high".into()];
@@ -175,28 +178,6 @@ mod tests {
         save(&root, &manifest).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest));
         crate::test_support::remove_workspace(&root).unwrap();
-    }
-
-    #[test]
-    fn skill_model_mappings_and_defaults_are_rejected() {
-        for fields in [
-            "standard: {primary: claude:sonnet:high, secondaries: []}",
-            "default_tier: economy",
-            "tiers: {}",
-        ] {
-            let body = format!(
-                "{}custom: {{{fields}}}\n",
-                crate::test_support::manifest_body()
-            );
-            let error = format!("{:#}", load_body("skill-model-mapping", &body).unwrap_err());
-            assert!(error.contains("unknown field"), "{error}");
-        }
-        let error = load_body(
-            "missing-global-tiers",
-            "entry: lead\nentry_agent: claude:sonnet:high\n",
-        )
-        .unwrap_err();
-        assert!(format!("{error:#}").contains("missing field `tiers`"));
     }
 
     #[test]
@@ -222,7 +203,7 @@ mod tests {
     }
     #[test]
     fn save_sorts_bindings_preserves_cadence_and_omits_absent_keys() {
-        let root = temp_test_path("manifest-save-cadence");
+        let root = temp_dir("manifest-save-cadence");
         let manifest = crate::test_support::manifest();
         let path = manifest_path(&root).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -254,41 +235,5 @@ mod tests {
         save(&root, &configured).unwrap();
         assert_eq!(load(&root).unwrap(), Some(configured));
         crate::test_support::remove_workspace(&root).unwrap();
-    }
-
-    #[test]
-    fn required_skill_and_tier_fields_fail_with_manifest_path() {
-        let body = crate::test_support::manifest_body();
-        for (invalid, cause) in [
-            (
-                body.replacen("  standard:\n    primary: codex:gpt-6.1-sol:medium\n    secondaries: [claude:sonnet:high]\n", "", 1),
-                "missing field `standard`",
-            ),
-            (
-                body.replacen("primary:", "when:", 1),
-                "unknown field `when`",
-            ),
-            (
-                body.replacen("    secondaries: [claude:sonnet:high]\n", "", 1),
-                "missing field `secondaries`",
-            ),
-            (
-                body.replacen("entry_agent: claude:opus:high\n", "", 1),
-                "missing field `entry_agent`",
-            ),
-            (
-                body.replacen("entry_agent: claude:opus:high", "entry_agent: claude:opus:medium", 1),
-                "agent claude:opus:medium is not listed in the manifest tiers",
-            ),
-        ] {
-            let error = format!(
-                "{:#}",
-                load_body("manifest-required-fields", &invalid).unwrap_err()
-            );
-            assert!(
-                error.contains("manifest.yaml") && error.contains(cause),
-                "{error}"
-            );
-        }
     }
 }
