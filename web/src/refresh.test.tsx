@@ -1,20 +1,20 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { Stream, json, openMenu, deferred, serveLocal } from './test-utils';
+import { expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
 
-const navigation = { ok: true, json: async () => ({ api_version: 1, projects: [{ name: 'notes', state: 'running', workers: [] }] }) };
-const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
-
 const session = { id: 'solo', project: 'notes', agent: { family: 'codex', entry_skill: 'solo' }, waiting: false, worker_count: 0 };
-const response = (sessions: unknown[]) => ({ ok: true, json: async () => ({ api_version: 1, sessions }) });
-beforeEach(() => { window.history.replaceState(null, '', '/'); localStorage.clear(); Element.prototype.scrollIntoView = vi.fn(); });
+const response = (sessions: unknown[]) => json({ api_version: 1, sessions });
+const projects = [{ name: 'notes', state: 'running' as const, workers: [] }];
+async function openLead() {
+  openMenu();
+  fireEvent.click(await screen.findByRole('button', { name: 'notes', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
+}
 it('refreshes on focus and the 15s timer without overlapping, and reports ended sessions', async () => {
   const interval = vi.spyOn(globalThis, 'setInterval');
-  let resolve!: (result: ReturnType<typeof response>) => void;
-  const fetch = vi.fn((url: string) => url === '/hosts.json' ? Promise.resolve({ status: 404 }) : url === '/api/projects' ? Promise.resolve(navigation) : new Promise(done => { resolve = done; }));
-  vi.stubGlobal('fetch', fetch);
-  class Stream extends EventTarget { close() {} }
-  vi.stubGlobal('EventSource', Stream);
+  let pending = deferred<Response>();
+  const fetch = serveLocal({ projects, sessions: () => (pending = deferred<Response>()).promise });
   render(<App />);
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
   const tick = interval.mock.calls.find(([, delay]) => delay === 15_000)![0] as () => void;
@@ -22,45 +22,33 @@ it('refreshes on focus and the 15s timer without overlapping, and reports ended 
   tick();
   expect(fetch).toHaveBeenCalledTimes(3);
   expect(interval).toHaveBeenCalledWith(expect.any(Function), 15_000);
-  resolve(response([session]));
-  openMenu();
-  await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button', { name: 'notes', exact: true }));
-  fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
+  pending.resolve(response([session]));
+  await openLead();
   tick();
   expect(fetch).toHaveBeenCalledTimes(5);
-  resolve(response([]));
+  pending.resolve(response([]));
   await screen.findByText(/This project’s lead is not running/);
   fireEvent(window, new Event('focus'));
   expect(fetch).toHaveBeenCalledTimes(7);
-  resolve(response([]));
+  pending.resolve(response([]));
 });
 it('does not overwrite an SSE status with an older in-flight snapshot', async () => {
-  class Stream extends EventTarget {
-    static latest: Stream;
-    constructor() { super(); Stream.latest = this; }
-    close() {}
-  }
-  vi.stubGlobal('EventSource', Stream);
-  let resolve!: (result: ReturnType<typeof response>) => void;
+  const pending = deferred<Response>();
   let calls = 0;
-  vi.stubGlobal('fetch', vi.fn((url: string) => url === '/hosts.json' ? Promise.resolve({ status: 404 }) : url === '/api/projects' ? Promise.resolve(navigation) : ++calls === 1 ? Promise.resolve(response([session])) : new Promise(done => { resolve = done; })));
+  serveLocal({ projects, sessions: () => ++calls === 1 ? Promise.resolve(response([session])) : pending.promise });
   render(<App />);
-  openMenu();
-  await screen.findByText('notes');
-  fireEvent.click(screen.getByRole('button', { name: 'notes', exact: true }));
-  fireEvent.click(screen.getByRole('button', { name: 'Open notes lead chat' }));
+  await openLead();
   await waitFor(() => expect(Stream.latest).toBeDefined());
   fireEvent(window, new Event('focus'));
   Stream.latest.dispatchEvent(new MessageEvent('status', { data: JSON.stringify({ ...session, agent: { family: 'claude', entry_skill: 'lead' } }) }));
   await screen.findByText('claude');
-  await act(async () => { resolve(response([session])); });
+  await act(async () => { pending.resolve(response([session])); });
   expect(screen.getByText('claude')).toBeDefined();
 });
-it.each([401, 403, 500])('reports HTTP %s without claiming a tailnet failure', async status => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status }));
+it.each([401, 403, 500, 'network'] as const)('reports list failure %s with the appropriate tailnet guidance', async failure => {
+  vi.stubGlobal('fetch', failure === 'network' ? vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) : vi.fn().mockResolvedValue({ ok: false, status: failure }));
   render(<App />);
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain(String(status));
-  expect(alert.textContent).not.toContain('tailnet');
+  if (failure !== 'network') expect(alert.textContent).toContain(String(failure));
+  expect(alert.textContent?.includes('tailnet')).toBe(failure === 'network');
 });

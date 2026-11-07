@@ -1,3 +1,4 @@
+import { Stream, json, openMenu, serveLocal } from './test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
@@ -14,24 +15,14 @@ const registered: Project[] = [
   { name: 'missing', state: 'missing', workers: [] },
 ];
 let leads: Session[] = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
-class Stream extends EventTarget {
-  static urls: string[];
-  constructor(url: string) { super(); Stream.urls.push(url); }
-  close() {}
-}
-const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+
 const expandProject = (name: string) => {
   const button = screen.getByRole('button', { name, exact: true });
   if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button);
 };
 beforeEach(() => {
-  localStorage.clear(); window.history.replaceState(null, '', '/');
-  Element.prototype.scrollIntoView = vi.fn(); Stream.urls = [];
   leads = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
-  vi.stubGlobal('EventSource', Stream);
-  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ status: url === '/hosts.json' ? 404 : 200, ok: true, json: async () =>
-    url === '/api/projects' ? { api_version: 1, projects: registered } : { api_version: 1, sessions: leads },
-  })));
+  serveLocal({ projects: registered, sessions: async () => json({ api_version: 1, sessions: leads }) });
 });
 it('shows the logo without auto-selecting a live project and opens the explorer menu', async () => {
   render(<App />);
@@ -56,34 +47,29 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(screen.getByRole('heading', { name: 'Help' })).toBeDefined();
   expect(screen.queryByRole('navigation')).toBeNull();
 });
-it('opens and remembers the project, including after its lead restarts', async () => {
+it.each(['demo', 'offline'])('remembers %s across remounts and lead restarts', async project => {
   const app = render(<App />); openMenu();
-  await screen.findByRole('button', { name: 'demo', exact: true }); expandProject('demo');
-  fireEvent.click(screen.getByRole('button', { name: 'Open demo lead chat' }));
-  await screen.findByRole('region', { name: 'Chat with demo' });
-  expect(localStorage.getItem('niles.activeProject')).toBe('demo');
+  await screen.findByRole('button', { name: project, exact: true }); expandProject(project);
+  fireEvent.click(screen.getByRole('button', { name: `Open ${project} lead chat` }));
+  const selected = () => project === 'demo' ? screen.findByRole('region', { name: 'Chat with demo' }) : screen.findByText(/This project’s lead is not running/);
+  await selected();
+  expect(localStorage.getItem('niles.activeProject')).toBe(project);
   expect(screen.queryByRole('navigation')).toBeNull();
-  expect(Stream.urls).toContain('/api/sessions/demo%3Aone/events');
-  leads = [{ ...leads[0], id: 'demo:two' }];
-  fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(Stream.urls).toContain('/api/sessions/demo%3Atwo/events'));
+  if (project === 'demo') {
+    expect(Stream.urls).toContain('/api/sessions/demo%3Aone/events');
+    leads = [{ ...leads[0], id: 'demo:two' }];
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(Stream.urls).toContain('/api/sessions/demo%3Atwo/events'));
+  }
   app.unmount(); window.history.replaceState(null, '', '/'); render(<App />);
-  await screen.findByRole('region', { name: 'Chat with demo' });
-});
-it('remembers an inactive project', async () => {
-  const app = render(<App />); openMenu();
-  await screen.findByRole('button', { name: 'offline', exact: true }); expandProject('offline');
-  fireEvent.click(screen.getByRole('button', { name: 'Open offline lead chat' }));
-  await screen.findByText(/This project’s lead is not running/);
-  expect(localStorage.getItem('niles.activeProject')).toBe('offline');
-  app.unmount(); render(<App />);
-  await screen.findByText(/This project’s lead is not running/);
-  expect(Stream.urls).toEqual([]);
+  await selected();
+  if (project === 'offline') expect(Stream.urls).toEqual([]);
 });
 it('opens notification session links and remembers their project', async () => {
   window.history.replaceState(null, '', '/#/sessions/demo%3Aone'); render(<App />);
   await screen.findByRole('region', { name: 'Chat with demo' });
   await waitFor(() => expect(localStorage.getItem('niles.activeProject')).toBe('demo'));
+  expect(await screen.findByLabelText('Message agent')).toBeDefined();
 });
 it('does not open a different remembered project for an expired notification', async () => {
   localStorage.setItem('niles.activeProject', 'demo');
