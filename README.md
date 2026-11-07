@@ -43,6 +43,10 @@ with the version):
    cargo install niles
    ```
 
+   Run `niles update` to update a shell installation. Homebrew and Cargo installations show
+   their package-manager command. Older shell installations need the installer run once more
+   to get the updater.
+
 2. Run Niles in your repository and answer the setup prompts:
 
    ```sh

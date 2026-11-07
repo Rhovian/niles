@@ -10,6 +10,10 @@ Processes already running as your user have authority Niles cannot revoke and ar
 
 What Niles launches:
 
+- `niles update` executes `niles-update` beside the resolved Niles executable, never from
+  `PATH` or the working directory. This trusts the installed cargo-dist updater and its release
+  source to replace the installation with your permissions. Homebrew and Cargo commands are
+  printed for the operator to run.
 - Workers start with approval prompts bypassed: Codex with
   `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`.
   The entry agent keeps its prompts, because it is the one you talk to. Pi has no approval
