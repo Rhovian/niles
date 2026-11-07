@@ -152,6 +152,21 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
 }
 #[tokio::test]
 async fn polling_failure_is_reported_without_any_browser_connection() {
+    let sensitive = "private/session-and-prompt";
+    let json = serde_json::from_str::<u64>(&format!("\"{sensitive}\"")).unwrap_err();
+    let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, sensitive);
+    for (error, detail) in [
+        (anyhow::Error::new(json), "JSON Data at line 1, column"),
+        (anyhow::Error::new(io), "I/O PermissionDenied"),
+        (
+            anyhow::anyhow!(sensitive),
+            "invalid transcript or session metadata",
+        ),
+    ] {
+        let diagnostic = observation_diagnostic(&error.context(sensitive));
+        assert!(diagnostic.contains(detail), "{diagnostic}");
+        assert!(!diagnostic.contains(sensitive), "{diagnostic}");
+    }
     let (_root, store, _) = fixture();
     let source: Source = Arc::new(|| anyhow::bail!("catalog failure"));
     assert_err_contains(

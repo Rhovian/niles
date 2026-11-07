@@ -173,7 +173,8 @@ Niles watcher nudges and known provider-generated user-role envelopes (including
 command output, hook metadata and environment context) remain visible in chat but do not count as
 operator messages. These reserved envelope forms are not authenticated operator input. A malformed
 transcript stops operator observation for that session with a diagnostic; other sessions, waiting
-transitions and the remote API continue.
+transitions and the remote API continue. Push transcript diagnostics contain only error categories,
+parser positions and OS error codes, never session identifiers, paths or malformed input values.
 Operator pushes contain only a generic reason, never message text.
 Historical messages are skipped when a transcript first becomes readable, including late discovery. Both reasons use the same
 host/session topic and browser tag, replacing queued and displayed notifications for that session.

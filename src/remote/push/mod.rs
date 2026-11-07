@@ -134,6 +134,23 @@ struct Tracker {
     sessions: HashMap<String, Observed>,
     notifications: Vec<Notification>,
 }
+// Error chains can include session IDs, transcript paths and malformed input values.
+// Only typed categories, numeric codes and parser positions are safe to log.
+fn observation_diagnostic(error: &anyhow::Error) -> String {
+    let reason = if let Some(json) = error.downcast_ref::<serde_json::Error>() {
+        format!(
+            "JSON {:?} at line {}, column {}",
+            json.classify(),
+            json.line(),
+            json.column()
+        )
+    } else if let Some(io) = error.downcast_ref::<std::io::Error>() {
+        format!("I/O {:?} (OS code {:?})", io.kind(), io.raw_os_error())
+    } else {
+        "invalid transcript or session metadata".to_owned()
+    };
+    format!("push transcript observation stopped: {reason}")
+}
 impl Tracker {
     fn observe(&mut self, session: &Session, chat: Result<Chat>) -> &mut Observed {
         let observed = self
@@ -166,7 +183,7 @@ impl Tracker {
                 }
                 Err(error) => {
                     // Invalid transcript state stops this session's observation, as SSE does.
-                    eprintln!("push session {} stopped: {error:#}", session.id);
+                    eprintln!("{}", observation_diagnostic(&error));
                     observed.follower = Err(error);
                     observed.pending.clear();
                 }
