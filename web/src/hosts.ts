@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, ApiError, connectionError, projects, sessions, type Project, type Session } from './api';
+import { API_VERSION, ApiError, connectionError, projects, sessions, type Project, type Session, type Incompatible } from './api';
 
 // Zod owns JSON validation; the refinement enforces our manifest's unique routing IDs.
 // https://github.com/colinhacks/zod/tree/v4.6.7/packages/zod/src/v4
@@ -14,7 +14,7 @@ const LOCAL_HOST: Host = { id: '', name: 'This host' };
 export const hostPrefix = (host: Host) => host.id ? `/h/${host.id}` : '';
 export { qualified } from './notification';
 type Availability = { state: 'loading' | 'asleep' } | { state: 'error'; error: string } |
-  { state: 'incompatible'; version: number } | { state: 'ready'; projects: Project[]; sessions: Session[] };
+  Incompatible | { state: 'ready'; projects: Project[]; sessions: Session[] };
 export type HostState = Host & Availability;
 
 export function hostFailure(cause: unknown): { state: 'asleep' } | { state: 'error'; error: string } {

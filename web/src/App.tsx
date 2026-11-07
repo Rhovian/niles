@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { API_VERSION, leadBase, workerBase, type Session } from './api';
+import { incompatibleMessage, leadBase, workerBase, type Session } from './api';
 import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
@@ -81,7 +81,7 @@ export function App() {
     </aside>}
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {error && <p class="banner" role="alert">{error}</p>}
-    {hosts.map(host => host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: Update the web app. API version {host.version} requires a matching release (this app supports {API_VERSION}).</p> :
+    {hosts.map(host => host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: {incompatibleMessage(host.version)}</p> :
       host.state === 'error' ? <p key={host.id} class="banner" role="alert">{host.name}: {host.error}</p> :
       host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep. Cannot reach Niles. Check your tailnet connection.</p> : null)}
     {telemetry ? <Telemetry /> : help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by skill; Lost means their recorded window is gone.</p>

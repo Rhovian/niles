@@ -1,8 +1,6 @@
 use std::fs;
 
-use camino::Utf8Path;
 use chrono::{NaiveDate, TimeZone};
-use serde_json::json;
 
 use super::{
     aggregate::dashboard,
@@ -12,9 +10,11 @@ use super::{
 use crate::{
     projects::registry::{Entry, ProjectName},
     telemetry::{Usage, fixtures},
-    test_support::temp_test_path,
+    test_support::{
+        telemetry::{archive, lead, pi_link, write},
+        temp_test_path,
+    },
     theme::{StyleKey, StyleRender},
-    util::timestamp_id,
     wake::WakeKind,
 };
 
@@ -52,16 +52,6 @@ fn today_starts_at_local_midnight_and_bins_cover_each_window_exactly() {
     }
 }
 
-fn write(path: &Utf8Path, body: &str) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, body).unwrap();
-}
-
-fn pi_link(dir: &Utf8Path) -> serde_json::Value {
-    write(&dir.join("session.jsonl"), fixtures::PI);
-    json!({ "family": "pi", "session_dir": dir })
-}
-
 fn totals(project: &Project) -> Vec<(&str, &str, u64)> {
     project
         .sessions
@@ -80,49 +70,36 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         name: ProjectName::parse("demo").unwrap(),
         path: root.join("demo"),
     };
-    let niles = crate::store::paths::project_dir(&entry.path).unwrap();
-    let archive = |id: &str, closed: &str, link: Option<serde_json::Value>| {
-        let dir = niles.join(format!(
-            "worker/archive/{id}-{}",
-            timestamp_id(&utc(closed))
-        ));
-        let meta = json!({
-            "id": id, "skill": "worker", "agent": "pi:tencent/hy3:high",
-            "created_at": "2026-10-01T07:00:00Z", "project": entry.path,
-            "window": format!("demo:{id}"), "launch": niles.join(format!("worker/{id}/launch.sh")),
-            "brief": niles.join(format!("worker/{id}/brief.md")), "session_link": link,
-        });
-        write(&dir.join("meta.json"), &meta.to_string());
-        dir
-    };
-    let lead = |started: &str, link: serde_json::Value| {
-        let id = timestamp_id(&utc(started));
-        let dir = niles.join("sessions").join(&id);
-        let meta = json!({
-            "id": id, "entry_skill": "coordinator", "agent": "pi:tencent/hy3:high", "created_at": started,
-            "workspace": entry.path, "brief": dir.join("lead.md"), "session_link": link,
-        });
-        write(&dir.join("session.json"), &meta.to_string());
-        dir
-    };
     let transcripts = root.join("transcripts");
     let closed = archive(
+        &entry.path,
         "impl",
+        "2026-10-01T07:00:00Z",
         "2026-10-01T17:00:00Z",
         Some(pi_link(&transcripts.join("impl"))),
     );
     let stale = archive(
+        &entry.path,
         "old",
+        "2026-08-31T07:00:00Z",
         "2026-09-01T00:00:00Z",
         Some(pi_link(&transcripts.join("old"))),
     );
-    let superseded = lead("2026-10-01T06:00:00Z", pi_link(&transcripts.join("lead1")));
+    let superseded = lead(
+        &entry.path,
+        "2026-10-01T06:00:00Z",
+        pi_link(&transcripts.join("lead1")),
+    );
     write(
         &superseded.join("watch.log"),
         "2026-10-01T12:00:00Z nudged impl: niles: impl reported (done) — check workers\n\
          2026-10-01T12:01:00Z check-in disarmed: impl answered it\n",
     );
-    let latest = lead("2026-10-01T15:00:00Z", pi_link(&transcripts.join("lead2")));
+    let latest = lead(
+        &entry.path,
+        "2026-10-01T15:00:00Z",
+        pi_link(&transcripts.join("lead2")),
+    );
     let since = utc("2026-09-20T00:00:00Z");
     let pi_total = fixtures::pi().total_tokens();
 

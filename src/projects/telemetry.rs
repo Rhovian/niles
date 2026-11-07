@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use super::registry;
 use crate::{
-    agents::{AgentSpec, ModelRoster},
+    agents::AgentSpec,
     config::spec::load_project_config_from,
     session,
     telemetry::{BUCKET, Buckets},
@@ -38,65 +38,58 @@ pub(crate) fn collect() -> Result<Vec<Session>> {
 // one snapshot can miss or double-count it; refreshing replaces that cached snapshot.
 fn project(entry: &registry::Entry, since: DateTime<Utc>) -> Result<Vec<Session>> {
     let models = load_project_config_from(&entry.path)?.models;
-    let mut sessions = Vec::new();
-    for open in usage::collect(&entry.path, session::latest_lead(&entry.path)?)? {
-        sessions.push(Session::from_open(entry, &models, open, since)?);
-    }
-    for closed in usage::closed_workers(&entry.path, since)?
+    let make_session = |id,
+                        entry_session,
+                        agent: &str,
+                        created_at,
+                        (closed_at, buckets): (Option<DateTime<Utc>>, Buckets)|
+     -> Result<Session> {
+        let agent = AgentSpec::parse(agent, &models)?;
+        Ok(Session {
+            project: entry.name.as_str().to_owned(),
+            id,
+            entry: entry_session,
+            family: agent.family().to_owned(),
+            model: agent.model().map(str::to_owned),
+            created_at,
+            closed_at,
+            buckets: buckets.since(since),
+        })
+    };
+    let open = usage::collect(&entry.path, session::latest_lead(&entry.path)?)?
+        .into_iter()
+        .map(|open| {
+            let buckets = match open.usage {
+                Some(usage) => usage.buckets,
+                None => Buckets::default(),
+            };
+            make_session(
+                open.id,
+                open.entry,
+                &open.agent,
+                open.created_at,
+                (None, buckets),
+            )
+        });
+    let closed = usage::closed_workers(&entry.path, since)?
         .into_iter()
         .chain(usage::superseded_leads(&entry.path, since)?)
-    {
-        sessions.push(Session::from_closed(entry, &models, closed, since)?);
-    }
-    Ok(sessions)
-}
-
-impl Session {
-    fn from_open(
-        project: &registry::Entry,
-        models: &ModelRoster,
-        open: usage::SessionUsage,
-        since: DateTime<Utc>,
-    ) -> Result<Self> {
-        let agent = AgentSpec::parse(&open.agent, models)?;
-        Ok(Self {
-            project: project.name.as_str().to_owned(),
-            id: open.id,
-            entry: open.entry,
-            family: agent.family().to_owned(),
-            model: agent.model().map(str::to_owned),
-            created_at: open.created_at,
-            closed_at: None,
-            buckets: match open.usage {
-                Some(usage) => usage.buckets.since(since),
-                None => Buckets::default(),
-            },
-        })
-    }
-
-    fn from_closed(
-        project: &registry::Entry,
-        models: &ModelRoster,
-        closed: usage::ClosedSession,
-        since: DateTime<Utc>,
-    ) -> Result<Self> {
-        let agent = AgentSpec::parse(&closed.agent, models)?;
-        Ok(Self {
-            project: project.name.as_str().to_owned(),
-            id: closed.id,
-            entry: closed.entry,
-            family: agent.family().to_owned(),
-            model: agent.model().map(str::to_owned),
-            created_at: closed.created_at,
-            closed_at: Some(closed.closed_at),
-            buckets: closed.buckets.since(since),
-        })
-    }
+        .map(|closed| {
+            make_session(
+                closed.id,
+                closed.entry,
+                &closed.agent,
+                closed.created_at,
+                (Some(closed.closed_at), closed.buckets),
+            )
+        });
+    open.chain(closed).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::telemetry::{archive, lead, pi_link, write};
     use serde_json::json;
     use std::fs;
 
@@ -110,54 +103,33 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let state = crate::store::paths::project_dir(&root).unwrap();
         let transcript = root.join("transcript");
-        fs::create_dir_all(&transcript).unwrap();
-        fs::write(
-            transcript.join("session.jsonl"),
-            format!(
+        let link = pi_link(&transcript);
+        write(
+            &transcript.join("session.jsonl"),
+            &format!(
                 "{}{}\n",
                 crate::telemetry::fixtures::PI,
                 json!({"type":"message","timestamp":"2026-10-01T17:00:00Z","message":{"role":"user","content":"private prompt"}})
             ),
-        )
-        .unwrap();
-        let link = json!({"family":"pi", "session_dir":transcript});
-        for day in [1, 2] {
-            let at: DateTime<Utc> = format!("2026-10-0{day}T00:00:00Z").parse().unwrap();
-            let id = crate::util::timestamp_id(&at);
-            let dir = state.join("sessions").join(&id);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("session.json"), json!({
-                "id":id, "entry_skill":"solo", "agent":"pi:tencent/hy3:high",
-                "created_at":at, "workspace":root, "brief":dir.join("lead.md"), "session_link":link
-            }).to_string()).unwrap();
+        );
+
+        for started in ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"] {
+            lead(&root, started, link.clone());
         }
-        let closed_at: DateTime<Utc> = "2026-10-03T00:00:00Z".parse().unwrap();
-        let dir = state.join(format!(
-            "worker/archive/impl-{}",
-            crate::util::timestamp_id(&closed_at)
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("meta.json"),
-            json!({
-                "id":"impl", "skill":"worker", "agent":"pi:tencent/hy3:high",
-                "created_at":"2026-10-01T00:00:00Z", "project":root, "window":"demo:impl",
-                "launch":dir.join("launch.sh"), "brief":dir.join("brief.md"), "session_link":link
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let old_closed: DateTime<Utc> = "2026-09-29T00:00:00Z".parse().unwrap();
-        let old_dir = state.join(format!(
-            "worker/archive/old-{}",
-            crate::util::timestamp_id(&old_closed)
-        ));
-        fs::create_dir_all(&old_dir).unwrap();
-        let mut old_meta: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(dir.join("meta.json")).unwrap()).unwrap();
-        old_meta["id"] = json!("old");
-        old_meta["created_at"] = json!("2026-09-01T00:00:00Z");
-        fs::write(old_dir.join("meta.json"), old_meta.to_string()).unwrap();
+        archive(
+            &root,
+            "impl",
+            "2026-10-01T00:00:00Z",
+            "2026-10-03T00:00:00Z",
+            Some(link.clone()),
+        );
+        archive(
+            &root,
+            "old",
+            "2026-09-01T00:00:00Z",
+            "2026-09-29T00:00:00Z",
+            Some(link),
+        );
         let since = "2026-09-30T00:00:00Z".parse().unwrap();
         let sessions = project(&entry, since).unwrap();
         assert_eq!(sessions.len(), 3);

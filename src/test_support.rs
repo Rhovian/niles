@@ -104,3 +104,5 @@ pub(crate) fn manifest_body() -> &'static str {
 pub(crate) fn manifest() -> crate::workspace_manifest::WorkspaceManifest {
     crate::store::parse_yaml(manifest_body()).unwrap()
 }
+
+pub(crate) mod telemetry;

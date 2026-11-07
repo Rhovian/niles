@@ -15,12 +15,8 @@ export const projectSchema = z.object({
 export type Project = z.infer<typeof projectSchema>;
 const projectsSchema = z.object({ api_version: z.number().int(), projects: z.array(projectSchema) });
 export async function projects(signal?: AbortSignal, prefix = '') {
-  const response = await fetch(`${prefix}/api/projects`, { cache: 'no-store', signal });
-  if (!response.ok) throw new ApiError(response.status);
-  const data: unknown = await response.json();
-  const { api_version } = z.object({ api_version: z.number().int() }).parse(data);
-  if (api_version !== API_VERSION) return { api_version, projects: [] };
-  return projectsSchema.parse(data);
+  const result = await getJson(`${prefix}/api/projects`, projectsSchema, signal);
+  return result.state === 'ready' ? result.data : { api_version: result.version, projects: [] };
 }
 export const turnSchema = z.object({
   id: z.string().min(1), role: z.enum(['agent', 'user']), text: z.string(),
@@ -34,13 +30,22 @@ export type Connection = 'live' | 'reconnecting' | 'catching up' | 'disconnected
 export class ApiError extends Error {
   constructor(readonly status: number, readonly detail?: string) { super(detail ?? `API request failed (${status})`); }
 }
-export async function sessions(signal?: AbortSignal, prefix = '') {
-  const response = await fetch(`${prefix}/api/sessions`, { cache: 'no-store', signal });
+export type Incompatible = { state: 'incompatible'; version: number };
+const apiVersionSchema = z.object({ api_version: z.number().int() });
+export function incompatibleMessage(version: number) {
+  return `Update the web app. API version ${version} requires a matching release (this app supports ${API_VERSION}).`;
+}
+export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<{ state: 'ready'; data: T } | Incompatible> {
+  const response = await fetch(path, { cache: 'no-store', signal });
   if (!response.ok) throw new ApiError(response.status);
   const data: unknown = await response.json();
-  const { api_version } = z.object({ api_version: z.number().int() }).parse(data);
-  if (api_version !== API_VERSION) return { api_version, sessions: [] };
-  return sessionsSchema.parse(data);
+  const { api_version } = apiVersionSchema.parse(data);
+  return api_version === API_VERSION ? { state: 'ready', data: schema.parse(data) }
+    : { state: 'incompatible', version: api_version };
+}
+export async function sessions(signal?: AbortSignal, prefix = '') {
+  const result = await getJson(`${prefix}/api/sessions`, sessionsSchema, signal);
+  return result.state === 'ready' ? result.data : { api_version: result.version, sessions: [] };
 }
 export async function sendMessage(base: string, message: Message) {
   const response = await fetch(`${base}/message`, {

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { useEffect, useState } from 'preact/hooks';
-import { API_VERSION, ApiError, connectionError } from './api';
+import { API_VERSION, getJson, connectionError, type Incompatible } from './api';
 import { configuredHosts, hostPrefix, hostFailure, HOST_TIMEOUT_MS, type Host } from './hosts';
 
+export const BUCKET_MS = 900_000;
 const timestamp = z.iso.datetime({ offset: true });
 const tokens = z.number().int().nonnegative();
 export const telemetrySchema = z.object({
@@ -10,11 +11,11 @@ export const telemetrySchema = z.object({
   sessions: z.array(z.object({
     project: z.string(), id: z.string(), entry: z.boolean(), family: z.string(), model: z.string().nullable(),
     created_at: timestamp, closed_at: timestamp.nullable(),
-    buckets: z.record(timestamp.refine(at => Date.parse(at) % 900_000 === 0, 'Unaligned bucket'), tokens),
+    buckets: z.record(timestamp.refine(at => Date.parse(at) % BUCKET_MS === 0, 'Unaligned bucket'), tokens),
   })),
 });
 export type Snapshot = z.infer<typeof telemetrySchema>;
-type Availability = { state: 'loading' | 'ready' | 'asleep' } | { state: 'error'; error: string };
+type Availability = { state: 'loading' | 'ready' | 'asleep' } | { state: 'error'; error: string } | Incompatible;
 export type Machine = Host & Availability & { snapshot?: Snapshot; cacheWarning?: string };
 const cacheKey = (host: Host) => `niles.telemetry.v${API_VERSION}:${host.id}`;
 
@@ -48,9 +49,9 @@ export function useTelemetry() {
       try {
         update(host, { state: 'loading' }, readCache(host));
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(HOST_TIMEOUT_MS)]);
-        const response = await fetch(`${hostPrefix(host)}/api/telemetry`, { cache: 'no-store', signal });
-        if (!response.ok) throw new ApiError(response.status);
-        const snapshot = telemetrySchema.parse(await response.json());
+        const response = await getJson(`${hostPrefix(host)}/api/telemetry`, telemetrySchema, signal);
+        if (response.state === 'incompatible') { update(host, response); return; }
+        const snapshot = response.data;
         if (controller.signal.aborted) return;
         try {
           localStorage.setItem(cacheKey(host), JSON.stringify(snapshot));

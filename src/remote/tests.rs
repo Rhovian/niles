@@ -301,23 +301,6 @@ async fn unavailable_transcripts_can_appear_after_the_initial_snapshot() {
     assert_eq!(event(&mut body).await.1["text"], "ready");
 }
 
-#[tokio::test]
-async fn internal_errors_are_not_returned_to_the_client_or_cached() {
-    let state = AppState::new(relay(), Arc::new(|| anyhow::bail!("private path /secret")));
-    let response = router(state)
-        .oneshot(request("/api/sessions"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    assert!(
-        to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-}
-
 #[test]
 fn mobile_text_omits_tools_and_assistant_code_blocks() {
     use crate::telemetry::transcript::{TextBlock, TextRole, TextTurn};
@@ -390,38 +373,6 @@ async fn mobile_sse_filters_snapshot_and_live_turns_before_delivery() {
     let (kind, turn) = event(&mut body).await;
     assert_eq!(kind, "turn");
     assert_eq!(turn["text"], "Live prose");
-}
-
-#[tokio::test]
-async fn projects_are_versioned_uncached_and_collection_errors_are_private() {
-    let mut fixture = Fixture::new(0);
-    fixture.state.projects = Arc::new(|| Ok(Vec::new()));
-    let response = fixture
-        .app()
-        .oneshot(request("/api/projects"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&body).unwrap(),
-        json!({"api_version": 1, "projects": []})
-    );
-    fixture.state.projects = Arc::new(|| anyhow::bail!("private registry path"));
-    let response = fixture
-        .app()
-        .oneshot(request("/api/projects"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    assert!(
-        to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap()
-            .is_empty()
-    );
 }
 
 #[test]
@@ -498,4 +449,4 @@ async fn only_the_relay_peer_can_forward_any_user_login() {
     }
 }
 
-mod telemetry;
+mod collections;
