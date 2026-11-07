@@ -48,6 +48,7 @@ struct AppState {
     source: Source,
     projects: ProjectSource,
     push: Option<Arc<push::Store>>,
+    push_observer: Arc<push::Observer>,
     wake_hosts: Arc<wake::Hosts>,
     telemetry: TelemetrySource,
 }
@@ -59,6 +60,7 @@ impl AppState {
             source,
             projects: Arc::new(crate::projects::navigation::collect),
             push: None,
+            push_observer: Arc::default(),
             wake_hosts: Arc::new(wake::Hosts::new()),
             telemetry: Arc::new(crate::projects::telemetry::collect),
         }
@@ -130,6 +132,7 @@ pub(crate) async fn run(port: u16) -> Result<()> {
     eprintln!("remote listening on {}", listener.local_addr()?);
     let notifier = state.push.clone();
     let source = state.source.clone();
+    let observer = state.push_observer.clone();
     let server = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
@@ -138,7 +141,7 @@ pub(crate) async fn run(port: u16) -> Result<()> {
     if let Some(store) = notifier {
         tokio::select! {
             result = server => result?,
-            result = push::watch(source, store) => result?,
+            result = push::watch(source, store, observer) => result?,
         }
     } else {
         server.await?;
@@ -292,15 +295,24 @@ async fn worker_events(Path((project, id)): Path<(String, String)>) -> Result<Re
 async fn lead_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::Extension(AuthorizedUser(user)): axum::Extension<AuthorizedUser>,
     message: Json<message::Message>,
 ) -> Result<StatusCode, ApiError> {
-    message::send(chat::lead(state.source, id), message).await
+    message::send(
+        chat::lead(state.source, id),
+        message,
+        state.push.map(|_| message::Sender {
+            user,
+            observer: state.push_observer,
+        }),
+    )
+    .await
 }
 async fn worker_message(
     Path((project, id)): Path<(String, String)>,
     message: Json<message::Message>,
 ) -> Result<StatusCode, ApiError> {
-    message::send(chat::worker(project, id), message).await
+    message::send(chat::worker(project, id), message, None).await
 }
 async fn stream(lookup: chat::Lookup) -> Result<Response, ApiError> {
     let initial_lookup = lookup.clone();

@@ -161,7 +161,26 @@ Push payloads carry a session ID, project name, generic reason and the host ID/n
 by the authenticated browser at registration. The browser qualifies session links and notification
 tags with that host ID. All hosts share one private VAPID key and receive the same browser
 subscription; compromising any host exposes that shared signing identity. Payloads are encrypted
-for the subscription and signed with VAPID.
+for the subscription and signed with VAPID. Waiting transitions and new operator messages
+observed in live lead/solo transcripts notify subscribed devices. Terminal input notifies all devices.
+The PWA identifies its browser subscription by a SHA-256 endpoint fingerprint, not by sending push
+registration metadata with messages. The host compares that typed fingerprint and the authenticated
+login with each stored device when selecting recipients; it excludes that device only. This works
+with existing registrations and does not require a host registration or an allowed push provider to
+send a message. An unregistered browser is not a recipient on that host. Malformed fingerprints
+are request errors; there is no fallback from invalid subscription metadata.
+In-memory receipts correlate pasted text with transcript echoes after trimming surrounding whitespace
+and normalizing CRLF. They are recorded before paste, without holding the observer lock during tmux
+I/O, and removed on a failed send, a matching echo or session exit. No receipt text is sent to devices.
+Niles watcher nudges and known provider-generated user-role envelopes (including interruptions,
+command output, hook metadata and environment context) remain visible in chat but do not count as
+operator messages. These reserved envelope forms are not authenticated operator input. A malformed
+transcript stops operator observation for that session with a diagnostic; other sessions, waiting
+transitions and the remote API continue. Push transcript diagnostics contain only error categories,
+parser positions and OS error codes, never session identifiers, paths or malformed input values.
+Operator pushes contain only a generic reason, never message text.
+Historical messages are skipped when a transcript first becomes readable, including late discovery. Both reasons use the same
+host/session topic and browser tag, replacing queued and displayed notifications for that session.
 Push services see delivery metadata, and a locked phone can show the project and reason.
 Subscriptions are accepted only for Google, Mozilla and Apple push endpoints, so registration
 can't turn the server into an HTTP client inside your network. Keys and subscriptions are

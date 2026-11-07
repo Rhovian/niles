@@ -48,9 +48,13 @@ export async function sessions(signal?: AbortSignal, prefix = '') {
   return result.state === 'ready' ? result.data : { api_version: result.version, sessions: [] };
 }
 export async function sendMessage(base: string, message: Message) {
+  const registration = base.includes('/api/sessions/') && 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
+  const subscription = await registration?.pushManager.getSubscription();
+  const fingerprint = subscription ? new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subscription.endpoint))) : undefined;
+  const sender_device = fingerprint ? btoa(String.fromCharCode(...fingerprint)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '') : undefined;
   const response = await fetch(`${base}/message`, {
     method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(message),
+    body: JSON.stringify({ ...message, ...(sender_device ? { sender_device } : {}) }),
   });
   if (response.status !== 200) throw new ApiError(response.status);
 }

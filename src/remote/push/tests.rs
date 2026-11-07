@@ -52,6 +52,20 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
         .save("alice".into(), subscription.clone(), None)
         .unwrap();
     assert_eq!(store.subscriptions().unwrap().len(), 1);
+    let device = &store.subscriptions().unwrap()[0];
+    let sender = Sender {
+        user: "alice".into(),
+        device: DeviceId::from_endpoint(&subscription.0.endpoint),
+    };
+    assert!(device.is_sender(&sender));
+    assert!(!device.is_sender(&Sender {
+        user: "bob".into(),
+        ..sender.clone()
+    }));
+    assert!(!device.is_sender(&Sender {
+        device: DeviceId::from_endpoint("https://wns.example/unregistered"),
+        ..sender
+    }));
     assert_eq!(
         fs::metadata(root.join("remote/vapid.json"))
             .unwrap()
@@ -77,7 +91,7 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     let (subscription, receiver, auth) = keyed_subscription(&subscription.0.endpoint);
     let plaintext = br#"{"session_id":"s","project":"p","reason":"waiting"}"#;
     let payload = loaded
-        .message(&subscription, plaintext)
+        .message(&subscription, plaintext, "test".into())
         .unwrap()
         .payload
         .unwrap();
@@ -106,22 +120,11 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
     info.keys.auth = "invalid".into();
     assert!(Subscription::try_from(info).is_err());
     assert_eq!(store.subscriptions().unwrap().len(), 0);
-}
-#[test]
-fn waiting_transitions_include_solo_without_repeating_or_retaining_exited_sessions() {
-    let session = session("s", "claude");
-    let mut previous = HashSet::new();
+    assert!(serde_json::from_value::<DeviceId>(serde_json::json!("not-a-device")).is_err());
     assert_eq!(
-        newly_waiting(&mut previous, vec![session.clone()]),
-        vec![session.clone()]
+        serde_json::to_value(DeviceId::from_endpoint("https://fcm.googleapis.com/device")).unwrap(),
+        "k2sftX3WMkqw1zuJw51X8xmB9kvuIeoe5Aa71h09hlM"
     );
-    assert!(newly_waiting(&mut previous, vec![session.clone()]).is_empty());
-    let mut working = session.clone();
-    working.waiting = false;
-    assert!(newly_waiting(&mut previous, vec![working]).is_empty());
-    assert_eq!(newly_waiting(&mut previous, vec![session.clone()]).len(), 1);
-    newly_waiting(&mut previous, vec![]);
-    assert_eq!(newly_waiting(&mut previous, vec![session]).len(), 1);
 }
 #[test]
 fn prunes_only_gone_endpoints_and_propagates_other_failures() {
@@ -153,8 +156,15 @@ async fn push_routes_authorize_validate_and_never_cache() {
     use axum::body::{Body, to_bytes};
     use tower::ServiceExt;
     let (_root, store, subscription) = fixture();
-    let mut state = AppState::new(super::super::tests::relay(), Arc::new(|| Ok(vec![])));
+    let api = super::super::tests::Fixture::new(0);
+    let records = api.records.clone();
+    let mut state = AppState::new(
+        super::super::tests::relay(),
+        Arc::new(move || Ok(records.lock().unwrap().clone())),
+    );
     state.push = Some(Arc::new(store));
+    let message =
+        serde_json::json!({"text": "hello", "sender_device": DeviceId::from_endpoint(&subscription.0.endpoint)}).to_string();
     let app = super::super::router(state);
     let subscription = serde_json::to_string(&subscription).unwrap();
     for (method, path, login, body, expected) in [
@@ -168,6 +178,20 @@ async fn push_routes_authorize_validate_and_never_cache() {
             200,
         ),
         ("POST", "/api/push/subscribe", "alice", "{}", 422),
+        (
+            "POST",
+            "/api/sessions/project:session/message",
+            "alice",
+            message.as_str(),
+            503,
+        ),
+        (
+            "POST",
+            "/api/sessions/project:session/message",
+            "alice",
+            "{\"text\":\"hello\",\"sender_device\":\"invalid\"}",
+            422,
+        ),
     ] {
         let request = relay_request(method, path)
             .header("Tailscale-User-Login", login)
@@ -196,18 +220,6 @@ async fn push_routes_authorize_validate_and_never_cache() {
     }
 }
 
-#[tokio::test]
-async fn polling_failure_is_reported_without_any_browser_connection() {
-    let (_root, store, _) = fixture();
-    let source: Source = Arc::new(|| anyhow::bail!("catalog failure"));
-    assert_err_contains(
-        tokio::time::timeout(Duration::from_secs(3), watch(source, Arc::new(store)))
-            .await
-            .unwrap(),
-        "catalog failure",
-    );
-}
-
 #[test]
 fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
     let (root, first, subscription) = fixture();
@@ -222,6 +234,7 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
     let second = Store::load(second_root.clone()).unwrap();
     assert_eq!(first.public_key().unwrap(), second.public_key().unwrap());
     let session = session("same-session", "codex");
+    let mut topics = Vec::new();
     for (store, id) in [(&first, "desk"), (&second, "laptop")] {
         let registration: store::Registration = serde_json::from_value(serde_json::json!({
             "endpoint": subscription.0.endpoint, "keys": subscription.0.keys,
@@ -232,20 +245,40 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
             .save("alice".into(), registration.subscription, registration.host)
             .unwrap();
         let devices = store.subscriptions().unwrap();
-        let payload: serde_json::Value =
-            serde_json::from_slice(&devices[0].payload(&session).unwrap()).unwrap();
-        assert_eq!(payload["host"]["id"], id);
-        assert_eq!(payload["session_id"], "same-session");
-        store
-            .message(
-                &devices[0].subscription,
-                &serde_json::to_vec(&payload).unwrap(),
-            )
-            .unwrap();
+        let device = &devices[0];
+        let topic = device.topic(&session).unwrap();
+        assert_ne!(
+            topic,
+            device.topic(&self::session("other", "codex")).unwrap()
+        );
+        topics.push(topic.clone());
+        for reason in [Reason::Waiting, Reason::OperatorMessage] {
+            let payload = device.payload(&session, reason).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "host": {"id": id, "name": id}, "session_id": "same-session",
+                    "project": "p", "reason": reason.text(),
+                })
+            );
+            let message = store
+                .message(
+                    &device.subscription,
+                    &payload,
+                    device.topic(&session).unwrap(),
+                )
+                .unwrap();
+            assert_eq!(message.topic.as_ref().unwrap(), &topic);
+            assert_eq!(topic.len(), 32);
+        }
     }
+    assert_ne!(topics[0], topics[1]);
     let loaded = Store::load(second_root).unwrap();
     assert_eq!(
         loaded.subscriptions().unwrap()[0].host.as_ref().unwrap().id,
         "laptop"
     );
 }
+
+mod observe;

@@ -40,11 +40,43 @@ pub(crate) struct Registration {
     pub(super) subscription: Subscription,
     pub(super) host: Option<Host>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub(in crate::remote) struct DeviceId(String);
+impl DeviceId {
+    pub(in crate::remote) fn from_endpoint(endpoint: &str) -> Self {
+        Self(URL_SAFE_NO_PAD.encode(openssl::sha::sha256(endpoint.as_bytes())))
+    }
+}
+impl TryFrom<String> for DeviceId {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self> {
+        ensure!(
+            URL_SAFE_NO_PAD.decode(&value)?.len() == 32,
+            "sender_device must be a SHA-256 fingerprint"
+        );
+        Ok(Self(value))
+    }
+}
 impl Device {
-    pub(super) fn payload(&self, session: &super::Session) -> Result<Vec<u8>> {
+    pub(super) fn is_sender(&self, sender: &super::Sender) -> bool {
+        self.user == sender.user
+            && DeviceId::from_endpoint(&self.subscription.0.endpoint) == sender.device
+    }
+
+    pub(super) fn topic(&self, session: &super::Session) -> Result<String> {
+        let identity = serde_json::to_vec(&(self.host.as_ref().map(|host| &host.id), &session.id))?;
+        Ok(URL_SAFE_NO_PAD.encode(&openssl::sha::sha256(&identity)[..24]))
+    }
+
+    pub(super) fn payload(
+        &self,
+        session: &super::Session,
+        reason: super::Reason,
+    ) -> Result<Vec<u8>> {
         Ok(serde_json::to_vec(&serde_json::json!({
             "host": self.host, "session_id": session.id, "project": session.project,
-            "reason": "Agent waiting for your input",
+            "reason": reason.text(),
         }))?)
     }
 }
@@ -169,6 +201,7 @@ impl Store {
         &self,
         subscription: &Subscription,
         payload: &[u8],
+        topic: String,
     ) -> Result<WebPushMessage> {
         let mut signature =
             VapidSignatureBuilder::from_pem(self.key.pem.as_bytes(), &subscription.0)?;
@@ -177,6 +210,9 @@ impl Store {
         builder.set_payload(ContentEncoding::Aes128Gcm, payload);
         builder.set_vapid_signature(signature.build()?);
         builder.set_ttl(PUSH_TTL_SECONDS);
+        // web-push 0.11 implements replacement of queued messages with the same topic.
+        // https://docs.rs/web-push/0.11.0/web_push/struct.WebPushMessageBuilder.html#method.set_topic
+        builder.set_topic(topic);
         Ok(builder.build()?)
     }
 }

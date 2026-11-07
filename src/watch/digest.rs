@@ -3,6 +3,9 @@ use super::checkin::Checkin;
 use crate::{telemetry::SessionState, wake::WakeKind};
 use camino::Utf8PathBuf;
 
+const PREFIX: &str = "niles: ";
+const SUFFIX: &str = " — check workers";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Item {
     Reported {
@@ -49,13 +52,17 @@ impl Item {
 // pending state before that single submission and its commit.
 pub(super) fn text(items: &[Item]) -> String {
     let phrases: Vec<_> = items.iter().map(Item::phrase).collect();
-    format!("niles: {} — check workers", phrases.join(", "))
+    format!("{PREFIX}{}{SUFFIX}", phrases.join(", "))
+}
+
+pub(crate) fn is_nudge(text: &str) -> bool {
+    text.starts_with(PREFIX) && text.ends_with(SUFFIX)
 }
 
 /// Extract reported workers from a watch.log batch.
 pub(super) fn parse_reports(text: &str) -> impl Iterator<Item = (&str, WakeKind)> {
-    text.strip_prefix("niles: ")
-        .and_then(|text| text.strip_suffix(" — check workers"))
+    text.strip_prefix(PREFIX)
+        .and_then(|text| text.strip_suffix(SUFFIX))
         .into_iter()
         .flat_map(|text| text.split(", "))
         .filter_map(|phrase| {
@@ -76,9 +83,10 @@ mod tests {
                 log_len: 4,
             };
             assert_eq!(
-                parse_reports(&text(&[item])).collect::<Vec<_>>(),
+                parse_reports(&text(std::slice::from_ref(&item))).collect::<Vec<_>>(),
                 vec![("w1", kind)]
             );
+            assert!(is_nudge(&text(&[item])));
         }
         assert_eq!(parse_reports("niles: w1 reported (done), no report from w2, w3 reported (blocked) — check workers").collect::<Vec<_>>(),
             vec![("w1", WakeKind::Done), ("w3", WakeKind::Blocked)]);
