@@ -13,6 +13,7 @@
 # Note that the GitHub Release will be created with a generated
 # title/body based on your changelogs.
 
+# Customized for scheduled nightlies; see dist-workspace.toml's allow-dirty setting.
 name: Release
 permissions:
   "contents": "write"
@@ -39,19 +40,44 @@ permissions:
 # If there's a prerelease-style suffix to the version, then the release(s)
 # will be marked as a prerelease.
 on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
   pull_request:
   push:
     tags:
       - '**[0-9]+.[0-9]+.[0-9]+*'
 
+concurrency:
+  group: release-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'nightly' || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
+  changes:
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          changed=$(bash scripts/nightly-changes.sh)
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result == 'skipped' || needs.changes.outputs.changed == 'true') && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
-      tag: ${{ !github.event.pull_request && github.ref_name || '' }}
-      tag-flag: ${{ !github.event.pull_request && format('--tag={0}', github.ref_name) || '' }}
+      tag: ${{ steps.plan.outputs.tag }}
+      tag-flag: ${{ steps.plan.outputs.tag-flag }}
       publishing: ${{ !github.event.pull_request }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,14 +96,28 @@ jobs:
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
-      # sure would be cool if github gave us proper conditionals...
-      # so here's a doubly-nested ternary-via-truthiness to try to provide the best possible
-      # functionality based on whether this is a pull_request, and whether it's from a fork.
-      # (PRs run on the *source* but secrets are usually on the *target* -- that's *good*
-      # but also really annoying to build CI around when it needs secrets to work right.)
       - id: plan
+        env:
+          NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          PR: ${{ github.event_name == 'pull_request' }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          dist ${{ (!github.event.pull_request && format('host --steps=create --tag={0}', github.ref_name)) || 'plan' }} --output-format=json > plan-dist-manifest.json
+          if [ "$PR" = true ]; then
+            dist plan --output-format=json > plan-dist-manifest.json
+          else
+            flags=()
+            if [ "$NIGHTLY" = true ]; then
+              # dist's timestamp mode retains the stable version, sorting below it:
+              # https://github.com/axodotdev/cargo-dist/blob/v0.33.0/cargo-dist/src/announce.rs#L694
+              version=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+              IFS=. read -r major minor patch <<< "$version"
+              RELEASE_TAG="v$major.$minor.$((patch + 1))-nightly.$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
+              flags+=(--force-tag)
+            fi
+            dist host --steps=create --tag="$RELEASE_TAG" "${flags[@]}" --output-format=json > plan-dist-manifest.json
+            echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+            echo "tag-flag=--tag=$RELEASE_TAG ${flags[*]}" >> "$GITHUB_OUTPUT"
+          fi
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -112,6 +152,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      NILES_RELEASE_VERSION: ${{ fromJson(needs.plan.outputs.val).releases[0].app_version }}
     steps:
       - name: enable windows longpaths
         run: |

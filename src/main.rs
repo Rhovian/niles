@@ -101,7 +101,7 @@ fn run() -> Result<ExitCode> {
             Some(command) => command.run()?,
         },
         Some(CommandName::Doctor) => doctor::doctor(selection()?.as_ref())?,
-        Some(CommandName::Update) => update::run()?,
+        Some(CommandName::Update { channel }) => update::run(channel)?,
         Some(CommandName::Compat { families }) => {
             return compat::compat(&families, selection()?.as_ref());
         }

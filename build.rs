@@ -8,6 +8,13 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_else(|| ".".into()));
     track_package_inputs(&manifest_dir);
+    println!("cargo:rerun-if-env-changed=NILES_RELEASE_VERSION");
+    let version = match env::var("NILES_RELEASE_VERSION") {
+        Ok(version) => version,
+        Err(env::VarError::NotPresent) => env!("CARGO_PKG_VERSION").to_owned(),
+        Err(error) => panic!("invalid NILES_RELEASE_VERSION: {error}"),
+    };
+    println!("cargo:rustc-env=NILES_BUILD_VERSION={version}");
 
     let repo = GitRepo::for_manifest(&manifest_dir);
     if let Some(repo) = &repo {

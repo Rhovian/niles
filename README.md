@@ -47,6 +47,13 @@ with the version):
    their package-manager command. Older shell installations need the installer run once more
    to get the updater.
 
+   Use `niles update --channel nightly` to include nightly prereleases from main;
+   the default `--channel stable` only considers stable releases. The updater only
+   installs newer versions, so returning to stable may require waiting for the next
+   stable release or rerunning the stable shell installer. Channel selection applies
+   to this invocation; nightly requires a shell installation. Nightly binaries and
+   installer receipts both use the versioned nightly tag (without its `v` prefix).
+
 2. Run Niles in your repository and answer the setup prompts:
 
    ```sh

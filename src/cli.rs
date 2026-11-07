@@ -109,7 +109,11 @@ pub enum CommandName {
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
     /// Update a shell installation, or show the package-manager command
-    Update,
+    Update {
+        /// Release channel (nightly includes prereleases).
+        #[arg(long, value_enum, default_value = "stable")]
+        channel: crate::update::Channel,
+    },
     /// Run one headless turn per manifest family with Niles's launch arguments
     /// (maintainer check; makes real model calls with approval-bypass flags).
     Compat { families: Vec<String> },

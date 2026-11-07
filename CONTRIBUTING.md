@@ -34,6 +34,17 @@ Major releases are reserved for a fundamental change in what niles is; there is 
 3. The release workflow builds the binaries, publishes the GitHub release, then publishes the crate
    to crates.io. It then adds the tested CLI versions from the README to the release notes.
 
+Nightly builds run daily at 07:17 UTC and can also be started with the Release workflow's
+manual dispatch on main. Both skip publication when main matches the latest published nightly
+commit, using the release's `target_commitish` SHA. Failed lookups stop the workflow.
+They share cargo-dist's build graph and publish GitHub prereleases only; Homebrew and crates.io
+stay stable. Tags use the next patch version followed by
+`-nightly.<run-id>.<attempt>`, so an existing stable installation can advance to nightly.
+The release workflow is customized (`allow-dirty = ["ci"]`); preserve the nightly trigger
+and plan step when upgrading cargo-dist. `--force-tag` sets the manifest and installer receipt
+version; local artifact builds pass that same version as `NILES_RELEASE_VERSION` so `--version`
+and `doctor` identify the nightly build correctly.
+
 ## Agent CLI compatibility
 
 Follow this procedure when asked what changed in new agent CLI releases or what Niles should

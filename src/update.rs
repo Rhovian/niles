@@ -5,19 +5,37 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-pub fn run() -> Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Channel {
+    Stable,
+    Nightly,
+}
+
+pub fn run(channel: Channel) -> Result<()> {
     let exe = std::env::current_exe()?.canonicalize()?;
     let bin = exe.parent().context("niles executable has no parent")?;
-    if bin.ancestors().any(|path| path.ends_with("Cellar/niles")) {
-        println!("Run: brew upgrade niles");
-        return Ok(());
-    }
-
+    let homebrew = bin.ancestors().any(|path| path.ends_with("Cellar/niles"));
     // dist 0.33.0 ships this alongside the app, not as a PATH dependency:
     // https://github.com/axodotdev/cargo-dist/blob/v0.33.0/book/src/reference/config.md#install-updater
     let updater = bin.join("niles-update");
-    if updater.try_exists()? {
-        return Err(Command::new(&updater).exec()).context("could not run niles-update");
+    let has_shell_updater = !homebrew && updater.try_exists()?;
+    if channel == Channel::Nightly && !has_shell_updater {
+        bail!(
+            "nightly updates require a shell installation with niles-update; rerun the shell installer from https://github.com/Rhovian/niles#quickstart"
+        );
+    }
+    if homebrew {
+        println!("Run: brew upgrade niles");
+        return Ok(());
+    }
+    if has_shell_updater {
+        let mut command = Command::new(&updater);
+        // The bundled axoupdater already selects releases; keep networking there:
+        // https://github.com/axodotdev/axoupdater/blob/v0.10.2/axoupdater-cli/src/bin/axoupdater/main.rs
+        if channel == Channel::Nightly {
+            command.arg("--prerelease");
+        }
+        return Err(command.exec()).context("could not run niles-update");
     }
 
     // Cargo maintains this v1 tracking file even for current installs, covering legacy roots too:
