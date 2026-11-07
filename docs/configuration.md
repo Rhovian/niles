@@ -52,12 +52,11 @@ codex:
     - effort: high
       tier: standard
       description: Complex work with a balance of intelligence and cost
-      cost: 2
       speed: null
       context_window: 1050000
 ```
 
-Cost and speed rank from 1 (cheapest, fastest) to 4; `null` means unverified and shows as
+Speed ranks from 1 (fastest) to 4 (slowest); `null` means unverified and shows as
 `unknown`. Omit `effort` for a model without one. `niles models` lists only pairs some skill in
 the manifest allows, or every pair when there is no manifest. Invalid overrides are errors.
 
