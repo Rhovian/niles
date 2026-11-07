@@ -148,8 +148,8 @@ it('preserves newer SSE status only on its own host during concurrent refresh', 
 it.each([
   [new TypeError('Network down'), { state: 'asleep' }],
   [new DOMException('timed out', 'TimeoutError'), { state: 'asleep' }],
-  ...[502, 503, 504].map(status => [new ApiError(status), { state: 'asleep' }]),
-  ...[401, 403, 500].map(status => [new ApiError(status), { state: 'error', error: `API request failed (${status})` }]),
-])('classifies host failure %s', (cause, expected) => {
+  ...[502, 503, 504].map(status => [new ApiError(status), { state: 'asleep' }] as const),
+  ...[401, 403, 500].map(status => [new ApiError(status), { state: 'error', error: `API request failed (${status})` }] as const),
+] as const)('classifies host failure %s', (cause, expected) => {
   expect(hostFailure(cause)).toEqual(expected);
 });
