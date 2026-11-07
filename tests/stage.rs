@@ -15,12 +15,12 @@ impl Worker {
     fn new(rounds: Option<u8>, skills: &[&str]) -> Self {
         let env = TestEnv::new("niles-stage");
         let dir = write_worker(&env.root, "staged", "@1", None, b"");
-        let mut meta = read_json(&dir.join("meta.json"));
-        meta["on_stage"] = serde_json::json!(skills);
-        meta["gates"] = rounds
-            .map(|rounds| serde_json::json!({"rounds": rounds}))
-            .into();
-        fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+        edit_json(dir.join("meta.json"), |meta| {
+            meta["on_stage"] = serde_json::json!(skills);
+            meta["gates"] = rounds
+                .map(|rounds| serde_json::json!({"rounds": rounds}))
+                .into();
+        });
         Self { env, dir }
     }
     fn command(&self, kind: &str) -> Command {
@@ -45,17 +45,13 @@ impl Worker {
         fs::write(self.dir.join("report.md"), "deliverable").unwrap();
     }
 }
-fn read_json(path: &std::path::Path) -> serde_json::Value {
-    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
-}
 fn skill(env: &TestEnv, name: &str, bytes: usize) {
-    let dir = env.root.join(".niles/skills").join(name);
-    fs::create_dir_all(&dir).unwrap();
-    let body = format!(
-        "---\nname: {name}\ndescription: Use when done\n---\n{}",
-        "x".repeat(bytes)
+    write_skill(
+        &env.root.join(".niles"),
+        name,
+        "Use when done",
+        &"x".repeat(bytes),
     );
-    fs::write(dir.join("SKILL.md"), body).unwrap();
 }
 
 #[test]
@@ -178,12 +174,13 @@ fn resolution_and_total_body_cap_leave_no_round() {
 fn spawn_snapshot_provenance_and_cap() {
     let env = TestEnv::with_manifest("niles-stage-spawn", "claude");
     let manifest = state_dir(&env.root).join("manifest.yaml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    let configured = text.replace(
+    let text = edit_manifest(&env.root, |text| {
+        text.replace(
         "worker: {}",
         "worker:\n  on_stage: [reviewer]\n  gates: {rounds: 2, post: [{name: check, timeout: 1500ms, run: [printf, \"literal; $(false)\"]}]}",
-    );
-    fs::write(&manifest, &configured).unwrap();
+    )
+    });
+    let configured = fs::read_to_string(&manifest).unwrap();
     let output = env.spawn("worker", &["job", "task"]);
     assert_command_success("spawn", &output);
     let provenance: Vec<_> = stdout_of(&output)

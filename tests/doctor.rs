@@ -3,13 +3,12 @@
 mod common;
 
 use common::*;
-use std::{fs, path::Path, process::Command};
+use std::fs;
 
 #[test]
 fn doctor_reports_binary_identity() {
     let workspace = temp_workspace("niles-doctor-test");
     let home = niles_home(&workspace);
-    write_workspace_manifest(&workspace, "claude", "codex", "claude", "claude");
 
     let output = niles_bare(&workspace, &home)
         .arg("doctor")
@@ -17,11 +16,19 @@ fn doctor_reports_binary_identity() {
         .unwrap();
 
     assert_command_success("doctor", &output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout_of(&output);
     assert!(stdout.contains(concat!("binary: niles ", env!("CARGO_PKG_VERSION"), " (")));
     assert!(stdout.contains("git_hash: "));
     assert!(stdout.contains("built_at: "));
     assert!(stdout.contains("dev_mode: no"));
+    assert!(stdout.contains("agents: no workspace manifest"));
+    let output = run_bare(&workspace, &["--version"]);
+    assert_success_contains(
+        "--version",
+        &output,
+        concat!("niles ", env!("CARGO_PKG_VERSION"), " ("),
+    );
+    assert!(stdout_of(&output).contains("built "));
 }
 
 #[test]
@@ -92,14 +99,6 @@ fn doctor_reports_missing_and_unavailable_builtin_versions() {
 }
 
 #[test]
-fn doctor_without_manifest_reports_absence() {
-    let env = TestEnv::new("niles-doctor-no-manifest");
-    let output = env.run(&["doctor"]);
-    assert_command_success("doctor no manifest", &output);
-    assert!(stdout_of(&output).contains("agents: no workspace manifest"));
-}
-
-#[test]
 fn doctor_dirty_source_tree_ignores_inherited_repository_routing() {
     let workspace = temp_workspace("niles-doctor-dirty-test");
     fs::create_dir_all(workspace.join("src")).unwrap();
@@ -115,18 +114,7 @@ edition = "2024"
     fs::write(workspace.join("src/main.rs"), "fn main() {}\n").unwrap();
     git(&workspace, &["init"]);
     git(&workspace, &["add", "."]);
-    git(
-        &workspace,
-        &[
-            "-c",
-            "user.name=Niles Test",
-            "-c",
-            "user.email=niles@example.invalid",
-            "commit",
-            "-m",
-            "initial",
-        ],
-    );
+    git(&workspace, &["commit", "-m", "initial"]);
     let caller = temp_workspace("niles-doctor-caller");
     git(&workspace, &["clone", ".", caller.to_str().unwrap()]);
     fs::write(
@@ -143,29 +131,9 @@ edition = "2024"
         .unwrap();
 
     assert_command_success("doctor dirty", &output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout_of(&output);
     assert!(stdout.contains("dev_mode: yes"));
     assert!(stdout.contains("working_tree: dirty"));
     assert!(stdout.contains("stale: unknown (working tree dirty)"));
     assert!(!stdout.contains("stale: no"));
-}
-
-#[test]
-fn version_includes_build_identity() {
-    let niles = env!("CARGO_BIN_EXE_niles");
-    let output = Command::new(niles).arg("--version").output().unwrap();
-
-    assert_command_success("--version", &output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(concat!("niles ", env!("CARGO_PKG_VERSION"), " (")));
-    assert!(stdout.contains("built "));
-}
-
-fn git(workspace: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(workspace)
-        .output()
-        .unwrap();
-    assert_command_success(&format!("git {}", args.join(" ")), &output);
 }

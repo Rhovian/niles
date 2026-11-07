@@ -11,49 +11,28 @@ fn report_prints_worker_report_file() {
         None,
         b"working: report ready",
     );
+    fs::write(worker_dir.join("final-pane.txt"), "pane tail\n").unwrap();
+
+    let report = run_bare(&workspace, &["report", "auth-fix"]);
+    assert_failure_contains(
+        "missing report",
+        &report,
+        "no report found for worker 'auth-fix'",
+    );
+    assert!(stdout_of(&report).is_empty());
+    let stderr = stderr_of(&report);
+    assert!(stderr.contains("worker/auth-fix/report.md"));
+    assert!(stderr.contains("final pane snapshot is available"));
+
     fs::write(
         worker_dir.join("report.md"),
         "# Findings\n\n- durable content\n",
     )
     .unwrap();
 
-    let report = niles_bare(&workspace, &niles_home(&workspace))
-        .args(["report", "auth-fix"])
-        .output()
-        .unwrap();
+    let report = run_bare(&workspace, &["report", "auth-fix"]);
     assert_command_success("report", &report);
-    assert_eq!(
-        String::from_utf8_lossy(&report.stdout),
-        "# Findings\n\n- durable content\n"
-    );
-}
-
-#[test]
-fn report_errors_helpfully_when_report_file_is_absent() {
-    let workspace = temp_workspace("niles-worker-report-missing");
-
-    let worker_dir = write_worker(
-        &workspace,
-        "auth-fix",
-        "niles:niles-auth-fix",
-        None,
-        b"working: no report yet",
-    );
-    fs::write(worker_dir.join("final-pane.txt"), "pane tail\n").unwrap();
-
-    let report = niles_bare(&workspace, &niles_home(&workspace))
-        .args(["report", "auth-fix"])
-        .output()
-        .unwrap();
-    assert_failure_contains(
-        "missing report",
-        &report,
-        "no report found for worker 'auth-fix'",
-    );
-    assert!(String::from_utf8_lossy(&report.stdout).is_empty());
-    let stderr = String::from_utf8_lossy(&report.stderr);
-    assert!(stderr.contains("worker/auth-fix/report.md"));
-    assert!(stderr.contains("final pane snapshot is available"));
+    assert_eq!(stdout_of(&report), "# Findings\n\n- durable content\n");
 }
 
 #[test]
@@ -89,8 +68,8 @@ fn report_falls_back_to_most_recent_local_archive() {
         .output()
         .unwrap();
     assert_command_success("local archived report", &report);
-    assert_eq!(String::from_utf8_lossy(&report.stdout), "second report\n");
-    let stderr = String::from_utf8_lossy(&report.stderr);
+    assert_eq!(stdout_of(&report), "second report\n");
+    let stderr = stderr_of(&report);
     assert!(stderr.contains("serving archived report from"));
     assert!(stderr.contains("worker/archive/reviewer-"));
 }
@@ -98,7 +77,6 @@ fn report_falls_back_to_most_recent_local_archive() {
 #[test]
 fn report_skips_prefix_sibling_worker_archive() {
     let workspace = temp_workspace("niles-worker-prefix-archive");
-    let home = niles_home(&workspace);
     let archive_root = state_dir(&workspace).join("worker/archive");
     let worker_archive = archive_root.join("a-20260705T120000000000Z");
     let sibling_archive = archive_root.join("a-fs-20260705T130000000000Z");
@@ -107,14 +85,8 @@ fn report_skips_prefix_sibling_worker_archive() {
     fs::write(worker_archive.join("report.md"), "short worker report\n").unwrap();
     fs::write(sibling_archive.join("report.md"), "sibling worker report\n").unwrap();
 
-    let report = niles_bare(&workspace, &home)
-        .args(["report", "a"])
-        .output()
-        .unwrap();
+    let report = run_bare(&workspace, &["report", "a"]);
 
     assert_command_success("prefix sibling archived report", &report);
-    assert_eq!(
-        String::from_utf8_lossy(&report.stdout),
-        "short worker report\n"
-    );
+    assert_eq!(stdout_of(&report), "short worker report\n");
 }

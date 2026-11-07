@@ -1,21 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 use common::*;
-use std::{fs, path::Path, process::Command};
-
-fn skill(root: &Path, name: &str, description: &str, body: &str) -> std::path::PathBuf {
-    let path = root.join("skills").join(name).join("SKILL.md");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        format!(
-            "---\nname: {name}\ndescription: {}\n---\n{body}",
-            serde_json::to_string(description).unwrap()
-        ),
-    )
-    .unwrap();
-    path
-}
+use std::{fs, process::Command};
 
 #[test]
 fn a_fresh_home_has_no_skill_fallback_or_materialization() {
@@ -34,7 +20,7 @@ fn a_fresh_home_has_no_skill_fallback_or_materialization() {
 fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
     let env = TestEnv::with_manifest("skills-delivery", "claude");
     let body = "literal {dir} 'quote' \"\r\nbody\n";
-    let path = skill(
+    let path = write_skill(
         &env.root.join(".niles"),
         "triage",
         &format!(
@@ -43,15 +29,13 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
         ),
         body,
     );
-    skill(
+    write_skill(
         &env.root.join(".niles"),
         "unreferenced",
         "Use when testing discovery",
         "body",
     );
-    let manifest = state_dir(&env.root).join("manifest.yaml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, text.replace("worker:", "triage:")).unwrap();
+    edit_manifest(&env.root, |text| text.replace("worker:", "triage:"));
     let output = env.run(&["skills"]);
     assert_command_success("skills", &output);
     let text = stdout_of(&output);
@@ -96,10 +80,10 @@ fn discovery_lists_installed_skills_without_bindings() {
     fs::write(&manifest, tiers).unwrap();
     let local = env.root.join(".niles");
     let global = env.home.join(".niles");
-    skill(&global, "extra", "Use when global", "global");
-    let winner = skill(&local, "extra", "Use when local", "local");
+    write_skill(&global, "extra", "Use when global", "global");
+    let winner = write_skill(&local, "extra", "Use when local", "local");
     let external = env.root.join("external");
-    let target = skill(&external, "linked", "Use when linked", "body");
+    let target = write_skill(&external, "linked", "Use when linked", "body");
     let link = env.home.join(".niles/skills/linked");
     std::os::unix::fs::symlink(target.parent().unwrap(), &link).unwrap();
     let listing = env.run(&["skills"]);
@@ -122,13 +106,13 @@ fn discovery_lists_installed_skills_without_bindings() {
 fn bad_directories_warn_without_hiding_valid_skills_or_allowing_launch() {
     let env = TestEnv::with_manifest("skills-warnings", "claude");
     let local = env.root.join(".niles");
-    skill(&local, "foo.bak", "Use when invalid", "body");
+    write_skill(&local, "foo.bak", "Use when invalid", "body");
     let pointer = local.join("skills/broken/SKILL.ref");
     fs::create_dir_all(pointer.parent().unwrap()).unwrap();
     fs::write(&pointer, "broken ref").unwrap();
-    let manifest = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest).unwrap();
-    fs::write(manifest, format!("{body}broken: {{}}\nghost: {{}}\n")).unwrap();
+    edit_manifest(&env.root, |body| {
+        format!("{body}broken: {{}}\nghost: {{}}\n")
+    });
     let listing = env.run(&["skills"]);
     assert_command_success("invalid discovered skills warn", &listing);
     let warnings = stderr_of(&listing);
@@ -146,7 +130,7 @@ fn bad_directories_warn_without_hiding_valid_skills_or_allowing_launch() {
 #[test]
 fn invalid_primaries_fail_before_worker_or_session_creation() {
     let env = TestEnv::with_manifest("skills-bounds", "codex");
-    let path = skill(&env.root.join(".niles"), "worker", "valid", "body");
+    let path = write_skill(&env.root.join(".niles"), "worker", "valid", "body");
     fs::write(&path, "malformed frontmatter").unwrap();
     assert_command_success("load checks existence only", &env.run(&["models"]));
     assert_failure_contains(
@@ -177,7 +161,7 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         ("worker", "\u{1b}".repeat(24000), "encoded primary"),
         ("lead", "\u{1b}".repeat(24000), "encoded primary"),
     ] {
-        let path = skill(&env.root.join(".niles"), name, "valid", &body);
+        let path = write_skill(&env.root.join(".niles"), name, "valid", &body);
         let output = if name == "worker" {
             env.spawn(name, &["job", "--worktree", "untouched", "task"])
         } else {
@@ -188,9 +172,7 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         assert!(!state_dir(&env.root).join("sessions").exists());
         fs::remove_file(path).unwrap();
     }
-    let manifest = state_dir(&env.root).join("manifest.yaml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, text.replace("worker:", "reveiwer:")).unwrap();
+    edit_manifest(&env.root, |text| text.replace("worker:", "reveiwer:"));
     assert_failure_contains(
         "unresolved binding",
         &env.spawn("worker", &["job", "task"]),
@@ -200,12 +182,10 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
 }
 
 fn bind_extras(env: &TestEnv, extra: &str) {
-    let path = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&path).unwrap();
-    let body = body
-        .replace("worker: {}\n", "worker:\n")
-        .replace("worker:\n", &format!("worker:\n{extra}"));
-    fs::write(path, body).unwrap();
+    edit_manifest(&env.root, |body| {
+        body.replace("worker: {}\n", "worker:\n")
+            .replace("worker:\n", &format!("worker:\n{extra}"))
+    });
 }
 
 fn discovery(env: &TestEnv, args: &[&str]) -> std::process::Output {
@@ -225,7 +205,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
         "é".repeat(250)
     );
     for name in ["alpha", "beta", "forced"] {
-        skill(root, name, &description, &format!("{name} body"));
+        write_skill(root, name, &description, &format!("{name} body"));
     }
     bind_extras(
         &env,
@@ -250,8 +230,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
         assert!(stdout_of(&output).contains(prefix));
     }
     let dir = state_dir(&env.root).join("worker/job");
-    let meta: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+    let meta = read_json(dir.join("meta.json"));
     for (key, names) in [
         ("menu", vec!["alpha", "beta"]),
         ("always", vec!["worker", "research", "research"]),
@@ -287,11 +266,9 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
         );
     }
     // Editing the binding cannot add permission to the running worker's discovery lists.
-    let manifest = state_dir(&env.root).join("manifest.yaml");
-    let body = fs::read_to_string(&manifest)
-        .unwrap()
-        .replace("skills: [alpha, alpha]", "skills: [forced]");
-    fs::write(manifest, body).unwrap();
+    edit_manifest(&env.root, |body| {
+        body.replace("skills: [alpha, alpha]", "skills: [forced]")
+    });
     let output = discovery(&env, &["agent", "skills"]);
     assert_command_success("menu discovery", &output);
     assert!(stdout_of(&output).starts_with("alpha:"));
@@ -339,7 +316,7 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
         ("some_when text", true),
         ("somewhen text", true),
     ] {
-        skill(root, "guide", description, "body");
+        write_skill(root, "guide", description, "body");
         let output = env.spawn("worker", &["job", "--menu", "guide", "task"]);
         assert_command_success("description warning", &output);
         assert_eq!(
@@ -352,7 +329,7 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
         reject(&["job", "--menu", name, "task"], message);
     }
     for description in ["".to_owned(), "x".repeat(1025)] {
-        skill(root, "guide", &description, "body");
+        write_skill(root, "guide", &description, "body");
         reject(
             &["job", "--menu", "guide", "task"],
             "description must be nonempty",
@@ -360,7 +337,7 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
     }
     let names = (0..17).map(|n| format!("s{n}")).collect::<Vec<_>>();
     for name in &names {
-        skill(root, name, "Use when needed", "body");
+        write_skill(root, name, "Use when needed", "body");
     }
     let mut args = vec!["job"];
     for name in &names[..16] {
@@ -375,17 +352,16 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
     args.pop();
     args.extend(["--menu", &names[16], "task"]);
     reject(&args, "maximum is 16");
-    skill(root, "guide", "Whenever useful", "body");
+    write_skill(root, "guide", "Whenever useful", "body");
     assert_command_success(
         "ordinary research menu at spawn",
         &env.spawn("worker", &["job", "--menu", "research", "task"]),
     );
     fs::remove_dir_all(&dir).unwrap();
-    let path = state_dir(&env.root).join("manifest.yaml");
     bind_extras(&env, "  skills: [research]\n");
     assert_command_success("ordinary research menu at load", &env.run(&["models"]));
     for name in ["large0", "large1", "large2", "large3"] {
-        skill(root, name, "Use when needed", &"x".repeat(16384));
+        write_skill(root, name, "Use when needed", &"x".repeat(16384));
     }
     assert_command_success(
         "duplicate bodies share one budget slot",
@@ -401,16 +377,17 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
     bind_extras(&env, "  on_stage: [large0, large1]\n");
     assert_command_success("exact stage cap", &env.spawn("worker", &["job", "task"]));
     fs::remove_dir_all(&dir).unwrap();
-    skill(root, "large1", "Use when needed", &"x".repeat(16385));
+    write_skill(root, "large1", "Use when needed", &"x".repeat(16385));
     reject(
         &["job", "--menu", "guide", "task"],
         "on_stage bodies exceed 32768",
     );
-    let body = fs::read_to_string(&path).unwrap().replace(
-        "on_stage: [large0, large1]",
-        "always: [large0, large1, large2, large3]",
-    );
-    fs::write(&path, body).unwrap();
+    edit_manifest(&env.root, |body| {
+        body.replace(
+            "on_stage: [large0, large1]",
+            "always: [large0, large1, large2, large3]",
+        )
+    });
     reject(&["job", "--menu", "guide", "task"], "maximum is 65536");
     reject(
         &["job", "--on-send", "large", "task"],

@@ -45,25 +45,14 @@ fn invalid_setup_names_fail_at_the_cli_boundary() {
 #[test]
 fn env_selection_reads_global_links_and_never_merges_the_default_manifest() {
     let setups = Setups::new("setup-env");
-    let default = setups.env.run(&["skills"]);
-    assert_command_success("default manifest", &default);
-    assert!(
-        stdout_of(&default)
-            .lines()
-            .any(|line| line.starts_with("skill: research "))
-    );
-    let output = setups
-        .env
-        .niles(&setups.env.root, &["skills"])
-        .env("NILES_SETUP", "tdd")
-        .output()
-        .unwrap();
-    assert_command_success("env setup through directory and file links", &output);
-    assert!(
-        stdout_of(&output)
-            .lines()
-            .any(|line| line.starts_with("skill: research "))
-    );
+    for selection in [None, Some("tdd")] {
+        let mut command = setups.env.niles(&setups.env.root, &["skills"]);
+        if let Some(selection) = selection {
+            command.env("NILES_SETUP", selection);
+        }
+        let output = command.output().unwrap();
+        assert_success_contains("selected skills", &output, "skill: research ");
+    }
 }
 
 #[test]
@@ -78,8 +67,7 @@ fn flag_selection_overrides_a_malformed_unused_environment_value() {
         .env("NILES_SETUP", "invalid:selection")
         .output()
         .unwrap();
-    assert_command_success("flag wins over env", &output);
-    assert!(stdout_of(&output).contains("haiku"));
+    assert_success_contains("flag wins over env", &output, "haiku");
 }
 
 #[test]
@@ -99,13 +87,12 @@ fn assert_entry_setup(entry: &str) {
         ),
     )
     .unwrap();
-    let guide = env.root.join(".niles/skills/guide/SKILL.md");
-    fs::create_dir_all(guide.parent().unwrap()).unwrap();
-    fs::write(
-        guide,
-        "---\nname: guide\ndescription: Use when testing setups.\n---\nSETUP GUIDE BODY",
-    )
-    .unwrap();
+    write_skill(
+        &env.root.join(".niles"),
+        "guide",
+        "Use when testing setups.",
+        "SETUP GUIDE BODY",
+    );
     let override_file = env.root.join("override.yaml");
     fs::write(&override_file, manifest("claude:haiku")).unwrap();
     write_executable(
@@ -141,16 +128,9 @@ fn assert_entry_setup(entry: &str) {
             .unwrap()
             .contains("guide: Use when testing setups.")
     );
-    assert!(
-        fs::read_to_string(worker_dir.join("launch.sh"))
-            .unwrap()
-            .contains("SETUP GUIDE BODY")
-    );
-    assert!(
-        !fs::read_to_string(state_dir(&env.root).join("worker/selected/launch.sh"))
-            .unwrap()
-            .contains("NILES_SETUP=")
-    );
+    let launch = fs::read_to_string(worker_dir.join("launch.sh")).unwrap();
+    assert!(launch.contains("SETUP GUIDE BODY"));
+    assert!(!launch.contains("NILES_SETUP="));
     let session = fs::read_dir(state_dir(&env.root).join("sessions"))
         .unwrap()
         .next()

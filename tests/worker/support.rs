@@ -41,12 +41,30 @@ pub(crate) fn latest_archive_dir(workspace: &Path, id: &str) -> PathBuf {
 }
 
 pub(crate) fn assert_archived_with_closed_sentinel(workspace: &Path, id: &str) {
-    assert!(!state_dir(workspace).join("worker").join(id).exists());
+    let label = workspace.display();
+    assert!(
+        !state_dir(workspace).join("worker").join(id).exists(),
+        "{label}"
+    );
     let archive_dir = latest_archive_dir(workspace, id);
-    assert!(archive_dir.join("meta.json").is_file());
+    assert!(archive_dir.join("meta.json").is_file(), "{label}");
     assert!(
         fs::read_to_string(archive_dir.join("status.log"))
             .unwrap()
-            .contains(&format!("closed: {id}"))
+            .contains(&format!("closed: {id}")),
+        "{label}"
     );
+}
+
+pub(crate) fn close_auth_fix(
+    env: &TestEnv,
+    window: &str,
+    status: &[u8],
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    write_worker(&env.root, "auth-fix", window, None, status);
+    env.niles(&env.root, &["close", "auth-fix"])
+        .envs(envs.iter().copied())
+        .output()
+        .unwrap()
 }

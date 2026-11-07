@@ -69,18 +69,6 @@ fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
 }
 
 #[test]
-fn spawn_rejects_missing_tree_without_worker_state() {
-    let env = TestEnv::with_manifest("niles-worker-missing-tree", "claude");
-    let missing = env.root.join("missing");
-    let spawn = env.spawn(
-        "research",
-        &["other", "--tree", missing.to_str().unwrap(), "Fix"],
-    );
-    assert_failure_contains("missing tree", &spawn, "failed to resolve tree");
-    assert!(!state_dir(&env.root).join("worker/other").exists());
-}
-
-#[test]
 fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let env = TestEnv::with_manifest("niles-worker-no-tmux", "claude");
 
@@ -91,7 +79,7 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
         .unwrap();
 
     assert_failure_contains("spawn outside tmux", &spawn, "must run inside tmux");
-    let stderr = String::from_utf8_lossy(&spawn.stderr);
+    let stderr = stderr_of(&spawn);
     assert!(stderr.contains("bare `niles`"), "{stderr}");
     // Refusing is the point: no window, no session, no worker directory left behind.
     assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
@@ -115,7 +103,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
         .output()
         .unwrap();
     assert_command_success("codex tiered spawn", &codex_spawn);
-    let codex_stdout = String::from_utf8_lossy(&codex_spawn.stdout);
+    let codex_stdout = stdout_of(&codex_spawn);
     assert!(codex_stdout.contains("agent: codex:gpt-5.7:xhigh"));
     assert!(codex_stdout.contains("agent_family: codex"));
     assert!(codex_stdout.contains("model: gpt-5.7"));
@@ -140,50 +128,67 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
 
 #[test]
 fn spawn_rejects_invalid_input_before_writing_a_worker() {
-    let workspace = temp_workspace("niles-worker-invalid-input");
-    write_spawn_manifest(&workspace, "claude");
-    for (id, flags, error) in [
-        ("archive", &[][..], "worker id 'archive' is reserved"),
+    let env = TestEnv::with_manifest("niles-worker-invalid-input", "claude");
+    let missing = env.root.join("missing");
+    for (id, skill, flags, error, bare) in [
+        (
+            "archive",
+            "research",
+            &[][..],
+            "worker id 'archive' is reserved",
+            true,
+        ),
         (
             "auth-fix",
+            "research",
             &["--task", "archive"],
             "task label 'archive' is reserved",
+            true,
         ),
         (
             "bad-worker",
+            "research",
             &["--agent", "claude:opus:turbo"],
             "unsupported claude effort `turbo`",
+            true,
         ),
         (
             "future-worker",
+            "research",
             &["--agent", "codex:gpt-5.7:xhigh"],
             "unsupported codex model `gpt-5.7`",
+            true,
+        ),
+        (
+            "job",
+            "lead",
+            &["--agent", "claude:sonnet:high"],
+            "entry skill",
+            false,
+        ),
+        (
+            "job",
+            "unbound",
+            &["--agent", "claude:sonnet:high"],
+            "skill `unbound` has no SKILL.md or SKILL.ref",
+            false,
+        ),
+        (
+            "other",
+            "research",
+            &["--tree", missing.to_str().unwrap()],
+            "failed to resolve tree",
+            false,
         ),
     ] {
-        let output = niles_bare(&workspace, &niles_home(&workspace))
-            .args(["spawn", id, "--skill", "research"])
-            .args(flags)
-            .arg("Task")
-            .output()
-            .unwrap();
-        assert_failure_contains("invalid spawn", &output, error);
-        assert!(!state_dir(&workspace).join("worker").join(id).exists());
-    }
-}
-
-#[test]
-fn entry_and_missing_skills_fail_before_worker_state_even_with_override() {
-    let env = TestEnv::with_manifest("spawn-bound-skill", "claude");
-    for (skill, error) in [
-        ("lead", "entry skill"),
-        ("unbound", "skill `unbound` has no SKILL.md or SKILL.ref"),
-    ] {
-        assert_failure_contains(
-            skill,
-            &env.spawn(skill, &["job", "--agent", "claude:sonnet:high", "task"]),
-            error,
-        );
-        assert!(!state_dir(&env.root).join("worker/job").exists());
+        let mut command = env.spawn_command(skill, &[id]);
+        command.args(flags).arg("Task");
+        if bare {
+            command.env_remove("TMUX");
+        }
+        let output = command.output().unwrap();
+        assert_failure_contains(id, &output, error);
+        assert!(!state_dir(&env.root).join("worker").join(id).exists());
     }
 }
 

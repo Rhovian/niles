@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{TestEnv, assert_command_success, state_dir, stdout_of};
+use common::{TestEnv, assert_command_success, register_project, state_dir, stdout_of};
 use std::{fs, os::unix::fs::symlink};
 
 #[test]
@@ -11,14 +11,13 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
     let registry = env.home.join(".niles/projects");
     let missing = env.root.join("missing");
     let other = env.root.join("other");
-    fs::create_dir_all(&registry).unwrap();
     fs::create_dir(&other).unwrap();
     for (name, target) in [
         ("a-missing", &missing),
         ("b-live", &env.root),
         ("c-other", &other),
     ] {
-        symlink(target, registry.join(name)).unwrap();
+        register_project(&env, name, target);
     }
     let archive = state_dir(&env.root).join("worker/archive");
     let sessions = state_dir(&other).join("sessions");
@@ -82,11 +81,7 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
         assert_eq!(fs::read_link(registry.join("b-live")).unwrap(), env.root);
         assert_eq!(fs::read_link(registry.join("c-other")).unwrap(), other);
     }
-    let output = env
-        .niles(&env.root, &["prune"])
-        .env("HOME", &env.home)
-        .output()
-        .unwrap();
+    let output = env.niles(&env.root, &["prune"]).output().unwrap();
     assert_command_success("empty prune", &output);
     assert!(output.stdout.is_empty());
 }

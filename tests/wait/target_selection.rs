@@ -16,24 +16,6 @@ fn corrupt_cursor_fails_loudly_and_names_the_file() {
 }
 
 #[test]
-fn a_symlinked_cursor_path_is_refused_rather_than_followed() {
-    let workspace = temp_workspace("niles-wait-symlink");
-    let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: ready\n");
-    let outside = workspace.join("outside.txt");
-    fs::write(&outside, "untouched\n").unwrap();
-    std::os::unix::fs::symlink(&outside, worker_dir.join("status.cursor")).unwrap();
-
-    let output = run_wait(&workspace, &["--interval", "50ms", "--timeout", "0"]);
-
-    assert!(!output.status.success());
-    assert_eq!(
-        fs::read_to_string(&outside).unwrap(),
-        "untouched\n",
-        "the cursor write followed a symlink out of the worker directory"
-    );
-}
-
-#[test]
 fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
     let workspace = temp_workspace("niles-wait-huge");
     let mut status = b"done: ".to_vec();

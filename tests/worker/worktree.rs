@@ -5,27 +5,9 @@ fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .args(args)
         .current_dir(cwd)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Niles Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Niles Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
-        .env("GIT_CONFIG_VALUE_0", "false")
+        .envs(GIT_ENV)
         .output()
         .unwrap()
-}
-
-fn git(cwd: &Path, args: &[&str]) -> String {
-    let output = git_output(cwd, args);
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        stderr_of(&output)
-    );
-    stdout_of(&output)
 }
 
 struct Repo {
@@ -66,17 +48,7 @@ impl Repo {
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = self.env.niles(&self.workspace, args);
-        command
-            .env("HOME", &self.env.home)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_AUTHOR_NAME", "Niles Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Niles Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
-            .env("GIT_CONFIG_VALUE_0", "false");
+        command.envs(GIT_ENV);
         command
     }
 
@@ -97,13 +69,20 @@ impl Repo {
         fs::write(path, format!("{body}worktree:\n{worktree}\n")).unwrap();
     }
 
-    fn spawn(&self, id: &str, base: bool) {
-        let mut args = vec!["spawn", "--skill", "research", id, "--worktree", "fix/x"];
+    fn worktree_spawn(&self, id: &str, base: bool) -> Command {
+        let mut command = self.spawn_command(id, &["--worktree", "fix/x"]);
         if base {
-            args.extend(["--base", "origin/main"]);
+            command.args(["--base", "origin/main"]);
         }
-        args.push("Fix");
-        assert_command_success("managed spawn", &self.run(&args));
+        command.arg("Fix");
+        command
+    }
+
+    fn spawn(&self, id: &str, base: bool) {
+        assert_command_success(
+            "managed spawn",
+            &self.worktree_spawn(id, base).output().unwrap(),
+        );
     }
 }
 
@@ -112,10 +91,7 @@ fn worktree_git_ignores_inherited_repository_routing() {
     let repo = Repo::new("niles-managed-git-env");
     let caller = Repo::new("niles-caller-git-env");
     for mut command in [
-        repo.spawn_command(
-            "worker",
-            &["--worktree", "fix/x", "--base", "origin/main", "Fix"],
-        ),
+        repo.worktree_spawn("worker", true),
         repo.command(&["close", "worker"]),
     ] {
         command
@@ -251,17 +227,7 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
 fn failing_worktree_setup_aborts_spawn_and_removes_new_tree() {
     let repo = Repo::new("niles-worktree-hook-failure");
     repo.configure("  setup: 'touch partial; echo setup-failed >&2; exit 7'");
-    let output = repo.run(&[
-        "spawn",
-        "--skill",
-        "research",
-        "failed",
-        "--worktree",
-        "fix/x",
-        "--base",
-        "origin/main",
-        "Fix",
-    ]);
+    let output = repo.worktree_spawn("failed", true).output().unwrap();
     assert!(!output.status.success());
     let stderr = stderr_of(&output);
     assert!(
@@ -308,10 +274,7 @@ fn worktree_setup_uses_eof_stdin_and_keeps_spawn_stdout_clean() {
     let input = repo.env.root.join("input");
     fs::write(&input, "unexpected input\n").unwrap();
     let output = repo
-        .spawn_command(
-            "worker",
-            &["--worktree", "fix/x", "--base", "origin/main", "Fix"],
-        )
+        .worktree_spawn("worker", true)
         .stdin(fs::File::open(input).unwrap())
         .output()
         .unwrap();
@@ -329,13 +292,7 @@ fn worktree_setup_uses_eof_stdin_and_keeps_spawn_stdout_clean() {
 fn worktree_setup_cleanup_failure_retains_error_and_blocks_reuse() {
     let repo = Repo::new("niles-hook-cleanup");
     repo.configure("  setup: 'git worktree lock \"$PWD\"; exit 7'");
-    let output = repo
-        .spawn_command(
-            "failed",
-            &["--worktree", "fix/x", "--base", "origin/main", "Fix"],
-        )
-        .output()
-        .unwrap();
+    let output = repo.worktree_spawn("failed", true).output().unwrap();
     assert!(!output.status.success());
     let stderr = stderr_of(&output);
     assert!(
@@ -345,10 +302,7 @@ fn worktree_setup_cleanup_failure_retains_error_and_blocks_reuse() {
         "{stderr}"
     );
     assert!(repo.tree.exists());
-    let retry = repo
-        .spawn_command("retry", &["--worktree", "fix/x", "Fix"])
-        .output()
-        .unwrap();
+    let retry = repo.worktree_spawn("retry", false).output().unwrap();
     assert!(!retry.status.success());
     assert!(stderr_of(&retry).contains("creation/setup is incomplete"));
     assert!(!repo.env.tmux_log().contains("new-window"));
@@ -374,20 +328,14 @@ fn worktree_setup_blocks_concurrent_join_and_reuse_after_interruption() {
         finished.display()
     ));
     let mut creator = repo
-        .spawn_command(
-            "creator",
-            &["--worktree", "fix/x", "--base", "origin/main", "Fix"],
-        )
+        .worktree_spawn("creator", true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     // FIFOs synchronize with the real setup process without timing-dependent polling.
     assert_eq!(fs::read_to_string(&ready).unwrap(), "ready\n");
-    let join = repo
-        .spawn_command("joiner", &["--worktree", "fix/x", "Fix"])
-        .output()
-        .unwrap();
+    let join = repo.worktree_spawn("joiner", false).output().unwrap();
     assert!(!join.status.success());
     assert!(stderr_of(&join).contains("creation is busy"));
     assert!(!repo.env.tmux_log().contains("new-window"));
@@ -395,10 +343,7 @@ fn worktree_setup_blocks_concurrent_join_and_reuse_after_interruption() {
     fs::write(&release, "continue\n").unwrap();
     assert_eq!(fs::read_to_string(&finished).unwrap(), "finished\n");
     assert!(!creator.wait_with_output().unwrap().status.success());
-    let retry = repo
-        .spawn_command("retry", &["--worktree", "fix/x", "Fix"])
-        .output()
-        .unwrap();
+    let retry = repo.worktree_spawn("retry", false).output().unwrap();
     assert!(!retry.status.success());
     assert!(stderr_of(&retry).contains("creation/setup is incomplete"));
     assert!(repo.tree.exists());

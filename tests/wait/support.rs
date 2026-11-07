@@ -10,12 +10,9 @@ pub(crate) use std::{
 
 /// Starts a workspace wait and returns the child.
 pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_niles"))
+    niles_bare(workspace, &niles_home(workspace))
         .arg("wait")
         .args(args)
-        .current_dir(workspace)
-        .env("HOME", niles_home(workspace))
-        .env_remove("TMUX")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -23,14 +20,23 @@ pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child
 }
 
 pub(crate) fn run_wait(workspace: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_niles"))
+    niles_bare(workspace, &niles_home(workspace))
         .arg("wait")
         .args(args)
-        .current_dir(workspace)
-        .env("HOME", niles_home(workspace))
-        .env_remove("TMUX")
         .output()
         .unwrap()
+}
+
+pub(crate) fn assert_drained(output: &Output) {
+    assert_eq!(output.status.code(), Some(22), "{}", stderr_of(output));
+    assert!(stdout_of(output).is_empty());
+}
+
+pub(crate) fn wait_once(status: &[u8]) -> (PathBuf, PathBuf, Output) {
+    let workspace = temp_workspace("niles-wait-status");
+    let dir = worker_with_status(&workspace, "auth-fix", status);
+    let output = run_wait(&workspace, &["--interval", "50ms", "--timeout", "0"]);
+    (workspace, dir, output)
 }
 
 pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
@@ -112,8 +118,8 @@ impl TmuxServer {
             "socket={} exists={} sessions={:?}/{:?} windows={:?}",
             self.socket.display(),
             self.socket.exists(),
-            String::from_utf8_lossy(&sessions.stdout),
-            String::from_utf8_lossy(&sessions.stderr),
+            stdout_of(&sessions),
+            stderr_of(&sessions),
             self.windows()
         )
     }
@@ -130,7 +136,7 @@ impl TmuxServer {
             ])
             .output()
             .unwrap();
-        String::from_utf8_lossy(&output.stdout).into_owned()
+        stdout_of(&output)
     }
 
     pub(crate) fn pane_in_mode(&self, target: &str) -> String {
@@ -140,7 +146,7 @@ impl TmuxServer {
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", self.diagnostics());
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        stdout_of(&output).trim().to_owned()
     }
 
     pub(crate) fn run(&self, args: &[&str]) {
@@ -152,7 +158,7 @@ impl TmuxServer {
         assert!(
             output.status.success(),
             "tmux {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr_of(&output)
         );
     }
 }
@@ -186,6 +192,10 @@ impl Lab {
             .env("HOME", niles_home(&self.workspace))
             .env("TMUX", self.server.tmux_env());
         command
+    }
+
+    pub(crate) fn wait_now(&self) -> Output {
+        self.niles(&["wait", "--timeout", "0"]).output().unwrap()
     }
 
     pub(crate) fn worker(&self, id: &str, task_label: Option<&str>, status: &[u8]) -> PathBuf {

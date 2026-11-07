@@ -2,22 +2,21 @@
 
 mod common;
 
-use common::{TestEnv, assert_command_success, state_dir, stdout_of, write_worker};
+use common::{
+    TestEnv, assert_command_success, register_project, state_dir, stdout_of, write_worker,
+};
 use std::{fs, process::Command};
 
 #[test]
 fn window_labels_need_metadata_but_never_logs_or_telemetry() {
     let env = TestEnv::new("niles-bar-labels");
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
-    std::os::unix::fs::symlink(&env.root, registry.join("api")).unwrap();
+    register_project(&env, "api", &env.root);
     let worker = write_worker(&env.root, "parse", "api:w", None, b"");
     fs::remove_file(worker.join("status.log")).unwrap();
     fs::create_dir(worker.join("status.log")).unwrap();
     write_worker(&env.root, "lost", "api:gone", None, b"");
     let output = env
         .niles(&env.root, &["status", "sessions", "api"])
-        .env("HOME", &env.home)
         .env(
             "TMUX_WINDOWS",
             "0\tniles\n1\tw\n2\tshell#{pane_id},#[fg=red]",
@@ -41,20 +40,16 @@ fn cached_bar_output_selects_at_tmux_expansion_time() {
     let env = TestEnv::new("niles-bar-selection");
     let output = env
         .niles(&env.root, &["status", "sessions", "api"])
-        .env("HOME", &env.home)
         .env("TMUX_WINDOWS", "0\tfirst\n1\t#{pane_id},#[fg=red]")
         .output()
         .unwrap();
     assert_command_success("window format", &output);
     let format = stdout_of(&output);
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
     for name in ["api", "other"] {
-        std::os::unix::fs::symlink(&env.root, registry.join(name)).unwrap();
+        register_project(&env, name, &env.root);
     }
     let projects = env
         .niles(&env.root, &["status", "projects"])
-        .env("HOME", &env.home)
         .env("TMUX_SESSION_EXISTS", "1")
         .env("TMUX_PROJECT_TAG", &env.root)
         .env("TMUX_WINDOWS", "niles\t0")
@@ -131,18 +126,15 @@ case "$1:$3" in
 esac
 "#,
     );
-    let registry = env.home.join(".niles/projects");
-    fs::create_dir_all(&registry).unwrap();
     for name in ["zeta", "wrong", "dead", "alpha", "absent"] {
-        std::os::unix::fs::symlink(&env.root, registry.join(name)).unwrap();
+        register_project(&env, name, &env.root);
     }
-    std::os::unix::fs::symlink(env.root.join("missing"), registry.join("missing")).unwrap();
+    register_project(&env, "missing", &env.root.join("missing"));
     let worker = state_dir(&env.root).join("worker/broken");
     fs::create_dir_all(&worker).unwrap();
     fs::write(worker.join("meta.json"), "invalid metadata").unwrap();
     let output = env
         .niles(&env.root, &["status", "projects"])
-        .env("HOME", &env.home)
         .env("PROJECT_PATH", &env.root)
         .output()
         .unwrap();
