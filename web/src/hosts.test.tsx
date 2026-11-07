@@ -1,3 +1,4 @@
+import { Stream, json, openMenu, deferred } from './test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { App } from './App';
@@ -7,16 +8,9 @@ import { API_NAVIGATION_PATH } from './shell';
 const hosts = [{ id: 'desk', name: 'Desktop' }, { id: 'laptop', name: 'Laptop' }];
 const session = { id: 'same/id', project: 'same project', agent: { family: 'codex', entry_skill: 'lead' }, waiting: false, worker_count: 1 };
 const project = { name: session.project, state: 'running', workers: [{ id: 'same/worker', skill: 'worker', lost: false }] };
-const json = (data: unknown) => ({ ok: true, status: 200, json: async () => data }) as Response;
-class Stream extends EventTarget {
-  static opened: Stream[];
-  close = vi.fn();
-  constructor(readonly url: string) { super(); Stream.opened.push(this); }
-  emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
-}
+
 let failures: Map<string, Response | Error>;
 let fetcher: ReturnType<typeof vi.fn<typeof fetch>>;
-const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
 const hostMenu = (name: string) => within(screen.getByRole('region', { name }));
 async function openLead(name: string) {
   openMenu();
@@ -26,9 +20,7 @@ async function openLead(name: string) {
   await screen.findByRole('region', { name: `Chat with ${project.name}` });
 }
 beforeEach(() => {
-  localStorage.clear(); window.history.replaceState(null, '', '/');
-  Stream.opened = []; failures = new Map();
-  vi.stubGlobal('EventSource', Stream);
+  failures = new Map();
   fetcher = vi.fn(async (input, options) => {
     const url = String(input);
     if (url === '/hosts.json') return json({ hosts });
@@ -117,9 +109,9 @@ it.each([json({ api_version: 99 }), new TypeError('Network down')])('clears stal
 });
 it('does not let a slow host block another host or overlap its refresh', async () => {
   const implementation = fetcher.getMockImplementation()!;
-  let finish!: (value: Response) => void;
+  const { promise, resolve: finish } = deferred<Response>();
   fetcher.mockImplementation((url, options) => String(url) === '/h/laptop/api/sessions'
-    ? new Promise(done => { finish = done; }) : implementation(url, options));
+    ? promise : implementation(url, options));
   render(<App />); await screen.findByText('Open projects on the sidebar.'); await openLead('Desktop');
   fireEvent(window, new Event('focus'));
   expect(fetcher.mock.calls.filter(([url]) => url === '/h/laptop/api/sessions')).toHaveLength(1);
@@ -163,9 +155,9 @@ it('times out a hung host as asleep while keeping other hosts usable', async () 
 it('preserves newer SSE status only on its own host during concurrent refresh', async () => {
   render(<App />); await screen.findByText('Open projects on the sidebar.'); await openLead('Laptop');
   const implementation = fetcher.getMockImplementation()!;
-  let finish!: (value: Response) => void;
+  const { promise, resolve: finish } = deferred<Response>();
   fetcher.mockImplementation((url, options) => String(url) === '/h/laptop/api/sessions'
-    ? new Promise(done => { finish = done; }) : implementation(url, options));
+    ? promise : implementation(url, options));
   fireEvent(window, new Event('focus'));
   Stream.opened.at(-1)!.emit('status', { ...session, agent: { ...session.agent, family: 'new-status' } });
   await screen.findByText('new-status');
