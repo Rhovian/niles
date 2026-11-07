@@ -18,6 +18,7 @@ mod store;
 mod telemetry;
 mod theme;
 mod tmux;
+mod update;
 mod util;
 mod wait;
 mod wake;
@@ -100,6 +101,7 @@ fn run() -> Result<ExitCode> {
             Some(command) => command.run()?,
         },
         Some(CommandName::Doctor) => doctor::doctor(selection()?.as_ref())?,
+        Some(CommandName::Update) => update::run()?,
         Some(CommandName::Compat { families }) => {
             return compat::compat(&families, selection()?.as_ref());
         }
