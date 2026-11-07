@@ -1,22 +1,45 @@
 use super::*;
+use crate::{
+    remote::tests::relay_request,
+    test_support::{TempDir, assert_err_contains, temp_dir},
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::{fs, os::unix::fs::PermissionsExt};
 use web_push::SubscriptionInfo;
 
-fn fixture() -> (tempfile::TempDir, Store, Subscription) {
-    let root = tempfile::tempdir().unwrap();
-    let store = Store::create(
-        camino::Utf8PathBuf::from_path_buf(root.path().join("remote")).unwrap(),
-        "mailto:operator@example.com",
-    )
-    .unwrap();
+fn keyed_subscription(endpoint: &str) -> (Subscription, ece::EcKeyComponents, [u8; 16]) {
     let (key, auth) = ece::generate_keypair_and_auth_secret().unwrap();
     let info = SubscriptionInfo::new(
-        "https://fcm.googleapis.com/fcm/send/device".to_owned(),
+        endpoint.to_owned(),
         URL_SAFE_NO_PAD.encode(key.pub_as_raw().unwrap()),
         URL_SAFE_NO_PAD.encode(auth),
     );
-    (root, store, Subscription::try_from(info).unwrap())
+    (
+        Subscription::try_from(info).unwrap(),
+        key.raw_components().unwrap(),
+        auth,
+    )
+}
+
+fn fixture() -> (TempDir, Store, Subscription) {
+    let root = temp_dir("remote-push");
+    let store = Store::create(root.join("remote"), "mailto:operator@example.com").unwrap();
+    let (subscription, _, _) = keyed_subscription("https://fcm.googleapis.com/fcm/send/device");
+    (root, store, subscription)
+}
+
+fn session(id: &str, family: &str) -> Session {
+    Session {
+        id: id.into(),
+        project: "p".into(),
+        agent: super::super::Agent {
+            model: None,
+            family: family.into(),
+            entry_skill: "solo".into(),
+        },
+        waiting: true,
+        worker_count: 0,
+    }
 }
 #[test]
 fn private_keys_and_device_files_survive_restart_without_rotation() {
@@ -30,20 +53,20 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
         .unwrap();
     assert_eq!(store.subscriptions().unwrap().len(), 1);
     assert_eq!(
-        fs::metadata(root.path().join("remote/vapid.json"))
+        fs::metadata(root.join("remote/vapid.json"))
             .unwrap()
             .permissions()
             .mode()
             & 0o777,
         0o600
     );
-    for file in fs::read_dir(root.path().join("remote/subscriptions")).unwrap() {
+    for file in fs::read_dir(root.join("remote/subscriptions")).unwrap() {
         assert_eq!(
             file.unwrap().metadata().unwrap().permissions().mode() & 0o777,
             0o600
         );
     }
-    let path = camino::Utf8PathBuf::from_path_buf(root.path().join("remote")).unwrap();
+    let path = root.join("remote");
     assert!(Store::create(path.clone(), "mailto:operator@example.com").is_err());
     let loaded = Store::load(path).unwrap();
     assert_eq!(loaded.public_key().unwrap(), key);
@@ -51,13 +74,7 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
         loaded.subscriptions().unwrap()[0].subscription.0,
         subscription.0
     );
-    let (receiver, auth) = ece::generate_keypair_and_auth_secret().unwrap();
-    let info = SubscriptionInfo::new(
-        subscription.0.endpoint,
-        URL_SAFE_NO_PAD.encode(receiver.pub_as_raw().unwrap()),
-        URL_SAFE_NO_PAD.encode(auth),
-    );
-    let subscription = Subscription::try_from(info).unwrap();
+    let (subscription, receiver, auth) = keyed_subscription(&subscription.0.endpoint);
     let plaintext = br#"{"session_id":"s","project":"p","reason":"waiting"}"#;
     let payload = loaded
         .message(&subscription, plaintext)
@@ -65,7 +82,7 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
         .payload
         .unwrap();
     assert_eq!(
-        ece::decrypt(&receiver.raw_components().unwrap(), &auth, &payload.content).unwrap(),
+        ece::decrypt(&receiver, &auth, &payload.content).unwrap(),
         plaintext
     );
     assert!(!payload.crypto_headers.is_empty());
@@ -92,17 +109,7 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
 }
 #[test]
 fn waiting_transitions_include_solo_without_repeating_or_retaining_exited_sessions() {
-    let session = Session {
-        id: "s".into(),
-        project: "p".into(),
-        agent: super::super::Agent {
-            model: None,
-            family: "claude".into(),
-            entry_skill: "solo".into(),
-        },
-        waiting: true,
-        worker_count: 0,
-    };
+    let session = session("s", "claude");
     let mut previous = HashSet::new();
     assert_eq!(
         newly_waiting(&mut previous, vec![session.clone()]),
@@ -143,103 +150,78 @@ fn prunes_only_gone_endpoints_and_propagates_other_failures() {
 }
 #[tokio::test]
 async fn push_routes_authorize_validate_and_never_cache() {
-    use axum::{
-        body::{Body, to_bytes},
-        http::Request,
-    };
+    use axum::body::{Body, to_bytes};
     use tower::ServiceExt;
     let (_root, store, subscription) = fixture();
     let mut state = AppState::new(super::super::tests::relay(), Arc::new(|| Ok(vec![])));
     state.push = Some(Arc::new(store));
     let app = super::super::router(state);
-    let request = |method, path, login, body: String| {
-        Request::builder()
-            .extension(axum::extract::ConnectInfo(
-                "100.64.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
-            ))
-            .method(method)
-            .uri(path)
-            .header("Tailscale-User-Login", login)
-            .header("Content-Type", "application/json")
-            .body(Body::from(body))
-            .unwrap()
-    };
-    let forbidden = app
-        .clone()
-        .oneshot(request("GET", "/api/push/vapid", "", String::new()))
-        .await
-        .unwrap();
-    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
-    let key = app
-        .clone()
-        .oneshot(request("GET", "/api/push/vapid", "alice", String::new()))
-        .await
-        .unwrap();
-    assert_eq!(key.status(), StatusCode::OK);
-    assert_eq!(key.headers()["cache-control"], "no-store");
-    let value: serde_json::Value =
-        serde_json::from_slice(&to_bytes(key.into_body(), 1024).await.unwrap()).unwrap();
-    assert_eq!(
-        URL_SAFE_NO_PAD
-            .decode(value["public_key"].as_str().unwrap())
-            .unwrap()
-            .len(),
-        65
-    );
-    let saved = app
-        .clone()
-        .oneshot(request(
+    let subscription = serde_json::to_string(&subscription).unwrap();
+    for (method, path, login, body, expected) in [
+        ("GET", "/api/push/vapid", "", "", 403),
+        ("GET", "/api/push/vapid", "alice", "", 200),
+        (
             "POST",
             "/api/push/subscribe",
             "alice",
-            serde_json::to_string(&subscription).unwrap(),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(saved.status(), StatusCode::OK);
-    assert_eq!(saved.headers()["cache-control"], "no-store");
-    let invalid = app
-        .oneshot(request("POST", "/api/push/subscribe", "alice", "{}".into()))
-        .await
-        .unwrap();
-    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            subscription.as_str(),
+            200,
+        ),
+        ("POST", "/api/push/subscribe", "alice", "{}", 422),
+    ] {
+        let request = relay_request(method, path)
+            .header("Tailscale-User-Login", login)
+            .header("Content-Type", "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status().as_u16(),
+            expected,
+            "{method} {path} {login}"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        if method == "GET" && expected == 200 {
+            let value: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                URL_SAFE_NO_PAD
+                    .decode(value["public_key"].as_str().unwrap())
+                    .unwrap()
+                    .len(),
+                65
+            );
+        }
+    }
 }
 
 #[tokio::test]
 async fn polling_failure_is_reported_without_any_browser_connection() {
     let (_root, store, _) = fixture();
     let source: Source = Arc::new(|| anyhow::bail!("catalog failure"));
-    let error = tokio::time::timeout(Duration::from_secs(3), watch(source, Arc::new(store)))
-        .await
-        .unwrap()
-        .unwrap_err();
-    assert!(error.to_string().contains("catalog failure"));
+    assert_err_contains(
+        tokio::time::timeout(Duration::from_secs(3), watch(source, Arc::new(store)))
+            .await
+            .unwrap(),
+        "catalog failure",
+    );
 }
 
 #[test]
 fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
     let (root, first, subscription) = fixture();
-    let second_root = camino::Utf8PathBuf::from_path_buf(root.path().join("second")).unwrap();
+    let second_root = root.join("second");
     fs::create_dir(&second_root).unwrap();
     fs::set_permissions(&second_root, fs::Permissions::from_mode(0o700)).unwrap();
     fs::copy(
-        root.path().join("remote/vapid.json"),
+        root.join("remote/vapid.json"),
         second_root.join("vapid.json"),
     )
     .unwrap();
     let second = Store::load(second_root.clone()).unwrap();
     assert_eq!(first.public_key().unwrap(), second.public_key().unwrap());
-    let session = Session {
-        id: "same-session".into(),
-        project: "p".into(),
-        agent: super::super::Agent {
-            model: None,
-            family: "codex".into(),
-            entry_skill: "solo".into(),
-        },
-        waiting: true,
-        worker_count: 0,
-    };
+    let session = session("same-session", "codex");
     for (store, id) in [(&first, "desk"), (&second, "laptop")] {
         let registration: store::Registration = serde_json::from_value(serde_json::json!({
             "endpoint": subscription.0.endpoint, "keys": subscription.0.keys,

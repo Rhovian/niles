@@ -25,7 +25,7 @@ async fn versioned_uncached_and_errors_are_private() {
         for failing in [false, true] {
             let mut fixture = Fixture::new(0);
             set_source(&mut fixture.state, failing);
-            let response = fixture.app().oneshot(request(path)).await.unwrap();
+            let response = fixture.get(path).await;
             assert_eq!(
                 response.headers()[header::CACHE_CONTROL],
                 "no-store",

@@ -1,6 +1,6 @@
 use super::*;
-use crate::config::user;
-use axum::{body::Body, extract::ConnectInfo, http::Request};
+use crate::{config::user, remote::tests::relay_request, test_support::temp_dir};
+use axum::{body::Body, extract::ConnectInfo};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tower::ServiceExt;
 
@@ -32,11 +32,11 @@ fn wake_configuration_rejects_invalid_ids_and_macs_and_survives_save() {
     }
     let mut file = user::FileConfig::default();
     file.remote.wake_hosts = config("desk_1-A", "01:23:45:67:89:AB");
-    let path = crate::test_support::temp_test_path("wake-config").join("config.yaml");
+    let root = temp_dir("wake-config");
+    let path = root.join("config.yaml");
     file.save(&path).unwrap();
     let hosts = configured(user::FileConfig::load(&path).unwrap().remote.wake_hosts).unwrap();
     assert_eq!(hosts["desk_1-A"].mac, [1, 0x23, 0x45, 0x67, 0x89, 0xab]);
-    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 #[test]
@@ -64,85 +64,57 @@ fn wake_sends_exact_magic_packet_and_propagates_socket_errors() {
 }
 
 #[tokio::test]
-async fn wake_endpoint_requires_relay_identity_and_only_wakes_configured_hosts() {
+async fn wake_routes_require_relay_identity_and_only_accept_configured_destinations() {
     let mut state = AppState::new(super::super::tests::relay(), Arc::new(|| Ok(Vec::new())));
     state.wake_hosts = Arc::new(configured(config("desk", "01:23:45:67:89:ab")).unwrap());
-    for (method, id, login, peer, expected) in [
-        ("POST", "desk", true, true, StatusCode::NO_CONTENT),
-        ("POST", "unknown", true, true, StatusCode::NOT_FOUND),
-        ("POST", "desk", false, true, StatusCode::FORBIDDEN),
-        ("POST", "desk", true, false, StatusCode::FORBIDDEN),
-        ("GET", "desk", true, true, StatusCode::METHOD_NOT_ALLOWED),
-    ] {
-        let mut request = Request::builder()
-            .method(method)
-            .uri(format!("/api/hosts/{id}/wake"));
-        if login {
-            request = request.header("tailscale-user-login", "alice@example.com");
-        }
-        if peer {
-            request = request.extension(ConnectInfo(
-                "100.64.0.1:1234".parse::<SocketAddr>().unwrap(),
-            ));
-        }
-        let response = super::super::router(state.clone())
-            .oneshot(
-                request
-                    .header("content-type", "application/json")
-                    .body(Body::from("null"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), expected);
-        assert_eq!(response.headers()["cache-control"], "no-store");
+    #[derive(Debug)]
+    enum Identity {
+        Relay,
+        NoLogin,
+        NoPeer,
+        OtherNode,
     }
-}
-
-#[tokio::test]
-async fn wake_rejects_simple_posts_and_request_supplied_destinations() {
-    let mut state = AppState::new(super::super::tests::relay(), Arc::new(|| Ok(Vec::new())));
-    state.wake_hosts = Arc::new(configured(config("desk", "01:23:45:67:89:ab")).unwrap());
-    for (content_type, body, expected) in [
-        ("text/plain", "null", StatusCode::UNSUPPORTED_MEDIA_TYPE),
-        ("application/json", "{}", StatusCode::UNPROCESSABLE_ENTITY),
+    use Identity::{NoLogin, NoPeer, OtherNode, Relay};
+    for (method, id, identity, content_type, body, expected) in [
+        ("POST", "desk", Relay, "application/json", "null", 204),
+        ("POST", "unknown", Relay, "application/json", "null", 404),
+        ("POST", "desk", NoLogin, "application/json", "null", 403),
+        ("POST", "desk", NoPeer, "application/json", "null", 403),
+        ("GET", "desk", Relay, "application/json", "null", 405),
+        ("POST", "desk", Relay, "text/plain", "null", 415),
+        ("POST", "desk", Relay, "application/json", "{}", 422),
         (
+            "POST",
+            "desk",
+            Relay,
             "application/json",
             "{\"mac\":\"01:23:45:67:89:ab\"}",
-            StatusCode::PAYLOAD_TOO_LARGE,
+            413,
         ),
+        ("POST", "desk", OtherNode, "", "", 403),
     ] {
-        let request = Request::post("/api/hosts/desk/wake")
+        let mut state = state.clone();
+        let mut request = relay_request(method, &format!("/api/hosts/{id}/wake"))
             .header("tailscale-user-login", "alice@example.com")
             .header("content-type", content_type)
-            .extension(ConnectInfo(
-                "100.64.0.1:1234".parse::<SocketAddr>().unwrap(),
-            ))
             .body(Body::from(body))
             .unwrap();
+        match identity {
+            NoLogin => {
+                request.headers_mut().remove("tailscale-user-login");
+            }
+            NoPeer => {
+                request.extensions_mut().remove::<ConnectInfo<SocketAddr>>();
+            }
+            OtherNode => state.relay.lookup = Arc::new(|_| Ok("other-node".into())),
+            Relay => {}
+        }
+        let response = super::super::router(state).oneshot(request).await.unwrap();
         assert_eq!(
-            super::super::router(state.clone())
-                .oneshot(request)
-                .await
-                .unwrap()
-                .status(),
-            expected
+            response.status().as_u16(),
+            expected,
+            "{method} {id} {identity:?} {body}"
         );
+        assert_eq!(response.headers()["cache-control"], "no-store");
     }
-    state.relay.lookup = Arc::new(|_| Ok("other-node".into()));
-    let request = Request::post("/api/hosts/desk/wake")
-        .header("tailscale-user-login", "alice@example.com")
-        .extension(ConnectInfo(
-            "100.64.0.1:1234".parse::<SocketAddr>().unwrap(),
-        ))
-        .body(Body::empty())
-        .unwrap();
-    assert_eq!(
-        super::super::router(state)
-            .oneshot(request)
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::FORBIDDEN
-    );
 }
