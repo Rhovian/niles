@@ -136,8 +136,7 @@ according to the [security policy](SECURITY.md).
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Licensed under [MIT](LICENSE-MIT).
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
-this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
-any additional terms or conditions.
+By intentionally submitting a contribution for inclusion in this project, you agree to license
+your contribution under MIT.
