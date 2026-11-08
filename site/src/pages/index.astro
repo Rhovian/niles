@@ -1,0 +1,177 @@
+---
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import Terminal from '../components/Terminal.astro';
+import Phone from '../components/Phone.astro';
+import CopyBlock from '../components/CopyBlock.astro';
+import StatusLine from '../components/StatusLine.astro';
+import { butler, wordmark } from '../repo/logo';
+import { crateVersion, roadmap } from '../repo/docs';
+
+// Astro builds from site/; these are the repository's own files, read once per build.
+const repo = (file: string) => readFileSync(resolve('..', file), 'utf8');
+const lockup = repo('assets/niles-lockup-amber.svg');
+const VERSION = crateVersion(repo('Cargo.toml'));
+const TODO = roadmap(repo('ROADMAP.md'));
+
+const REPO = 'https://github.com/Rhovian/niles';
+const BLOB = `${REPO}/blob/main`;
+const TITLE = 'Niles: coding agent teams in your terminal';
+const DESCRIPTION = 'Niles puts a team of coding agents behind one conversation: a lead agent you talk to, and workers on other models.';
+const INSTALL = [
+  ['Homebrew', 'brew tap Rhovian/niles && brew install niles'],
+  ['shell installer', "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Rhovian/niles/releases/latest/download/niles-installer.sh | sh"],
+  ['Cargo', 'cargo install niles'],
+];
+// Absolute, as share cards require; Astro.site is set in astro.config.mjs.
+const CANONICAL = new URL('/', Astro.site).href;
+const SHARE_IMAGE = new URL('/og.png', Astro.site).href;
+const WINDOWS = [{ name: 'top', href: '#top' }, { name: 'demo', href: '#demo' }, { name: 'phone', href: '#phone' }, { name: 'todo', href: '#todo' }];
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{TITLE}</title>
+<meta name="description" content={DESCRIPTION}>
+<link rel="canonical" href={CANONICAL}>
+<meta property="og:type" content="website">
+<meta property="og:url" content={CANONICAL}>
+<meta property="og:title" content={TITLE}>
+<meta property="og:description" content={DESCRIPTION}>
+<meta property="og:image" content={SHARE_IMAGE}>
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#12201e">
+</head>
+<body>
+<StatusLine windows={WINDOWS} repo={REPO} version={VERSION} />
+<main id="top" class="man" data-window="0">
+  <h1 class="sr-only">{TITLE}</h1>
+
+  <div class="banner">
+    <pre class="banner__butler" role="img" aria-label="The Niles butler">{butler(lockup).join('\n')}</pre>
+    <div class="banner__side">
+      <pre class="banner__word" aria-hidden="true">{wordmark(lockup).join('\n')}</pre>
+      <p class="banner__tagline">coding agent teams in your terminal</p>
+    </div>
+  </div>
+
+  <section id="demo" data-window="1" aria-label="The Niles home view, staged">
+    <p class="demo__how">Click in: arrows move, Enter opens, Tab talks to the lead; ask it for a review. Staged; nothing runs.</p>
+    <div class="demo"><Terminal label="Interactive Niles home view. Arrow keys move, Enter opens, Tab types to the shown agent, Escape leaves." /></div>
+  </section>
+
+  <section data-window="0">
+    <h2>SYNOPSIS</h2>
+    <div class="ind">
+      <p class="comment"># 1. install, with one of</p>
+      {INSTALL.map(([label, cmd]) => <CopyBlock label={`${label} install`} text={cmd} />)}
+      <p class="comment"># 2. first run, in your repository</p>
+      <p><b>cd</b> <u>repo</u> <b>&& niles</b></p>
+    </div>
+  </section>
+
+  <section>
+    <h2>DESCRIPTION</h2>
+    <div class="ind">
+      <p><b>Niles</b> puts a team of coding agents behind one conversation. You talk to a lead agent; it hands work to agents on other models and reads their reports.</p>
+      <p>Today Niles runs agents in tmux and works with Claude Code, Codex and pi; more backends and agents are coming. One logged-in agent CLI is enough: setup detects what is installed, and solo mode lets one agent do the work itself.</p>
+      <p>Free and open source under MIT or Apache-2.0; you pay for your agent CLIs.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>REMOTE</h2>
+    <div class="ind pair" id="phone" data-window="2">
+      <Phone />
+      <div>
+        <p>The same session from your phone, through the opt-in remote app on your tailnet.</p>
+        <p>Tap the notification and answer the lead. Ask it for a review there, then look at the home view above: the worker is in its tree.</p>
+        <p><a href={`${BLOB}/docs/remote.md`}>Remote setup</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="todo" data-window="3">
+    <h2>TODO</h2>
+    <div class="ind">
+      <p>From <a href={`${BLOB}/ROADMAP.md`}>ROADMAP.md</a>: directions, with no set dates or promised order.</p>
+      <ul class="todo">{TODO.map((t) => <li><b>{t.title}</b><br>{t.detail}</li>)}</ul>
+    </div>
+  </section>
+
+  <section data-window="0">
+    <h2>BUGS</h2>
+    <div class="ind">
+      <p>Linux support is not confirmed yet, and there is no Windows build.</p>
+      <p>Workers launch without approval prompts, and Niles adds no sandbox. Read the <a href={`${BLOB}/docs/security.md`}>threat model</a> before you point it at a repository.</p>
+      <p>Report bugs at <a href={`${REPO}/issues`}>github.com/Rhovian/niles/issues</a>.</p>
+    </div>
+  </section>
+
+
+  <p class="end"><span class="end__mark">(END)</span><span class="cursor" aria-hidden="true">█</span></p>
+</main>
+</body>
+</html>
+
+<style is:global>
+  /* The PWA's palette (web/src/style.css) with the logo's amber (the fill of assets/niles-lockup-amber.svg)
+     as the accent, plus a darker ground and derived tones for the terminal. */
+  :root {
+    --bg: #12201e; --surface: #1b2d29; --line: #3c514b; --ink: #e8f2ee; --accent: #e3a43a; --muted: #b7c8c1;
+    --warning: #f5d395; --success: #9ece6a;
+    --term-bg: #0d1816; --term-ink: #d5e3dd; --term-dim: #9fb3ac; --term-sel: #23403a; --term-tool: #7aa2f7;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --bar: 28px;
+    color-scheme: dark;
+  }
+  @media (pointer: coarse) { :root { --bar: 44px; } }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--mono); scroll-padding-top: calc(var(--bar) + 16px); }
+  body { margin: 0; padding-top: var(--bar); }
+  a { color: var(--accent); }
+  a:hover { color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  b { font-weight: 700; color: var(--ink); }
+  u { text-underline-offset: 3px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+  /* One manual page, 80 columns, body text indented seven like man(1). */
+  .man { width: min(100% - 2ch, 80ch); margin-inline: auto; padding-block: 24px 16px; }
+  .man p { margin-block: 0 1em; }
+  h2 { margin: 24px 0 4px; font-size: 1em; font-weight: 700; }
+  .ind { margin-left: 7ch; }
+
+  .banner { display: flex; align-items: center; gap: 3ch; margin: 16px 0 8px; }
+  .banner pre { margin: 0; line-height: 1; color: var(--accent); }
+  /* Half blocks need square pixels: a cell half as wide as it is tall. */
+  .banner__butler { font-size: 3px; letter-spacing: -0.1em; }
+  .banner__word { margin-bottom: 12px; }
+  .banner__side p { margin: 0; color: var(--muted); }
+
+  .man .demo__how { margin-top: 16px; color: var(--muted); }
+  .man .comment { margin: 12px 0 0; color: var(--term-dim); }
+  .demo { height: min(600px, 75svh); }
+  .pair { display: flex; gap: 4ch; align-items: flex-start; }
+  .todo { margin: 0; padding: 0; list-style: none; }
+  .todo li { margin-bottom: 0.8em; padding-left: 4ch; text-indent: -4ch; color: var(--muted); }
+  .todo li::before { content: "[ ] "; color: var(--accent); white-space: pre; }
+  .man .end { margin-top: 16px; }
+  .end__mark { background: var(--ink); color: var(--bg); }
+  .cursor { color: var(--accent); animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+  @media (max-width: 767px) {
+    .ind { margin-left: 2ch; }
+    .pair { flex-direction: column; align-items: flex-start; gap: 16px; }
+    .banner { gap: 2ch; }
+    .banner__word { font-size: 7px; }
+    .demo { height: 860px; }
+  }
+</style>

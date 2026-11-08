@@ -1,0 +1,80 @@
+---
+import { initialDemo } from '../demo/model';
+import { initialPhone, phoneView, PHONE_COLS } from '../demo/phone';
+import { line } from '../demo/html';
+
+const v = phoneView(initialDemo(), initialPhone(), { time: '--:--', date: '' });
+---
+<div class="phone" data-phone style={`--cols: ${PHONE_COLS}`}>
+  <div class="phone__top" set:html={v.top.map((l) => line(l)).join('')} />
+  <form class="phone__compose" hidden>
+    <div class="tl"><span class="dim">│ </span><label for="phone-msg">Message agent</label><span class="phone__gap"></span><span class="dim"> │</span></div>
+    <div class="tl"><span class="dim">│ </span><input id="phone-msg" name="message" autocomplete="off" maxlength="120"><button type="submit">[Send]</button><span class="dim"> │</span></div>
+  </form>
+  <div class="phone__bottom" set:html={v.bottom.map((l) => line(l)).join('')} />
+  <button class="phone__lock" type="button" data-act="lock">[lock phone]</button>
+</div>
+
+<script>
+  import { sendTo } from '../demo/model';
+  import { act, initialPhone, phoneView, type Phone } from '../demo/phone';
+  import { line } from '../demo/html';
+  import { store } from '../demo/store';
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-phone]')) {
+    const top = root.querySelector('.phone__top') as HTMLElement;
+    const bottom = root.querySelector('.phone__bottom') as HTMLElement;
+    const form = root.querySelector('form') as HTMLFormElement;
+    const input = form.querySelector('input') as HTMLInputElement;
+    let phone: Phone = initialPhone();
+
+    const clock = () => {
+      const now = new Date();
+      return {
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+        date: now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }),
+      };
+    };
+    const draw = () => {
+      const v = phoneView(store.get(), phone, clock());
+      top.innerHTML = v.top.map((l) => line(l)).join('');
+      bottom.innerHTML = v.bottom.map((l) => line(l)).join('');
+      form.hidden = phone.screen !== 'chat';
+    };
+
+    root.addEventListener('click', (e) => {
+      const action = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (!action) return;
+      phone = act(phone, action);
+      draw();
+      if (phone.screen === 'chat') input.focus({ preventScroll: true });
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text || !phone.open) return;
+      input.value = '';
+      store.set(sendTo(store.get(), phone.open, text));
+    });
+    store.subscribe(draw);
+    setInterval(draw, 30_000);
+    draw();
+  }
+</script>
+
+<style>
+  .phone { width: calc((var(--cols) + 2) * 1ch); font: 13px/1.5 var(--mono); color: var(--term-ink); }
+  .phone :global(.tl) { white-space: pre; min-height: 1.5em; }
+  .phone__compose .tl { display: flex; }
+  .phone :global(button) { padding: 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .phone :global(:is(.b, .h)) { color: var(--ink); font-weight: 600; }
+  .phone :global(:is(.dim, .idle)) { color: var(--term-dim); }
+  .phone :global(.brand) { color: var(--accent); text-decoration: none; }
+  .phone :global(:is(.ok, .working)) { color: var(--success); }
+  .phone :global(.waiting) { color: var(--warning); }
+  .phone__compose label { color: var(--muted); }
+  .phone__gap { flex: 1; }
+  .phone__compose input { width: calc((var(--cols) - 9) * 1ch); margin-right: 1ch; padding: 0; background: var(--surface); color: var(--ink); border: 0; font: inherit; }
+  .phone__compose button[type="submit"] { color: var(--accent); text-decoration: none; }
+  .phone__lock { margin-top: 12px; min-height: 44px; color: var(--accent); }
+</style>
