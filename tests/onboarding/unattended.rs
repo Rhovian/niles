@@ -30,7 +30,7 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
     let env = environment();
     fetch_fixture(&env, "design");
     let mut args = args();
-    args.extend(["--starter-skills", "design,worker", "--start", "installed"]);
+    args.extend(["--starter-skills", "design,solo", "--start", "installed"]);
     let output = env.run(&args);
     assert_success_contains("explicit setup", &output, "entry session: installed");
     let body = fs::read_to_string(manifest(&env)).unwrap();
@@ -46,18 +46,16 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
     assert!(env.tmux_log().contains("new-session -d -s installed"));
     assert!(env.tmux_log().contains("start --keep-skills"));
     fs::remove_dir_all(env.home.join(".niles/skills/solo")).unwrap();
-    assert_failure_contains(
-        "refuse overwrite",
-        &env.run(&args),
-        "manifest already exists",
-    );
+    let output = env.run(&args);
+    assert_failure_contains("overwrite", &output, "manifest already exists");
 }
 
 #[test]
 fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
     let env = environment();
+    fetch_fixture(&env, "design");
     for (flag, value, message) in [
-        ("--entry-skill", "../bad", "invalid skill name"),
+        ("--starter-skills", "design,workre", "unknown starter skill"),
         ("--entry-agent", "claude:opus:medium", "not listed"),
         ("--tiers", "{}", "missing field `standard`"),
         ("--start", "../bad", "project name must use"),
@@ -70,6 +68,7 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
         assert_failure_contains(flag, &env.run(&args), message);
         assert!(!manifest(&env).exists());
     }
+    assert!(!env.home.join("git.log").exists());
     for (missing, selection, message) in [
         (None, Some("other"), "does not accept"),
         (Some("tmux"), None, "CLI not found on PATH: tmux"),

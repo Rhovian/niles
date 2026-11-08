@@ -18,7 +18,7 @@ pub(crate) struct Options {
     /// Manifest YAML: standard is required; each tier has primary and secondaries.
     #[arg(long, value_name = "YAML", value_parser = crate::store::parse_yaml::<Tiers>)]
     tiers: Tiers,
-    /// Optional installed skills, fetched from Rhovian/niles when missing.
+    /// Installed skills, or missing starter names from the bundled catalog.
     #[arg(long, value_name = "SKILL", value_delimiter = ',')]
     starter_skills: Vec<SkillName>,
     /// Register this project and launch its entry agent in a detached tmux session.
