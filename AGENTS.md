@@ -44,6 +44,9 @@ code you changed, and say what printed.
 - Never copy-paste-tweak; extract a function or generic.
 - No pass-through functions unless they change visibility, satisfy a trait, or cross a module
   boundary under a name the caller's domain needs.
+- Integrations with outside tools (multiplexers, harnesses, gateways, catalogues, transports)
+  go behind a trait or config entry, even with one implementation; core code names no specific
+  tool.
 
 ## Correctness
 
