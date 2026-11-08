@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { initialDemo, press, project, rows, type Demo } from './model';
+import { click, initialDemo, press, project, rows, type Demo } from './model';
 import { hint, view, wrap } from './view';
+import { panes } from './html';
 
 const keys = (demo: Demo, ...seq: string[]) => seq.reduce(press, demo);
 const text = (lines: { t: string }[][]) => lines.map((l) => l.map((s) => s.t).join('')).join('\n');
@@ -18,14 +19,25 @@ describe('explorer keys', () => {
     expect(project(collapsed, 'billing').expanded).toBe(false);
     expect(rows(collapsed).some((r) => r.kind === 'worker')).toBe(false);
     expect(project(keys(collapsed, 'ArrowRight'), 'billing').expanded).toBe(true);
+    expect(click(initialDemo(), 0, 'disclosure')).toEqual(collapsed);
+    expect(click(collapsed, 0, 'disclosure')).toEqual(keys(collapsed, 'ArrowRight'));
+    expect(panes(collapsed, 60).explorer).toContain('data-act="toggle">▸ </button>');
   });
 
   it('starts a stopped project on Enter and shows its lead', () => {
     const at = rows(initialDemo()).findIndex((r) => r.kind === 'project' && r.project === 'mobile');
-    const demo = keys({ ...initialDemo(), cursor: at }, 'Enter');
+    const selected = click({ ...initialDemo(), focus: 'view' }, at, 'row');
+    expect(selected).toEqual({ ...initialDemo(), cursor: at });
+    const demo = keys(selected, 'Enter');
     expect(project(demo, 'mobile').lead?.state).toBe('waiting');
     expect(demo.shown).toEqual({ kind: 'project', project: 'mobile' });
     expect(text(view(demo, 60))).toContain('Lead started in mobile');
+  });
+
+  it.each(['project', 'worker', 'panel'])('click opens a %s row like Enter', (kind) => {
+    const start: Demo = { ...initialDemo(), focus: 'view', shown: { kind: 'panel', panel: 'help' } };
+    const cursor = rows(start).findIndex((row) => row.kind === kind);
+    expect(click(start, cursor, 'row')).toEqual(keys({ ...start, focus: 'explorer', cursor }, 'Enter'));
   });
 
   it('shows help on ? and the selection again on Escape', () => {
@@ -41,6 +53,7 @@ describe('explorer keys', () => {
 
   it('closes a worker only after y', () => {
     const asked = keys(initialDemo(), 'ArrowDown', 'c');
+    expect(click(asked, 0, 'row')).toEqual(asked);
     expect(text([hint(asked)])).toContain('close w412?');
     expect(project(keys(asked, 'n'), 'billing').workers).toHaveLength(1);
     const closed = keys(asked, 'y');

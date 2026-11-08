@@ -26,7 +26,7 @@ const KEYS = [['ArrowUp', '↑'], ['ArrowDown', '↓'], ['ArrowLeft', '←'], ['
 </div>
 
 <script>
-  import { press, sendTo } from '../demo/model';
+  import { click, press, sendTo } from '../demo/model';
   import { panes } from '../demo/html';
   import { store } from '../demo/store';
 
@@ -64,7 +64,9 @@ const KEYS = [['ArrowUp', '↑'], ['ArrowDown', '↓'], ['ArrowLeft', '←'], ['
     exp.addEventListener('click', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('[data-row]');
       if (!row) return;
-      store.set(press({ ...store.get(), focus: 'explorer', cursor: Number(row.dataset.row) }, 'Enter'));
+      const target = (e.target as HTMLElement).closest('[data-act="toggle"]') ? 'disclosure' : 'row';
+      store.set(click(store.get(), Number(row.dataset.row), target));
+      root.focus({ preventScroll: true });
     });
     viewPane.addEventListener('click', () => store.set({ ...store.get(), focus: 'view' }));
     root.querySelector('.term__keys')?.addEventListener('click', (e) => {
@@ -97,6 +99,7 @@ const KEYS = [['ArrowUp', '↑'], ['ArrowDown', '↓'], ['ArrowLeft', '←'], ['
   .term__exp { position: relative; overflow-y: auto; border-right: 1px solid var(--line); white-space: pre; }
   .term__view { white-space: pre-wrap; }
   .term__exp :global([data-row]) { cursor: pointer; }
+  .term__exp :global(button) { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
   .term :global(.tl) { min-height: 1.6em; }
   .term :global(:is(.b, .h)) { color: var(--ink); font-weight: 600; }
   .term :global(.dim), .term :global(.idle) { color: var(--term-dim); }

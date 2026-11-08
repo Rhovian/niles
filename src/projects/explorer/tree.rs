@@ -200,6 +200,14 @@ impl Tree {
         self.cursor
     }
 
+    pub fn select_row(&mut self, row: usize) -> bool {
+        if row >= self.items().len() {
+            return false;
+        }
+        self.cursor = row;
+        true
+    }
+
     pub fn selected(&self) -> Option<Item<'_>> {
         self.items().get(self.cursor).copied()
     }
@@ -225,6 +233,35 @@ impl Tree {
                 self.collapsed_folders.remove(&key);
             }
             Some(Item::ProjectScopes) => self.project_scopes_expanded = true,
+            Some(
+                Item::Project(_)
+                | Item::Header
+                | Item::Panel(_)
+                | Item::Scope(_)
+                | Item::Range(_)
+                | Item::Member(..),
+            )
+            | None => {}
+        }
+    }
+
+    pub fn toggle_branch(&mut self) {
+        match self.selected() {
+            Some(Item::Project(project)) if project.skills().next().is_some() => {
+                let name = project.row.entry.name.as_str().to_owned();
+                if !self.collapsed.remove(&name) {
+                    self.collapsed.insert(name);
+                }
+            }
+            Some(Item::Folder(project, skill)) => {
+                let key = (project.row.entry.name.as_str().to_owned(), skill.clone());
+                if !self.collapsed_folders.remove(&key) {
+                    self.collapsed_folders.insert(key);
+                }
+            }
+            Some(Item::ProjectScopes) => {
+                self.project_scopes_expanded = !self.project_scopes_expanded;
+            }
             Some(
                 Item::Project(_)
                 | Item::Header

@@ -74,14 +74,14 @@ fn projects() -> Vec<Project> {
     ]
 }
 
-fn tree() -> Tree {
+pub(in crate::projects::explorer) fn tree() -> Tree {
     let mut tree = Tree::default();
     tree.replace(projects());
     tree.down();
     tree
 }
 
-fn labels(tree: &Tree) -> Vec<String> {
+pub(in crate::projects::explorer) fn labels(tree: &Tree) -> Vec<String> {
     let now = DateTime::from_timestamp_millis(0).unwrap();
     let items = tree.items();
     let theme = Theme::parse(None).unwrap();

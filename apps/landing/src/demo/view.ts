@@ -88,7 +88,7 @@ export function explorer(demo: Demo): { line: Line; row: number | null }[] {
       const p = project(demo, row.project);
       const last = demo.projects[demo.projects.length - 1] === p;
       const fold = p.workers.length ? (p.expanded ? '▾ ' : '▸ ') : '  ';
-      out.push({ row: i, line: [{ t: last ? '└─ ' : '├─ ', c: 'dim' }, { t: fold, c: 'dim' }, stateSeg(p.lead),
+      out.push({ row: i, line: [{ t: last ? '└─ ' : '├─ ', c: 'dim' }, { t: fold, c: 'dim', a: p.workers.length ? 'toggle' : undefined }, stateSeg(p.lead),
         { t: p.name, c: cls }, ...(p.lead ? [{ t: ` ${tokens(p.lead.tokens)}`, c: 'dim' }] : [])] });
     } else if (row.kind === 'worker') {
       const workers = project(demo, row.project).workers;
