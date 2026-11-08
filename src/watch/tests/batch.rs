@@ -101,6 +101,10 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     };
     tick(&root, at(1_300), &mut memory, &mut sink, &running());
     assert_eq!(sink.sent, ["niles: no report from c — check workers"]);
+    // Model a concurrent fork retaining the same open file description until exec.
+    let inherited = wait.try_clone().unwrap();
+    // flock(2): dup/fork share a lock; closing one descriptor need not release it.
+    wait.unlock().unwrap();
     drop(wait);
     tick(&root, at(1_301), &mut memory, &mut sink, &running());
     assert_eq!(
@@ -108,6 +112,7 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
         "niles: a reported (done), b reported (done), d reported (blocked) — check workers"
     );
     assert_eq!(sink.sent.len(), 2);
+    drop(inherited);
     crate::test_support::remove_workspace(&root).unwrap();
 }
 
