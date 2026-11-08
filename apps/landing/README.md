@@ -22,7 +22,7 @@ site root. Colours follow the PWA's tokens in `apps/pwa/src/style.css`.
   version from `Cargo.toml`. A change to their shape fails the build.
 
 Vercel builds and serves it from git (project `niles`, root directory `apps/landing`, production
-branch `main`) at https://niles-xi.vercel.app, which `site` in astro.config.mjs names for the
+branch `main`) at https://niles-cli.vercel.app, which `site` in astro.config.mjs names for the
 canonical link and the share image. The build reads files outside `apps/landing/` (the workspace
 root and its lockfile, the logo, ROADMAP.md, Cargo.toml), so the project keeps "Include source
 files outside of the Root Directory" on. `public/og.png` is a 1200x630 capture of the
