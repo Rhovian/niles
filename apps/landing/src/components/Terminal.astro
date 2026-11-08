@@ -1,0 +1,124 @@
+---
+import { initialDemo } from '../demo/model';
+import { panes } from '../demo/html';
+
+interface Props {
+  label: string;
+}
+const { label } = Astro.props;
+const p = panes(initialDemo(), 64);
+const KEYS = [['ArrowUp', '↑'], ['ArrowDown', '↓'], ['ArrowLeft', '←'], ['ArrowRight', '→'], ['Enter', '↵'], ['Tab', 'tab'], ['Escape', 'esc'], ['?', '?']];
+---
+<div class="term" data-term tabindex="0" role="application" aria-label={label}>
+  <div class="term__head" set:html={p.head} />
+  <div class="term__body">
+    <div class="term__exp" set:html={p.explorer} />
+    <div class="term__view" set:html={p.view} />
+  </div>
+  <div class="term__foot" set:html={p.foot} />
+  <div class="term__keys">
+    {KEYS.map(([key, glyph]) => <button type="button" data-key={key} aria-label={`Press ${key}`}>{glyph}</button>)}
+  </div>
+  <!-- A touch screen has no key to type with; this field brings up its keyboard. -->
+  <form class="term__type">
+    <label for="term-msg">❯</label><input id="term-msg" autocomplete="off" maxlength="120" aria-label="Message the shown agent" placeholder="message the shown agent"><button type="submit">[send]</button>
+  </form>
+</div>
+
+<script>
+  import { press, sendTo } from '../demo/model';
+  import { panes } from '../demo/html';
+  import { store } from '../demo/store';
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-term]')) {
+    const part = (name: string) => root.querySelector(`.term__${name}`) as HTMLElement;
+    const [head, exp, viewPane, foot] = ['head', 'exp', 'view', 'foot'].map(part);
+    const probe = document.createElement('span');
+    probe.textContent = '0'.repeat(10);
+    probe.style.cssText = 'position:absolute;visibility:hidden';
+    viewPane.append(probe);
+    const charWidth = probe.getBoundingClientRect().width / 10;
+    probe.remove();
+    const draw = () => {
+      const p = panes(store.get(), Math.max(24, Math.floor((viewPane.clientWidth - 32) / charWidth)));
+      head.innerHTML = p.head;
+      exp.innerHTML = p.explorer;
+      viewPane.innerHTML = p.view;
+      foot.innerHTML = p.foot;
+      viewPane.scrollTop = viewPane.scrollHeight;
+      // Keep the selected row in view as the tree outgrows the explorer.
+      const row = exp.querySelector('.sel, .sel-dim')?.closest<HTMLElement>('.tl');
+      if (row && row.offsetTop < exp.scrollTop) exp.scrollTop = row.offsetTop;
+      else if (row && row.offsetTop + row.offsetHeight > exp.scrollTop + exp.clientHeight) exp.scrollTop = row.offsetTop + row.offsetHeight - exp.clientHeight;
+    };
+    const send = (key: string) => store.set(press(store.get(), key));
+
+    root.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest('.term__type')) return;
+      // Tab and the arrows belong to the demo while it has focus; Esc from the explorer hands focus back to the page.
+      const leaving = e.key === 'Escape' && store.get().focus === 'explorer';
+      e.preventDefault();
+      send(e.key);
+      if (leaving) root.blur();
+    });
+    exp.addEventListener('click', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-row]');
+      if (!row) return;
+      store.set(press({ ...store.get(), focus: 'explorer', cursor: Number(row.dataset.row) }, 'Enter'));
+    });
+    viewPane.addEventListener('click', () => store.set({ ...store.get(), focus: 'view' }));
+    root.querySelector('.term__keys')?.addEventListener('click', (e) => {
+      const key = (e.target as HTMLElement).closest<HTMLElement>('[data-key]')?.dataset.key;
+      if (key) send(key);
+    });
+    const form = root.querySelector('.term__type') as HTMLFormElement;
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = form.querySelector('input') as HTMLInputElement;
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      store.set(sendTo(store.get(), store.get().shown, text));
+    });
+    store.subscribe(draw);
+    new ResizeObserver(draw).observe(viewPane);
+  }
+</script>
+
+<style>
+  .term { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto auto; height: 100%;
+    background: var(--term-bg); color: var(--term-ink); font: 13px/1.6 var(--mono); border: 1px solid var(--line); }
+  .term:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .term__head, .term__foot { padding: 8px 16px; white-space: pre; overflow: hidden; }
+  .term__head { background: var(--surface); border-bottom: 1px solid var(--line); }
+  .term__foot { border-top: 1px solid var(--line); }
+  .term__body { display: grid; grid-template-columns: minmax(200px, 30%) minmax(0, 1fr); min-height: 0; }
+  .term__exp, .term__view { padding: 12px 16px; overflow: hidden; min-height: 0; }
+  .term__exp { position: relative; overflow-y: auto; border-right: 1px solid var(--line); white-space: pre; }
+  .term__view { white-space: pre-wrap; }
+  .term__exp :global([data-row]) { cursor: pointer; }
+  .term :global(.tl) { min-height: 1.6em; }
+  .term :global(:is(.b, .h)) { color: var(--ink); font-weight: 600; }
+  .term :global(.dim), .term :global(.idle) { color: var(--term-dim); }
+  .term :global(.brand) { color: var(--accent); font-weight: 600; }
+  .term :global(:is(.ok, .working)) { color: var(--success); }
+  .term :global(.waiting) { color: var(--warning); }
+  .term :global(.tool) { color: var(--term-tool); }
+  .term :global(.you) { display: block; background: var(--surface); }
+  .term :global(.sel) { background: var(--term-sel); color: var(--ink); }
+  .term :global(.sel-dim) { background: var(--surface); }
+  .term :global(.tab) { background: var(--term-sel); color: var(--accent); }
+  .term__keys, .term__type { display: none; }
+  @media (max-width: 767px) {
+    .term { font-size: 12px; }
+    .term__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .term__exp { max-height: 260px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .term__foot { white-space: normal; }
+    .term__keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border-top: 1px solid var(--line); }
+    .term__keys button { min-height: 44px; background: var(--term-bg); color: var(--term-ink); border: 0; font: inherit; }
+    .term__type { display: flex; align-items: center; gap: 1ch; padding: 0 0 0 16px; border-top: 1px solid var(--line); }
+    .term__type label { color: var(--accent); }
+    .term__type input { flex: 1; min-width: 0; min-height: 44px; padding: 0; background: none; border: 0; color: var(--ink); font: 16px var(--mono); }
+    .term__type button { min-height: 44px; padding: 0 16px; background: none; border: 0; color: var(--accent); font: inherit; }
+  }
+</style>

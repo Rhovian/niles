@@ -1,10 +1,11 @@
-# Niles web
+# Niles PWA
 
 Installable Preact PWA, built independently of Cargo. Requires Node 24 and pnpm
-10.8.1 (pinned in package.json).
+10.8.1 (pinned in the root package.json). It is a package of the repository's pnpm workspace;
+one install covers every app.
 
 ```sh
-cd web
+cd apps/pwa
 pnpm install --frozen-lockfile
 pnpm dev
 ```
@@ -21,9 +22,9 @@ The manifest requests `minimal-ui`, keeping a small browser toolbar in installed
 to avoid Chrome’s separate “Tap to copy the URL for this app” notification.
 
 For installation from `niles-web.tar.gz`, relay Tailscale Serve/Caddy configuration,
-tailnet policy and shared VAPID initialization, follow the [remote setup guide](../docs/remote.md).
+tailnet policy and shared VAPID initialization, follow the [remote setup guide](../../docs/remote.md).
 Only the built shell directory is served; Cargo never builds this frontend.
-The [threat model](../docs/security.md#remote-pwa-frontend) covers sanitized markdown,
+The [threat model](../../docs/security.md#remote-pwa-frontend) covers sanitized markdown,
 shell-only caching, CSP and the known framing gap. API responses must use no-store;
 no transcript or outgoing message is saved in browser storage.
 
@@ -106,7 +107,7 @@ all are rendered as text, never trusted HTML.
 
 ## Notifications
 
-After [server initialization](../docs/remote.md#install-the-backend-and-shell-on-the-host),
+After [server initialization](../../docs/remote.md#install-the-backend-and-shell-on-the-host),
 choose **Enable notifications** in this app; permission is requested
 only in response to that button. Existing browser subscriptions are re-registered
 with the host; a failed save is visible and can be retried. The UI never claims

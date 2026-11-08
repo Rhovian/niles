@@ -1,0 +1,57 @@
+---
+import GitHubLink from './GitHubLink.astro';
+
+interface Props {
+  /** Sections in order; each names the first element that carries its index in data-window. */
+  windows: { name: string; href: string }[];
+  repo: string;
+  version: string;
+}
+const { windows, repo, version } = Astro.props;
+---
+<nav class="status" aria-label="Sections">
+  {windows.map((w, i) => <a href={w.href} data-window-link={i} aria-current={i === 0 ? 'location' : undefined}><span class="status__key">{i}</span> {w.name}</a>)}
+  <span class="status__version">v{version}</span>
+  <span class="status__gh"><GitHubLink href={repo} size={16} /></span>
+</nav>
+
+<script>
+  const links = [...document.querySelectorAll<HTMLAnchorElement>('[data-window-link]')];
+  const marks = [...document.querySelectorAll<HTMLElement>('[data-window]')];
+
+  // At the top of the page the first window is current; below it, the last marked section whose
+  // top has passed a quarter of the screen.
+  const mark = () => {
+    const passed = marks.filter((m) => m.getBoundingClientRect().top <= innerHeight * 0.25);
+    const current = scrollY < 1 ? marks[0].dataset.window : (passed.at(-1) ?? marks[0]).dataset.window;
+    for (const link of links) {
+      if (link.dataset.windowLink === current) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    }
+  };
+
+  // Digits jump between sections, unless the keys are typing into the demo or a field.
+  document.addEventListener('keydown', (e) => {
+    const target = e.target as HTMLElement;
+    if (e.metaKey || e.ctrlKey || e.altKey || target.closest('[data-term], input, textarea')) return;
+    links.find((l) => l.dataset.windowLink === e.key)?.click();
+  });
+  addEventListener('scroll', () => requestAnimationFrame(mark), { passive: true });
+  mark();
+</script>
+
+<style>
+  .status { position: fixed; inset: 0 0 auto; z-index: 10; display: flex; align-items: stretch; height: var(--bar);
+    background: var(--surface); border-bottom: 1px solid var(--line); color: var(--muted); white-space: nowrap; overflow: hidden; }
+  .status > * { display: flex; align-items: center; padding: 0 1.5ch; }
+  .status a { gap: 1ch; color: inherit; text-decoration: none; border-right: 1px solid var(--line); }
+  .status a:hover { color: var(--ink); }
+  .status a[aria-current] { background: var(--ink); color: var(--bg); }
+  .status__key { color: var(--accent); }
+  .status a[aria-current] .status__key { color: inherit; }
+  .status a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .status__version { margin-left: auto; color: var(--ink); }
+  .status > .status__gh { padding: 0; }
+  .status__gh .gh { min-height: var(--bar); }
+  @media (max-width: 479px) { .status { font-size: 12px; } .status > * { padding: 0 0.75ch; } }
+</style>

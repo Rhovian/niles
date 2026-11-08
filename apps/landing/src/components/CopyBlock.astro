@@ -1,0 +1,31 @@
+---
+interface Props {
+  /** What the text is, for the copy button's accessible name. */
+  label: string;
+  text: string;
+}
+const { label, text } = Astro.props;
+---
+<div class="copy">
+  <pre><span class="copy__prompt" aria-hidden="true">$ </span><code>{text}</code></pre>
+  <button class="copy__btn" type="button" data-copy={text} aria-label={`Copy: ${label}`}>[copy]</button>
+</div>
+
+<script>
+  const HOLD_MS = 1800;
+  document.addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-copy]');
+    if (!btn) return;
+    await navigator.clipboard.writeText(btn.dataset.copy as string);
+    btn.textContent = '[copied]';
+    setTimeout(() => (btn.textContent = '[copy]'), HOLD_MS);
+  });
+</script>
+
+<style>
+  .copy { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2ch; }
+  .copy pre { margin: 0; padding-block: 10px; overflow-x: auto; white-space: pre; }
+  .copy__prompt { color: var(--term-dim); }
+  .copy__btn { min-height: 44px; padding: 0 1ch; background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; }
+  .copy__btn:hover { color: var(--ink); }
+</style>

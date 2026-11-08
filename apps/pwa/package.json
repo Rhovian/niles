@@ -1,9 +1,8 @@
 {
-  "name": "niles-web",
+  "name": "niles-pwa",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "pnpm@10.8.1",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --mode mock",
     "build": "vite build",
