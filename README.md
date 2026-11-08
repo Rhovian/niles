@@ -35,6 +35,16 @@ with the version):
 
 ## Quickstart
 
+For agent-led installation (requires Node.js 22.20+), run this in your repository to add the
+[niles skill](skills/niles/SKILL.md) to your coding agent:
+
+```sh
+npx skills add Rhovian/niles --skill niles
+```
+
+Then ask your agent to install Niles for this repository. It previews the changes, installs
+prerequisites, and uses `niles setup` to configure and launch an entry agent without the wizard.
+
 1. Install Niles with one of:
 
    ```sh

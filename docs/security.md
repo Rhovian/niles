@@ -8,6 +8,12 @@ suspected vulnerabilities according to the [security policy](../SECURITY.md).
 Niles treats the operator's choice to clone a repository as the repository trust decision.
 Processes already running as your user have authority Niles cannot revoke and are out of scope.
 
+The agent-led `niles` install skill states the planned machine changes before executing them.
+`niles setup` accepts explicit model tiers and skill choices without the wizard's confirmation;
+invoking it authorizes fetching missing skills and writing the default project manifest.
+`--start <project>` also registers the directory and launches the entry agent in detached tmux.
+The caller owns consent and CLI authentication; setup does not accept harness trust prompts.
+
 What Niles launches:
 
 - `niles update` executes `niles-update` beside the resolved Niles executable, never from

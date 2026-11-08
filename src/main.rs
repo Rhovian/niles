@@ -100,6 +100,13 @@ fn run() -> Result<ExitCode> {
             None => skills::list(selection()?.as_ref())?,
             Some(command) => command.run()?,
         },
+        Some(CommandName::Setup(options)) => {
+            anyhow::ensure!(
+                cli.setup.is_none(),
+                "setup does not accept --setup or NILES_SETUP"
+            );
+            projects::onboard::unattended::run(*options)?;
+        }
         Some(CommandName::Doctor) => doctor::doctor(selection()?.as_ref())?,
         Some(CommandName::Update { channel }) => update::run(channel)?,
         Some(CommandName::Compat { families }) => {

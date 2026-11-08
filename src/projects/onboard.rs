@@ -3,6 +3,7 @@ mod defaults;
 #[cfg(test)]
 mod tests;
 mod ui;
+pub(crate) mod unattended;
 use super::{register, registry};
 use crate::{skills, workspace_manifest as manifest};
 use anyhow::{Context, Result, ensure};
@@ -173,37 +174,54 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         .map(str::parse)
         .collect::<Result<Vec<skills::SkillName>>>()?;
     let finish = || {
-        manifest::check(&manifest, &config.models)?;
-        let body = serde_saphyr::to_string(&manifest)?;
-        let names: std::collections::BTreeSet<_> = manifest
-            .bindings
-            .iter()
-            .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
-            .chain(&starter_skills)
-            .chain(std::iter::once(&manifest.entry))
-            .collect();
-        for name in names {
-            if skills::find(name, cwd, &global)?.is_none() {
-                println!("fetching {name} from latest");
-                skills::import(
-                    defaults::reference(name)?,
-                    skills::Origin::Global,
-                    skills::ImportMode::Replace,
-                )?;
-            }
-        }
-        let path = manifest::manifest_path(cwd, None)?;
-        fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => file.write_all(body.as_bytes())?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
+        finish(cwd, &global, &manifest, &starter_skills, &config.models)?;
         manifest::load(cwd, None)
     };
     match entry_skill {
         EntrySkill::Custom(reference) => custom::install(reference, cwd, &global, finish),
         EntrySkill::Named(_) => finish(),
+    }
+}
+enum ManifestWrite {
+    Written,
+    Existing,
+}
+
+fn finish(
+    cwd: &Utf8Path,
+    global: &Utf8Path,
+    manifest: &WorkspaceManifest,
+    starter_skills: &[skills::SkillName],
+    models: &crate::agents::ModelRoster,
+) -> Result<ManifestWrite> {
+    manifest::check(manifest, models)?;
+    let body = serde_saphyr::to_string(manifest)?;
+    let names: std::collections::BTreeSet<_> = manifest
+        .bindings
+        .iter()
+        .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
+        .chain(starter_skills)
+        .chain(std::iter::once(&manifest.entry))
+        .collect();
+    for name in names {
+        if skills::find(name, cwd, global)?.is_none() {
+            println!("fetching {name} from latest");
+            skills::import(
+                defaults::reference(name)?,
+                skills::Origin::Global,
+                skills::ImportMode::Replace,
+            )?;
+        }
+    }
+    let path = manifest::manifest_path(cwd, None)?;
+    fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            file.write_all(body.as_bytes())?;
+            Ok(ManifestWrite::Written)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(ManifestWrite::Existing),
+        Err(error) => Err(error.into()),
     }
 }
 pub(super) fn first_run(cwd: &Utf8Path) -> Result<Option<registry::Entry>> {
