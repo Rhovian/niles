@@ -1,4 +1,4 @@
-use super::{Item, Member, Tree, spinner};
+use super::{Item, Member, Project, Tree, spinner};
 use crate::{
     projects::{panels::Range, rows::State, windows::WindowKind},
     theme::{self, State as ThemeState, StyleKey, Theme},
@@ -7,6 +7,22 @@ use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
 
 impl Tree {
+    fn project_prefix(&self, project: &Project) -> String {
+        let last = self
+            .projects
+            .last()
+            .is_some_and(|last| last.row.entry.name == project.row.entry.name);
+        format!("{} ", if last { theme::LAST } else { theme::BRANCH })
+    }
+
+    pub fn project_disclosure_column(&self) -> Option<usize> {
+        let Item::Project(project) = self.selected()? else {
+            return None;
+        };
+        project.skills().next()?;
+        Some(Line::raw(self.project_prefix(project)).width())
+    }
+
     pub fn label<'a>(
         &self,
         item: Item<'_>,
@@ -78,8 +94,8 @@ impl Tree {
                     State::Missing | State::NotRunning => (" ", theme.style(StyleKey::Muted)),
                 };
                 let mut line = Line::from(vec![
-                    guide(if last { theme::LAST } else { theme::BRANCH }),
-                    Span::styled(format!(" {marker} "), theme.style(StyleKey::Guide)),
+                    Span::styled(self.project_prefix(project), theme.style(StyleKey::Guide)),
+                    Span::styled(format!("{marker} "), theme.style(StyleKey::Guide)),
                     Span::styled(glyph, style),
                     Span::raw(format!(" {name}")),
                 ]);

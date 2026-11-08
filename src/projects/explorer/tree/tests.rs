@@ -81,7 +81,7 @@ pub(in crate::projects::explorer) fn tree() -> Tree {
     tree
 }
 
-fn labels(tree: &Tree) -> Vec<String> {
+pub(in crate::projects::explorer) fn labels(tree: &Tree) -> Vec<String> {
     let now = DateTime::from_timestamp_millis(0).unwrap();
     let items = tree.items();
     let theme = Theme::parse(None).unwrap();
