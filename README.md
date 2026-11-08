@@ -35,6 +35,10 @@ with the version):
 
 ## Quickstart
 
+For agent-led installation, add the [niles skill](skills/niles/SKILL.md) to your coding agent
+and ask it to install Niles for your repository. It previews the changes, installs prerequisites,
+and uses `niles setup` to configure and launch an entry agent without the wizard.
+
 1. Install Niles with one of:
 
    ```sh

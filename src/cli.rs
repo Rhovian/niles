@@ -108,6 +108,8 @@ pub enum CommandName {
     },
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
+    /// Configure this project without the interactive wizard (does not overwrite).
+    Setup(Box<crate::projects::onboard::unattended::Options>),
     /// Update a shell installation, or show the package-manager command
     Update {
         /// Release channel (nightly includes prereleases).

@@ -76,8 +76,7 @@ pub fn home() -> Result<()> {
 
 fn start_project(entry: &registry::Entry, theme: &Theme) -> Result<WindowTarget> {
     let session = entry.name.session()?;
-    tmux::open_session(&session, &entry.path, tmux::LeadStart::Attended)?;
-    tmux::configure_status(&session, theme)?;
+    super::lifecycle::start_entry(entry, tmux::LeadStart::Attended, theme)?;
     WindowTarget::new(session, LEAD_WINDOW)
 }
 

@@ -4,6 +4,8 @@ mod common;
 mod retry;
 #[path = "onboarding/support.rs"]
 mod support;
+#[path = "onboarding/unattended.rs"]
+mod unattended;
 use common::register_project;
 use std::fs;
 use support::{environment, manifest, terminal};
@@ -58,6 +60,9 @@ fn missing_entry_fetch_failure_stops_before_manifest() {
     fs::remove_file(env.home.join(".niles/skills/solo/SKILL.md")).unwrap();
     let (output, _) = terminal(&env, &["start"], SOLO_DEFAULTS, |_| {});
     assert!(!output.status.success());
+    assert!(!manifest(&env).exists());
+    let output = env.run(&unattended::args());
+    common::assert_failure_contains("explicit setup fetch failure", &output, "unexpected import");
     assert!(!manifest(&env).exists());
 }
 

@@ -1,0 +1,147 @@
+use super::{environment, manifest, support};
+use crate::common::*;
+use std::{fs, sync::LazyLock};
+
+static FIXTURE: LazyLock<serde_json::Value> =
+    LazyLock::new(|| serde_saphyr::from_str(setup_manifest_body()).unwrap());
+static TIERS: LazyLock<String> =
+    LazyLock::new(|| serde_saphyr::to_string(&FIXTURE["tiers"]).unwrap());
+pub(super) fn args() -> Vec<&'static str> {
+    vec![
+        "setup",
+        "--entry-skill",
+        "solo",
+        "--entry-agent",
+        FIXTURE["entry_agent"].as_str().unwrap(),
+        "--tiers",
+        &TIERS,
+    ]
+}
+
+fn fetch_fixture(env: &TestEnv, name: &str) {
+    let dir = env.home.join(".niles/skills").join(name);
+    let body = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    support::import_fixture(env, name, &body);
+}
+
+#[test]
+fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached() {
+    let env = environment();
+    fetch_fixture(&env, "design");
+    let mut args = args();
+    args.extend(["--starter-skills", "design,worker", "--start", "installed"]);
+    let output = env.run(&args);
+    assert_success_contains("explicit setup", &output, "entry session: installed");
+    let body = fs::read_to_string(manifest(&env)).unwrap();
+    let value: serde_json::Value = serde_saphyr::from_str(&body).unwrap();
+    assert_eq!(value["entry"], "solo");
+    assert_eq!(value["entry_agent"], FIXTURE["entry_agent"]);
+    assert_eq!(value["tiers"], FIXTURE["tiers"]);
+    assert!(env.home.join(".niles/skills/design/SKILL.ref").exists());
+    assert_eq!(
+        fs::read_link(env.home.join(".niles/projects/installed")).unwrap(),
+        env.root
+    );
+    assert!(env.tmux_log().contains("new-session -d -s installed"));
+    assert!(env.tmux_log().contains("start --keep-skills"));
+    fs::remove_dir_all(env.home.join(".niles/skills/solo")).unwrap();
+    assert_failure_contains(
+        "refuse overwrite",
+        &env.run(&args),
+        "manifest already exists",
+    );
+}
+
+#[test]
+fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
+    let env = environment();
+    for (flag, value, message) in [
+        ("--entry-skill", "../bad", "invalid skill name"),
+        ("--entry-agent", "claude:opus:medium", "not listed"),
+        ("--tiers", "{}", "missing field `standard`"),
+        ("--start", "../bad", "project name must use"),
+    ] {
+        let mut args = args();
+        match args.iter().position(|arg| *arg == flag) {
+            Some(index) => args[index + 1] = value,
+            None => args.extend([flag, value]),
+        }
+        assert_failure_contains(flag, &env.run(&args), message);
+        assert!(!manifest(&env).exists());
+    }
+    for (missing, selection, message) in [
+        (None, Some("other"), "does not accept"),
+        (Some("tmux"), None, "CLI not found on PATH: tmux"),
+        (Some("codex"), None, "CLI not found on PATH: codex"),
+    ] {
+        let env = environment();
+        if let Some(binary) = missing {
+            fs::remove_file(env.bin.join(binary)).unwrap();
+        }
+        let mut input = args();
+        input.extend(["--start", "installed"]);
+        let output = env
+            .niles(&env.root, &input)
+            .env("PATH", &env.bin)
+            .envs(selection.map(|value| ("NILES_SETUP", value)))
+            .output()
+            .unwrap();
+        assert_failure_contains("environment", &output, message);
+        assert!(!manifest(&env).exists());
+    }
+}
+
+#[test]
+fn explicit_setup_respects_registration_by_name_and_directory() {
+    for (existing_name, same_directory, expected) in [
+        ("installed", true, None),
+        ("old", true, Some("directory is already registered as old")),
+        (
+            "installed",
+            false,
+            Some("name is already registered elsewhere"),
+        ),
+    ] {
+        let env = environment();
+        let other = env.root.join("other");
+        fs::create_dir(&other).unwrap();
+        register_project(
+            &env,
+            existing_name,
+            if same_directory { &env.root } else { &other },
+        );
+        let mut input = args();
+        input.extend(["--start", "installed"]);
+        let output = env.run(&input);
+        if let Some(message) = expected {
+            assert_failure_contains("registration conflict", &output, message);
+            assert!(!manifest(&env).exists());
+        } else {
+            assert_success_contains("existing registration", &output, "entry session: installed");
+        }
+    }
+}
+
+#[test]
+fn explicit_setup_refuses_manifest_created_during_skill_fetch() {
+    let env = environment();
+    fetch_fixture(&env, "solo");
+    let git = env.bin.join("git");
+    let original = fs::read_to_string(&git).unwrap();
+    let hook = "cp \"$NILES_TEST_WINNER\" \"$NILES_TEST_MANIFEST\"";
+    let script = original.replacen('\n', &format!("\n{hook}\n"), 1);
+    write_executable(&git, &script);
+    fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
+    let winner = env.root.join("winner.yaml");
+    fs::write(&winner, setup_manifest_body()).unwrap();
+    let mut input = args();
+    input.extend(["--start", "installed"]);
+    let output = env
+        .niles(&env.root, &input)
+        .env("NILES_TEST_WINNER", winner)
+        .env("NILES_TEST_MANIFEST", manifest(&env))
+        .output()
+        .unwrap();
+    assert_failure_contains("concurrent manifest", &output, "manifest already exists");
+}

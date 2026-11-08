@@ -1,7 +1,7 @@
-#[cfg(feature = "remote")]
 use super::registry;
+use crate::{theme::Theme, tmux};
 #[cfg(feature = "remote")]
-use crate::{theme::Theme, tmux, worker, workspace_manifest};
+use crate::{worker, workspace_manifest};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use std::{
@@ -48,15 +48,24 @@ pub(crate) fn start(name: &str) -> Result<Start> {
     if entry.has_live_session()? {
         return Ok(Start::Running);
     }
-    if let Err(error) = tmux::open_session(&session, &entry.path, tmux::LeadStart::Unattended) {
+    start_entry(&entry, tmux::LeadStart::Unattended, &Theme::load()?)?;
+    Ok(Start::Running)
+}
+
+pub(super) fn start_entry(
+    entry: &registry::Entry,
+    start: tmux::LeadStart,
+    theme: &Theme,
+) -> Result<()> {
+    let session = entry.name.session()?;
+    if let Err(error) = tmux::open_session(&session, &entry.path, start) {
         // Another starter can win between lookup and tmux's exclusive session creation.
         if !entry.has_live_session()? {
             return Err(error);
         }
-        eprintln!("remote concurrent start: {error:#}");
+        eprintln!("concurrent project start: {error:#}");
     }
-    tmux::configure_status(&session, &Theme::load()?)?;
-    Ok(Start::Running)
+    tmux::configure_status(&session, theme)
 }
 
 #[cfg(feature = "remote")]
