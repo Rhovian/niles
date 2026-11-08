@@ -232,3 +232,15 @@ function onViewKey(demo: Demo, key: string): Demo {
 export function press(demo: Demo, key: string): Demo {
   return demo.focus === 'view' ? onViewKey(demo, key) : onExplorerKey(demo, key);
 }
+
+export function click(demo: Demo, cursor: number, target: 'row' | 'disclosure'): Demo {
+  if (demo.confirm) return demo;
+  const selected: Demo = { ...demo, focus: 'explorer', cursor };
+  const row = rows(selected)[cursor];
+  if (row.kind === 'project') {
+    const p = project(selected, row.project);
+    if (target === 'disclosure') return press(selected, p.expanded ? 'ArrowLeft' : 'ArrowRight');
+    if (!p.lead) return selected;
+  }
+  return press(selected, 'Enter');
+}
