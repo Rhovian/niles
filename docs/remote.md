@@ -9,7 +9,7 @@ a public site. Read the [threat model](security.md#remote-api) first.
 - A Niles binary built with `--features remote`; release binaries omit it. Building needs Rust
   1.89+ and system OpenSSL development files ([OpenSSL build instructions](https://docs.rs/openssl/0.10.81/openssl/#automatic)).
   Building the app from a checkout also needs Node 24 and pnpm 10.8.1
-  ([web prerequisites](../web/README.md)).
+  ([web prerequisites](../apps/pwa/README.md)).
 - Tailscale 1.96.2 or newer on the host and phone, both on your tailnet, with tailnet ACLs or
   grants restricting the host's TCP 443 to your users and devices. The phone must sign in as a
   user, not a tagged device, because tagged clients get no identity header.
@@ -34,7 +34,7 @@ rm "$NILES_WEB_DIR/niles-web.tar.gz"
 ```
 
 From a checkout, run `scripts/install-remote.sh` in its root, then use
-`NILES_WEB_DIR="$PWD/web/dist"`.
+`NILES_WEB_DIR="$PWD/apps/pwa/dist"`.
 
 The web directory must contain only the built app, with `index.html` at its top. Never point it
 at the repository, your home directory or `~/.niles/`. Treat the app and wherever you get it
@@ -78,7 +78,7 @@ the public asset directory. Never put private keys or Niles state in the PWA dir
 Open `https://<relay>.<tailnet>.ts.net/` on the phone, select a live session and send a harmless
 message; check it arrives at the desk. Then use the browser's Add to Home Screen. On iOS 16.4+,
 push needs the installed app: choose Enable notifications there. Notifications arrive even with
-Tailscale off, but opening one needs Tailscale. See [notification behavior](../web/README.md#notifications).
+Tailscale off, but opening one needs Tailscale. See [notification behavior](../apps/pwa/README.md#notifications).
 
 ## Using it
 

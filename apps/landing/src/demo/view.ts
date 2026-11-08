@@ -24,13 +24,28 @@ export function tokens(n: number): string {
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
 }
 
+/** Terminal columns a string takes: pictographs (emoji) two, joiners and variation selectors none. */
+export function cols(s: string): number {
+  let n = 0;
+  for (const ch of s) n += /\p{Extended_Pictographic}/u.test(ch) ? 2 : /[\u200d\ufe00-\ufe0f]/u.test(ch) ? 0 : 1;
+  return n;
+}
+
+// A word wider than the line (a pasted URL, a row of emoji) breaks at the width rather than running past it.
+function chunks(word: string, width: number): string[] {
+  const parts = [''];
+  for (const ch of word) {
+    if (parts[parts.length - 1] && cols(parts[parts.length - 1] + ch) > width) parts.push('');
+    parts[parts.length - 1] += ch;
+  }
+  return parts;
+}
+
 export function wrap(text: string, width: number): string[] {
   const out: string[] = [];
   let line = '';
-  // A word wider than the line (a pasted URL) breaks at the width rather than running past it.
-  const words = text.split(' ').flatMap((w) => w.match(new RegExp(`.{1,${width}}`, 'gu')) ?? ['']);
-  for (const word of words) {
-    if (line && line.length + 1 + word.length > width) {
+  for (const word of text.split(' ').flatMap((w) => chunks(w, width))) {
+    if (line && cols(line) + 1 + cols(word) > width) {
       out.push(line);
       line = word;
     } else line = line ? `${line} ${word}` : word;

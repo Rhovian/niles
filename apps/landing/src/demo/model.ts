@@ -37,7 +37,7 @@ export type Demo = {
 
 const PANELS: Panel[] = ['global', 'projects', 'today', 'week', 'month', 'help'];
 
-// Workers spawn on the next family in turn, so a request shows the mixing the page describes.
+// A worker comes from a family other than its lead's, in turn, so a review is always cross-family.
 const SPAWN_MODELS = ['codex:gpt-6.1-sol:medium', 'claude:opus:high', 'pi:z-ai/glm-5.3-flash:high'];
 
 export const SPAWN_PATTERN = /\b(yes|go|spawn|review)\b/i;
@@ -177,8 +177,8 @@ function close(demo: Demo, target: Row): Demo {
   return shownGone ? { ...next, shown: { kind: 'project', project: target.project } } : next;
 }
 
-/** The staged reply: a spawn request adds a worker on the next model family. */
-function reply(demo: Demo, row: Row, text: string): Demo {
+/** The staged reply: a spawn request to a lead adds a worker from another model family. */
+function reply(demo: Demo, row: Row, text: string, addressed: Agent): Demo {
   if (row.kind !== 'project' || !SPAWN_PATTERN.test(text)) {
     const answer = row.kind === 'worker'
       ? 'Noted. I will finish this step first; the lead reads my report when I say done.'
@@ -186,7 +186,9 @@ function reply(demo: Demo, row: Row, text: string): Demo {
     // A lead that answers waits for the operator (the PWA's push); a worker keeps working.
     return append(demo, row, [{ role: 'agent', text: answer }], row.kind === 'worker' ? 'working' : 'waiting');
   }
-  const model = SPAWN_MODELS[demo.spawned % SPAWN_MODELS.length];
+  const family = (spec: string) => spec.slice(0, spec.indexOf(':'));
+  const others = SPAWN_MODELS.filter((m) => family(m) !== family(addressed.model));
+  const model = others[demo.spawned % others.length];
   const id = `w${413 + demo.spawned}`;
   const spawned = withProject({ ...demo, spawned: demo.spawned + 1 }, row.project, (p) => ({
     ...p,
@@ -211,8 +213,9 @@ function append(demo: Demo, row: Row, entries: Entry[], state: AgentState): Demo
 
 /** The operator's message to an agent and its staged answer; the terminal and the phone both send here. */
 export function sendTo(demo: Demo, row: Row, text: string): Demo {
-  if (!text || !agentOf(demo, row)) return demo;
-  return reply(append(demo, row, [{ role: 'you', text }], 'working'), row, text);
+  const agent = agentOf(demo, row);
+  if (!text || !agent) return demo;
+  return reply(append(demo, row, [{ role: 'you', text }], 'working'), row, text, agent);
 }
 
 function onViewKey(demo: Demo, key: string): Demo {

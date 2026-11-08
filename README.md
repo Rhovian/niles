@@ -124,7 +124,7 @@ The manifest's worktree `setup` runs with your permissions, so keep it trusted. 
 
 ## Remote access (opt-in)
 
-The installable [PWA](web/README.md) lists sessions, chats with the foreground agent, and sends
+The installable [PWA](apps/pwa/README.md) lists sessions, chats with the foreground agent, and sends
 Web Push when attention is needed. Phone access is shell access on the host. Prebuilt binaries
 omit the `remote` feature; follow the [remote setup guide](docs/remote.md) and read the
 [threat model](docs/security.md#remote-api).

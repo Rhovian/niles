@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { initialDemo, project, sendTo } from './model';
 import { act, initialPhone, notifications, phoneView, PHONE_COLS } from './phone';
-import type { Line } from './view';
+import { cols, type Line } from './view';
 
 const CLOCK = { time: '09:41', date: 'Friday 7 November' };
 const text = (lines: Line[]) => lines.map((l) => l.map((s) => s.t).join('')).join('\n');
@@ -21,17 +21,20 @@ describe('phone', () => {
   it('sends into the shared session, so the terminal sees the worker it spawns', () => {
     const demo = sendTo(initialDemo(), docs, 'review it first');
     expect(project(demo, 'docs').workers.map((w) => w.id)).toEqual(['w413']);
+    // The docs lead runs on codex, so even the page's first spawn reviews from another family.
+    expect(project(demo, 'docs').workers[0].model).toBe('claude:opus:high');
     const chat = text(phoneView(demo, act(initialPhone(), 'open:docs'), CLOCK).top);
     expect(chat).toContain('You · Sent');
     expect(chat).toContain('review it first');
     expect(chat).not.toContain('niles spawn');
   });
 
-  it('keeps every frame line the frame width', () => {
-    const demo = sendTo(initialDemo(), docs, 'a'.repeat(80));
+  it('keeps every frame line the frame width, emoji included', () => {
+    // Emoji take two columns in two UTF-16 units, ☕ two in one, 𝐀 one in two: width must count columns.
+    const demo = ['a'.repeat(80), '😀'.repeat(24), '☕'.repeat(20), '𝐀'.repeat(40)].reduce((d, text) => sendTo(d, docs, text), initialDemo());
     for (const phone of [initialPhone(), act(initialPhone(), 'menu'), act(initialPhone(), 'open:docs')]) {
       const { top, bottom } = phoneView(demo, phone, CLOCK);
-      for (const line of [...top, ...bottom]) expect([...line.map((s) => s.t).join('')]).toHaveLength(PHONE_COLS + 2);
+      for (const line of [...top, ...bottom]) expect(cols(line.map((s) => s.t).join(''))).toBe(PHONE_COLS + 2);
     }
   });
 });

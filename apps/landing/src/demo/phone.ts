@@ -1,9 +1,9 @@
 // The remote PWA on a phone, drawn in box characters: a second view on the same staged session.
-// Words follow web/: notifications "Niles · <project>" / "<project>: Agent waiting for your input",
+// Words follow apps/pwa/: notifications "Niles · <project>" / "<project>: Agent waiting for your input",
 // bubbles "Agent" and "You · Sent", the composer "Message agent".
 
 import { agentOf, type Demo, type Row } from './model';
-import { wrap, type Line, type Seg } from './view';
+import { cols, wrap, type Line, type Seg } from './view';
 
 export type Phone = { screen: 'lock' | 'chat' | 'menu'; open: Exclude<Row, { kind: 'panel' }> | null };
 export type Clock = { time: string; date: string };
@@ -30,7 +30,7 @@ export function act(phone: Phone, action: string): Phone {
   return { screen: 'chat', open: worker ? { kind: 'worker', project, worker } : { kind: 'project', project } };
 }
 
-const width = (segs: Seg[]) => segs.reduce((n, s) => n + [...s.t].length, 0);
+const width = (segs: Seg[]) => segs.reduce((n, s) => n + cols(s.t), 0);
 const row = (segs: Seg[], align: 'left' | 'right' | 'centre' = 'left'): Line => {
   const room = Math.max(0, TEXT - width(segs));
   const left = align === 'right' ? room : align === 'centre' ? Math.floor(room / 2) : 0;
@@ -65,7 +65,7 @@ function chatScreen(demo: Demo, open: Phone['open']): Seg[][] {
   // The remote API drops tool calls; only the operator's and the agent's words reach the phone.
   const lines = agent.transcript.filter((e) => e.role !== 'tool').flatMap((e) => {
     const text = wrap(e.text, BUBBLE);
-    const bubble = [[{ t: e.role === 'you' ? 'You · Sent' : 'Agent', c: 'dim' }], ...box(text.map((t) => [{ t }]), Math.max(...text.map((t) => t.length)))];
+    const bubble = [[{ t: e.role === 'you' ? 'You · Sent' : 'Agent', c: 'dim' }], ...box(text.map((t) => [{ t }]), Math.max(...text.map(cols)))];
     return e.role === 'you' ? bubble.map((segs) => [{ t: ' '.repeat(TEXT - width(segs)) }, ...segs]) : bubble;
   });
   return lines.slice(-PHONE_ROWS);

@@ -5,12 +5,12 @@ import Terminal from '../components/Terminal.astro';
 import Phone from '../components/Phone.astro';
 import CopyBlock from '../components/CopyBlock.astro';
 import StatusLine from '../components/StatusLine.astro';
-import { butler, wordmark } from '../repo/logo';
+import butler from '../art/butler.txt?raw';
+import wordmark from '../art/wordmark.txt?raw';
 import { crateVersion, roadmap } from '../repo/docs';
 
-// Astro builds from site/; these are the repository's own files, read once per build.
-const repo = (file: string) => readFileSync(resolve('..', file), 'utf8');
-const lockup = repo('assets/niles-lockup-amber.svg');
+// Astro builds from apps/landing/; these are the repository's own files, read once per build.
+const repo = (file: string) => readFileSync(resolve('../..', file), 'utf8');
 const VERSION = crateVersion(repo('Cargo.toml'));
 const TODO = roadmap(repo('ROADMAP.md'));
 
@@ -53,9 +53,9 @@ const WINDOWS = [{ name: 'top', href: '#top' }, { name: 'demo', href: '#demo' },
   <h1 class="sr-only">{TITLE}</h1>
 
   <div class="banner">
-    <pre class="banner__butler" role="img" aria-label="The Niles butler">{butler(lockup).join('\n')}</pre>
+    <pre class="banner__butler" role="img" aria-label="The Niles butler">{butler.trimEnd()}</pre>
     <div class="banner__side">
-      <pre class="banner__word" aria-hidden="true">{wordmark(lockup).join('\n')}</pre>
+      <pre class="banner__word" aria-hidden="true">{wordmark.trimEnd()}</pre>
       <p class="banner__tagline">coding agent teams in your terminal</p>
     </div>
   </div>
@@ -120,7 +120,7 @@ const WINDOWS = [{ name: 'top', href: '#top' }, { name: 'demo', href: '#demo' },
 </html>
 
 <style is:global>
-  /* The PWA's palette (web/src/style.css) with the logo's amber (the fill of assets/niles-lockup-amber.svg)
+  /* The PWA's palette (apps/pwa/src/style.css) with the logo's amber (the fill of assets/niles-lockup-amber.svg)
      as the accent, plus a darker ground and derived tones for the terminal. */
   :root {
     --bg: #12201e; --surface: #1b2d29; --line: #3c514b; --ink: #e8f2ee; --accent: #e3a43a; --muted: #b7c8c1;

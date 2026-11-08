@@ -29,7 +29,7 @@ fn builds_shell_before_installing_from_any_directory() {
             .output()
             .unwrap();
         let mut expected = format!(
-            "{0}/web: pnpm install --frozen-lockfile\n{0}/web: pnpm build\n",
+            "{0}/apps/pwa: pnpm install --frozen-lockfile\n{0}/apps/pwa: pnpm build\n",
             root.display()
         );
         if fail_build {
@@ -44,7 +44,7 @@ fn builds_shell_before_installing_from_any_directory() {
             ));
             assert_eq!(
                 stdout_of(&output),
-                format!("Web shell: {}/web/dist\n", root.display())
+                format!("Web shell: {}/apps/pwa/dist\n", root.display())
             );
         }
         assert_eq!(fs::read_to_string(log).unwrap(), expected);

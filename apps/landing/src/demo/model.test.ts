@@ -57,14 +57,14 @@ describe('typing to an agent', () => {
     expect(keys(typing, 'Escape').focus).toBe('explorer');
   });
 
-  it('spawns a worker on the next family when asked for a review', () => {
+  it('spawns workers from families other than the lead\'s, in turn', () => {
     const sent = keys(type(keys(initialDemo(), 'Tab'), 'please review it'), 'Enter');
     const billing = project(sent, 'billing');
     expect(billing.workers.map((w) => w.id)).toEqual(['w412', 'w413']);
     expect(billing.workers[1].model).toBe('codex:gpt-6.1-sol:medium');
     expect(sent.draft).toBe('');
     const again = keys(type(sent, 'go'), 'Enter');
-    expect(project(again, 'billing').workers[2].model).toBe('claude:opus:high');
+    expect(project(again, 'billing').workers[2].model).toBe('pi:z-ai/glm-5.3-flash:high');
   });
 
   it('answers without spawning otherwise, and ignores an empty send', () => {
@@ -79,5 +79,6 @@ describe('typing to an agent', () => {
 describe('wrap', () => {
   it('breaks on spaces within the width', () => {
     expect(wrap('aaa bbb ccc', 7)).toEqual(['aaa bbb', 'ccc']);
+    expect(wrap('😀😀😀 x', 4)).toEqual(['😀😀', '😀 x']);
   });
 });
