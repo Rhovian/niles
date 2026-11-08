@@ -15,6 +15,8 @@ pub(super) fn args() -> Vec<&'static str> {
         FIXTURE["entry_agent"].as_str().unwrap(),
         "--tiers",
         &TIERS,
+        "--start",
+        "installed",
     ]
 }
 
@@ -28,9 +30,9 @@ fn fetch_fixture(env: &TestEnv, name: &str) {
 #[test]
 fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached() {
     let env = environment();
-    fetch_fixture(&env, "design");
+    fetch_fixture(&env, "solo");
     let mut args = args();
-    args.extend(["--starter-skills", "design,solo", "--start", "installed"]);
+    args.extend(["--starter-skills", "solo,cost-analysis"]);
     let output = env.run(&args);
     assert_success_contains("explicit setup", &output, "entry session: installed");
     let body = fs::read_to_string(manifest(&env)).unwrap();
@@ -38,16 +40,18 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
     assert_eq!(value["entry"], "solo");
     assert_eq!(value["entry_agent"], FIXTURE["entry_agent"]);
     assert_eq!(value["tiers"], FIXTURE["tiers"]);
-    assert!(env.home.join(".niles/skills/design/SKILL.ref").exists());
+    assert!(env.home.join(".niles/skills/solo/SKILL.ref").exists());
     assert_eq!(
         fs::read_link(env.home.join(".niles/projects/installed")).unwrap(),
         env.root
     );
     assert!(env.tmux_log().contains("new-session -d -s installed"));
     assert!(env.tmux_log().contains("start --keep-skills"));
+    fs::remove_file(env.home.join("git.log")).unwrap();
     fs::remove_dir_all(env.home.join(".niles/skills/solo")).unwrap();
     let output = env.run(&args);
     assert_failure_contains("overwrite", &output, "manifest already exists");
+    assert!(!env.home.join("git.log").exists());
 }
 
 #[test]
@@ -55,12 +59,14 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
     let env = environment();
     fetch_fixture(&env, "design");
     for (flag, value, message) in [
-        ("--starter-skills", "design,workre", "unknown starter skill"),
+        ("--entry-skill", "sloo", "unknown skill sloo"),
+        ("--starter-skills", "design,workre", "fetchable:"),
         ("--entry-agent", "claude:opus:medium", "not listed"),
         ("--tiers", "{}", "missing field `standard`"),
         ("--start", "../bad", "project name must use"),
     ] {
         let mut args = args();
+        args.extend(["--starter-skills", "design"]);
         match args.iter().position(|arg| *arg == flag) {
             Some(index) => args[index + 1] = value,
             None => args.extend([flag, value]),
@@ -78,10 +84,8 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
         if let Some(binary) = missing {
             fs::remove_file(env.bin.join(binary)).unwrap();
         }
-        let mut input = args();
-        input.extend(["--start", "installed"]);
         let output = env
-            .niles(&env.root, &input)
+            .niles(&env.root, &args())
             .env("PATH", &env.bin)
             .envs(selection.map(|value| ("NILES_SETUP", value)))
             .output()
@@ -110,9 +114,7 @@ fn explicit_setup_respects_registration_by_name_and_directory() {
             existing_name,
             if same_directory { &env.root } else { &other },
         );
-        let mut input = args();
-        input.extend(["--start", "installed"]);
-        let output = env.run(&input);
+        let output = env.run(&args());
         if let Some(message) = expected {
             assert_failure_contains("registration conflict", &output, message);
             assert!(!manifest(&env).exists());
@@ -134,10 +136,8 @@ fn explicit_setup_refuses_manifest_created_during_skill_fetch() {
     fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
     let winner = env.root.join("winner.yaml");
     fs::write(&winner, setup_manifest_body()).unwrap();
-    let mut input = args();
-    input.extend(["--start", "installed"]);
     let output = env
-        .niles(&env.root, &input)
+        .niles(&env.root, &args())
         .env("NILES_TEST_WINNER", winner)
         .env("NILES_TEST_MANIFEST", manifest(&env))
         .output()

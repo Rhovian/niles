@@ -195,14 +195,6 @@ fn finish(
     models: &crate::agents::ModelRoster,
 ) -> Result<ManifestWrite> {
     manifest::check(manifest, models)?;
-    let starters: Vec<(skills::SkillName, String)> = crate::store::parse_yaml(defaults::SKILLS)?;
-    for name in starter_skills {
-        ensure!(
-            skills::find(name, cwd, global)?.is_some()
-                || starters.iter().any(|(known, _)| known == name),
-            "unknown starter skill {name}; install custom skills before selecting them"
-        );
-    }
     let body = serde_saphyr::to_string(manifest)?;
     let names: std::collections::BTreeSet<_> = manifest
         .bindings

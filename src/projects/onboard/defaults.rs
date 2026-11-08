@@ -5,9 +5,17 @@ use crate::agents::{
 use crate::skills::{SkillName, reference::GithubRef};
 use crate::workspace_manifest::{TierBinding, Tiers, WorkspaceManifest};
 use anyhow::{Context, Result, ensure};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 pub(super) const REPOSITORY: &str = "github.com/Rhovian/niles";
 pub(super) const SKILLS: &str = include_str!("skills.yaml");
+pub(super) fn fetchable_names() -> Result<BTreeSet<SkillName>> {
+    let mut names = BTreeSet::new();
+    for source in [SKILLS, include_str!("modes.yaml")] {
+        let rows: Vec<(SkillName, String)> = crate::store::parse_yaml(source)?;
+        names.extend(rows.into_iter().map(|(name, _)| name));
+    }
+    Ok(names)
+}
 pub(super) fn reference(name: &SkillName) -> Result<GithubRef> {
     format!("{REPOSITORY}/skills/{name}").parse()
 }

@@ -1,15 +1,15 @@
 use crate::{
     agents::AgentSpec,
-    skills::SkillName,
+    skills::{self, SkillName},
     tmux,
     workspace_manifest::{self, Tiers, WorkspaceManifest},
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use clap::Args;
 
 #[derive(Debug, Args)]
 pub(crate) struct Options {
-    /// Installed skill name, or a missing skill to fetch from Rhovian/niles.
+    /// Installed or fetchable default skill; unknown names list the choices.
     #[arg(long, value_name = "SKILL")]
     entry_skill: SkillName,
     /// Exact family:model:effort listed in --tiers.
@@ -18,7 +18,7 @@ pub(crate) struct Options {
     /// Manifest YAML: standard is required; each tier has primary and secondaries.
     #[arg(long, value_name = "YAML", value_parser = crate::store::parse_yaml::<Tiers>)]
     tiers: Tiers,
-    /// Installed skills, or missing starter names from the bundled catalog.
+    /// Installed or fetchable default skills; unknown names list the choices.
     #[arg(long, value_name = "SKILL", value_delimiter = ',')]
     starter_skills: Vec<SkillName>,
     /// Register this project and launch its entry agent in a detached tmux session.
@@ -30,6 +30,19 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let cwd = crate::util::current_dir_utf8()?;
     let path = workspace_manifest::manifest_path(&cwd, None)?;
     ensure!(!path.try_exists()?, "manifest already exists: {path}");
+    let global = skills::global_dir()?;
+    let fetchable = super::defaults::fetchable_names()?;
+    let choices = fetchable
+        .iter()
+        .map(SkillName::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    for name in std::iter::once(&options.entry_skill).chain(&options.starter_skills) {
+        ensure!(
+            skills::find(name, &cwd, &global)?.is_some() || fetchable.contains(name),
+            "unknown skill {name}; fetchable: {choices}; import custom skills first"
+        );
+    }
     let config = crate::config::spec::load_project_config_from(&cwd)?;
     let mut manifest = WorkspaceManifest {
         entry: options.entry_skill,
@@ -80,7 +93,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
     }
     let written = super::finish(
         &cwd,
-        &crate::skills::global_dir()?,
+        &global,
         &manifest,
         &options.starter_skills,
         &config.models,
@@ -89,7 +102,6 @@ pub(crate) fn run(options: Options) -> Result<()> {
         matches!(written, super::ManifestWrite::Written),
         "manifest already exists: {path}"
     );
-    workspace_manifest::load(&cwd, None)?.context("setup did not produce a manifest")?;
     println!("manifest: {path}");
     if let Some(name) = project {
         let entry = match super::registry::find(name.as_str())? {
