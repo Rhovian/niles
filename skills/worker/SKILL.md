@@ -57,5 +57,5 @@ responsibility in the same change. For each hand-written mechanism (batching, pa
 parsing, caching), cite in the code the pinned dependency's source or docs showing it doesn't
 already do the job.
 
-Your `done:` states production and test lines added against the size target: the record's, or
-without a record, the one in your brief. With neither, state the counts alone.
+Before `done:`, delete code and tests the change makes redundant; measure net lines (added minus deleted), split production/tests.
+Report both net counts against the record's target, or the brief's without a record; with neither, state the counts alone. For positive test net, justify each added test by the behaviour-changing mutation only it kills.
