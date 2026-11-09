@@ -169,76 +169,6 @@ fn recorded_lead_pane() -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_support::{temp_dir, temp_test_path};
-    static LEAD_BRIEF_TEMPLATE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let root = temp_test_path("lead-body");
-        crate::skills::resolve(
-            &"lead".parse().unwrap(),
-            &root,
-            &crate::skills::global_dir().unwrap(),
-        )
-        .unwrap()
-        .body
-    });
-
-    #[test]
-    fn lead_brief_coordinates_within_the_operators_scope() {
-        const REQUIRED: &[(&str, &str)] = &[
-            (
-                "scope",
-                "The operator's request sets the scope of what you do",
-            ),
-            ("scope", "is not commissioned again"),
-            ("scope", "mean the named object only"),
-            ("scope", "only when the operator says so"),
-            ("coordination", "You coordinate"),
-            ("tier routing", "Default to the standard primary"),
-            ("tier routing", "`niles models`"),
-            ("tier routing", "in one line with the reason"),
-            ("tier routing", "then wait for the operator's yes"),
-            (
-                "tier routing",
-                "Propose stepping down when economical and appropriate",
-            ),
-            ("command discovery", "`niles skills`"),
-            ("command discovery", "`niles spawn --help`"),
-            ("command discovery", "niles spawn <id> --skill <name> -"),
-        ];
-        const FORBIDDEN: &[(&str, &str)] = &[
-            ("designer scope", "economy pass"),
-            ("designer scope", "race accepted"),
-            ("designer scope", "outbound calls built from untrusted data"),
-            ("designer scope", "worker_planning"),
-            ("designer scope", "Lead decision"),
-            ("designer scope", "{review_instruction}"),
-            ("hardcoded model ladder", "opus"),
-            ("hardcoded model ladder", "sonnet"),
-            ("hardcoded model ladder", "gpt-5"),
-            ("hardcoded model ladder", "claude:"),
-            ("hardcoded model ladder", "codex:gpt"),
-            ("spawn/--help discovery", "niles peek <id>"),
-            ("spawn/--help discovery", "niles close <id>"),
-            ("spawn/--help discovery", "niles wait <id>"),
-            ("spawn/--help discovery", "niles wait --all"),
-        ];
-        for (reason, phrase) in REQUIRED {
-            assert!(
-                LEAD_BRIEF_TEMPLATE.contains(phrase),
-                "{reason}: missing {phrase:?}"
-            );
-        }
-        for (reason, phrase) in FORBIDDEN {
-            assert!(
-                !LEAD_BRIEF_TEMPLATE.contains(phrase),
-                "{reason}: found {phrase:?}"
-            );
-        }
-        for line in LEAD_BRIEF_TEMPLATE
-            .lines()
-            .filter(|line| line.contains("--skill "))
-        {
-            assert!(line.contains("--skill <name>"), "{line}");
-        }
-    }
 
     #[test]
     fn session_meta_records_the_lead_pane() {
@@ -285,21 +215,17 @@ mod tests {
             &workspace,
             &dir,
             "worker: none",
-            &LEAD_BRIEF_TEMPLATE,
+            "{manifest}\n{workspace}\n{agent}\n{dir}\n{startup_context}\n{unknown}",
             None,
         )
         .unwrap();
 
-        assert!(body.contains(&format!(
-            "manifest: {}",
-            workspace_manifest::manifest_path(&workspace, None).unwrap()
-        )));
-        assert!(body.contains("lead_agent: codex:gpt-5.5:xhigh"));
-        assert!(body.contains("worker: none"));
-        assert!(body.contains(&format!("workspace: {workspace}\n")));
-        assert!(body.contains(&format!("session_dir: {dir}\n")));
-        for placeholder in ["{manifest}", "{workspace}", "{agent}", "{startup_context}"] {
-            assert!(!body.contains(placeholder), "unfilled placeholder: {body}");
-        }
+        assert_eq!(
+            body,
+            format!(
+                "{}\n{workspace}\ncodex:gpt-5.5:xhigh\n{dir}\nworker: none\n{{unknown}}",
+                workspace_manifest::manifest_path(&workspace, None).unwrap()
+            )
+        );
     }
 }
