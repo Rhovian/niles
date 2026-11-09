@@ -74,12 +74,42 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     assert!(peek.status.success());
     assert_eq!(stdout_of(&peek), "pane output\n");
 
+    let finished = env.root.join("finished");
+    let started = env.root.join("started");
+    assert!(
+        Command::new("mkfifo")
+            .args([&finished, &started])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let hook = r#"if [ ! -e "$RACES" ]; then
+        touch "$RACES"
+        (TMUX_SEND_HOOK= SEND_STARTED=1 "$NILES_TEST_BIN" send auth-fix beta > "$RACES" 2>&1; echo finished > "$FINISHED") > /dev/null 2>&1 &
+        read started < "$STARTED"
+    fi"#;
     let send = env
         .niles(&env.root, &["send", "auth-fix", "continue", "please"])
+        .env("NILES_TEST_BIN", env!("CARGO_BIN_EXE_niles"))
+        .env("RACES", env.root.join("races"))
+        .env("FINISHED", &finished)
+        .env("STARTED", &started)
+        .env("TMUX_SEND_HOOK", hook)
         .env("TMUX_PANE_FILE", &pane_file)
         .output()
         .unwrap();
     assert!(send.status.success());
+    assert_eq!(fs::read_to_string(&finished).unwrap(), "finished\n");
+    let races = fs::read_to_string(env.root.join("races")).unwrap();
+    assert!(races.contains("sent: auth-fix"), "{races}");
+    let composer = fs::read_to_string(&pane_file).unwrap();
+    let submit = composer.find("submitted").unwrap();
+    assert!(
+        composer.find("continue please").unwrap() < submit
+            && submit < composer.find("beta").unwrap(),
+        "{composer}"
+    );
+    assert_eq!(composer.matches("submitted").count(), 2);
     let send_stdout = stdout_of(&send);
     assert!(send_stdout.contains("sent: auth-fix"));
     // `wait` first, as spawn prints it: the send just armed a wake, and collecting it is the

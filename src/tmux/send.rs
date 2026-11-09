@@ -1,3 +1,4 @@
+use crate::{store::Scope, tmux::TmuxTarget};
 use std::{
     fmt, thread,
     time::{Duration, Instant},
@@ -5,8 +6,7 @@ use std::{
 
 use anyhow::{Result, bail};
 
-use super::TmuxTarget;
-
+const PANE_IDENTITY: &str = "#{socket_path}:#{pane_id}";
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
 
 /// Pane rows captured while watching a send land. The composer sits at the bottom of the pane, so
@@ -80,6 +80,9 @@ impl Pane for TmuxTarget {
 /// before the submit is sent, and the pane must change after it — a submit that changes nothing
 /// is an error, not a `sent:`.
 pub(crate) fn send_line(target: &TmuxTarget, line: &str) -> Result<()> {
+    let identity = ["display", "-pt", target.as_str(), PANE_IDENTITY];
+    let pane = super::query(&identity)?;
+    let _lock = Scope::Pane(pane.trim()).reserve()?;
     send_line_to_pane(target, line, &REAL_TIMINGS)
 }
 
@@ -289,27 +292,14 @@ mod tests {
             let result = send_line_to_pane(&pane, brief, &TEST_TIMINGS);
             match error {
                 Some(needle) => crate::test_support::assert_err_contains(result, needle),
-                None => result.unwrap(),
+                None => {
+                    result.unwrap();
+                    let quiet = pane.submit_at.get().unwrap() - pane.rendered_at.get().unwrap();
+                    assert!(quiet >= TEST_TIMINGS.quiet_window);
+                }
             }
             assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));
             assert_eq!(pane.actions(), actions);
         }
-    }
-
-    #[test]
-    fn submit_waits_for_the_quiet_window() {
-        let timings = Timings {
-            poll_interval: Duration::from_millis(1),
-            quiet_window: Duration::from_millis(20),
-            settle_timeout: Duration::from_millis(100),
-            submit_timeout: Duration::from_millis(10),
-        };
-        let pane = ScriptedPane::new(&["staged"], false, "changed");
-
-        send_line_to_pane(&pane, "hello", &timings).unwrap();
-
-        let rendered_at = pane.rendered_at.get().expect("paste should render");
-        let submit_at = pane.submit_at.get().expect("submit should be sent");
-        assert!(submit_at.duration_since(rendered_at) >= timings.quiet_window);
     }
 }

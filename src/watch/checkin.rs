@@ -21,10 +21,6 @@ use super::cadence::{Delay, Recheck, parse_delay, parse_recheck};
 const CHECKIN_FILE: &str = "checkin";
 const LOCK_FILE: &str = "checkin.lock";
 
-/// Where a check-in is written before it is renamed into place. Never read: a leftover one is a
-/// write that never landed, and the next write overwrites it.
-const STAGING_FILE: &str = "checkin.tmp";
-
 /// One worker's check-in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Checkin {
@@ -126,9 +122,7 @@ impl Checkin {
             self.recheck.spelling(),
             self.armed_len
         );
-        let staging = worker_dir.join(STAGING_FILE);
-        fs::write(&staging, body).with_context(|| format!("failed to write {staging}"))?;
-        fs::rename(&staging, &path).with_context(|| format!("failed to replace {path}"))
+        crate::store::atomic_write(&path, body)
     }
 
     /// Deletes the arm state. `Ok(false)` when there was none — a worker that disarms twice (it
@@ -254,8 +248,6 @@ mod tests {
         let before = fs::metadata(dir.join(CHECKIN_FILE)).unwrap().ino();
         next.write(&dir).unwrap();
         assert_ne!(fs::metadata(dir.join(CHECKIN_FILE)).unwrap().ino(), before);
-        assert!(!dir.join(STAGING_FILE).exists());
-        fs::write(dir.join(STAGING_FILE), "deadline=half-a-write").unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), Some(next));
         assert_eq!(next.delay.duration().as_secs(), 600);
 

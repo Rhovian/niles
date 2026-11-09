@@ -46,6 +46,20 @@ What Niles launches:
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
+Worker launch, replacement and close reserve IDs outside movable worker directories. Shared project
+reservations exclude deregistration; joining through metadata publication and retirement share tree
+reservations. Busy lifecycle operations fail. Pane delivery waits for the socket and pane reservation,
+then retains it through submit acknowledgement. Trust detection holds the check-in lock through its
+baseline update. State publishers stage unique files beside their destinations before atomic publication;
+this does not promise fsync durability.
+
+Reservations use hashed, typed keys under `~/.niles/locks/`. These small lock files persist after
+worker close, pane exit and project deregistration: unlinking an active flock inode would let
+another process bypass it. Managed tree paths resolve HOME symlinks before selecting a key.
+Atomic JSON/YAML publication replaces destination symlinks instead of following them and publishes
+files with mode 0600. This includes user config and workspace manifests: a dotfiles symlink becomes
+a regular file, its former target is unchanged, and previous destination modes are not preserved.
+
 The global project manifest at `~/.niles/state/<workspace key>/@state/manifest.yaml` is yours, not the
 repository's. Its `worktree.setup` and `gates.post` run with your permissions, so only put
 commands there you would run yourself. Model spending approval is project-wide:
@@ -231,5 +245,5 @@ A failed custom setup removes its new skill reference so that the same URL can b
 The resolved full commit SHA is recorded in each global
 `SKILL.ref`; subsequent runs use that immutable revision. Existing local and imported skills are
 kept. Missing revisions, invalid skill references and fetch failures stop setup before writing
-the manifest. The validated manifest is written with exclusive creation, preserving a manifest
+the manifest. The validated manifest is written with atomic exclusive publication, preserving a manifest
 that appeared concurrently. No editor or external setup command is launched by the wizard.

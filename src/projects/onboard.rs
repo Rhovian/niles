@@ -10,7 +10,7 @@ use anyhow::{Context, Result, ensure};
 use camino::Utf8Path;
 use manifest::WorkspaceManifest;
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::{self, IsTerminal, Write},
 };
 
@@ -215,11 +215,10 @@ fn finish(
     }
     let path = manifest::manifest_path(cwd, None)?;
     fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            file.write_all(body.as_bytes())?;
-            Ok(ManifestWrite::Written)
-        }
+    match crate::store::publish(&path, crate::store::Publication::Create, |file| {
+        file.write_all(body.as_bytes())
+    }) {
+        Ok(_) => Ok(ManifestWrite::Written),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(ManifestWrite::Existing),
         Err(error) => Err(error.into()),
     }

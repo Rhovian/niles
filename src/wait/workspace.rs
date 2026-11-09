@@ -15,8 +15,6 @@ use crate::{store, util, worker};
 
 const TAKEOVER_POLL: Duration = Duration::from_millis(100);
 
-/// libc 0.2.189 exposes flock as an fd + operation (src/unix/mod.rs:2221); it
-/// cannot replace a live holder. Rust 1.89 File::lock has the same exclusion model.
 /// Replacing the presence inode under a short-lived lock makes takeover and output atomic.
 struct Registration {
     path: Utf8PathBuf,
@@ -34,17 +32,10 @@ impl Registration {
         let running = root.join("wait.running");
         // Refuse a planted symlink just as for the workspace and cursor locks.
         drop(open_lock_file(&running)?);
-        let temporary = root.join(format!("wait.running.{}", uuid::Uuid::new_v4()));
-        let presence = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&temporary)
-            .with_context(|| format!("failed to create {temporary}"))?;
-        presence.lock_shared()?;
         // A stale waiter keeps only the unlinked old inode, never current presence.
-        fs::rename(&temporary, &running).with_context(|| format!("failed to publish {running}"))?;
+        let presence = store::publish(&running, store::Publication::Replace, |file| {
+            file.lock_shared()
+        })?;
         Ok(Self {
             path,
             running,

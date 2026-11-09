@@ -41,53 +41,34 @@ fn leftover_worker_json_file_is_inert() {
 fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     let env = TestEnv::with_manifest("niles-worker-failed-spawn", "claude");
 
-    let failed = env
-        .spawn_command("research", &["auth-fix", "Fix", "auth"])
-        .env("TMUX_FAIL_NEW_WINDOW", "1")
-        .output()
-        .unwrap();
-    assert_failure_contains("failed spawn", &failed, "failed to launch worker auth-fix");
-    let stderr = stderr_of(&failed);
-    assert!(stderr.contains("create window failed: index 1 in use"));
+    let reservation = reserve_project(&env.home, &env.root);
+    let output = env.spawn("research", &["auth-fix", "Fix"]);
+    assert_failure_contains("reserved spawn", &output, "busy");
     assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
-
-    let peek = run_bare(&env.root, &["peek", "auth-fix"]);
-    assert_failure_contains("peek failed spawn", &peek, "unknown worker id 'auth-fix'");
-
-    let failed = env
-        .spawn_command("research", &["auth-fix", "Fix", "auth"])
-        .env(
-            "META_PATH",
-            state_dir(&env.root).join("worker/auth-fix/meta.json"),
-        )
-        .output()
-        .unwrap();
-    assert_failure_contains(
-        "spawn with meta write failure",
-        &failed,
-        "failed to finish launching worker auth-fix",
-    );
-    let stderr = stderr_of(&failed);
-    assert!(stderr.contains("cleaned up launched worker"));
-    assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
+    drop(reservation);
+    let meta = state_dir(&env.root).join("worker/auth-fix/meta.json");
+    let meta = meta.to_str().unwrap();
+    for (key, value, cause) in [
+        ("TMUX_FAIL_NEW_WINDOW", "1", "create window failed"),
+        ("META_PATH", meta, "cleaned up launched worker"),
+    ] {
+        let failed = env
+            .spawn_command("research", &["auth-fix", "Fix", "auth"])
+            .env(key, value)
+            .output()
+            .unwrap();
+        assert_failure_contains("failed spawn", &failed, cause);
+        assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
+        let peek = run_bare(&env.root, &["peek", "auth-fix"]);
+        assert_failure_contains("peek failed spawn", &peek, "unknown worker id 'auth-fix'");
+    }
 
     let log = env.tmux_log();
-    assert!(log.contains("new-window -d -t =niles-test-session:"));
-    assert!(log.contains(": -n niles-auth-fix"));
-    assert!(log.contains("set-option -w -t "));
+    assert!(log.contains("new-window -d -t =niles-test-session: -n niles-auth-fix"));
     assert!(log.contains(" @niles-worker-id auth-fix"));
-    assert!(log.contains("kill-window -t "));
-    assert!(log.contains(":=niles-auth-fix"));
+    assert!(log.contains("kill-window -t =niles-test-session:=niles-auth-fix"));
 
-    let respawn = env
-        .spawn_command("research", &["auth-fix", "Fix", "auth"])
-        .output()
-        .unwrap();
+    let respawn = env.spawn("research", &["auth-fix", "Fix", "auth"]);
     assert_command_success("respawn", &respawn);
-    assert!(state_dir(&env.root).join("worker/auth-fix").is_dir());
-    assert!(
-        state_dir(&env.root)
-            .join("worker/auth-fix/meta.json")
-            .is_file()
-    );
+    assert!(Path::new(meta).is_file());
 }

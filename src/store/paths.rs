@@ -1,4 +1,6 @@
-use anyhow::{Result, bail};
+use std::fs::{self, File};
+
+use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 
@@ -10,9 +12,6 @@ pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
         bail!("workspace path is not absolute: {workspace}");
     }
     let home = crate::util::home_dir()?;
-    if !home.is_absolute() {
-        bail!("HOME must be absolute: {home}");
-    }
     Ok(home
         .join(".niles/state")
         .join(format!(
@@ -28,6 +27,37 @@ pub(crate) fn workers_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
 
 pub(crate) fn archive_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(workers_dir(workspace)?.join(ARCHIVE_DIR))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) enum Scope<'a> {
+    Project(&'a Utf8Path),
+    #[serde(rename = "Project")] // Deregistration excludes shared project reservations.
+    Deregister(&'a Utf8Path),
+    Worker(&'a Utf8Path, &'a str),
+    Tree(&'a Utf8Path),
+    Pane(&'a str),
+}
+
+pub(crate) struct Lock {
+    _file: File,
+}
+impl Scope<'_> {
+    pub(crate) fn reserve(self) -> Result<Lock> {
+        // Never unlink these global lock inodes, including during deregistration.
+        let root = crate::util::home_dir()?.join(".niles/locks");
+        fs::create_dir_all(&root)?;
+        let path = root.join(format!("{:x}", Sha256::digest(serde_json::to_vec(&self)?)));
+        let file = crate::wait::cursor::open_lock_file(&path)?;
+        // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html#method.try_lock
+        match self {
+            Self::Project(_) => file.try_lock_shared(),
+            Self::Pane(_) => file.lock().map_err(std::fs::TryLockError::Error),
+            Self::Deregister(_) | Self::Worker(..) | Self::Tree(_) => file.try_lock(),
+        }
+        .with_context(|| format!("{self:?} is busy; cannot lock {path}"))?;
+        Ok(Lock { _file: file })
+    }
 }
 
 #[cfg(test)]
