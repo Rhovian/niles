@@ -241,11 +241,13 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
     frames.extend(zstd::stream::encode_all(&body.as_bytes()[20..], 0).unwrap());
     let (workspace, needle) = (Utf8Path::new("/w"), Utf8Path::new("/w/report.md"));
     std::fs::write(plain.with_extension("jsonl.tmp"), &body).unwrap();
+    std::fs::write(&plain, "bad\n").unwrap();
     assert!(
         codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
             .is_none()
     );
+    std::fs::remove_file(&plain).unwrap();
     std::fs::write(&compressed, &frames).unwrap();
     for expected in [&compressed, &plain] {
         if expected == &plain {

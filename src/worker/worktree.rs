@@ -43,17 +43,31 @@ fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(home.join(".niles/trees").join(workspace))
 }
 
-fn registered_branch(workspace: &Utf8Path, path: &Utf8Path) -> Result<Option<String>> {
-    for entry in git(workspace, &["worktree", "list", "--porcelain"])?.split("\n\n") {
-        let mut lines = entry.lines();
-        if lines.next() == Some(format!("worktree {path}").as_str()) {
-            let branch = lines.find_map(|line| line.strip_prefix("branch "));
-            return Ok(Some(
+fn registered_worktrees(workspace: &Utf8Path) -> Result<Vec<(Utf8PathBuf, String)>> {
+    // Git's -z porcelain preserves paths verbatim and separates records with two NULs:
+    // https://git-scm.com/docs/git-worktree#_porcelain_format
+    git(workspace, &["worktree", "list", "--porcelain", "-z"])?
+        .split("\0\0")
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let mut fields = entry.split('\0');
+            let path = fields
+                .next()
+                .and_then(|field| field.strip_prefix("worktree "))
+                .context("worktree record has no path")?;
+            let branch = fields.find_map(|field| field.strip_prefix("branch "));
+            Ok((
+                Utf8PathBuf::from(path),
                 branch.map_or(DETACHED_HEAD, |branch| branch).to_owned(),
-            ));
-        }
-    }
-    Ok(None)
+            ))
+        })
+        .collect()
+}
+
+fn registered_branch(workspace: &Utf8Path, path: &Utf8Path) -> Result<Option<String>> {
+    Ok(registered_worktrees(workspace)?
+        .into_iter()
+        .find_map(|(tree, branch)| (tree == path).then_some(branch)))
 }
 
 pub(super) fn create_or_join(
@@ -172,13 +186,7 @@ pub(crate) fn remove_project_worktrees(workspace: &Utf8Path) -> Result<()> {
         return Ok(());
     }
     let root = crate::util::utf8_path(fs::canonicalize(root)?, "managed worktree root")?;
-    // Git's -z porcelain format preserves paths containing newlines or quoting characters:
-    // https://git-scm.com/docs/git-worktree#_porcelain_format
-    for path in git(workspace, &["worktree", "list", "--porcelain", "-z"])?
-        .split('\0')
-        .filter_map(|field| field.strip_prefix("worktree "))
-    {
-        let path = Utf8Path::new(path);
+    for (path, _) in registered_worktrees(workspace)? {
         if path != workspace && path.starts_with(&root) {
             git(workspace, &["worktree", "remove", "--force", path.as_str()])?;
         }

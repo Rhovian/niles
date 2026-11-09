@@ -31,7 +31,7 @@ use codex::read_codex;
 use pi::read_pi;
 pub(crate) use processes::process_activity;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "lowercase")]
 pub(crate) enum SessionLink {
     Claude { session_id: String },

@@ -47,8 +47,10 @@ fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
         .with_context(|| format!("failed to lock {path}"))?;
     let log = wake::status_log_path(dir);
     let bytes = fs::read(&log).with_context(|| format!("failed to read {log}"))?;
-    let last_done = wake::complete_lines(&bytes)
-        .filter(|(_, line)| WakeKind::parse_line(line) == Some(WakeKind::Done))
+    let boundary = wake::complete_lines(&bytes)
+        .filter(|(_, line)| {
+            *line == wake::FOLLOWUP_STARTED || WakeKind::parse_line(line) == Some(WakeKind::Done)
+        })
         .map(|(end, _)| end)
         .last();
     #[expect(
@@ -57,10 +59,10 @@ fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
     )]
     let rounds: Vec<Round> =
         store::read_optional_json(&dir.join("gates.json"))?.unwrap_or_default();
-    // Equal offsets mean stage immediately followed done without another status.
+    // Equal offsets mean stage immediately followed the boundary without another status.
     let count = rounds
         .iter()
-        .filter(|round| last_done.is_none_or(|end| round.log_len >= end))
+        .filter(|round| boundary.is_none_or(|end| round.log_len >= end))
         .count();
     Ok(LockedState {
         _lock: lock,
