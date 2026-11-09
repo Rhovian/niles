@@ -14,6 +14,7 @@ const SEND_LINE_SUBMIT_KEY: &str = "C-m";
 const SEND_WATCH_LINES: usize = 50;
 
 struct Timings {
+    now: fn() -> Instant,
     /// How often the pane is re-captured while watching a send land.
     poll_interval: Duration,
 
@@ -32,6 +33,7 @@ struct Timings {
 }
 
 const REAL_TIMINGS: Timings = Timings {
+    now: Instant::now,
     poll_interval: Duration::from_millis(50),
     quiet_window: Duration::from_millis(500),
     settle_timeout: Duration::from_secs(6),
@@ -101,7 +103,7 @@ fn send_line_to_pane<P: Pane>(pane: &P, line: &str, timings: &Timings) -> Result
 /// worth sending and [`confirm_submit_took`] judges whether it took. If the text never renders,
 /// the pane may not be accepting input and the submit must not be sent blindly.
 fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<String> {
-    let deadline = Instant::now() + timings.settle_timeout;
+    let deadline = (timings.now)() + timings.settle_timeout;
     let mut previous = before.to_owned();
     let mut rendered = false;
     let mut quiet_since = None;
@@ -109,8 +111,8 @@ fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<Str
         thread::sleep(timings.poll_interval);
         let current = pane.capture_watched_lines()?;
         if current == previous {
-            let since = quiet_since.get_or_insert_with(Instant::now);
-            if rendered && since.elapsed() >= timings.quiet_window {
+            let since = quiet_since.get_or_insert_with(timings.now);
+            if rendered && (timings.now)().duration_since(*since) >= timings.quiet_window {
                 return Ok(current);
             }
         } else {
@@ -118,7 +120,7 @@ fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<Str
             quiet_since = None;
             previous = current;
         }
-        if Instant::now() >= deadline {
+        if (timings.now)() >= deadline {
             if !rendered {
                 bail!(
                     "message text never appeared in {pane}: the pane may not be accepting input; \
@@ -139,13 +141,13 @@ fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<Str
 /// [`settle_pane`] gave up, the next redraw counts as a change and the check passes for the
 /// wrong reason.
 fn confirm_submit_took<P: Pane>(pane: &P, staged: &str, timings: &Timings) -> Result<()> {
-    let deadline = Instant::now() + timings.submit_timeout;
+    let deadline = (timings.now)() + timings.submit_timeout;
     loop {
         thread::sleep(timings.poll_interval);
         if pane.capture_watched_lines()? != staged {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        if (timings.now)() >= deadline {
             bail!(
                 "message was typed into {pane} but the submit key did not take: the pane has not \
                  changed in {}s. The text is most likely still sitting unsent in the composer — \
@@ -165,7 +167,12 @@ mod tests {
 
     use super::*;
 
+    thread_local! {
+        static CLOCK: Cell<Instant> = Cell::new(Instant::now());
+    }
+
     const TEST_TIMINGS: Timings = Timings {
+        now: || CLOCK.get(),
         poll_interval: Duration::from_millis(1),
         quiet_window: Duration::from_millis(2),
         settle_timeout: Duration::from_millis(6),
@@ -183,35 +190,26 @@ mod tests {
         phase: Cell<Phase>,
         actions: RefCell<Vec<&'static str>>,
         pasted_text: RefCell<Option<String>>,
-        pasted_frames: RefCell<VecDeque<String>>,
+        pasted_frames: RefCell<VecDeque<&'static str>>,
+        poll_step: Duration,
         cycle_frames: bool,
         submitted_frame: String,
-        rendered_at: Cell<Option<Instant>>,
-        submit_at: Cell<Option<Instant>>,
+        started_at: Instant,
     }
 
     impl ScriptedPane {
-        fn new(pasted_frames: &[&str], cycle_frames: bool, submitted_frame: &str) -> Self {
-            assert!(!pasted_frames.is_empty());
+        fn new(frames: &[&'static str], cycle_frames: bool, submitted_frame: &str) -> Self {
+            assert!(!frames.is_empty());
             Self {
                 phase: Cell::new(Phase::Initial),
                 actions: RefCell::new(Vec::new()),
                 pasted_text: RefCell::new(None),
-                pasted_frames: RefCell::new(
-                    pasted_frames
-                        .iter()
-                        .map(|frame| (*frame).to_owned())
-                        .collect(),
-                ),
+                pasted_frames: RefCell::new(frames.iter().copied().collect()),
+                poll_step: TEST_TIMINGS.poll_interval,
                 cycle_frames,
                 submitted_frame: submitted_frame.to_owned(),
-                rendered_at: Cell::new(None),
-                submit_at: Cell::new(None),
+                started_at: CLOCK.get(),
             }
-        }
-
-        fn actions(&self) -> Vec<&'static str> {
-            self.actions.borrow().clone()
         }
     }
 
@@ -228,23 +226,20 @@ mod tests {
         }
 
         fn capture_watched_lines(&self) -> Result<String> {
+            if self.phase.get() != Phase::Initial {
+                CLOCK.set(CLOCK.get() + self.poll_step);
+            }
             match self.phase.get() {
                 Phase::Initial => Ok("before".to_owned()),
                 Phase::Pasted => {
                     let mut frames = self.pasted_frames.borrow_mut();
-                    let frame = if self.cycle_frames {
-                        let frame = frames.pop_front().expect("constructor requires frames");
-                        frames.push_back(frame.clone());
-                        frame
+                    let frame = *frames.front().expect("constructor requires frames");
+                    if self.cycle_frames {
+                        frames.rotate_left(1);
                     } else if frames.len() > 1 {
-                        frames.pop_front().expect("constructor requires frames")
-                    } else {
-                        frames.front().expect("constructor requires frames").clone()
-                    };
-                    if frame != "before" && self.rendered_at.get().is_none() {
-                        self.rendered_at.set(Some(Instant::now()));
+                        frames.pop_front();
                     }
-                    Ok(frame)
+                    Ok(frame.to_owned())
                 }
                 Phase::Submitted => Ok(self.submitted_frame.clone()),
             }
@@ -259,7 +254,12 @@ mod tests {
 
         fn send_submit_key(&self) -> Result<()> {
             self.actions.borrow_mut().push("submit");
-            self.submit_at.set(Some(Instant::now()));
+            let minimum = if self.cycle_frames || self.poll_step == TEST_TIMINGS.settle_timeout {
+                TEST_TIMINGS.settle_timeout
+            } else {
+                TEST_TIMINGS.poll_interval + TEST_TIMINGS.quiet_window
+            };
+            assert!(CLOCK.get() - self.started_at >= minimum);
             self.phase.set(Phase::Submitted);
             Ok(())
         }
@@ -287,19 +287,19 @@ mod tests {
             ),
             (&["staged", "moving"][..], true, "changed", None, SUBMIT),
         ] {
-            let pane = ScriptedPane::new(frames, cycle, submitted);
+            let mut pane = ScriptedPane::new(frames, cycle, submitted);
+            // The successful static pane models a poll reaching the settle deadline.
+            if !cycle && error.is_none() {
+                pane.poll_step = TEST_TIMINGS.settle_timeout;
+            }
             let brief = "brief\nwith multiple lines";
             let result = send_line_to_pane(&pane, brief, &TEST_TIMINGS);
             match error {
                 Some(needle) => crate::test_support::assert_err_contains(result, needle),
-                None => {
-                    result.unwrap();
-                    let quiet = pane.submit_at.get().unwrap() - pane.rendered_at.get().unwrap();
-                    assert!(quiet >= TEST_TIMINGS.quiet_window);
-                }
+                None => result.unwrap(),
             }
             assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));
-            assert_eq!(pane.actions(), actions);
+            assert_eq!(*pane.actions.borrow(), actions);
         }
     }
 }
