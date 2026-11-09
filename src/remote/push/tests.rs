@@ -116,6 +116,21 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
         info.endpoint = endpoint.into();
         assert!(Subscription::try_from(info).is_err());
     }
+    for (field, value) in [
+        ("id", "a".repeat(3100)),
+        ("name", "a".repeat(3100)),
+        ("name", "\0".repeat(43)),
+    ] {
+        let mut host = serde_json::json!({"id": "desk", "name": "desk"});
+        host[field] = value.into();
+        assert!(
+            serde_json::from_value::<store::Registration>(serde_json::json!({
+                "endpoint": subscription.0.endpoint, "keys": subscription.0.keys, "host": host,
+            }))
+            .is_err(),
+            "oversized host {field}"
+        );
+    }
     let mut info = subscription.0.clone();
     info.keys.auth = "invalid".into();
     assert!(Subscription::try_from(info).is_err());
@@ -276,7 +291,8 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
     assert_ne!(topics[0], topics[1]);
     let loaded = Store::load(second_root).unwrap();
     assert_eq!(
-        loaded.subscriptions().unwrap()[0].host.as_ref().unwrap().id,
+        serde_json::to_value(&loaded.subscriptions().unwrap()[0].host.as_ref().unwrap().id)
+            .unwrap(),
         "laptop"
     );
 }

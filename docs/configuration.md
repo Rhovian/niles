@@ -115,15 +115,11 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 ## State layout
 
 - `~/.niles/state/<workspace key>/@state/`: the manifest, sessions, worker briefs, status
-  logs and reports. Encode the entire absolute workspace path's UTF-8 bytes (including `/`)
-  as lowercase hexadecimal, then split that string into directory components of at most
-  240 characters. For example, `/code/my-app` becomes `2f636f64652f6d792d617070/@state`,
-  while `/code/my/app` becomes `2f636f64652f6d792f617070/@state`. This reversible encoding
-  distinguishes separators, hyphens, case and Unicode bytes even on case-insensitive filesystems.
-  The reserved `@state` leaf keeps prefix keys' state directories disjoint. Individual key
-  components stay below the usual 255-byte name limit; the filesystem's total path limit still
-  applies. Older binaries used slash-to-hyphen keys; move existing state to the new layout
-  by hand before installing this version. Niles does not migrate or read legacy state.
+  logs and reports. The workspace key is the full SHA-256 digest of the absolute workspace
+  path's UTF-8 bytes, formatted as 64 lowercase hexadecimal characters. This bounds the key
+  while distinguishing separators, hyphens, case and Unicode bytes. The `@state` leaf keeps
+  state separate from keys. Existing state is not carried over on upgrade; Niles does not
+  migrate or look up old keys.
 - `~/.niles/projects`: registered projects.
 - `~/.niles/cache/`: checkouts of skills pinned with `niles skills import`, which also writes a
   `SKILL.ref` pointer under `.niles/skills/` or `~/.niles/skills/`.

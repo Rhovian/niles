@@ -50,7 +50,7 @@ fn terminal_normal_and_stale_completions_disarm_and_nudge_once() {
         let project = setup(label, failure, timestamp);
         let mut memory = WatchMemory::at_start(&worker_snapshot(&project).unwrap());
         let mut sink = RecordingSink::default();
-        tick(&project, at(1300), &mut memory, &mut sink, &running());
+        tick(&project, at(1300), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(status(&project, "impl"), status_line, "{label}");
         assert_eq!(sink.sent, [nudge], "{label}");
         assert_eq!(
@@ -58,7 +58,7 @@ fn terminal_normal_and_stale_completions_disarm_and_nudge_once() {
             None,
             "{label}"
         );
-        tick(&project, at(1600), &mut memory, &mut sink, &running());
+        tick(&project, at(1600), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(sink.sent.len(), 1, "{label}");
         assert!(sink.captures.is_empty(), "{label}");
         crate::test_support::remove_workspace(&project).unwrap();
@@ -73,7 +73,7 @@ fn unreadable_activity_nudges_and_rearms_without_a_blocked_line() {
     fs::create_dir(dir.join("pi/session.jsonl")).unwrap();
     let mut memory = WatchMemory::at_start(&worker_snapshot(&project).unwrap());
     let mut sink = RecordingSink::default();
-    tick(&project, at(1300), &mut memory, &mut sink, &running());
+    tick(&project, at(1300), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(status(&project, "impl"), "");
     assert_eq!(sink.sent, ["niles: no report from impl — check workers"]);
     assert!(Checkin::read(&dir).unwrap().unwrap().deadline > at(1300));

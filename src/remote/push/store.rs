@@ -31,8 +31,24 @@ pub(super) struct Device {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Host {
-    pub(super) id: String,
-    pub(super) name: String,
+    pub(super) id: HostLabel,
+    pub(super) name: HostLabel,
+}
+// Bound JSON escaping too: two labels occupy at most 512 bytes of a 3052-byte push payload.
+// web-push 0.11 caps the complete payload, not individual fields:
+// https://docs.rs/web-push/0.11.0/src/web_push/http_ece.rs.html
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub(super) struct HostLabel(String);
+impl TryFrom<String> for HostLabel {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self> {
+        ensure!(
+            serde_json::to_vec(&value)?.len() <= 256,
+            "push host label exceeds 256 JSON bytes"
+        );
+        Ok(Self(value))
+    }
 }
 #[derive(Deserialize)]
 pub(crate) struct Registration {

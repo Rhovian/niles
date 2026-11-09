@@ -1,12 +1,9 @@
-use std::fmt::Write;
-
 use anyhow::{Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
+use sha2::{Digest, Sha256};
 
 pub(crate) const WORKERS_DIR: &str = "worker";
 pub(crate) const ARCHIVE_DIR: &str = "archive";
-// Two hex digits per byte keep each component below the usual 255-byte name limit.
-const KEY_CHUNK_BYTES: usize = 120;
 
 pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     if !workspace.is_absolute() {
@@ -16,19 +13,13 @@ pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     if !home.is_absolute() {
         bail!("HOME must be absolute: {home}");
     }
-    let mut dir = home.join(".niles/state");
-    // Encode bytes rather than path components to preserve case and Unicode distinctions.
-    // Camino exposes UTF-8, but has no filesystem key encoding:
-    // https://docs.rs/camino/1.2.6/camino/struct.Utf8Path.html#method.as_str
-    for chunk in workspace.as_str().as_bytes().chunks(KEY_CHUNK_BYTES) {
-        let mut encoded = String::with_capacity(chunk.len() * 2);
-        for byte in chunk {
-            write!(encoded, "{byte:02x}")?;
-        }
-        dir.push(encoded);
-    }
-    // Outside the hex alphabet, so no longer key can descend into this project's state.
-    Ok(dir.join("@state"))
+    Ok(home
+        .join(".niles/state")
+        .join(format!(
+            "{:x}",
+            Sha256::digest(workspace.as_str().as_bytes())
+        ))
+        .join("@state"))
 }
 
 pub(crate) fn workers_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
@@ -44,25 +35,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_encode_workspace_bytes() {
-        let root = crate::util::home_dir().unwrap().join(".niles/state");
-        for (workspace, key) in [
-            ("/", "2f"),
-            ("/code/my-app", "2f636f64652f6d792d617070"),
-            ("/code/my/app", "2f636f64652f6d792f617070"),
-            ("/é", "2fc3a9"),
-        ] {
-            assert_eq!(
-                project_dir(Utf8Path::new(workspace)).unwrap(),
-                root.join(key).join("@state")
-            );
-        }
-        assert!(project_dir(Utf8Path::new("relative/path")).is_err());
-    }
-
-    #[test]
     fn keys_separate_separators_case_and_reserved_names() {
-        let workspaces = ["/a-b", "/a/b", "/A-b", "/a/@state", "/a", "/a/state"];
+        let workspaces = [
+            "/a-b",
+            "/a/b",
+            "/A-b",
+            "/a/@state",
+            "/a",
+            "/a/state",
+            "/é",
+            "/e",
+        ];
         let dirs: Vec<_> = workspaces
             .iter()
             .map(|path| project_dir(Utf8Path::new(path)).unwrap())
@@ -77,19 +60,20 @@ mod tests {
 
     #[test]
     fn long_keys_use_bounded_components_and_disjoint_state_leaves() {
-        let workspace = format!("/{}", "a".repeat(239));
-        let parent = project_dir(Utf8Path::new(&workspace)).unwrap();
-        let child = project_dir(Utf8Path::new(&format!("{workspace}/é"))).unwrap();
-        assert!(!child.starts_with(&parent));
-        assert!(!parent.starts_with(&child));
         let root = crate::util::home_dir().unwrap().join(".niles/state");
-        for dir in [parent, child] {
-            assert!(dir.starts_with(&root), "key must use the state root");
+        for workspace in [
+            "/".to_owned(),
+            "/é".into(),
+            format!("/{}", "a/".repeat(libc::PATH_MAX as usize / 3)),
+        ] {
+            let dir = project_dir(Utf8Path::new(&workspace)).unwrap();
             let key = dir.strip_prefix(&root).unwrap();
-            assert!(key.iter().all(|component| component.len() <= 240));
+            assert_eq!(key.iter().count(), 2);
+            assert_eq!(key.iter().next().unwrap().len(), 64);
             assert_eq!(key.file_name(), Some("@state"));
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::remove_dir_all(&dir).unwrap();
         }
+        assert!(project_dir(Utf8Path::new("relative/path")).is_err());
     }
 }

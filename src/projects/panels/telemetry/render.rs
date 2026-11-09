@@ -18,7 +18,7 @@ use crate::{
 const SIDE_BY_SIDE: usize = 120;
 const GAP: usize = 4;
 const BAR_WIDTH: u64 = 12;
-const CONTEXT_WARN_PERCENT: u64 = 80;
+const CONTEXT_WARN_PERCENT: u128 = 80;
 const CONTEXT_ROWS: usize = 5;
 const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
@@ -105,15 +105,15 @@ fn pair(left: Block, right: Block, width: usize) -> Vec<String> {
 }
 
 /// `part` of `whole`, scaled to `scale`; nothing of nothing.
-fn share(part: u64, whole: u64, scale: u64) -> u64 {
+pub(super) fn share(part: u64, whole: u64, scale: u64) -> u128 {
     match whole {
         0 => 0,
-        _ => part * scale / whole,
+        _ => u128::from(part) * u128::from(scale) / u128::from(whole),
     }
 }
 
-fn bar(filled: u64) -> String {
-    let filled = filled.min(BAR_WIDTH) as usize;
+fn bar(filled: u128) -> String {
+    let filled = filled.min(u128::from(BAR_WIDTH)) as usize;
     "█".repeat(filled) + &" ".repeat(BAR_WIDTH as usize - filled)
 }
 
@@ -256,7 +256,7 @@ fn context_row(row: &ContextRow<'_>, theme: &Theme) -> Vec<Cell> {
         Cell::left(&session.agent, style(StyleKey::Muted)),
         match row.percent {
             Some(percent) => Cell::left(
-                bar(share(percent, 100, BAR_WIDTH)),
+                bar(share(percent.min(100) as u64, 100, BAR_WIDTH)),
                 theme.style(StyleKey::Bar),
             ),
             None => Cell::left("", Style::new()),

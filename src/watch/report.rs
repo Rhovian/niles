@@ -12,7 +12,11 @@ pub(super) fn report(
     blocker: &Blocker,
 ) -> Result<bool> {
     if let Blocker::Refused(failure) = blocker
-        && failure.at < planned.deadline - TimeDelta::seconds(planned.delay as i64)
+        && failure.at
+            < planned
+                .deadline
+                .checked_sub_signed(TimeDelta::from_std(planned.delay.duration())?)
+                .context("check-in arm time is out of range")?
     {
         return Ok(false);
     }

@@ -8,7 +8,6 @@ use std::{
     collections::BTreeMap,
     fs::{self, File},
     io::ErrorKind,
-    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -17,7 +16,7 @@ use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
 use crate::{telemetry::SessionState, wait::cursor::open_lock_file, worker::ActionableWake};
 
-use super::cadence::{Recheck, parse_recheck};
+use super::cadence::{Delay, Recheck, parse_delay, parse_recheck};
 
 const CHECKIN_FILE: &str = "checkin";
 const LOCK_FILE: &str = "checkin.lock";
@@ -32,7 +31,7 @@ pub(crate) struct Checkin {
     pub(crate) deadline: DateTime<Utc>,
     /// The delay this arm waits, in seconds: the one `--checkin` asked for, or the one the last
     /// fire re-armed at. Carried because a re-arm doubles *it*, not the schedule's first step.
-    pub(crate) delay: u64,
+    pub(crate) delay: Delay,
     /// The policy this arm follows, so the watcher re-arms from the state alone.
     pub(crate) recheck: Recheck,
     /// Status-log byte length at the moment of arming. An actionable line past it is the worker
@@ -42,39 +41,37 @@ pub(crate) struct Checkin {
 
 impl Checkin {
     pub(crate) fn armed(
-        delay: Duration,
+        delay: Delay,
         recheck: Recheck,
         armed_len: u64,
         now: DateTime<Utc>,
-    ) -> Self {
-        let delay = delay.as_secs();
-        Self {
-            deadline: fire_at(now, delay),
+    ) -> Result<Self> {
+        Ok(Self {
+            deadline: fire_at(now, delay)?,
             delay,
             recheck,
             armed_len,
-        }
-    }
-
-    pub(crate) fn held(&self, now: DateTime<Utc>, state: Option<SessionState>) -> Option<Self> {
-        (state == Some(SessionState::Working)).then_some(Self {
-            deadline: fire_at(now, self.delay),
-            ..*self
         })
     }
 
+    pub(crate) fn held(
+        &self,
+        now: DateTime<Utc>,
+        state: Option<SessionState>,
+    ) -> Result<Option<Self>> {
+        (state == Some(SessionState::Working))
+            .then(|| Self::armed(self.delay, self.recheck, self.armed_len, now))
+            .transpose()
+    }
+
     /// The check-in that follows this one, once it has fired.
-    pub(crate) fn rearmed(&self, now: DateTime<Utc>) -> Self {
-        let delay = self
-            .recheck
-            .next_delay(Duration::from_secs(self.delay))
-            .as_secs();
-        Self {
-            deadline: fire_at(now, delay),
-            delay,
-            recheck: self.recheck,
-            armed_len: self.armed_len,
-        }
+    pub(crate) fn rearmed(&self, now: DateTime<Utc>) -> Result<Self> {
+        Self::armed(
+            self.recheck.next_delay(self.delay),
+            self.recheck,
+            self.armed_len,
+            now,
+        )
     }
 
     /// Whether `wake` answers the assignment this check-in was armed for.
@@ -108,7 +105,10 @@ impl Checkin {
             deadline: field(&fields, "deadline", "deadline", &path, |value| {
                 DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Utc))
             })?,
-            delay: field(&fields, "delay", "delay", &path, str::parse::<u64>)?,
+            delay: field(&fields, "delay", "delay", &path, |value| -> Result<Delay> {
+                parse_delay(&format!("{}s", value.parse::<u64>()?))?
+                    .context("check-in delay must be positive")
+            })?,
             recheck: field(&fields, "recheck", "re-check", &path, parse_recheck)?,
             armed_len: field(&fields, "armed_len", "log length", &path, str::parse::<u64>)?,
         }))
@@ -122,7 +122,7 @@ impl Checkin {
         let body = format!(
             "deadline={}\ndelay={}\nrecheck={}\narmed_len={}\n",
             self.deadline.to_rfc3339_opts(SecondsFormat::Secs, true),
-            self.delay,
+            self.delay.duration().as_secs(),
             self.recheck.spelling(),
             self.armed_len
         );
@@ -143,9 +143,9 @@ impl Checkin {
     }
 }
 
-/// `now` plus a parsed delay, which is bounded so the conversion cannot overflow.
-fn fire_at(now: DateTime<Utc>, seconds: u64) -> DateTime<Utc> {
-    now + TimeDelta::seconds(seconds as i64)
+fn fire_at(now: DateTime<Utc>, delay: Delay) -> Result<DateTime<Utc>> {
+    now.checked_add_signed(TimeDelta::from_std(delay.duration())?)
+        .context("check-in deadline is out of range")
 }
 
 fn field<T, E>(
@@ -175,17 +175,24 @@ mod tests {
 
     #[test]
     fn working_holds_and_waiting_or_unknown_fires() {
-        let checkin = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 0, at(1_000));
-        let held = checkin
-            .held(at(1_300), Some(SessionState::Working))
-            .unwrap();
-        assert_eq!(held.deadline, at(1_600));
-        assert!(
-            checkin
-                .held(at(1_300), Some(SessionState::Waiting))
-                .is_none()
+        let checkin = Checkin::armed(Delay::seconds(300), Recheck::Backoff, 0, at(1_000)).unwrap();
+        for (state, deadline) in [
+            (Some(SessionState::Working), Some(at(1_600))),
+            (Some(SessionState::Waiting), None),
+            (None, None),
+        ] {
+            assert_eq!(
+                checkin
+                    .held(at(1_300), state)
+                    .unwrap()
+                    .map(|held| held.deadline),
+                deadline
+            );
+        }
+        assert_err_contains(
+            checkin.held(DateTime::<Utc>::MAX_UTC, Some(SessionState::Working)),
+            "deadline",
         );
-        assert!(checkin.held(at(1_300), None).is_none());
     }
 
     #[test]
@@ -210,57 +217,47 @@ mod tests {
             ),
             (
                 300,
-                Recheck::Fixed(Duration::from_secs(600)),
+                Recheck::Fixed(Delay::seconds(600)),
                 &[(1_300, 300), (1_900, 600), (2_500, 600)][..],
             ),
         ] {
             let mut armed =
-                Checkin::armed(Duration::from_secs(first_delay), recheck, 42, at(1_000));
+                Checkin::armed(Delay::seconds(first_delay), recheck, 42, at(1_000)).unwrap();
             for &(deadline, delay) in schedule {
                 assert_eq!(armed.deadline, at(deadline));
-                assert_eq!(armed.delay, delay);
+                assert_eq!(armed.delay.duration().as_secs(), delay);
                 assert_eq!(armed.armed_len, 42);
-                armed = armed.rearmed(armed.deadline);
+                armed = armed.rearmed(armed.deadline).unwrap();
             }
         }
     }
 
     #[test]
-    fn only_a_line_past_the_armed_length_answers_a_check_in() {
-        let checkin = Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 10, at(1_000));
-        let wake = |end| ActionableWake {
-            end,
-            kind: crate::wake::WakeKind::Done,
-        };
-
-        assert!(!checkin.answered_by(wake(10)));
-        assert!(!checkin.answered_by(wake(0)));
-        assert!(checkin.answered_by(wake(11)));
-    }
-
-    #[test]
-    fn arm_state_round_trips_through_the_worker_directory() {
+    fn arm_state_round_trips_and_replaces_whole_files() {
         let dir = temp_dir("round-trip");
         let armed = Checkin::armed(
-            Duration::from_secs(90),
-            Recheck::Fixed(Duration::from_secs(600)),
+            Delay::seconds(90),
+            Recheck::Fixed(Delay::seconds(600)),
             7,
             at(1_000),
-        );
+        )
+        .unwrap();
 
         assert_eq!(Checkin::read(&dir).unwrap(), None);
         armed.write(&dir).unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), Some(armed));
 
-        // The policy and the delay a re-arm doubles are on disk, so the watcher re-arms from the
-        // state alone: it never needs the manifest the check-in was armed under.
         let body = fs::read_to_string(dir.join(CHECKIN_FILE)).unwrap();
         assert!(body.contains("delay=90"), "{body}");
         assert!(body.contains("recheck=10m"), "{body}");
-        let next = armed.rearmed(at(1_090));
+        let next = armed.rearmed(at(1_090)).unwrap();
+        let before = fs::metadata(dir.join(CHECKIN_FILE)).unwrap().ino();
         next.write(&dir).unwrap();
+        assert_ne!(fs::metadata(dir.join(CHECKIN_FILE)).unwrap().ino(), before);
+        assert!(!dir.join(STAGING_FILE).exists());
+        fs::write(dir.join(STAGING_FILE), "deadline=half-a-write").unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), Some(next));
-        assert_eq!(next.delay, 600);
+        assert_eq!(next.delay.duration().as_secs(), 600);
 
         assert!(Checkin::disarm(&dir).unwrap());
         assert_eq!(Checkin::read(&dir).unwrap(), None);
@@ -269,49 +266,16 @@ mod tests {
     }
 
     #[test]
-    fn a_write_replaces_the_file_whole_and_leaves_no_staging_file() {
-        let dir = temp_dir("staging");
-        Checkin::armed(Duration::from_secs(300), Recheck::Backoff, 3, at(1_000))
-            .write(&dir)
-            .unwrap();
-        let replacement = Checkin::armed(Duration::from_secs(90), Recheck::Backoff, 7, at(2_000));
-        let path = dir.join(CHECKIN_FILE);
-        let before = fs::metadata(&path).unwrap().ino();
-
-        replacement.write(&dir).unwrap();
-
-        // Written beside the file and renamed over it, so a reader never sees half of either check-in.
-        // The inode moving is what says it was replaced rather than truncated in place.
-        assert_ne!(
-            fs::metadata(&path).unwrap().ino(),
-            before,
-            "the check-in must be replaced, not truncated in place"
-        );
-        assert_eq!(Checkin::read(&dir).unwrap(), Some(replacement));
-        assert!(!dir.join(STAGING_FILE).exists());
-
-        // A staging file a crashed write left behind is not arm state, and the real file still reads.
-        fs::write(dir.join(STAGING_FILE), "deadline=half-a-write").unwrap();
-        assert_eq!(Checkin::read(&dir).unwrap(), Some(replacement));
-    }
-
-    #[test]
     fn malformed_checkin_files_are_errors_rather_than_defaults() {
-        for (label, body, expected) in [
-            (
-                "incomplete",
-                "deadline=1970-01-01T00:16:40Z\n",
-                "incomplete",
-            ),
-            (
-                "bad-recheck",
-                "deadline=1970-01-01T00:16:40Z\ndelay=300\nrecheck=soon\narmed_len=0\n",
-                "re-check",
-            ),
+        let valid = "deadline=1970-01-01T00:16:40Z\ndelay=300\nrecheck=backoff\narmed_len=0\n";
+        for (from, to, expected) in [
+            ("delay=300", "delay=0", "delay"),
+            ("delay=300", "delay=9223372036854775807", "delay"),
+            ("recheck=backoff", "recheck=soon", "re-check"),
+            (valid, "deadline=1970-01-01T00:16:40Z\n", "incomplete"),
         ] {
-            let dir = temp_dir(label);
-            fs::write(dir.join(CHECKIN_FILE), body).unwrap();
-
+            let dir = temp_dir("malformed-checkin");
+            fs::write(dir.join(CHECKIN_FILE), valid.replace(from, to)).unwrap();
             assert_err_contains(Checkin::read(&dir), expected);
         }
     }

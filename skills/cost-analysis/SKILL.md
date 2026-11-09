@@ -39,8 +39,9 @@ cannot be interpreted confidently, report it as unsupported rather than inventin
 
 Current layout:
 
-- State roots are under `~/.niles/state/`, ending at `@state`. Workspace UTF-8 bytes are
-  hex encoded in chunks of at most 120 bytes; long paths have multiple key components.
+- State roots are under `~/.niles/state/<workspace key>/@state/`. The key is the full SHA-256
+  digest of the absolute workspace path’s UTF-8 bytes, in lowercase hex. It cannot be decoded;
+  read the workspace path from metadata or project registration.
 - Closed workers: `@state/worker/archive/<id>-<archive-time>/meta.json`.
   Unclosed workers: `@state/worker/<id>/meta.json`.
 - Leads: `@state/sessions/<session-id>/session.json`; `latest` is a pointer, not a session.

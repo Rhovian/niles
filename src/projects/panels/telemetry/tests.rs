@@ -315,28 +315,32 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
         .map(|(_, event)| event.id.as_str())
         .collect::<Vec<_>>();
     assert_eq!(events, ["e9", "e8", "e7", "e6", "e5", "e4", "e3", "e2"]);
-    projects[0].sessions[1]
-        .live
-        .as_mut()
-        .unwrap()
-        .context_window = Some(0);
-    let zero_window = dashboard(&projects, window);
-    assert_eq!(
-        zero_window
-            .context
-            .iter()
-            .find(|row| row.session.id == "impl")
-            .unwrap()
-            .percent,
-        None
-    );
+    for (prompt, capacity, expected) in [
+        (u64::MAX, u64::MAX, Some(100)),
+        (u64::MAX, 1, Some(u128::from(u64::MAX) * 100)),
+        (1, 0, None),
+    ] {
+        let live = projects[0].sessions[1].live.as_mut().unwrap();
+        live.prompt_tokens = Some(prompt);
+        live.context_window = Some(capacity);
+        let board = dashboard(&projects, window);
+        assert_eq!(
+            board
+                .context
+                .iter()
+                .find(|row| row.session.id == "impl")
+                .unwrap()
+                .percent,
+            expected
+        );
+    }
 }
 
 #[test]
 fn render_lays_out_pairs_by_width_and_warns_on_full_context() {
     let theme = Theme::parse(None).unwrap();
     let projects = projects();
-    let board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap());
+    let mut board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap());
     let narrow = render::dashboard(&board, &theme, 80);
     let wide = render::dashboard(&board, &theme, 120);
     let together = |text: &str, left: &str, right: &str| {
@@ -363,4 +367,6 @@ fn render_lays_out_pairs_by_width_and_warns_on_full_context() {
         );
         assert!(!text.contains("herm "));
     }
+    board.projects = vec![("large", u64::MAX)];
+    assert!(render::dashboard(&board, &theme, 80).contains("100%"));
 }

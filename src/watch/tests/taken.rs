@@ -17,11 +17,11 @@ fn a_line_a_wait_delivered_is_not_reported() {
     .unwrap();
 
     let mut sink = RecordingSink::default();
-    tick(&root, at(1_000), &mut memory, &mut sink, &running());
+    tick(&root, at(1_000), &mut memory, &mut sink, &running()).unwrap();
     assert!(sink.attempts.is_empty(), "{sink:?}");
 
     append_log(&root, "impl", BLOCKED);
-    tick(&root, at(1_001), &mut memory, &mut sink, &running());
+    tick(&root, at(1_001), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.sent, vec![REPORTED]);
     crate::test_support::remove_workspace(&root).unwrap();
 }

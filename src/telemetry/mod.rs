@@ -187,7 +187,8 @@ pub(crate) mod fixtures {
     }
 
     pub(crate) fn codex() -> Usage {
-        codex::codex_usage(&parse_lines(CODEX).unwrap()).unwrap()
+        let lines = parse_lines(CODEX).unwrap();
+        codex::codex_usage(&lines).unwrap().unwrap()
     }
 
     pub(crate) fn pi() -> Usage {
@@ -287,30 +288,33 @@ mod tests {
         let user = r##"{"type":"response_item","timestamp":"2026-10-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"text":"# Niles worker brief\nreport_file: /w/report.md"}]}}"##;
         let injected = user.replace("# Niles worker brief", "# AGENTS.md instructions");
         let other = user.replace("report.md", "other.md");
-        let count = |n| {
+        let workspace = Utf8Path::new("/w");
+        let needle = Utf8Path::new("/w/report.md");
+        let count = |n, write| {
             format!(
-                r#"{{"type":"event_msg","timestamp":"2026-10-01T00:00:00Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{n},"output_tokens":2,"cached_input_tokens":3,"reasoning_output_tokens":4}}}}}}}}"#
+                r#"{{"type":"event_msg","timestamp":"2026-10-01T00:00:00Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{n},"output_tokens":2,"cached_input_tokens":3,"cache_write_input_tokens":{write},"reasoning_output_tokens":4}}}}}}}}"#
             )
         };
         let lines = parse_lines::<CodexLine>(&format!(
             "{meta}\n{injected}\n{user}\n{}\n{}\n",
-            count(4),
-            count(9)
+            count(4, 0),
+            count(9, 0)
         ))
         .unwrap();
-        assert!(codex_matches(
-            &lines,
-            Utf8Path::new("/w"),
-            Utf8Path::new("/w/report.md")
-        ));
-        assert_eq!(codex_usage(&lines).unwrap().input_tokens, 6);
+        assert!(codex_matches(&lines, workspace, needle));
+        assert_eq!(codex_usage(&lines).unwrap().unwrap().input_tokens, 6);
+        for body in [
+            count(2, 0),
+            format!("{}\n{}", count(9, 0), count(4, 0)),
+            count(u64::MAX, 0),
+            count(u64::MAX, 1),
+        ] {
+            let parsed = parse_lines::<CodexLine>(&format!("{body}\n")).unwrap();
+            assert!(codex_usage(&parsed).is_err(), "{body}");
+        }
         let lines =
             parse_lines::<CodexLine>(&format!("{meta}\n{injected}\n{other}\n{user}\n")).unwrap();
-        assert!(!codex_matches(
-            &lines,
-            Utf8Path::new("/w"),
-            Utf8Path::new("/w/report.md")
-        ));
+        assert!(!codex_matches(&lines, workspace, needle));
     }
 
     #[test]

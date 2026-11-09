@@ -18,7 +18,7 @@ mod taken;
 
 use super::{
     Sink, WatchMemory, apply, arm_checkin,
-    cadence::{Cadence, Recheck},
+    cadence::{Cadence, Delay, Recheck},
     checkin::Checkin,
     quiet, read_checkins, tick,
     trust::claude_prompt,
@@ -29,12 +29,7 @@ fn running() -> AtomicBool {
 }
 
 fn armed_checkin(delay_secs: u64, armed_len: u64, now: DateTime<Utc>) -> Checkin {
-    Checkin::armed(
-        Duration::from_secs(delay_secs),
-        Recheck::Backoff,
-        armed_len,
-        now,
-    )
+    Checkin::armed(Delay::seconds(delay_secs), Recheck::Backoff, armed_len, now).unwrap()
 }
 
 #[derive(Debug, Default)]
@@ -160,7 +155,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
         capture_failure: true,
         ..RecordingSink::default()
     };
-    tick(&root, now, &mut memory, &mut sink, &running());
+    tick(&root, now, &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.captures.len(), 2);
     assert_eq!(sink.notes.len(), 2);
     assert_eq!(status(&root, "armed"), "");
@@ -169,7 +164,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
         screen: claude_prompt(&root),
         ..RecordingSink::default()
     };
-    tick(&root, now, &mut memory, &mut sink, &running());
+    tick(&root, now, &mut memory, &mut sink, &running()).unwrap();
     let blocked = |id| {
         format!(
             "blocked: workspace trust confirmation needs operator action in worker pane \
@@ -193,7 +188,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
     assert_eq!(Checkin::read(&armed_dir).unwrap(), Some(preserved));
 
     sink = RecordingSink::default();
-    tick(&root, at(1_001), &mut memory, &mut sink, &running());
+    tick(&root, at(1_001), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.sent.len(), 1);
     assert_eq!(
         sink.sent[0],
@@ -203,19 +198,19 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
 
     let mut restarted = WatchMemory::at_start(&worker_snapshot(&root).unwrap());
     sink = RecordingSink::default();
-    tick(&root, at(1_002), &mut restarted, &mut sink, &running());
+    tick(&root, at(1_002), &mut restarted, &mut sink, &running()).unwrap();
     assert!(sink.captures.is_empty());
     assert!(sink.sent.is_empty());
     assert_eq!(status(&root, "armed").lines().count(), 1);
 
     sink = RecordingSink::default();
-    tick(&root, at(1_090), &mut memory, &mut sink, &running());
+    tick(&root, at(1_090), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.sent, ["niles: no report from armed — check workers"]);
     assert!(Checkin::read(&armed_dir).unwrap().is_some());
 
     append_log(&root, "armed", DONE);
     sink = RecordingSink::default();
-    tick(&root, at(1_091), &mut memory, &mut sink, &running());
+    tick(&root, at(1_091), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.sent, [reported("armed", "done")]);
     assert_eq!(Checkin::read(&armed_dir).unwrap(), None);
 
@@ -255,14 +250,15 @@ fn failed_or_stopping_ticks_leave_reports_for_the_next_tick() {
             &mut memory,
             &mut sink,
             &AtomicBool::new(stop),
-        );
+        )
+        .unwrap();
         assert_eq!(sink.attempts.len(), usize::from(!stop));
         assert!(sink.sent.is_empty(), "{sink:?}");
         sink.fail = false;
-        tick(&root, at(1_001), &mut memory, &mut sink, &running());
+        tick(&root, at(1_001), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(sink.sent, [reported("impl", "done")]);
         let attempts = sink.attempts.len();
-        tick(&root, at(1_002), &mut memory, &mut sink, &running());
+        tick(&root, at(1_002), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(sink.attempts.len(), attempts, "{sink:?}");
         crate::test_support::remove_workspace(&root).unwrap();
     }
@@ -289,7 +285,7 @@ fn ticks_persist_checkins_only_after_successful_delivery() {
             false,
             Some(Checkin {
                 deadline: at(1_900),
-                delay: 600,
+                delay: Delay::seconds(600),
                 ..armed
             }),
             "niles: no report from impl — check workers".into(),
@@ -330,12 +326,12 @@ fn ticks_persist_checkins_only_after_successful_delivery() {
             fail,
             ..RecordingSink::default()
         };
-        tick(&root, at(now), &mut memory, &mut sink, &running());
+        tick(&root, at(now), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(Checkin::read(&dir).unwrap(), expected, "{label}: {sink:?}");
         assert_eq!(dir.join("checkin").exists(), expected.is_some(), "{label}");
         assert_eq!(sink.sent, if fail { vec![] } else { vec![sent] }, "{label}");
         if matches!(label, "rearm" | "gone-report") {
-            tick(&root, at(1_301), &mut memory, &mut sink, &running());
+            tick(&root, at(1_301), &mut memory, &mut sink, &running()).unwrap();
             assert_eq!(sink.attempts.len(), 1, "{label}: {sink:?}");
         }
         crate::test_support::remove_workspace(&root).unwrap();
@@ -352,7 +348,7 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     let armed = arm_checkin(
         &dir,
         Cadence {
-            delay: Some(Duration::from_secs(90)),
+            delay: Some(Delay::seconds(90)),
             recheck: Recheck::Backoff,
         },
         baseline,
@@ -428,7 +424,7 @@ fn a_checkin_rearmed_during_delivery_is_left_alone() {
         let snapshot = worker_snapshot(&root).unwrap();
         let mut sink = RecordingSink::default();
         let checkins = read_checkins(&snapshot, &mut sink);
-        let plan = memory.plan(&snapshot, &checkins, at(plan_at));
+        let plan = memory.plan(&snapshot, &checkins, at(plan_at)).unwrap();
         if report.is_empty() {
             assert_eq!(plan.nudges.len(), 1, "the check-in is due");
         } else {
