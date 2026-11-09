@@ -93,6 +93,12 @@ fn assert_entry_setup(entry: &str) {
         "Use when testing setups.",
         "SETUP GUIDE BODY",
     );
+    write_skill(
+        &env.home.join(".niles"),
+        entry,
+        "Use when testing setups.",
+        "{manifest}",
+    );
     let override_file = env.root.join("override.yaml");
     fs::write(&override_file, manifest("claude:haiku")).unwrap();
     write_executable(
@@ -140,9 +146,8 @@ fn assert_entry_setup(entry: &str) {
         .join("session.json");
     assert_eq!(read_json(&session)["setup"], worker["setup"]);
     assert_eq!(read_json(&session)["entry_skill"], entry);
-    assert!(
-        fs::read_to_string(session.parent().unwrap().join("lead.md"))
-            .unwrap()
-            .contains(&format!("manifest: {}", setups.global.display()))
+    assert_eq!(
+        fs::read_to_string(session.parent().unwrap().join("lead.md")).unwrap(),
+        setups.global.to_str().unwrap()
     );
 }

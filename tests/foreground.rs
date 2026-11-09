@@ -7,12 +7,12 @@ use std::fs;
 
 #[test]
 fn entry_delivers_entry_agent_and_session_header_to_builtin_cli() {
-    for (entry, model, agent_line) in [
-        ("reviewer", "sonnet", ""),
-        ("lead", "haiku", "lead_agent: claude:haiku"),
-        ("solo", "sonnet", "agent: claude:sonnet:high"),
+    for (entry, model) in [
+        ("reviewer", "sonnet"),
+        ("lead", "haiku"),
+        ("solo", "sonnet"),
     ] {
-        assert_entry(entry, model, agent_line);
+        assert_entry(entry, model);
     }
 }
 
@@ -50,7 +50,7 @@ fn entry_agent_is_chosen_apart_from_standard_primary_and_overridable_within_tier
     );
 }
 
-fn assert_entry(entry: &str, model: &str, agent_line: &str) {
+fn assert_entry(entry: &str, model: &str) {
     let env = start_fixture("niles-foreground-header", |body| {
         let mut body = body.replace("entry: lead", &format!("entry: {entry}"));
         let agent = format!(
@@ -66,15 +66,17 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
         body
     });
     let manifest = state_dir(&env.root).join("manifest.yaml");
-    let skill = env.root.join(format!(".niles/skills/{entry}/SKILL.md"));
-    if entry == "reviewer" {
-        write_skill_document(
-            &skill,
-            entry,
-            "Use when reviewing.",
-            "entry {workspace} {unknown}",
-        );
-    }
+    let skill = if entry == "reviewer" {
+        env.root.join(format!(".niles/skills/{entry}/SKILL.md"))
+    } else {
+        env.home.join(format!(".niles/skills/{entry}/SKILL.md"))
+    };
+    write_skill_document(
+        &skill,
+        entry,
+        "Use when testing entry delivery.",
+        "{workspace}\n{manifest}\n{dir}\n{agent}\n{startup_context}\n{unknown}",
+    );
     let args_log = env.root.join("args");
     let output = env
         .niles(&env.root, &["start", "--keep-skills"])
@@ -119,26 +121,17 @@ fn assert_entry(entry: &str, model: &str, agent_line: &str) {
     assert_eq!(meta["entry_skill"], entry, "{entry}");
     assert!(meta.get("setup").is_none(), "{entry}");
     let primary = fs::read_to_string(dir.join("lead.md")).expect(entry);
-    if entry == "reviewer" {
-        assert_eq!(
-            primary,
-            format!("entry {} {{unknown}}", env.root.display()),
-            "{entry}"
-        );
-    } else {
-        for rendered in [
-            format!("workspace: {}", env.root.display()),
-            format!("manifest: {}", manifest.display()),
-            format!("session_dir: {}", dir.display()),
-            agent_line.to_owned(),
-            "worker: none".to_owned(),
-        ] {
-            assert!(
-                primary.lines().any(|line| line == rendered),
-                "{entry}: missing {rendered:?} in {primary}"
-            );
-        }
-    }
+    assert_eq!(
+        primary,
+        format!(
+            "{}\n{}\n{}\nclaude:{model}{}\nworker: none\n{{unknown}}",
+            env.root.display(),
+            manifest.display(),
+            dir.display(),
+            if model == "haiku" { "" } else { ":high" }
+        ),
+        "{entry}"
+    );
     assert!(
         args.windows(2)
             .any(|pair| pair == ["--append-system-prompt", primary.as_str()]),
