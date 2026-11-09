@@ -36,7 +36,7 @@ pub(super) struct ContextRow<'a> {
     pub(super) project: &'a str,
     pub(super) session: &'a Session,
     pub(super) prompt_tokens: u64,
-    pub(super) percent: Option<u64>,
+    pub(super) percent: Option<u128>,
 }
 
 pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
@@ -65,7 +65,8 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
                     prompt_tokens,
                     percent: live
                         .context_window
-                        .and_then(|window| (prompt_tokens * 100).checked_div(window)),
+                        .filter(|window| *window != 0)
+                        .map(|window| super::render::share(prompt_tokens, window, 100)),
                 });
             }
             if tokens == 0 && session.live.is_none() {

@@ -252,8 +252,8 @@ pub(crate) fn arm_checkin(
         Checkin::disarm(worker_dir)?;
         return Ok(None);
     };
-    Checkin::armed(delay, cadence.recheck, armed_len, now).write(worker_dir)?;
-    Ok(Some(delay))
+    Checkin::armed(delay, cadence.recheck, armed_len, now)?.write(worker_dir)?;
+    Ok(Some(delay.duration()))
 }
 
 /// `niles quiet <id>`: the lead disarming a check-in by hand, for a worker that is idle on purpose.
@@ -281,7 +281,9 @@ fn watch(workspace: Utf8PathBuf, mut sink: WatchSink, stop: Arc<AtomicBool>) {
     ));
 
     while !stop.load(Ordering::Relaxed) {
-        tick(&workspace, Utc::now(), &mut memory, &mut sink, &stop);
+        if let Err(error) = tick(&workspace, Utc::now(), &mut memory, &mut sink, &stop) {
+            sink.note(&format!("watcher tick failed: {error:#}"));
+        }
         sleep_until_next_tick(&stop);
     }
     sink.note("watcher stopped: the foreground agent exited");
@@ -304,16 +306,8 @@ fn tick(
     memory: &mut WatchMemory,
     sink: &mut dyn Sink,
     stop: &AtomicBool,
-) {
-    let mut snapshot = match worker_snapshot(workspace) {
-        Ok(snapshot) => snapshot,
-        Err(err) => {
-            sink.note(&format!(
-                "failed to read the workspace ({err:#}); retrying next tick"
-            ));
-            return;
-        }
-    };
+) -> Result<()> {
+    let mut snapshot = worker_snapshot(workspace).context("failed to read the workspace")?;
     for worker in &snapshot {
         if let Some(error) = &worker.read_error {
             sink.note(&format!(
@@ -324,13 +318,14 @@ fn tick(
     }
     trust::inspect_starting_workers(&snapshot, now, sink);
     let mut checkins = read_checkins(&snapshot, sink);
-    due::check_due(&mut snapshot, &mut checkins, now, memory, sink);
-    let mut plan = memory.plan(&snapshot, &checkins, now);
+    due::check_due(&mut snapshot, &mut checkins, now, memory, sink)?;
+    let mut plan = memory.plan(&snapshot, &checkins, now)?;
     let has_draft = !plan.nudges.is_empty() && sink.has_draft();
     if memory.hold_nudge(has_draft, now) {
         plan.nudges.clear();
     }
     apply(&plan, memory, sink, stop);
+    Ok(())
 }
 
 /// Delivers all pending items in one nudge.

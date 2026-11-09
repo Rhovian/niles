@@ -424,17 +424,13 @@ fn fixture_home(workspace: &Path) -> PathBuf {
 }
 
 pub fn state_dir_at(home: &Path, workspace: &Path) -> PathBuf {
-    let hex: String = workspace
-        .to_str()
-        .unwrap()
-        .bytes()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let mut dir = home.join(".niles/state");
-    for chunk in hex.as_bytes().chunks(240) {
-        dir.push(std::str::from_utf8(chunk).unwrap());
-    }
-    dir.join("@state")
+    use sha2::{Digest, Sha256};
+    home.join(".niles/state")
+        .join(format!(
+            "{:x}",
+            Sha256::digest(workspace.to_str().unwrap().as_bytes())
+        ))
+        .join("@state")
 }
 
 pub fn setup_manifest_body() -> &'static str {

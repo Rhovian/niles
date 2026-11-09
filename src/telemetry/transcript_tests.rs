@@ -258,7 +258,8 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
             .unwrap()
             .unwrap();
         assert_eq!(&path, expected);
-        assert_eq!(codex::codex_usage(&parsed).unwrap().output_tokens, 2);
+        let usage = codex::codex_usage(&parsed).unwrap().unwrap();
+        assert_eq!(usage.output_tokens, 2);
         assert!(matches!(
             codex::codex_activity(&parsed).unwrap().state,
             super::super::TurnState::Ended

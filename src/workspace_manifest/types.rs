@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::skills::SkillName;
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{AgentSpec, ModelRoster, roster::Tier};
@@ -160,7 +160,9 @@ impl<T> RawGates<T> {
                 None => DEFAULT_TIMEOUT,
             };
             ensure!(!timeout.is_zero(), "gate timeout must be greater than zero");
-            total += timeout;
+            total = total
+                .checked_add(timeout)
+                .context("gate timeout sum exceeds 10 minutes")?;
             ensure!(total <= MAX_TIMEOUT, "gate timeout sum exceeds 10 minutes");
             post.push(RunGate {
                 name,
@@ -360,6 +362,11 @@ mod tests {
         let gates: GateConfig =
             crate::store::parse_yaml("post: [{run: [true]}, {run: [false]}]").unwrap();
         assert_eq!(gates.0.post[0].timeout, Duration::from_secs(300));
+        let overflow = serde_json::json!({"post": [{"run": ["true"]}, {"run": ["false"], "timeout": {"secs": u64::MAX, "nanos": 0}}]});
+        assert_err_contains(
+            serde_json::from_value::<Gates>(overflow).map_err(Into::into),
+            "gate timeout sum exceeds 10 minutes",
+        );
         for body in [
             "post: [{run: []}]",
             "post: [{run: [true], timeout: 601s}]",

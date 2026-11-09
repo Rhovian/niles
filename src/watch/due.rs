@@ -9,7 +9,7 @@ pub(super) fn check_due(
     now: DateTime<Utc>,
     memory: &mut WatchMemory,
     sink: &mut dyn Sink,
-) {
+) -> anyhow::Result<()> {
     for worker in snapshot {
         let Some(checkin) = checkins.get(&worker.id).copied() else {
             continue;
@@ -52,7 +52,7 @@ pub(super) fn check_due(
         memory
             .activity
             .insert(worker.id.clone(), (checkin.deadline, state));
-        if let Some(held) = checkin.held(now, state) {
+        if let Some(held) = checkin.held(now, state)? {
             with_planned_checkin(
                 &worker.id,
                 &worker.worker_dir,
@@ -70,6 +70,7 @@ pub(super) fn check_due(
             checkins.insert(worker.id.clone(), held);
         }
     }
+    Ok(())
 }
 
 pub(super) fn read_checkins(

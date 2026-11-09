@@ -243,7 +243,7 @@ pub fn spawn(
         created_at,
         starting_until: Some(crate::telemetry::initial_deadline(
             created_at,
-            cadence.delay,
+            cadence.delay.map(|delay| delay.duration()),
         )),
         project: project.clone(),
         tree,

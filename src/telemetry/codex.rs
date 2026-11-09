@@ -1,6 +1,6 @@
 use super::{Buckets, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Duration, Local, LocalResult, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
@@ -11,14 +11,15 @@ pub(super) fn read_codex(
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<super::SessionRecord>> {
-    Ok(
-        read_codex_source(home, workspace, needle, created_at)?.map(|(_, lines)| {
-            super::SessionRecord {
+    read_codex_source(home, workspace, needle, created_at)?
+        .map(|(path, lines)| {
+            Ok(super::SessionRecord {
                 turn: codex_activity(&lines),
-                usage: codex_usage(&lines),
-            }
-        }),
-    )
+                usage: codex_usage(&lines)
+                    .with_context(|| format!("invalid Codex transcript {path}"))?,
+            })
+        })
+        .transpose()
 }
 
 pub(super) fn read_codex_source(
@@ -141,12 +142,30 @@ struct CodexCounters {
 
 impl CodexCounters {
     /// Codex's input count already includes its cached part.
-    fn prompt(&self) -> u64 {
-        self.input_tokens + self.cache_write_input_tokens.into_iter().sum::<u64>()
-    }
-
-    fn total(&self) -> u64 {
-        self.prompt() + self.output_tokens
+    fn checked(&self) -> Result<Usage> {
+        let input_tokens = self
+            .input_tokens
+            .checked_sub(self.cached_input_tokens)
+            .context("Codex cached input exceeds input tokens")?;
+        let prompt = self
+            .input_tokens
+            .checked_add(self.cache_write_input_tokens.into_iter().sum())
+            .context("Codex prompt token count overflows")?;
+        prompt
+            .checked_add(self.output_tokens)
+            .context("Codex total token count overflows")?;
+        Ok(Usage {
+            input_tokens,
+            output_tokens: self.output_tokens,
+            cache_read_tokens: self.cached_input_tokens,
+            cache_write_tokens: self.cache_write_input_tokens,
+            reasoning_tokens: Some(self.reasoning_output_tokens),
+            last_turn_at: None,
+            estimated_cost_usd: None,
+            buckets: Buckets::default(),
+            prompt_tokens: Some(prompt),
+            context_window: None,
+        })
     }
 }
 
@@ -175,7 +194,7 @@ pub(super) fn codex_matches(lines: &[CodexLine], workspace: &Utf8Path, needle: &
     false
 }
 
-pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
+pub(super) fn codex_usage(lines: &[CodexLine]) -> Result<Option<Usage>> {
     let (mut last, mut prompt, mut window, mut spent) = (None, None, None, 0);
     let mut buckets = Buckets::default();
     for line in lines {
@@ -192,30 +211,31 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Option<Usage> {
         prompt = info
             .last_token_usage
             .as_ref()
-            .map(CodexCounters::prompt)
+            .map(CodexCounters::checked)
+            .transpose()?
+            .and_then(|usage| usage.prompt_tokens)
             .or(prompt);
         let Some(counts) = info.total_token_usage.as_ref() else {
             continue;
         };
-        debug_assert!(counts.cached_input_tokens <= counts.input_tokens);
-        debug_assert!(spent <= counts.total(), "Codex totals only grow");
-        buckets.add(*timestamp, counts.total() - spent);
-        spent = counts.total();
-        last = Some((counts, *timestamp));
+        let mut usage = counts
+            .checked()
+            .with_context(|| format!("invalid Codex token record at {timestamp}"))?;
+        let total = usage.total_tokens();
+        let delta = total
+            .checked_sub(spent)
+            .context("Codex token totals decreased")?;
+        buckets.add(*timestamp, delta);
+        spent = total;
+        usage.last_turn_at = Some(*timestamp);
+        last = Some(usage);
     }
-    let (counts, timestamp) = last?;
-    Some(Usage {
-        input_tokens: counts.input_tokens - counts.cached_input_tokens,
-        output_tokens: counts.output_tokens,
-        cache_read_tokens: counts.cached_input_tokens,
-        cache_write_tokens: counts.cache_write_input_tokens,
-        reasoning_tokens: Some(counts.reasoning_output_tokens),
-        last_turn_at: Some(timestamp),
-        estimated_cost_usd: None,
+    Ok(last.map(|usage| Usage {
         buckets,
         prompt_tokens: prompt,
         context_window: window,
-    })
+        ..usage
+    }))
 }
 
 #[derive(Deserialize)]
@@ -268,7 +288,7 @@ mod refusal_tests {
             panic!("terminal error must end the turn");
         };
         assert_eq!(failure.message, "Provider stopped");
-        assert!(codex_usage(&lines).is_none());
+        assert!(codex_usage(&lines).unwrap().is_none());
     }
 
     #[test]

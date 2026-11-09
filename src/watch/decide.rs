@@ -77,7 +77,7 @@ impl WatchMemory {
         snapshot: &[WorkerSnapshot],
         checkins: &BTreeMap<String, Checkin>,
         now: DateTime<Utc>,
-    ) -> Plan {
+    ) -> anyhow::Result<Plan> {
         let mut plan = Plan::default();
         let mut live = BTreeSet::new();
 
@@ -118,7 +118,8 @@ impl WatchMemory {
                             state,
                             planned: *checkin,
                             next: (state != Some(SessionState::Waiting))
-                                .then(|| checkin.rearmed(now)),
+                                .then(|| checkin.rearmed(now))
+                                .transpose()?,
                         });
                     }
                     _ => {}
@@ -141,7 +142,7 @@ impl WatchMemory {
         // directory that was archived or removed.
         self.seen.retain(|id, _| live.contains(id));
         self.activity.retain(|id, _| live.contains(id));
-        plan
+        Ok(plan)
     }
 
     /// Records a nudge that landed.
@@ -154,8 +155,9 @@ impl WatchMemory {
 
 #[cfg(test)]
 mod tests {
+    use crate::watch::cadence::Delay;
 
-    use std::{path::PathBuf, time::Duration};
+    use std::path::PathBuf;
 
     use super::super::cadence::Recheck;
     use super::*;
@@ -182,11 +184,12 @@ mod tests {
         BTreeMap::from([(
             "impl".to_owned(),
             Checkin::armed(
-                Duration::from_secs(delay_secs),
+                Delay::seconds(delay_secs),
                 Recheck::Backoff,
                 worker("impl", log).log_len,
                 now,
-            ),
+            )
+            .unwrap(),
         )])
     }
 
@@ -203,11 +206,13 @@ mod tests {
         let now = at(1_000);
         let checkins = armed_over(WINDOW, 300, now);
         let mut memory = fresh();
-        let plan = memory.plan(
-            &[worker("impl", &format!("{WINDOW}stage: ready\n"))],
-            &checkins,
-            at(1060),
-        );
+        let plan = memory
+            .plan(
+                &[worker("impl", &format!("{WINDOW}stage: ready\n"))],
+                &checkins,
+                at(1060),
+            )
+            .unwrap();
         assert!(plan.nudges.is_empty());
         assert!(plan.disarms.is_empty());
     }
@@ -219,7 +224,7 @@ mod tests {
         let mut memory = fresh();
         let dispatched = || worker("impl", &format!("{WINDOW}{DONE}"));
 
-        let plan = memory.plan(&[dispatched()], &checkins, at(1060));
+        let plan = memory.plan(&[dispatched()], &checkins, at(1060)).unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
         // The worker answered the assignment, so the check-in goes with it.
         assert_eq!(plan.disarms.len(), 1);
@@ -227,7 +232,9 @@ mod tests {
 
         // Nothing has changed since: the same state is not nudged again.
         memory.commit(&plan.nudges[0]);
-        let quiet = memory.plan(&[dispatched()], &BTreeMap::new(), at(1061));
+        let quiet = memory
+            .plan(&[dispatched()], &BTreeMap::new(), at(1061))
+            .unwrap();
         assert!(quiet.nudges.is_empty(), "{quiet:?}");
     }
 
@@ -237,13 +244,17 @@ mod tests {
         let first = format!("{WINDOW}{DONE}");
         let second = format!("{first}done: shipped again\n");
 
-        let plan = memory.plan(&[worker("impl", &first)], &BTreeMap::new(), at(1030));
+        let plan = memory
+            .plan(&[worker("impl", &first)], &BTreeMap::new(), at(1030))
+            .unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
         memory.commit(&plan.nudges[0]);
 
         // `send` appends nothing to the log; the second report is later text of the same shape,
         // and the length is what tells it apart from a replay.
-        let plan = memory.plan(&[worker("impl", &second)], &BTreeMap::new(), at(1060));
+        let plan = memory
+            .plan(&[worker("impl", &second)], &BTreeMap::new(), at(1060))
+            .unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
     }
 
@@ -263,7 +274,9 @@ mod tests {
             ),
         ] {
             let mut memory = WatchMemory::at_start(&[worker("impl", &start_log)]);
-            let plan = memory.plan(&[worker("impl", &next_log)], &BTreeMap::new(), at(1_000));
+            let plan = memory
+                .plan(&[worker("impl", &next_log)], &BTreeMap::new(), at(1_000))
+                .unwrap();
             assert_eq!(reports(&plan), expected, "{start_log:?} -> {next_log:?}");
             if expected.is_empty() {
                 assert!(plan.nudges.is_empty(), "{plan:?}");
@@ -279,14 +292,14 @@ mod tests {
         let busy = || worker("impl", WINDOW);
 
         // Not due yet.
-        let early = memory.plan(&[busy()], &armed, at(1299));
+        let early = memory.plan(&[busy()], &armed, at(1299)).unwrap();
         assert!(early.nudges.is_empty(), "{early:?}");
 
         memory.activity.insert(
             "impl".to_owned(),
             (armed["impl"].deadline, Some(SessionState::Waiting)),
         );
-        let idle = memory.plan(&[busy()], &armed, at(1300));
+        let idle = memory.plan(&[busy()], &armed, at(1300)).unwrap();
         assert_eq!(
             idle.nudges[0].text(),
             "niles: impl stopped without a report — check workers"
@@ -298,7 +311,7 @@ mod tests {
         // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
         // nudge every three minutes at a worker nobody has heard from.
         for offset in [300, 900, 2_100] {
-            let plan = memory.plan(&[busy()], &armed, at(1_000 + offset));
+            let plan = memory.plan(&[busy()], &armed, at(1_000 + offset)).unwrap();
             assert_eq!(
                 plan.nudges
                     .iter()
@@ -330,9 +343,9 @@ mod tests {
         let mut memory = fresh();
         let busy = || worker("impl", WINDOW);
 
-        let first = memory.plan(&[busy()], &checkins, at(1300));
+        let first = memory.plan(&[busy()], &checkins, at(1300)).unwrap();
         // No commit: the send failed, so nothing moved.
-        let retry = memory.plan(&[busy()], &checkins, at(1301));
+        let retry = memory.plan(&[busy()], &checkins, at(1301)).unwrap();
 
         assert_eq!(first.nudges.len(), 1);
         assert_eq!(
@@ -351,29 +364,28 @@ mod tests {
         let checkins = armed_over(WINDOW, 300, now);
         let mut memory = fresh();
 
-        // A `done:` that was already in the log when the lead armed the check-in is history: it
-        // answers an earlier assignment, not this one.
-        let stale = worker("impl", &format!("{WINDOW}{DONE}"));
-        let mut stale_checkins = checkins.clone();
-        stale_checkins.insert(
-            "impl".to_owned(),
-            Checkin::armed(
-                Duration::from_secs(300),
-                Recheck::Backoff,
-                stale.log_len + 10,
-                now,
-            ),
-        );
-        let plan = memory.plan(&[stale], &stale_checkins, at(1300));
-        assert!(plan.disarms.is_empty(), "{plan:?}");
-        memory.commit(&plan.nudges[0]);
+        for extra in [0, 10] {
+            let mut stale = armed_over(&format!("{WINDOW}{DONE}"), 300, now);
+            stale.get_mut("impl").unwrap().armed_len += extra;
+            let plan = memory
+                .plan(
+                    &[worker("impl", &format!("{WINDOW}{DONE}"))],
+                    &stale,
+                    at(1300),
+                )
+                .unwrap();
+            assert!(plan.disarms.is_empty(), "{plan:?}");
+            memory.commit(&plan.nudges[0]);
+        }
 
         // A report that lands after arming does answer it.
-        let plan = memory.plan(
-            &[worker("impl", &format!("{WINDOW}{DONE}done: answered\n"))],
-            &checkins,
-            at(1300),
-        );
+        let plan = memory
+            .plan(
+                &[worker("impl", &format!("{WINDOW}{DONE}done: answered\n"))],
+                &checkins,
+                at(1300),
+            )
+            .unwrap();
         assert_eq!(plan.disarms.len(), 1, "{plan:?}");
     }
 
@@ -384,7 +396,9 @@ mod tests {
             let mut memory = fresh();
             let deadline = checkins["impl"].deadline;
             memory.activity.insert("impl".into(), (deadline, state));
-            let plan = memory.plan(&[worker("impl", WINDOW)], &checkins, at(1300));
+            let plan = memory
+                .plan(&[worker("impl", WINDOW)], &checkins, at(1300))
+                .unwrap();
             assert_eq!(
                 plan.nudges[0].text(),
                 "niles: no report from impl — check workers"
@@ -403,12 +417,12 @@ mod tests {
         let report = worker("impl", &format!("{WINDOW}{DONE}"));
 
         // Gone for a tick: nothing to say about it.
-        let gone = memory.plan(&[], &BTreeMap::new(), now);
+        let gone = memory.plan(&[], &BTreeMap::new(), now).unwrap();
         assert!(gone.nudges.is_empty(), "{gone:?}");
 
         // A worker id that appears again is a new incarnation — it was closed and respawned — so
         // its log is read from the start rather than against the dead worker's length.
-        let plan = memory.plan(&[report], &BTreeMap::new(), at(1001));
+        let plan = memory.plan(&[report], &BTreeMap::new(), at(1001)).unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
     }
 }

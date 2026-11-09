@@ -40,7 +40,7 @@ What Niles launches:
 | Repository code execution | `.niles/setups/<name>.yaml`, when you select it | Runs its `worktree.setup` and `gates.post` only from a setup you name with `--setup`; prints gate argv at spawn. | Selecting a repository setup runs its commands as you. See [Named setups](#named-setups). |
 | Workspace skills | `.niles/skills/<name>/SKILL.md` | Lists installed skills by scanning workspace/global skill directories, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
 | Imported skills | The pinned GitHub repository | Pins a full commit SHA, fetches only from github.com with hooks off and symlinks as plain files, caps content at 8 MiB, and never runs imported scripts. | Agents may still choose to run those scripts. |
-| Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses reversible byte-encoded workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
+| Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses fixed-length SHA-256 workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
 | Status lines and pane text | Worker status lines and captured pane text | Declares the orchestration contract independently of skills; `niles agent status` rejects invalid kinds and details before appending, and checks reports and staging for `done`. A follow-up dispatch resets the stage requirement and round budget. Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | Same-user writers can bypass submission checks by editing the log directly; malformed lines are still skipped by wait. `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
 | Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
@@ -53,11 +53,11 @@ only exact agents in the manifest's `tiers` list may be selected by `spawn --age
 `--tier` selects only a listed tier. A skill needs no composition binding to use those agents;
 composition bindings grant no additional model access.
 
-Workspace keys encode the full absolute path's UTF-8 bytes as lowercase hex, split into
-directory components of at most 240 characters. `@state` is outside that alphabet, so prefix
-keys cannot contain each other's state. See [state layout](configuration.md#state-layout).
-Legacy slash-to-hyphen state must be migrated by hand before installing the new binary;
-there is no legacy lookup that could share another workspace's state.
+Workspace keys are the full SHA-256 digest of the absolute path's UTF-8 bytes, in lowercase
+hexadecimal. Their fixed length bounds state paths regardless of workspace path length, and
+preserves distinctions between separators, hyphens, case and Unicode. Keys cannot be decoded
+back to paths; project registration supplies the path. See [state layout](configuration.md#state-layout).
+Existing state is not carried over on upgrade; Niles does not migrate or look up old keys.
 
 ### Project deregistration
 
@@ -190,7 +190,8 @@ host/session topic and browser tag, replacing queued and displayed notifications
 Push services see delivery metadata, and a locked phone can show the project and reason.
 Subscriptions are accepted only for Google, Mozilla and Apple push endpoints, so registration
 can't turn the server into an HTTP client inside your network. Keys and subscriptions are
-stored with mode 0600.
+stored with mode 0600. Push host IDs and names are bounded at registration, including JSON
+escaping, to keep host metadata within the push payload budget.
 
 ## Non-goals
 

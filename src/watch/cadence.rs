@@ -14,16 +14,29 @@ const BACKOFF_CAP: Duration = Duration::from_secs(60 * 60);
 /// Longest accepted `--checkin`. A check-in further out than a day is always a typo.
 const MAX_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// A positive check-in delay of at most 24 hours, in whole seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Delay(Duration);
+impl Delay {
+    pub(crate) fn duration(self) -> Duration {
+        self.0
+    }
+    #[cfg(test)]
+    pub(crate) fn seconds(seconds: u64) -> Self {
+        parse_delay(&format!("{seconds}s")).unwrap().unwrap()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Recheck {
     Backoff,
-    Fixed(Duration),
+    Fixed(Delay),
 }
 
 impl Recheck {
-    pub(super) fn next_delay(self, fired: Duration) -> Duration {
+    pub(super) fn next_delay(self, fired: Delay) -> Delay {
         match self {
-            Self::Backoff => fired.saturating_mul(2).min(BACKOFF_CAP).max(fired),
+            Self::Backoff => Delay(fired.0.saturating_mul(2).min(BACKOFF_CAP).max(fired.0)),
             Self::Fixed(delay) => delay,
         }
     }
@@ -31,14 +44,14 @@ impl Recheck {
     pub(crate) fn spelling(self) -> String {
         match self {
             Self::Backoff => "backoff".to_owned(),
-            Self::Fixed(delay) => describe_delay(delay),
+            Self::Fixed(delay) => describe_delay(delay.0),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Cadence {
-    pub(crate) delay: Option<Duration>,
+    pub(crate) delay: Option<Delay>,
     pub(crate) recheck: Recheck,
 }
 
@@ -53,7 +66,7 @@ pub(crate) fn resolve_cadence(
             Some(value) => parse_delay(value).with_context(|| {
                 format!("invalid `checkin` in workspace manifest {manifest_path}")
             })?,
-            None => Some(DEFAULT_DELAY),
+            None => Some(Delay(DEFAULT_DELAY)),
         },
     };
     let recheck = match manifest.and_then(|manifest| manifest.recheck.as_deref()) {
@@ -90,7 +103,7 @@ pub(crate) fn describe_delay(delay: Duration) -> String {
     }
 }
 
-pub(crate) fn parse_delay(value: &str) -> Result<Option<Duration>> {
+pub(crate) fn parse_delay(value: &str) -> Result<Option<Delay>> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("off") {
         return Ok(None);
@@ -106,7 +119,7 @@ pub(crate) fn parse_delay(value: &str) -> Result<Option<Duration>> {
     if delay > MAX_DELAY {
         bail!("check-in delay `{value}` is longer than 24h");
     }
-    Ok(Some(delay))
+    Ok(Some(Delay(Duration::from_secs(delay.as_secs()))))
 }
 
 #[cfg(test)]
@@ -149,7 +162,7 @@ mod tests {
             match expected {
                 Ok(seconds) => assert_eq!(
                     parse_delay(input).unwrap(),
-                    seconds.map(Duration::from_secs),
+                    seconds.map(|seconds| Delay(Duration::from_secs(seconds))),
                     "{input}"
                 ),
                 Err(needle) => crate::test_support::assert_err_contains(parse_delay(input), needle),
@@ -159,7 +172,7 @@ mod tests {
             assert_eq!(describe_delay(Duration::from_secs(seconds)), printed);
             assert_eq!(
                 parse_delay(printed).unwrap(),
-                Some(Duration::from_secs(seconds))
+                Some(Delay(Duration::from_secs(seconds)))
             );
         }
     }
@@ -170,22 +183,22 @@ mod tests {
         assert_eq!(
             cadence(None, Some(&configured)).unwrap(),
             Cadence {
-                delay: Some(Duration::from_secs(900)),
-                recheck: Recheck::Fixed(Duration::from_secs(1800)),
+                delay: Some(Delay(Duration::from_secs(900))),
+                recheck: Recheck::Fixed(Delay(Duration::from_secs(1800))),
             }
         );
         assert_eq!(
             cadence(Some("90s"), Some(&configured)).unwrap(),
             Cadence {
-                delay: Some(Duration::from_secs(90)),
-                recheck: Recheck::Fixed(Duration::from_secs(1800)),
+                delay: Some(Delay(Duration::from_secs(90))),
+                recheck: Recheck::Fixed(Delay(Duration::from_secs(1800))),
             }
         );
         for manifest in [None, Some(manifest(None, None))] {
             assert_eq!(
                 cadence(None, manifest.as_ref()).unwrap(),
                 Cadence {
-                    delay: Some(DEFAULT_DELAY),
+                    delay: Some(Delay(DEFAULT_DELAY)),
                     recheck: Recheck::Backoff,
                 }
             );
