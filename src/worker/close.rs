@@ -3,7 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 
 use crate::{
-    store,
+    store::{self, Scope},
     tmux::{self, TargetState, WindowTarget},
     util::append_line,
     wake::{self, WakeKind},
@@ -174,8 +174,16 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
 }
 
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
+    let project = crate::util::current_dir_utf8()?;
+    let _project_lock = Scope::Project(&project).reserve()?;
+    let _worker_lock = Scope::Worker(&project, id).reserve()?;
     let worker_dir = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
     let meta = read_meta_if_exists(&worker_dir)?.with_context(|| no_live_worker_message(id))?;
+    let tree = meta
+        .tree
+        .as_deref()
+        .map(|tree| Scope::Tree(tree).reserve().map(|lock| (tree, lock)))
+        .transpose()?;
     let status_path = wake::status_log_path(&worker_dir);
     append_closed_sentinel(&status_path, id)?;
 
@@ -215,15 +223,10 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     let window = window.kill();
 
     let finished_at = Utc::now();
-    let archive_dir = archive_worker_dir(
-        &crate::util::current_dir_utf8()?,
-        id,
-        &worker_dir,
-        finished_at,
-    )?;
+    let archive_dir = archive_worker_dir(&project, id, &worker_dir, finished_at)?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
-    let tree = if let Some(tree) = meta.tree.as_deref() {
-        worktree::retire(&meta.project, tree)
+    let tree = if let Some((tree, lock)) = tree {
+        worktree::retire(&meta.project, tree, lock)
             .with_context(|| format!("worker {id} closed but the tree was not retired"))?
     } else {
         None

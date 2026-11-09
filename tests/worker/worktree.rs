@@ -18,7 +18,7 @@ struct Repo {
 
 impl Repo {
     fn new(prefix: &str) -> Self {
-        let env = TestEnv::new(prefix);
+        let mut env = TestEnv::new(prefix);
         let bare = env.root.join("remote.git");
         let workspace = env.root.join("workspace");
         git(
@@ -39,6 +39,9 @@ impl Repo {
             .join(".niles/trees")
             .join(workspace.strip_prefix("/").unwrap())
             .join("fix/x");
+        let alias = env.root.join("home-alias");
+        std::os::unix::fs::symlink(&env.home, &alias).unwrap();
+        env.home = alias;
         Self {
             env,
             workspace,
@@ -126,10 +129,26 @@ fn create_join_and_retire_managed_tree() {
             .status
             .success()
     );
+    let races = repo.env.root.join("races");
+    let hook = r#"TMUX_NEW_WINDOW_HOOK= "$NILES_TEST_BIN" close first > "$RACES" 2>&1;
+TMUX_NEW_WINDOW_HOOK= "$NILES_TEST_BIN" spawn --skill worker second Fix >> "$RACES" 2>&1"#;
+    let joined = repo
+        .spawn_command("second", &["--tree", repo.tree.to_str().unwrap(), "Fix"])
+        .env("NILES_TEST_BIN", env!("CARGO_BIN_EXE_niles"))
+        .env("RACES", &races)
+        .env("TMUX_NEW_WINDOW_HOOK", hook)
+        .output()
+        .unwrap();
+    assert_command_success("join during close and replace", &joined);
+    let races = fs::read_to_string(races).unwrap();
+    assert!(
+        races.contains("Tree(") && races.contains("second") && races.matches("busy").count() == 2,
+        "{races}"
+    );
+    assert!(repo.tree.exists());
     let workers = repo.run(&["workers"]);
     assert_command_success("workers", &workers);
     assert!(stdout_of(&workers).contains(&repo.tree.to_str().unwrap().replace('\n', "\\n")));
-    repo.spawn("second", false);
     let first = repo.run(&["close", "first"]);
     assert_command_success("close first", &first);
     assert!(stdout_of(&first).contains("tree: kept: in use by second"));
@@ -213,12 +232,10 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
         fs::read_to_string(repo.tree.join("worker-literal")).unwrap(),
         "$(touch injected); spaces"
     );
+    let agent_dir = fs::read_to_string(repo.tree.join("worker-agent-dir")).unwrap();
     assert_eq!(
-        fs::read_to_string(repo.tree.join("worker-agent-dir")).unwrap(),
-        state_dir(&repo.workspace)
-            .join("worker/second")
-            .to_str()
-            .unwrap()
+        fs::canonicalize(agent_dir).unwrap(),
+        state_dir(&repo.workspace).join("worker/second")
     );
     assert!(!repo.tree.join("injected").exists());
 }
@@ -337,7 +354,7 @@ fn worktree_setup_blocks_concurrent_join_and_reuse_after_interruption() {
     assert_eq!(fs::read_to_string(&ready).unwrap(), "ready\n");
     let join = repo.worktree_spawn("joiner", false).output().unwrap();
     assert!(!join.status.success());
-    assert!(stderr_of(&join).contains("creation is busy"));
+    assert!(stderr_of(&join).contains("is busy"));
     assert!(!repo.env.tmux_log().contains("new-window"));
     creator.kill().unwrap();
     fs::write(&release, "continue\n").unwrap();

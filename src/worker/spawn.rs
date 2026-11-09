@@ -10,7 +10,7 @@ use crate::{
     config::spec::load_project_config_from,
     session,
     skills::{self, SkillName},
-    store,
+    store::{self, Scope},
     tmux::{self, WindowTarget},
     util::{
         append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
@@ -89,6 +89,8 @@ pub fn spawn(
         validate_task_label(label)?;
     }
     let project = current_dir_utf8()?;
+    let _project_lock = Scope::Project(&project).reserve()?;
+    let _worker_lock = Scope::Worker(&project, &id).reserve()?;
     let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
     let manifest_path = workspace_manifest::manifest_path(&project, selection)?;
@@ -137,12 +139,14 @@ pub fn spawn(
     // leave no half-built worker directory behind.
     let session = tmux::current_session()?;
 
+    let mut _tree_lock = None;
     let tree = match tree {
         None => None,
         Some(SpawnTree::Path(path)) => {
             let canonical = path
                 .canonicalize_utf8()
                 .with_context(|| format!("failed to resolve tree {path}"))?;
+            _tree_lock = Some(Scope::Tree(&canonical).reserve()?);
             if !canonical.is_dir() {
                 bail!("tree is not a directory: {canonical}");
             }
@@ -150,7 +154,9 @@ pub fn spawn(
         }
         Some(SpawnTree::Worktree { branch, base }) => {
             let config = manifest.worktree.as_ref();
-            let path = worktree::create_or_join(&project, &branch, base.as_deref(), config)?;
+            let (path, lock) =
+                worktree::create_or_join(&project, &branch, base.as_deref(), config)?;
+            _tree_lock = Some(lock);
             if let Some(config) = config {
                 invocation.env.extend(
                     config

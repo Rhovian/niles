@@ -1,3 +1,4 @@
+use crate::store::{Lock, Scope};
 use std::{
     fs,
     os::unix::fs::OpenOptionsExt,
@@ -39,7 +40,7 @@ fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     let workspace = workspace
         .strip_prefix("/")
         .context("workspace path is not absolute")?;
-    let home = crate::util::home_dir()?;
+    let home = crate::util::home_dir()?.canonicalize_utf8()?;
     Ok(home.join(".niles/trees").join(workspace))
 }
 
@@ -75,20 +76,17 @@ pub(super) fn create_or_join(
     branch: &str,
     base: Option<&str>,
     config: Option<&WorktreeConfig>,
-) -> Result<Utf8PathBuf> {
+) -> Result<(Utf8PathBuf, Lock)> {
     git(workspace, &["check-ref-format", "--branch", branch])?;
     let state = store::paths::project_dir(workspace)?
         .join("worktrees")
         .join(branch);
     fs::create_dir_all(&state).with_context(|| format!("create worktree state {state}"))?;
+    let path = root(workspace)?.join(branch);
+    let lock = Scope::Tree(&path).reserve()?;
     // Git forbids branch components starting with '.', so these files cannot collide with branches.
-    let lock_path = state.join(".lock");
-    let lock = crate::wait::cursor::open_lock_file(&lock_path)?;
-    lock.try_lock()
-        .with_context(|| format!("worktree {branch} creation is busy; cannot lock {lock_path}"))?;
     let pending = state.join(".pending");
-    // Rust 1.89 File::try_lock provides exclusion, but releases on death, not completion:
-    // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html#method.try_lock
+    // A released lock cannot distinguish successful setup from a dead creator.
     if pending
         .try_exists()
         .with_context(|| format!("inspect {pending}"))?
@@ -97,14 +95,13 @@ pub(super) fn create_or_join(
             "worktree {branch} creation/setup is incomplete; stop any setup process, remove the incomplete worktree, then remove {pending} before recreating it"
         );
     }
-    let path = root(workspace)?.join(branch);
     let wanted = format!("refs/heads/{branch}");
     match registered_branch(workspace, &path)? {
         Some(found) if found == wanted => {
             if base.is_some() {
                 bail!("tree for {branch} exists at {path}; omit --base to join it");
             }
-            Ok(path)
+            Ok((path, lock))
         }
         Some(found) => bail!("tree at {path} is on {found}, not {wanted}"),
         None => {
@@ -134,7 +131,7 @@ pub(super) fn create_or_join(
             }
             fs::remove_file(&pending)
                 .with_context(|| format!("complete worktree creation: remove {pending}"))?;
-            Ok(path)
+            Ok((path, lock))
         }
     }
 }
@@ -154,7 +151,7 @@ fn setup(path: &Utf8Path, command: &str, config: &WorktreeConfig) -> Result<()> 
     Ok(())
 }
 
-pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path) -> Result<Option<String>> {
+pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path, _lock: Lock) -> Result<Option<String>> {
     if !tree.starts_with(root(workspace)?) || registered_branch(workspace, tree)?.is_none() {
         return Ok(None);
     }

@@ -30,7 +30,7 @@ case "$1" in
     if [ "$3" = '#{client_width} #{client_height}' ]; then printf '160 45\n'; exit 0; fi
     if [ "$3" = "-t" ]; then printf '%s\n' "${TMUX_PROJECT_TAG:-}"; else printf 'niles-test-session\n'; fi
     exit 0 ;;
-  display) printf '%s\n' "${TMUX_PROJECT_TAG:-}"; exit 0 ;;
+  display) if [ "$2" = -pt ]; then printf '/tmp/test-socket:%%1\n'; [ "${SEND_STARTED:-}" != 1 ] || echo started > "$STARTED"; exit 0; fi; printf '%s\n' "${TMUX_PROJECT_TAG:-}"; exit 0 ;;
   has-session)
     if [ "${TMUX_SESSION_EXISTS:-}" = 1 ]; then exit 0; fi
     printf "can't find session\n" >&2; exit 1 ;;
@@ -55,6 +55,7 @@ case "$1" in
     exit 0
     ;;
   new-window)
+    [ -z "${TMUX_NEW_WINDOW_HOOK:-}" ] || sh -c "$TMUX_NEW_WINDOW_HOOK"
     if [ "${TMUX_FAIL_NEW_WINDOW:-}" = 1 ]; then
       printf 'create window failed: index 1 in use\n' >&2
       exit 1
@@ -72,6 +73,7 @@ case "$1" in
     exit 0
     ;;
   send-keys)
+    [ -z "${TMUX_SEND_HOOK:-}" ] || sh -c "$TMUX_SEND_HOOK"
     if [ -n "${TMUX_PANE_FILE:-}" ]; then
       if [ "$4" = "-l" ]; then
         printf 'composer: %s\n' "$5" >> "$TMUX_PANE_FILE"
@@ -470,4 +472,14 @@ case "$*" in
 esac
 "#,
     );
+}
+
+pub fn reserve_project(home: &Path, workspace: &Path) -> fs::File {
+    use sha2::{Digest, Sha256};
+    let root = home.join(".niles/locks");
+    fs::create_dir_all(&root).unwrap();
+    let key = serde_json::to_vec(&serde_json::json!({"Project": workspace})).unwrap();
+    let file = fs::File::create(root.join(format!("{:x}", Sha256::digest(key)))).unwrap();
+    file.lock().unwrap();
+    file
 }

@@ -1,6 +1,4 @@
-use std::{fs, process};
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use camino::Utf8Path;
 
 use super::{Buckets, Usage};
@@ -23,12 +21,6 @@ pub(crate) fn closed_buckets(
         Some(usage) => usage.buckets,
         None => Buckets::default(),
     };
-    // race accepted: concurrent renders compute the same buckets and the last identical rename
-    // wins. The staging name is per writer, so one writer never truncates a file another is about
-    // to rename.
-    let staging = dir.join(format!("{CACHE_FILE}.{}.tmp", process::id()));
-    let body = serde_json::to_string(&buckets).context("failed to serialize usage buckets")?;
-    fs::write(&staging, body).with_context(|| format!("failed to write {staging}"))?;
-    fs::rename(&staging, &path).with_context(|| format!("failed to replace {path}"))?;
+    store::write_json(&path, &buckets)?;
     Ok(buckets)
 }

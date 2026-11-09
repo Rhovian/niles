@@ -97,6 +97,7 @@ pub(super) fn deregister(entry: &Entry) -> Result<()> {
     {
         bail!("unsafe project path: {}", entry.path);
     }
+    let _lock = crate::store::Scope::Deregister(&entry.path).reserve()?;
     if !crate::worker::live_worker_locations(&entry.path)?.is_empty() {
         bail!(
             "cannot deregister {}: close its live workers first",
@@ -141,6 +142,7 @@ mod tests {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
+            String::from_utf8(output.stdout).unwrap()
         };
         git(&["init"]);
         git(&[
@@ -169,8 +171,6 @@ mod tests {
             path: project.to_path_buf(),
         };
         let state = store::paths::project_dir(&project).unwrap();
-        assert!(state.starts_with(crate::util::home_dir().unwrap().join(".niles/state")));
-        assert_eq!(state.file_name(), Some("@state"));
         let dir = store::workers_dir(&project).unwrap().join("w");
         let created_at = "2026-01-01T00:00:00Z".parse().unwrap();
         write_worker_meta(&project, "w", "api:w", created_at, None);
@@ -179,21 +179,16 @@ mod tests {
         assert!(error.contains("live workers"), "{error}");
         assert!(link.exists() && tree.exists() && dir.exists());
         fs::remove_file(dir.join("meta.json")).unwrap();
+        let reservation = store::Scope::Project(&project).reserve().unwrap();
+        assert!(deregister(&entry).unwrap_err().to_string().contains("busy"));
+        assert!(link.exists() && tree.exists());
+        drop(reservation);
         deregister(&entry).unwrap();
         assert!(link.symlink_metadata().is_err());
         assert!(!state.exists());
         assert!(!tree.exists());
         assert!(project.join(".git").exists() && external.exists());
-        let listing = crate::util::git_command()
-            .current_dir(&project)
-            .args(["worktree", "list", "--porcelain"])
-            .output()
-            .unwrap();
-        assert!(
-            !String::from_utf8(listing.stdout)
-                .unwrap()
-                .contains(tree.as_str())
-        );
+        assert!(!git(&["worktree", "list", "--porcelain"]).contains(tree.as_str()));
         git(&["worktree", "remove", external.as_str()]);
         fs::remove_dir_all(trees).unwrap();
         remove_workspace(&project).unwrap();

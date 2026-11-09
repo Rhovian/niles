@@ -41,6 +41,8 @@ struct RecordingSink {
     fail: bool,
     capture_failure: bool,
     screen: String,
+    replace_status: Option<Utf8PathBuf>,
+    quiet_during_capture: Option<Utf8PathBuf>,
     typed: bool,
     activity: Option<SessionState>,
 }
@@ -76,6 +78,15 @@ impl Sink for RecordingSink {
         self.captures.push(target.as_str().to_owned());
         if self.capture_failure {
             bail!("stub worker pane vanished");
+        }
+        if let Some(dir) = &self.quiet_during_capture {
+            let lock = crate::wait::cursor::open_lock_file(&dir.join("checkin.lock"))?;
+            lock.try_lock()?;
+            Checkin::disarm(dir)?;
+        }
+        if let Some(path) = &self.replace_status {
+            fs::remove_file(path)?;
+            fs::write(path, "")?;
         }
         Ok(self.screen.clone())
     }
@@ -214,6 +225,21 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
     assert_eq!(sink.sent, [reported("armed", "done")]);
     assert_eq!(Checkin::read(&armed_dir).unwrap(), None);
 
+    write_starting_worker(&root, "impl", "", now);
+    let dir = worker_dir(&root, "impl");
+    armed.write(&dir).unwrap();
+    let path = dir.join("status.log");
+    sink = RecordingSink {
+        quiet_during_capture: Some(dir.clone()),
+        replace_status: Some(path.clone()),
+        screen: claude_prompt(&root),
+        ..RecordingSink::default()
+    };
+    super::trust::inspect_starting_workers(&worker_snapshot(&root).unwrap(), now, &mut sink);
+    assert!(sink.notes.is_empty(), "{:?}", sink.notes);
+    assert!(sink.sent.is_empty());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "");
+    assert_eq!(Checkin::read(&dir).unwrap(), None);
     crate::test_support::remove_workspace(&root).unwrap();
 }
 

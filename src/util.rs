@@ -38,6 +38,7 @@ pub(crate) fn home_dir() -> Result<Utf8PathBuf> {
     let home = crate::test_support::home_dir().to_owned();
     #[cfg(not(test))]
     let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
+    anyhow::ensure!(home.is_absolute(), "HOME must be absolute: {home}");
     Ok(home)
 }
 

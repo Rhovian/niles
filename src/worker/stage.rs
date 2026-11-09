@@ -1,7 +1,4 @@
-use std::{
-    fs::{self, File},
-    os::unix::fs::OpenOptionsExt,
-};
+use std::fs::{self, File};
 
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -158,17 +155,7 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
         (false, false) => "fail",
     };
     state.rounds.push(round);
-    // Atomic replacement keeps an interrupted stage from truncating previous rounds.
-    let temporary = dir.join("gates.tmp");
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&temporary)
-        .with_context(|| format!("failed to open {temporary}"))?;
-    serde_json::to_writer(file, &state.rounds)?;
-    fs::rename(&temporary, dir.join("gates.json")).context("failed to replace gates.json")?;
+    store::write_json(&dir.join("gates.json"), &state.rounds)?;
     append_line(
         &wake::status_log_path(dir),
         &wake::line(
