@@ -38,7 +38,7 @@ A big project with an unclear way forward gets research and grilling first: you 
 
 ## Building and review
 
-For implementation, choose a suitable installed skill with `niles skills`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`. Give the worker the issue verbatim and a size target in production and test lines; when a review finds the diff over it, re-budget from the measured diff — its size minus the excess named line by line, not a new estimate.
+For implementation, choose a suitable installed skill with `niles skills`. `--mechanical <reason>` remains an optional way to log mechanical work to `decisions.log`. Give the worker the issue verbatim and a net-change target (added minus deleted), split production/tests. Default: production net as small as correctness allows; tests net ≤ 0 unless each added test is justified by the defect only it catches. When a review finds the diff over target, re-budget from the measured net diff minus the excess named line by line.
 
 Security passes run only when the operator asks unprompted; never propose or ask for one, even when a reviewer calls for one. Reviews and re-reviews run only on the operator's request; if you think one is needed, say so in one line and wait. Before commissioning or dispatching a re-review, ask the operator whether they want a full review of the body of work or a review scoped to a diff. Give the reviewer that choice, the issue verbatim and the command that shows the chosen scope, including the base for a scoped diff.
 
