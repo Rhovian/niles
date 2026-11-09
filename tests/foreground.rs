@@ -7,7 +7,11 @@ use std::fs;
 
 #[test]
 fn entry_delivers_entry_agent_and_session_header_to_builtin_cli() {
-    for (entry, model) in [("reviewer", "sonnet"), ("lead", "haiku"), ("solo", "sonnet")] {
+    for (entry, model) in [
+        ("reviewer", "sonnet"),
+        ("lead", "haiku"),
+        ("solo", "sonnet"),
+    ] {
         assert_entry(entry, model);
     }
 }
