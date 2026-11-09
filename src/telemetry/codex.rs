@@ -2,7 +2,7 @@ use super::{Buckets, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, LocalResult, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
 
 pub(super) fn read_codex(
@@ -56,10 +56,7 @@ pub(super) fn read_codex_source(
             let Some(stamp) = path.file_name().and_then(rollout_time) else {
                 continue;
             };
-            let Some(local) = Local.from_local_datetime(&stamp).single() else {
-                continue;
-            };
-            if local + Duration::seconds(1) < start || local > deadline {
+            if !rollout_in_window(Local.from_local_datetime(&stamp), start) {
                 continue;
             }
             let body = read_transcript(path)?;
@@ -71,6 +68,13 @@ pub(super) fn read_codex_source(
         }
     }
     Ok(None)
+}
+
+fn rollout_in_window(candidates: LocalResult<DateTime<Local>>, start: DateTime<Local>) -> bool {
+    [candidates.earliest(), candidates.latest()]
+        .into_iter()
+        .flatten()
+        .any(|local| local + Duration::seconds(1) >= start && local <= start + Duration::minutes(2))
 }
 
 #[expect(clippy::disallowed_methods, reason = "non-rollout names are skipped")]
@@ -268,17 +272,17 @@ mod refusal_tests {
     }
 
     #[test]
-    fn an_unparseable_rollout_is_not_this_session() {
-        let home = crate::test_support::temp_test_path("codex-foreign-rollout");
-        let created_at = Utc::now();
-        let local = created_at.with_timezone(&Local);
-        let dir = home.join(format!(".codex/sessions/{}", local.format("%Y/%m/%d")));
-        std::fs::create_dir_all(&dir).unwrap();
-        let name = format!("rollout-{}-x.jsonl", local.format("%Y-%m-%dT%H-%M-%S"));
-        std::fs::write(dir.join(name), "bad\n").unwrap();
-        let workspace = Utf8Path::new("/w");
-        let found = read_codex(&home, workspace, &workspace.join("report.md"), created_at);
-        assert!(found.unwrap().is_none());
-        std::fs::remove_dir_all(home).unwrap();
+    fn rollout_window_checks_both_fold_instants_and_bounds() {
+        let first = Utc::now().with_timezone(&Local);
+        let second = first + Duration::hours(1);
+        for (seconds, expected) in [(0, true), (3600, true), (-121, false), (3602, false)] {
+            assert_eq!(
+                rollout_in_window(
+                    LocalResult::Ambiguous(first, second),
+                    first + Duration::seconds(seconds)
+                ),
+                expected
+            );
+        }
     }
 }

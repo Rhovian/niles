@@ -13,6 +13,7 @@ mod project;
 use project::file_turns;
 
 #[cfg(feature = "remote")]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct TranscriptSource {
     pub link: Option<SessionLink>,
     pub workspace: camino::Utf8PathBuf,

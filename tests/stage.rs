@@ -3,6 +3,7 @@ mod common;
 use common::*;
 use std::{
     fs,
+    io::Write,
     path::PathBuf,
     process::{Command, Stdio},
 };
@@ -55,7 +56,7 @@ fn skill(env: &TestEnv, name: &str, bytes: usize) {
 }
 
 #[test]
-fn configured_rounds_require_stage_and_reset_after_done() {
+fn configured_rounds_require_stage_and_reset_after_dispatch_or_done() {
     for limit in [1, 2] {
         let worker = Worker::new(Some(limit), &["reviewer"]);
         worker.fails("stage", "missing report");
@@ -76,6 +77,13 @@ fn configured_rounds_require_stage_and_reset_after_done() {
             assert!(text.contains("report `done`"));
         }
         worker.fails("stage", "round limit");
+        let mut log = fs::OpenOptions::new()
+            .append(true)
+            .open(worker.dir.join("status.log"))
+            .unwrap();
+        writeln!(log, "working: follow-up dispatch started").unwrap();
+        worker.fails("done", "stage first");
+        worker.succeeds("stage");
         worker.succeeds("done");
         worker.fails("done", "stage first");
         worker.succeeds("stage");

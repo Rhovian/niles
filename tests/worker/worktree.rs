@@ -115,7 +115,7 @@ fn worktree_git_ignores_inherited_repository_routing() {
 
 #[test]
 fn create_join_and_retire_managed_tree() {
-    let repo = Repo::new("niles-managed-create");
+    let repo = Repo::new("niles-managed-é\ncreate");
     repo.spawn("first", true);
     assert_eq!(
         git(&repo.tree, &["branch", "--show-current"]).trim(),
@@ -128,7 +128,7 @@ fn create_join_and_retire_managed_tree() {
     );
     let workers = repo.run(&["workers"]);
     assert_command_success("workers", &workers);
-    assert!(stdout_of(&workers).contains(repo.tree.to_str().unwrap()));
+    assert!(stdout_of(&workers).contains(&repo.tree.to_str().unwrap().replace('\n', "\\n")));
     repo.spawn("second", false);
     let first = repo.run(&["close", "first"]);
     assert_command_success("close first", &first);

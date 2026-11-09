@@ -89,7 +89,15 @@ impl ModelRoster {
                     .get(family)
                     .and_then(|models| models.get(name))
                 {
-                    model.entries = existing.entries.clone();
+                    model.entries = existing
+                        .entries
+                        .iter()
+                        .filter(|entry| match &entry.effort {
+                            Some(effort) => model.efforts.contains(effort),
+                            None => model.efforts.is_empty(),
+                        })
+                        .cloned()
+                        .collect();
                 }
             }
         }
@@ -145,9 +153,17 @@ impl ModelRoster {
     }
 
     pub fn entry(&self, family: &str, model: &str, effort: Option<&str>) -> Result<&RegistryEntry> {
-        self.families.get(family).and_then(|models| models.get(model))
-            .and_then(|model| model.entries.iter().find(|entry| entry.effort.as_deref() == effort))
+        self.metadata(family, model, effort)
             .with_context(|| format!("no registry metadata for {family}:{model} effort {effort:?}; register it in ~/.niles/roster.yaml"))
+    }
+
+    fn metadata(&self, family: &str, model: &str, effort: Option<&str>) -> Option<&RegistryEntry> {
+        self.families
+            .get(family)?
+            .get(model)?
+            .entries
+            .iter()
+            .find(|entry| entry.effort.as_deref() == effort)
     }
 
     fn from_raw(raw: RawRoster) -> Result<Self> {
@@ -208,15 +224,22 @@ impl ModelRoster {
                 };
                 for effort in pairs {
                     if allows(family, name, effort)? {
-                        let entry = self.entry(family, name, effort)?;
+                        let entry = self.metadata(family, name, effort);
+                        let description = entry
+                            .map(|entry| serde_json::to_string(&entry.description))
+                            .transpose()?;
                         rows.push([
                             family.to_owned(),
                             name.to_owned(),
                             effort.iter().copied().collect(),
-                            entry.tier.as_str().to_owned(),
-                            serde_json::to_string(&entry.description)?,
-                            relative_rank(entry.speed),
-                            entry.context_window.to_string(),
+                            metadata_text(entry.map(|entry| entry.tier.as_str())),
+                            metadata_text(description),
+                            metadata_text(entry.and_then(|entry| entry.speed)),
+                            metadata_text(
+                                entry
+                                    .map(|entry| entry.context_window.get())
+                                    .or_else(|| self.context_window(family, name)),
+                            ),
                         ]);
                     }
                 }
@@ -238,11 +261,8 @@ impl ModelRoster {
     }
 }
 
-fn relative_rank(rank: Option<NonZeroU32>) -> String {
-    match rank {
-        Some(rank) => rank.to_string(),
-        None => "unknown".to_owned(),
-    }
+fn metadata_text(value: Option<impl std::fmt::Display>) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
 }
 
 pub(crate) fn parse(body: &str) -> Result<ModelRoster> {
@@ -324,6 +344,10 @@ mod tests {
         );
         assert_eq!(rows[2][5], "unknown");
         assert_eq!(rows[3][2], "");
+        let overrides =
+            crate::store::parse_yaml("codex: {fixture: {efforts: [high, fresh]}}").unwrap();
+        let changed = roster.with_overrides(overrides).unwrap();
+        assert!(changed.entry("codex", "fixture", Some("medium")).is_err());
     }
 
     #[test]

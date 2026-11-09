@@ -92,19 +92,21 @@ impl Feed {
 }
 
 #[derive(Default)]
-pub(super) struct Follower(Option<TranscriptReader>);
+pub(super) struct Follower(Option<(TranscriptSource, TranscriptReader)>);
 impl Follower {
     fn read(&mut self, source: &TranscriptSource) -> Result<Vec<TextTurn>> {
-        if self.0.is_none() {
-            self.0 = source.open()?;
+        // File handles keep their original source; worker IDs can be reused between polls.
+        // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html
+        if self.0.as_ref().is_none_or(|(current, _)| current != source) {
+            self.0 = source.open()?.map(|reader| (source.clone(), reader));
         }
         match &mut self.0 {
-            Some(reader) => reader.read(),
+            Some((_, reader)) => reader.read(),
             None => Ok(Vec::new()),
         }
     }
     pub(super) fn read_new(&mut self, source: &TranscriptSource) -> Result<Vec<TextTurn>> {
-        let baseline = self.0.is_none();
+        let baseline = self.0.as_ref().is_none_or(|(current, _)| current != source);
         let turns = self.read(source)?;
         // A rollout discovered late is a baseline, not a batch of new messages.
         Ok(if baseline { Vec::new() } else { turns })

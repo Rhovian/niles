@@ -405,15 +405,20 @@ fn worker_feed_streams_turns_without_lead_status_and_ends_when_gone() {
             status: None,
         }))
     });
+    let source = || lookup().unwrap().unwrap().transcript;
+    let mut observer = feed::Follower::default();
+    observer.read_new(&source()).unwrap();
     let (mut feed, snapshot) = feed::Feed::open(lookup().unwrap().unwrap()).unwrap();
     assert_eq!(
         serde_json::to_value(snapshot).unwrap()["turns"][0]["id"],
         "project/worker:0"
     );
     assert!(feed.poll(&lookup).unwrap().unwrap().is_empty());
-    fixture.append(&message("worker reply"));
+    let replacement = Fixture::new(1);
+    *fixture.records.lock().unwrap() = replacement.records.lock().unwrap().clone();
     let events = feed.poll(&lookup).unwrap().unwrap();
     assert_eq!(events.len(), 1);
+    assert!(observer.read_new(&source()).unwrap().is_empty());
     fixture.records.lock().unwrap().clear();
     assert!(feed.poll(&lookup).unwrap().is_none());
 }
