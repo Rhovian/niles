@@ -1,8 +1,6 @@
-use ratatui::{
-    backend::IntoCrossterm,
-    crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor},
-    style::{Color, Modifier, Style},
-};
+use ratatui::backend::IntoCrossterm;
+use ratatui::crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor};
+use ratatui::style::{Color, Modifier, Style};
 
 const MODIFIERS: [(Modifier, &str, Attribute); 2] = [
     (Modifier::BOLD, "bold", Attribute::Bold),
@@ -19,31 +17,28 @@ impl StyleRender for Style {
     fn tmux_option(&self) -> String {
         let mut parts = Vec::new();
         for (slot, color) in [("fg", self.fg), ("bg", self.bg)] {
-            match color {
-                Some(Color::Rgb(r, g, b)) => parts.push(format!("{slot}=#{r:02x}{g:02x}{b:02x}")),
-                Some(Color::Reset) | None => {}
-                Some(
-                    Color::Black
-                    | Color::Red
-                    | Color::Green
-                    | Color::Yellow
-                    | Color::Blue
-                    | Color::Magenta
-                    | Color::Cyan
-                    | Color::Gray
-                    | Color::DarkGray
-                    | Color::LightRed
-                    | Color::LightGreen
-                    | Color::LightYellow
-                    | Color::LightBlue
-                    | Color::LightMagenta
-                    | Color::LightCyan
-                    | Color::White
-                    | Color::Indexed(_),
-                ) => {
-                    unreachable!("ratatui-themes palettes contain only RGB colors")
-                }
-            }
+            let color = match color {
+                Some(Color::Reset) | None => continue,
+                Some(Color::Rgb(r, g, b)) => format!("#{r:02x}{g:02x}{b:02x}"),
+                Some(Color::Indexed(index)) => format!("colour{index}"),
+                Some(Color::Black) => "colour0".into(),
+                Some(Color::Red) => "colour1".into(),
+                Some(Color::Green) => "colour2".into(),
+                Some(Color::Yellow) => "colour3".into(),
+                Some(Color::Blue) => "colour4".into(),
+                Some(Color::Magenta) => "colour5".into(),
+                Some(Color::Cyan) => "colour6".into(),
+                Some(Color::Gray) => "colour7".into(),
+                Some(Color::DarkGray) => "colour8".into(),
+                Some(Color::LightRed) => "colour9".into(),
+                Some(Color::LightGreen) => "colour10".into(),
+                Some(Color::LightYellow) => "colour11".into(),
+                Some(Color::LightBlue) => "colour12".into(),
+                Some(Color::LightMagenta) => "colour13".into(),
+                Some(Color::LightCyan) => "colour14".into(),
+                Some(Color::White) => "colour15".into(),
+            };
+            parts.push(format!("{slot}={color}"));
         }
         for (modifier, name, _) in MODIFIERS {
             if self.add_modifier.contains(modifier) {

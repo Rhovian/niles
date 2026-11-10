@@ -1,19 +1,18 @@
-use anyhow::{Context, Result};
+use crate::agents::roster::Tier;
+use crate::config::spec::ProjectConfig;
+use crate::theme::Theme;
+use crate::workspace_manifest::WorkspaceManifest;
+use anyhow::Result;
 use camino::Utf8Path;
-use ratatui::{
-    DefaultTerminal,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-};
-
-use crate::{config::spec::ProjectConfig, theme::Theme, workspace_manifest::WorkspaceManifest};
+use form::{Decision, Form, Screen};
+use ratatui::DefaultTerminal;
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
 mod columns;
 mod draw;
 mod form;
 #[cfg(test)]
 mod tests;
-
-use form::{Decision, Form, Screen};
 
 pub(crate) enum Choice {
     Save(Box<WorkspaceManifest>),
@@ -111,10 +110,10 @@ pub(crate) fn configure(
     manifest: WorkspaceManifest,
     config: &ProjectConfig,
     theme: &Theme,
-    tier: crate::agents::roster::Tier,
+    tier: Tier,
 ) -> Result<Choice> {
     let mut form = Form::new(manifest, config)?;
-    form.selected = form.rows().iter().position(|row| matches!(row, form::Row::Agent { tier: candidate, index: 0 } if *candidate == tier)).context("tier row is missing")?;
+    form.select_agent(tier, 0)?;
     let decision = run_form(terminal, root, &mut form, theme, |form, key| {
         form.key(key, config)
     })?;

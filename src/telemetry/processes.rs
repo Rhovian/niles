@@ -1,10 +1,8 @@
 use crate::tmux::{self, TmuxTarget};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, TimeDelta, Utc};
-use std::{
-    collections::HashMap,
-    process::{Command, Stdio},
-};
+use std::collections::HashMap;
+use std::process::{self, Command, Stdio};
 
 const START_TIME_TOLERANCE: TimeDelta = TimeDelta::seconds(1);
 
@@ -33,8 +31,8 @@ pub(crate) fn process_activity(
     }
     Ok(Some(has_work(
         root,
-        [std::process::id(), probe_pid],
-        Utc::now() - since,
+        [process::id(), probe_pid],
+        Utc::now().signed_duration_since(since),
         &String::from_utf8(output.stdout)?,
     )?))
 }
@@ -43,23 +41,35 @@ fn has_work(root: u32, excluded: [u32; 2], turn_age: TimeDelta, snapshot: &str) 
     let mut children = HashMap::<u32, Vec<(u32, i64, bool)>>::new();
     for line in snapshot.lines() {
         let fields = line.split_whitespace().collect::<Vec<_>>();
-        if fields.len() < 5 {
+        let [pid, parent, status, elapsed, command @ ..] = fields.as_slice() else {
             bail!("invalid ps row: {line}");
-        }
-        let pid: u32 = fields[0].parse()?;
-        let parent = fields[1].parse()?;
-        if fields[2].starts_with('Z') || excluded.contains(&pid) {
+        };
+        anyhow::ensure!(!command.is_empty(), "invalid ps row: {line}");
+        let pid: u32 = pid.parse()?;
+        let parent = parent.parse()?;
+        if status.starts_with('Z') || excluded.contains(&pid) {
             continue;
         }
-        let (days, clock) = match fields[3].split_once('-') {
+        let (days, clock) = match elapsed.split_once('-') {
             Some((days, clock)) => (days.parse::<i64>()?, clock),
-            None => (0, fields[3]),
+            None => (0, *elapsed),
         };
-        let elapsed = clock.split(':').try_fold(0, |total, part| {
-            Ok::<_, anyhow::Error>(total * 60 + part.parse::<i64>()?)
-        })? + days * 86_400;
+        let seconds = clock
+            .split(':')
+            .try_fold(0i64, |total, part| -> Result<i64> {
+                let part = part.parse::<i64>()?;
+                anyhow::ensure!(part >= 0, "negative ps elapsed time");
+                total
+                    .checked_mul(60)
+                    .and_then(|total| total.checked_add(part))
+                    .context("ps elapsed time overflow")
+            })?;
+        let elapsed = days
+            .checked_mul(86_400)
+            .and_then(|days| days.checked_add(seconds))
+            .context("ps elapsed time overflow")?;
         // Unix shell executable names conventionally end in sh; comm excludes arguments.
-        let shell = fields[4..].join(" ").ends_with("sh");
+        let shell = command.join(" ").ends_with("sh");
         children
             .entry(parent)
             .or_default()
@@ -70,7 +80,13 @@ fn has_work(root: u32, excluded: [u32; 2], turn_age: TimeDelta, snapshot: &str) 
         if let Some(branch) = children.remove(&parent) {
             for (pid, elapsed, shell) in branch {
                 let under_shell = under_shell || shell;
-                if under_shell && elapsed <= (turn_age + START_TIME_TOLERANCE).num_seconds() {
+                if under_shell
+                    && elapsed
+                        <= turn_age
+                            .checked_add(&START_TIME_TOLERANCE)
+                            .context("turn age overflow")?
+                            .num_seconds()
+                {
                     return Ok(true);
                 }
                 pending.push((pid, under_shell));

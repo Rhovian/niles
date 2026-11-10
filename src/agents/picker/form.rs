@@ -1,14 +1,12 @@
-use anyhow::Result;
-use ratatui::crossterm::event::KeyCode;
-
 use super::columns::{self, Columns, Family, Pick};
-use crate::{
-    agents::roster::Tier,
-    config::spec::ProjectConfig,
-    workspace_manifest::{self, TierBinding, WorkspaceManifest},
-};
-
-const FIRST_ENTRY_AGENT: usize = 0;
+use crate::agents::AgentSpec;
+use crate::agents::roster::Tier;
+use crate::config::spec::ProjectConfig;
+use crate::selection::Selection;
+use crate::workspace_manifest::{self, TierBinding, WorkspaceManifest};
+use anyhow::{Context, Result};
+use ratatui::crossterm::event::KeyCode;
+use std::iter;
 
 pub(super) const TIERS: [Tier; 4] = [
     Tier::Standard,
@@ -17,21 +15,34 @@ pub(super) const TIERS: [Tier; 4] = [
     Tier::Mechanical,
 ];
 
-#[derive(Clone, Copy)]
-pub(super) enum Row {
-    Agent { tier: Tier, index: usize },
+fn agents(manifest: &WorkspaceManifest, tier: Tier) -> impl Iterator<Item = Option<&str>> {
+    let binding = manifest.tiers.get(tier);
+    iter::once(binding.map(|binding| binding.primary.as_str())).chain(
+        binding
+            .into_iter()
+            .flat_map(|binding| binding.secondaries.iter().map(|agent| Some(agent.as_str()))),
+    )
+}
+
+pub(super) enum EditRow {
+    Primary { tier: Tier, value: Option<String> },
+    Secondary { tier: Tier, value: String },
     Entry,
 }
 
-impl Row {
-    pub fn value(self, manifest: &WorkspaceManifest) -> Option<&str> {
+impl EditRow {
+    fn tier(&self) -> Option<Tier> {
         match self {
-            Self::Entry => Some(&manifest.entry_agent),
-            Self::Agent { tier, index } => manifest.tiers.get(tier).and_then(|binding| {
-                std::iter::once(binding.primary.as_str())
-                    .chain(binding.secondaries.iter().map(String::as_str))
-                    .nth(index)
-            }),
+            Self::Primary { tier, .. } | Self::Secondary { tier, .. } => Some(*tier),
+            Self::Entry => None,
+        }
+    }
+
+    fn value(&self) -> Option<&str> {
+        match self {
+            Self::Primary { value, .. } => value.as_deref(),
+            Self::Secondary { value, .. } => Some(value),
+            Self::Entry => None,
         }
     }
 }
@@ -40,11 +51,11 @@ pub(super) enum Screen {
     Tiers,
     Editing {
         tier: Tier,
-        index: usize,
-        columns: Columns,
+        append: bool,
+        columns: Box<Columns>,
     },
     Entry {
-        selected: usize,
+        choices: Selection<String>,
     },
     Review,
 }
@@ -60,35 +71,62 @@ pub(super) struct Form {
     pub original: WorkspaceManifest,
     pub draft: WorkspaceManifest,
     pub screen: Screen,
-    pub selected: usize,
+    pub selection: Selection<EditRow>,
     pub error: String,
     families: Vec<Family>,
 }
 
 impl Form {
     pub fn new(manifest: WorkspaceManifest, config: &ProjectConfig) -> Result<Self> {
+        let rows = TIERS
+            .into_iter()
+            .flat_map(|tier| {
+                let binding = manifest.tiers.get(tier);
+                iter::once(EditRow::Primary {
+                    tier,
+                    value: binding.map(|b| b.primary.clone()),
+                })
+                .chain(binding.into_iter().flat_map(move |b| {
+                    b.secondaries
+                        .iter()
+                        .cloned()
+                        .map(move |value| EditRow::Secondary { tier, value })
+                }))
+            })
+            .chain(iter::once(EditRow::Entry));
+        let selection = Selection::new(rows).context("picker has no tier rows")?;
         Ok(Self {
             setup: false,
             original: manifest.clone(),
             draft: manifest,
             screen: Screen::Tiers,
-            selected: 0,
+            selection,
             error: String::new(),
             families: columns::families(config)?,
         })
     }
 
-    pub fn rows(&self) -> Vec<Row> {
-        let mut rows = Vec::new();
-        for tier in TIERS {
-            let count = match self.draft.tiers.get(tier) {
-                Some(binding) => binding.secondaries.len() + 1,
-                None => 1,
-            };
-            rows.extend((0..count).map(|index| Row::Agent { tier, index }));
-        }
-        rows.push(Row::Entry);
-        rows
+    pub fn rows(&self) -> impl Iterator<Item = (String, Option<&str>, Option<&str>)> {
+        TIERS
+            .into_iter()
+            .flat_map(|tier| {
+                agents(&self.draft, tier)
+                    .enumerate()
+                    .zip(agents(&self.original, tier).chain(iter::repeat(None)))
+                    .map(move |((index, value), original)| {
+                        let label = if index == 0 {
+                            tier.as_str().to_owned()
+                        } else {
+                            format!("  secondary {index}")
+                        };
+                        (label, value, original)
+                    })
+            })
+            .chain(iter::once((
+                "entry_agent".to_owned(),
+                Some(self.draft.entry_agent.as_str()),
+                Some(self.original.entry_agent.as_str()),
+            )))
     }
 
     pub fn entry_choices(&self) -> Vec<&str> {
@@ -118,6 +156,36 @@ impl Form {
         }
     }
 
+    pub fn select_agent(&mut self, tier: Tier, index: usize) -> Result<()> {
+        let position = self
+            .selection
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.tier() == Some(tier))
+            .nth(index)
+            .map(|(position, _)| position)
+            .context("tier row is missing")?;
+        self.selection.focus(position)?;
+        Ok(())
+    }
+
+    fn update_tier(&mut self, tier: Tier) -> Result<()> {
+        let mut values = self
+            .selection
+            .iter()
+            .filter(|row| row.tier() == Some(tier))
+            .filter_map(EditRow::value);
+        let primary = values.next().context("edited tier has no primary agent")?;
+        self.draft.tiers.set(
+            tier,
+            TierBinding {
+                primary: primary.to_owned(),
+                secondaries: values.map(str::to_owned).collect(),
+            },
+        );
+        Ok(())
+    }
+
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "each screen ignores unbound terminal keys"
@@ -129,30 +197,21 @@ impl Form {
         match &mut self.screen {
             Screen::Editing {
                 tier,
-                index,
+                append,
                 columns,
             } => match columns.key(key) {
                 Pick::Pending => {}
                 Pick::Cancelled => self.screen = Screen::Tiers,
                 Pick::Selected(value) => {
                     let tier = *tier;
-                    let index = *index;
-                    let mut binding = match self.draft.tiers.get(tier) {
-                        Some(binding) => binding.clone(),
-                        None => TierBinding {
-                            primary: value.clone(),
-                            secondaries: Vec::new(),
-                        },
-                    };
-                    debug_assert!(index <= binding.secondaries.len() + 1);
-                    let selected = crate::agents::AgentSpec::parse(&value, &config.models)?;
+                    let append = *append;
+                    let selected = AgentSpec::parse(&value, &config.models)?;
                     let mut duplicate = false;
-                    for (i, agent) in std::iter::once(&binding.primary)
-                        .chain(&binding.secondaries)
-                        .enumerate()
-                    {
-                        if i != index
-                            && crate::agents::AgentSpec::parse(agent, &config.models)? == selected
+                    for (position, row) in self.selection.iter().enumerate() {
+                        if row.tier() == Some(tier)
+                            && (append || position != self.selection.position())
+                            && let Some(agent) = row.value()
+                            && AgentSpec::parse(agent, &config.models)? == selected
                         {
                             duplicate = true;
                             break;
@@ -161,50 +220,51 @@ impl Form {
                     if duplicate {
                         self.error = format!("Duplicate agent: {value}");
                     } else {
-                        if index == 0 {
-                            binding.primary = value;
-                        } else if index <= binding.secondaries.len() {
-                            binding.secondaries[index - 1] = value;
+                        if append {
+                            let position = self.selection.position();
+                            let end = self
+                                .selection
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, row)| row.tier() == Some(tier))
+                                .map(|(position, _)| position)
+                                .last()
+                                .context("tier has no rows")?;
+                            self.selection.focus(end)?;
+                            self.selection
+                                .insert_after(EditRow::Secondary { tier, value });
+                            self.selection.focus(position)?;
                         } else {
-                            binding.secondaries.push(value);
+                            match self.selection.current_mut() {
+                                EditRow::Primary { value: target, .. } => *target = Some(value),
+                                EditRow::Secondary { value: target, .. } => *target = value,
+                                EditRow::Entry => anyhow::bail!("agent editor selected entry row"),
+                            }
                         }
-                        self.draft.tiers.set(tier, binding);
+                        self.update_tier(tier)?;
                         self.error.clear();
                     }
                     self.screen = Screen::Tiers;
                 }
             },
-            Screen::Entry { selected } => {
-                let mut cursor = *selected;
-                let choices = self.entry_choices();
-                match key {
-                    KeyCode::Up => cursor = cursor.saturating_sub(1),
-                    KeyCode::Down => cursor = (cursor + 1).min(choices.len() - 1),
-                    KeyCode::Enter => {
-                        self.draft.entry_agent = choices[cursor].to_owned();
-                        self.screen = Screen::Tiers;
-                        self.error.clear();
-                        return Ok(None);
-                    }
-                    KeyCode::Esc | KeyCode::Left => {
-                        self.screen = Screen::Tiers;
-                        return Ok(None);
-                    }
-                    _ => {}
-                }
-                self.screen = Screen::Entry { selected: cursor };
-            }
-            Screen::Review => match key {
-                KeyCode::Enter if self.accept(config) => {
-                    return Ok(Some(Decision::Save));
+            Screen::Entry { choices } => match key {
+                KeyCode::Up | KeyCode::Down => choices.move_focus(key == KeyCode::Down),
+                KeyCode::Enter => {
+                    self.draft.entry_agent = choices.current().clone();
+                    self.screen = Screen::Tiers;
+                    self.error.clear();
                 }
                 KeyCode::Esc | KeyCode::Left => self.screen = Screen::Tiers,
-                _ => {}
+                _ => return Ok(None),
+            },
+            Screen::Review => match key {
+                KeyCode::Enter if self.accept(config) => return Ok(Some(Decision::Save)),
+                KeyCode::Esc | KeyCode::Left => self.screen = Screen::Tiers,
+                _ => return Ok(None),
             },
             Screen::Tiers => match key {
                 KeyCode::Char('c') if !self.can_save() => return Ok(Some(Decision::Keep)),
-                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-                KeyCode::Down => self.selected = (self.selected + 1).min(self.rows().len() - 1),
+                KeyCode::Up | KeyCode::Down => self.selection.move_focus(key == KeyCode::Down),
                 KeyCode::Char('s') if self.can_save() && self.accept(config) => {
                     self.screen = Screen::Review
                 }
@@ -214,66 +274,44 @@ impl Form {
                     }
                 }
                 KeyCode::Right | KeyCode::Enter | KeyCode::Char('a') => {
-                    match self.rows()[self.selected] {
-                        Row::Entry => {
-                            let selected = match self
-                                .entry_choices()
-                                .iter()
-                                .position(|a| *a == self.draft.entry_agent)
-                            {
-                                Some(index) => index,
-                                None => FIRST_ENTRY_AGENT,
-                            };
-                            self.screen = Screen::Entry { selected };
-                        }
-                        Row::Agent { tier, index } => {
-                            let (index, current): (usize, &str) = match self.draft.tiers.get(tier) {
-                                Some(binding) if key == KeyCode::Char('a') => {
-                                    (binding.secondaries.len() + 1, binding.primary.as_str())
-                                }
-                                Some(binding) => (
-                                    index,
-                                    if index == 0 {
-                                        &binding.primary
-                                    } else {
-                                        &binding.secondaries[index - 1]
-                                    },
-                                ),
-                                None => (0, self.draft.entry_agent.as_str()),
-                            };
-                            self.screen = Screen::Editing {
-                                tier,
-                                index,
-                                columns: Columns::new(&self.families, current, config)?,
-                            };
-                        }
+                    if let Some(tier) = self.selection.current().tier() {
+                        let append =
+                            key == KeyCode::Char('a') && self.draft.tiers.get(tier).is_some();
+                        let current = if append {
+                            &self.draft.tiers.tier(tier)?.primary
+                        } else {
+                            match self.selection.current().value() {
+                                Some(value) => value,
+                                None => &self.draft.entry_agent,
+                            }
+                        };
+                        self.screen = Screen::Editing {
+                            tier,
+                            append,
+                            columns: Box::new(Columns::new(&self.families, current, config)?),
+                        };
+                    } else {
+                        let mut choices =
+                            Selection::new(self.entry_choices().into_iter().map(str::to_owned))
+                                .context("no tier agents available for entry selection")?;
+                        choices.prefer(|agent| *agent == self.draft.entry_agent);
+                        self.screen = Screen::Entry { choices };
                     }
                 }
                 KeyCode::Char('d' | '[' | ']') => {
-                    if let Row::Agent { tier, index } = self.rows()[self.selected]
-                        && index > 0
-                    {
-                        let mut binding = self.draft.tiers.tier(tier)?.clone();
-                        let i = index - 1;
-                        match key {
-                            KeyCode::Char('d') => {
-                                binding.secondaries.remove(i);
-                                self.selected -= 1;
-                            }
-                            KeyCode::Char('[') if i > 0 => {
-                                binding.secondaries.swap(i, i - 1);
-                                self.selected -= 1;
-                            }
-                            KeyCode::Char(']') if i + 1 < binding.secondaries.len() => {
-                                binding.secondaries.swap(i, i + 1);
-                                self.selected += 1;
-                            }
-                            _ => {}
+                    if let EditRow::Secondary { tier, .. } = self.selection.current() {
+                        let tier = *tier;
+                        if key == KeyCode::Char('d') {
+                            self.selection.remove()?;
+                        } else {
+                            self.selection.reorder(key == KeyCode::Char(']'), |row| {
+                                matches!(row, EditRow::Secondary { tier: candidate, .. } if *candidate == tier)
+                            });
                         }
-                        self.draft.tiers.set(tier, binding);
+                        self.update_tier(tier)?;
                     }
                 }
-                _ => {}
+                _ => return Ok(None),
             },
         }
         Ok(None)

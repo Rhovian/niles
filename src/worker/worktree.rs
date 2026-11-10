@@ -1,16 +1,12 @@
-use crate::store::{Lock, Scope};
-use std::{
-    fs,
-    os::unix::fs::OpenOptionsExt,
-    process::{Command, Stdio},
-};
-
+use super::meta::read_meta_if_exists;
+use crate::store::{self, Lock, Scope};
+use crate::util;
+use crate::workspace_manifest::WorktreeConfig;
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
-
-use crate::{store, workspace_manifest::WorktreeConfig};
-
-use super::meta::read_meta_if_exists;
+use std::os::unix::fs::OpenOptionsExt;
+use std::process::{Command, Stdio};
+use std::{fs, io};
 
 const DETACHED_HEAD: &str = "(detached HEAD)";
 
@@ -23,7 +19,7 @@ pub enum SpawnTree {
 }
 
 fn git(workspace: &Utf8Path, args: &[&str]) -> Result<String> {
-    let output = crate::util::git_command()
+    let output = util::git_command()
         .args(args)
         .current_dir(workspace)
         .output()
@@ -40,10 +36,11 @@ fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     let workspace = workspace
         .strip_prefix("/")
         .context("workspace path is not absolute")?;
-    let home = crate::util::home_dir()?.canonicalize_utf8()?;
+    let home = util::home_dir()?.canonicalize_utf8()?;
     Ok(home.join(".niles/trees").join(workspace))
 }
 
+#[expect(clippy::disallowed_methods, reason = "detached HEAD")]
 fn registered_worktrees(workspace: &Utf8Path) -> Result<Vec<(Utf8PathBuf, String)>> {
     // Git's -z porcelain preserves paths verbatim and separates records with two NULs:
     // https://git-scm.com/docs/git-worktree#_porcelain_format
@@ -59,7 +56,7 @@ fn registered_worktrees(workspace: &Utf8Path) -> Result<Vec<(Utf8PathBuf, String
             let branch = fields.find_map(|field| field.strip_prefix("branch "));
             Ok((
                 Utf8PathBuf::from(path),
-                branch.map_or(DETACHED_HEAD, |branch| branch).to_owned(),
+                branch.unwrap_or(DETACHED_HEAD).to_owned(),
             ))
         })
         .collect()
@@ -142,7 +139,7 @@ fn setup(path: &Utf8Path, command: &str, config: &WorktreeConfig) -> Result<()> 
         .current_dir(path)
         .envs(&config.env)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(std::io::stderr()))
+        .stdout(Stdio::from(io::stderr()))
         .status()
         .with_context(|| format!("run worktree setup in {path}"))?;
     if !status.success() {
@@ -182,7 +179,7 @@ pub(crate) fn remove_project_worktrees(workspace: &Utf8Path) -> Result<()> {
     if !root.try_exists()? {
         return Ok(());
     }
-    let root = crate::util::utf8_path(fs::canonicalize(root)?, "managed worktree root")?;
+    let root = util::utf8_path(fs::canonicalize(root)?, "managed worktree root")?;
     for (path, _) in registered_worktrees(workspace)? {
         if path != workspace && path.starts_with(&root) {
             git(workspace, &["worktree", "remove", "--force", path.as_str()])?;

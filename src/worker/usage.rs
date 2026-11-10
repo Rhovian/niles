@@ -1,26 +1,22 @@
+use super::WorkerSnapshot;
+use super::list::print_json;
+use super::meta::{WorkerMeta, meta_path, report_path};
+use super::resolve::window_state;
+use super::snapshot::worker_snapshot;
+use crate::skills::SkillName;
+use crate::telemetry::{self, Buckets, SessionState};
+use crate::tmux::{TargetState, TmuxTarget, WindowTarget};
+use crate::util::{current_dir_utf8, parse_timestamp_id};
+use crate::{session, store};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::{
-    session, store,
-    telemetry::{self, Buckets, SessionState},
-    util::{current_dir_utf8, parse_timestamp_id},
-};
-
-use super::{
-    WorkerSnapshot,
-    list::print_json,
-    meta::{WorkerMeta, meta_path, report_path},
-    resolve::window_state,
-    snapshot::worker_snapshot,
-};
-
 #[derive(Serialize)]
 pub(crate) struct SessionUsage {
     pub(crate) id: String,
-    pub(crate) skill: crate::skills::SkillName,
+    pub(crate) skill: SkillName,
     pub(crate) entry: bool,
     pub(crate) agent: String,
     pub(crate) state: SessionState,
@@ -36,7 +32,7 @@ pub(crate) struct SessionUsage {
 /// their buckets are cached.
 pub(crate) struct ClosedSession {
     pub(crate) id: String,
-    pub(crate) skill: crate::skills::SkillName,
+    pub(crate) skill: SkillName,
     pub(crate) entry: bool,
     pub(crate) agent: String,
     pub(crate) created_at: DateTime<Utc>,
@@ -107,10 +103,10 @@ pub(crate) fn lead_session(
         &meta.workspace,
         dir,
         meta.created_at,
-        telemetry::initial_deadline(meta.created_at, None),
+        telemetry::initial_deadline(meta.created_at, None)?,
         now,
         |since| match &meta.lead_pane {
-            Some(pane) => telemetry::process_activity(&crate::tmux::TmuxTarget::pane(pane)?, since),
+            Some(pane) => telemetry::process_activity(&TmuxTarget::pane(pane)?, since),
             None => Ok(Some(false)),
         },
     )
@@ -216,7 +212,7 @@ pub(crate) fn worker_session(
         .context("worker metadata is unreadable")?;
     let starting_until = match meta.starting_until {
         Some(deadline) => deadline,
-        None => telemetry::initial_deadline(meta.created_at, None),
+        None => telemetry::initial_deadline(meta.created_at, None)?,
     };
     telemetry::resolve_session(
         meta.session_link.as_ref(),
@@ -228,14 +224,14 @@ pub(crate) fn worker_session(
         |since| {
             let state = window_state(meta);
             let target = match &state {
-                crate::tmux::TargetState::Live => crate::tmux::WindowTarget::parse(&meta.window)?,
-                crate::tmux::TargetState::OrphanRecovered { actual } => actual.clone(),
-                crate::tmux::TargetState::PaneExited
-                | crate::tmux::TargetState::WindowDead
-                | crate::tmux::TargetState::OrphanGone
-                | crate::tmux::TargetState::Unknown { .. } => return Ok(state.liveness()),
+                TargetState::Live => WindowTarget::parse(&meta.window)?,
+                TargetState::OrphanRecovered { actual } => actual.clone(),
+                TargetState::PaneExited
+                | TargetState::WindowDead
+                | TargetState::OrphanGone
+                | TargetState::Unknown { .. } => return Ok(state.liveness()),
             };
-            telemetry::process_activity(&crate::tmux::TmuxTarget::window(&target), since)
+            telemetry::process_activity(&TmuxTarget::window(&target), since)
         },
     )
 }

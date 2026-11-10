@@ -1,11 +1,10 @@
 use super::ui;
-use crate::skills::{self, reference::GithubRef};
+use crate::skills;
+use crate::skills::reference::GithubRef;
 use anyhow::{Context, Result, ensure};
 use camino::Utf8Path;
-use ratatui::{
-    crossterm::event::KeyCode,
-    widgets::{Paragraph, Wrap},
-};
+use ratatui::crossterm::event::KeyCode;
+use ratatui::widgets::{Paragraph, Wrap};
 use std::fs;
 
 pub(super) enum Choice {
@@ -83,7 +82,7 @@ pub(super) fn input(
                     text.pop();
                 }
                 KeyCode::Char(ch) => text.push(ch),
-                _ => {}
+                _ => continue,
             }
         }
     })

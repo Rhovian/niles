@@ -1,9 +1,13 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-mod common;
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 use common::*;
-use std::{fs, os::unix::fs::symlink, process::Output};
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+use std::process::Output;
 
-fn status(env: &TestEnv, dir: &std::path::Path, kind: &str, detail: &[&str]) -> Output {
+mod common;
+
+fn status(env: &TestEnv, dir: &Path, kind: &str, detail: &[&str]) -> Output {
     let mut command = env.niles(&env.root, &["agent", "status", kind]);
     command
         .env("NILES_AGENT_DIR", dir)
@@ -17,13 +21,13 @@ fn kinds_details_reports_and_partial_lines() {
     let env = TestEnv::new("niles-agent-status");
     let dir = write_worker(&env.root, "test", "@1", None, b"");
     let log = dir.join("status.log");
-    fs::write(&log, "working: partial").unwrap();
+    atomic_write(&log, "working: partial").unwrap();
     for kind in ["working", "blocked", "needs-decision", "failed"] {
         assert_command_success(kind, &status(&env, &dir, kind, &["  first", "second  "]));
     }
     for report in [None, Some("")] {
         if let Some(body) = report {
-            fs::write(dir.join("report.md"), body).unwrap();
+            atomic_write(dir.join("report.md"), body).unwrap();
         }
         let before = fs::read(&log).unwrap();
         assert_failure_contains(
@@ -33,7 +37,7 @@ fn kinds_details_reports_and_partial_lines() {
         );
         assert_eq!(fs::read(&log).unwrap(), before);
     }
-    fs::write(dir.join("report.md"), "deliverable").unwrap();
+    atomic_write(dir.join("report.md"), "deliverable").unwrap();
     assert_command_success("done", &status(&env, &dir, "done", &["ready"]));
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
@@ -49,9 +53,9 @@ fn kinds_details_reports_and_partial_lines() {
 fn hyphen_leading_details_are_values() {
     let env = TestEnv::new("niles-agent-hyphens");
     let log = env.root.join("status.log");
-    fs::write(&log, "").unwrap();
+    atomic_write(&log, "").unwrap();
     for (kind, words) in [
-        ("blocked", ["-x", "unsupported"]),
+        ("blocked", ["-x", "invalid"]),
         ("working", ["-1", "failures"]),
         ("failed", ["--foo", "missing"]),
     ] {
@@ -59,7 +63,7 @@ fn hyphen_leading_details_are_values() {
     }
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
-        "blocked: -x unsupported\nworking: -1 failures\nfailed: --foo missing\n"
+        "blocked: -x invalid\nworking: -1 failures\nfailed: --foo missing\n"
     );
 }
 
@@ -67,7 +71,7 @@ fn hyphen_leading_details_are_values() {
 fn invalid_details_and_niles_owned_kinds_leave_log_unchanged() {
     let env = TestEnv::new("niles-agent-invalid");
     let log = env.root.join("status.log");
-    fs::write(&log, "earlier\n").unwrap();
+    atomic_write(&log, "earlier\n").unwrap();
     for detail in [
         "",
         "   ",
@@ -104,9 +108,9 @@ fn requires_worker_environment_and_existing_log_and_rejects_symlinks() {
         .output()
         .unwrap();
     assert_failure_contains("unset", &output, "NILES_AGENT_DIR");
-    fs::write(env.root.join("file"), "untouched").unwrap();
+    atomic_write(env.root.join("file"), "untouched").unwrap();
     for dir in [
-        std::path::PathBuf::from("relative"),
+        PathBuf::from("relative"),
         env.root.join("absent"),
         env.root.join("file"),
         env.root.clone(),
@@ -115,8 +119,8 @@ fn requires_worker_environment_and_existing_log_and_rejects_symlinks() {
         assert!(!output.status.success());
         assert!(!env.root.join("status.log").exists());
     }
-    fs::write(env.root.join("status.log"), "earlier\n").unwrap();
-    let output = status(&env, std::path::Path::new("."), "working", &["ready"]);
+    atomic_write(env.root.join("status.log"), "earlier\n").unwrap();
+    let output = status(&env, Path::new("."), "working", &["ready"]);
     assert_failure_contains(
         "existing relative directory",
         &output,

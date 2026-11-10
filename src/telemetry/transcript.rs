@@ -1,16 +1,15 @@
 use super::SessionLink;
+use crate::util;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
+use project::file_turns;
 use serde::Serialize;
 use serde_json::Value;
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Cursor, Seek, SeekFrom},
-};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom};
 
 mod project;
-use project::file_turns;
 
 #[cfg(feature = "remote")]
 #[derive(Clone, PartialEq, Eq)]
@@ -91,13 +90,7 @@ impl TranscriptReader {
         needle: &Utf8Path,
         created_at: DateTime<Utc>,
     ) -> Result<Option<Self>> {
-        Self::open_in(
-            &crate::util::home_dir()?,
-            link,
-            workspace,
-            needle,
-            created_at,
-        )
+        Self::open_in(&util::home_dir()?, link, workspace, needle, created_at)
     }
 
     fn open_in(

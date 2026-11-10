@@ -1,17 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    net::{Ipv4Addr, SocketAddrV4, UdpSocket},
-};
-
-use anyhow::{Context, Result, ensure};
-use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
-};
-
 use super::{ApiError, AppState, blocking};
 use crate::config::user::FileWakeHost;
+use anyhow::{Context, Result, ensure};
+use axum::Json;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 
 pub(super) struct Target {
     mac: [u8; 6],
@@ -28,7 +22,10 @@ pub(super) fn configured(hosts: BTreeMap<String, FileWakeHost>) -> Result<Hosts>
                     && id
                         .bytes()
                         .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                    && id.as_bytes()[0].is_ascii_alphanumeric(),
+                    && id
+                        .bytes()
+                        .next()
+                        .is_some_and(|byte| byte.is_ascii_alphanumeric()),
                 "invalid wake host ID: {id}"
             );
             // std parses hexadecimal bytes, but offers no MAC address parser.

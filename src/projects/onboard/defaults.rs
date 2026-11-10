@@ -1,17 +1,18 @@
-use crate::agents::{
-    AgentSpec, ModelRoster,
-    roster::Tier::{self, Economy, Frontier, Mechanical, Standard},
-};
-use crate::skills::{SkillName, reference::GithubRef};
+use crate::agents::roster::Tier::{self, Economy, Frontier, Mechanical, Standard};
+use crate::agents::{AgentSpec, ModelRoster};
+use crate::skills::SkillName;
+use crate::skills::reference::GithubRef;
+use crate::store;
 use crate::workspace_manifest::{TierBinding, Tiers, WorkspaceManifest};
 use anyhow::{Context, Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
+
 pub(super) const REPOSITORY: &str = "github.com/Rhovian/niles";
 pub(super) const SKILLS: &str = include_str!("skills.yaml");
 pub(super) fn fetchable_names() -> Result<BTreeSet<SkillName>> {
     let mut names = BTreeSet::new();
     for source in [SKILLS, include_str!("modes.yaml")] {
-        let rows: Vec<(SkillName, String)> = crate::store::parse_yaml(source)?;
+        let rows: Vec<(SkillName, String)> = store::parse_yaml(source)?;
         names.extend(rows.into_iter().map(|(name, _)| name));
     }
     Ok(names)
@@ -55,7 +56,7 @@ fn candidates(
     data: &str,
     roster: &ModelRoster,
 ) -> Result<BTreeMap<Tier, Vec<(String, AgentSpec)>>> {
-    let ordered: BTreeMap<Tier, Vec<String>> = crate::store::parse_yaml(data)?;
+    let ordered: BTreeMap<Tier, Vec<String>> = store::parse_yaml(data)?;
     let mut parsed = BTreeMap::new();
     for (tier, agents) in ordered {
         let mut candidates = Vec::new();

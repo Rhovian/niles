@@ -178,7 +178,7 @@ fn normalize_effort(
             bail!("{family} model `{model}` takes no effort; drop the effort from the agent spec")
         }
         Some(_) => {
-            bail!("unsupported {family} effort `{effort}` for model `{model}` in agent spec")
+            bail!("invalid {family} effort `{effort}` for model `{model}` in agent spec")
         }
     }
 }
@@ -192,8 +192,5 @@ pub(crate) fn validate_model(spec: &AgentSpec, models: &ModelRoster) -> Result<(
         return Ok(());
     }
 
-    bail!(
-        "unsupported {} model `{model}` in agent spec",
-        spec.family()
-    )
+    bail!("invalid {} model `{model}` in agent spec", spec.family())
 }

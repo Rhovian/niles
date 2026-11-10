@@ -8,8 +8,8 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     assert_command_success("first spawn", &first);
 
     let worker_dir = state_dir(&env.root).join("worker/reviewer");
-    fs::write(worker_dir.join("report.md"), "first report\n").unwrap();
-    fs::write(worker_dir.join("status.log"), "done: first\n").unwrap();
+    atomic_write(worker_dir.join("report.md"), "first report\n").unwrap();
+    atomic_write(worker_dir.join("status.log"), "done: first\n").unwrap();
 
     let close = env
         .niles(&env.root, &["close", "reviewer"])

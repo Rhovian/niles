@@ -1,6 +1,6 @@
-use std::{borrow::Cow, fmt};
-
 use camino::{Utf8Path, Utf8PathBuf};
+use std::borrow::Cow;
+use std::fmt;
 
 pub(crate) const FOLLOWUP_STARTED: &str = "working: follow-up dispatch started";
 
@@ -76,17 +76,20 @@ pub(crate) fn is_actionable_wake(line: &str) -> bool {
     WakeKind::actionable(line).is_some()
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "chunks partition log, so consumed bytes cannot exceed its length"
+)]
 pub(crate) fn complete_lines(log: &[u8]) -> impl Iterator<Item = (usize, Cow<'_, str>)> {
     let mut end = 0;
     log.split_inclusive(|byte| *byte == b'\n')
-        .take_while(|raw| raw.ends_with(b"\n"))
-        .map(move |raw| {
+        .filter_map(move |raw| {
             end += raw.len();
-            let mut raw = &raw[..raw.len() - 1];
+            let mut raw = raw.strip_suffix(b"\n")?;
             while let Some(stripped) = raw.strip_suffix(b"\r") {
                 raw = stripped;
             }
-            (end, String::from_utf8_lossy(raw))
+            Some((end, String::from_utf8_lossy(raw)))
         })
 }
 

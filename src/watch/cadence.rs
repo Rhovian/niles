@@ -1,9 +1,8 @@
-use std::time::Duration;
-
+use crate::duration::parse_duration;
+use crate::workspace_manifest::WorkspaceManifest;
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
-
-use crate::{duration::parse_duration, workspace_manifest::WorkspaceManifest};
+use std::time::Duration;
 
 /// The delay `spawn` and `send` arm when nothing else is asked for.
 pub(crate) const DEFAULT_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -124,9 +123,9 @@ pub(crate) fn parse_delay(value: &str) -> Result<Option<Delay>> {
 
 #[cfg(test)]
 mod tests {
-    use camino::Utf8PathBuf;
-
     use super::*;
+    use crate::test_support;
+    use camino::Utf8PathBuf;
 
     fn manifest_file() -> Utf8PathBuf {
         Utf8PathBuf::from("/w/.niles/manifest.yaml")
@@ -136,7 +135,7 @@ mod tests {
         WorkspaceManifest {
             checkin: checkin.map(str::to_owned),
             recheck: recheck.map(str::to_owned),
-            ..crate::test_support::manifest()
+            ..test_support::manifest()
         }
     }
 
@@ -165,7 +164,7 @@ mod tests {
                     seconds.map(|seconds| Delay(Duration::from_secs(seconds))),
                     "{input}"
                 ),
-                Err(needle) => crate::test_support::assert_err_contains(parse_delay(input), needle),
+                Err(needle) => test_support::assert_err_contains(parse_delay(input), needle),
             }
         }
         for (seconds, printed) in [(90, "90s"), (300, "5m"), (3600, "1h")] {

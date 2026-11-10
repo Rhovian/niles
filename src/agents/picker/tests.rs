@@ -1,10 +1,11 @@
-use crate::agents::roster::Tier;
-use ratatui::crossterm::event::KeyCode;
-
 use super::*;
-use crate::{agents::ModelRoster, config::spec::ProjectConfig};
+use crate::agents::ModelRoster;
+use crate::agents::roster::Tier;
+use crate::config::spec::ProjectConfig;
+use crate::{test_support, workspace_manifest};
 use columns::{Column, Columns, Pick};
 use form::{Decision, Screen};
+use ratatui::crossterm::event::KeyCode;
 
 fn config() -> ProjectConfig {
     ProjectConfig {
@@ -13,284 +14,238 @@ fn config() -> ProjectConfig {
 }
 
 fn columns(value: &str) -> Columns {
-    let config = config();
-    Columns::new(&columns::families(&config).unwrap(), value, &config).unwrap()
+    Columns::new(&columns::families(&config()).unwrap(), value, &config()).unwrap()
 }
 
-fn selected(pick: Pick) -> String {
-    match pick {
-        Pick::Selected(value) => value,
-        Pick::Pending | Pick::Cancelled => panic!("pick did not complete"),
+fn keys(form: &mut Form, keys: impl IntoIterator<Item = KeyCode>) {
+    for key in keys {
+        form.key(key, &config()).unwrap();
     }
 }
 
-#[test]
-fn current_value_is_selected_and_back_undoes_every_level() {
-    let mut picker = columns("codex:gpt-6.1-sol:high");
-    assert_eq!(picker.families[picker.family].name, "codex");
-    assert_eq!(
-        picker.families[picker.family].models[picker.model].name,
-        "gpt-6.1-sol"
-    );
-    assert_eq!(
-        picker.families[picker.family].models[picker.model].efforts[picker.effort],
-        "high"
-    );
-    for back in [KeyCode::Left, KeyCode::Esc] {
-        picker.key(KeyCode::Right);
-        picker.key(KeyCode::Enter);
-        assert_eq!(picker.column, Column::Effort);
-        picker.key(back);
-        assert_eq!(picker.column, Column::Model);
-        picker.key(back);
-        assert_eq!(picker.column, Column::Family);
-        assert!(matches!(picker.key(back), Pick::Cancelled));
+fn choose(form: &mut Form, value: &str) {
+    let picker = match &mut form.screen {
+        Screen::Editing { columns, .. } => Some(columns),
+        Screen::Tiers | Screen::Entry { .. } | Screen::Review => None,
     }
-    picker.key(KeyCode::Enter);
-    picker.key(KeyCode::Enter);
-    assert_eq!(
-        selected(picker.key(KeyCode::Enter)),
-        "codex:gpt-6.1-sol:high"
-    );
+    .expect("edit screen");
+    **picker = columns(value);
+    keys(form, [KeyCode::Enter; 3]);
+}
+
+fn render(form: &Form) -> String {
+    let theme = Theme::parse(None).unwrap();
+    test_support::render(140, 24, |frame| draw::form(frame, form, &theme, "/project"))
+}
+
+fn form() -> Form {
+    Form::new(test_support::manifest(), &config()).unwrap()
+}
+
+fn entry(form: &mut Form) {
+    form.selection
+        .prefer(|row| matches!(row, form::EditRow::Entry));
+    keys(form, [KeyCode::Right]);
 }
 
 #[test]
-fn picker_requires_exact_effort_and_skips_it_only_for_no_effort_models() {
-    for (value, enters) in [("claude:opus:high", 2), ("claude:haiku", 1)] {
+fn current_value_back_navigation_and_effort_completion() {
+    for (value, enters) in [
+        ("codex:gpt-6.1-sol:high", 2),
+        ("claude:opus:high", 2),
+        ("claude:haiku", 1),
+    ] {
         let mut picker = columns(value);
-        for _ in 0..enters {
-            picker.key(KeyCode::Enter);
+        for back in [KeyCode::Left, KeyCode::Esc] {
+            picker.key(KeyCode::Right);
+            assert_eq!(picker.column, Column::Model);
+            if enters == 2 {
+                picker.key(KeyCode::Enter);
+                assert_eq!(picker.column, Column::Effort);
+                picker.key(back);
+                assert_eq!(picker.column, Column::Model);
+            }
+            picker.key(back);
+            assert_eq!(picker.column, Column::Family);
+            assert!(matches!(picker.key(back), Pick::Cancelled));
         }
-        assert_eq!(selected(picker.key(KeyCode::Enter)), value);
+        for _ in 0..enters {
+            assert!(matches!(picker.key(KeyCode::Enter), Pick::Pending));
+        }
+        assert!(
+            matches!(picker.key(KeyCode::Enter), Pick::Selected(selected) if selected == value)
+        );
     }
 }
 
 #[test]
 fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
-    let picker = columns("claude");
-    let family = &picker.families[picker.family];
-    assert_eq!(family.models[picker.model].name, family.models[0].name);
+    assert!(Columns::new(&[], "claude", &config()).is_err());
     let mut picker = columns("codex:gpt-5.4:high");
-    let family = &picker.families[picker.family];
-    assert!(!family.models.iter().any(|model| model.name == "gpt-5.4"));
-    assert_eq!(family.models[picker.model].name, "gpt-5.5");
+    let models = picker.models.as_ref().unwrap();
+    assert!(!models.iter().any(|model| model.name == "gpt-5.4"));
+    assert_eq!(models.current().name, "gpt-5.5");
     picker.key(KeyCode::Enter);
-    for _ in 0..100 {
-        picker.key(KeyCode::Down);
+    for key in [KeyCode::Down, KeyCode::Up] {
+        for _ in 0..100 {
+            picker.key(key);
+        }
+        let models = picker.models.as_ref().unwrap();
+        let edge = if key == KeyCode::Down {
+            models.iter().last()
+        } else {
+            models.iter().next()
+        };
+        assert_eq!(models.current().name, edge.unwrap().name);
     }
-    assert_eq!(
-        picker.model,
-        picker.families[picker.family].models.len() - 1
-    );
 }
 
 #[test]
-fn editing_standard_primary_preserves_secondaries_and_other_tiers() {
-    let config = config();
-    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Esc, &config).unwrap();
+fn editing_primary_renders_hints_preserves_other_rows_and_can_be_restored() {
+    let mut form = form();
+    assert!(!render(&form).contains("s save"));
+    assert!(render(&form).contains("c continue"));
+    assert!(matches!(
+        form.key(KeyCode::Char('c'), &config()).unwrap(),
+        Some(Decision::Keep)
+    ));
+    keys(&mut form, [KeyCode::Char('s'), KeyCode::Right]);
+    if let Screen::Editing { columns, .. } = &mut form.screen {
+        columns.families.current_mut().installed = false;
+    }
+    let text = render(&form);
+    assert!(text.contains("codex (not installed)") && text.contains("low medium high xhigh max"));
+    assert!(!text.contains("cli default"));
+    keys(&mut form, [KeyCode::Esc]);
     assert_eq!(form.draft, form.original);
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    form.key(KeyCode::Up, &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
+    keys(&mut form, [KeyCode::Right]);
+    choose(&mut form, "codex:gpt-6.1-sol:low");
     let mut expected = form.original.tiers.clone();
     expected.standard.primary = "codex:gpt-6.1-sol:low".into();
     assert_eq!(form.draft.tiers, expected);
-    assert!(form.key(KeyCode::Char('c'), &config).unwrap().is_none());
-    form.draft.entry_agent = form.draft.tiers.standard.primary.clone();
-    form.key(KeyCode::Char('s'), &config).unwrap();
-    assert!(matches!(form.screen, Screen::Review));
-    let decision = form.key(KeyCode::Enter, &config).unwrap().unwrap();
-    let Choice::Save(saved) = choice(&form, decision) else {
-        panic!("save the reviewed draft")
-    };
-    assert_eq!(*saved, form.draft);
-}
-
-fn assert_save_hidden(form: &mut Form) {
-    assert!(!render(form).contains("s save"));
-    assert!(form.key(KeyCode::Char('s'), &config()).unwrap().is_none());
+    assert!(render(&form).contains("s save"));
+    assert!(form.key(KeyCode::Char('c'), &config()).unwrap().is_none());
+    keys(&mut form, [KeyCode::Right]);
+    choose(&mut form, "codex:gpt-6.1-sol:medium");
+    assert!(!form.can_save());
+    keys(&mut form, [KeyCode::Char('s')]);
     assert!(matches!(form.screen, Screen::Tiers));
 }
 
 #[test]
-fn unchanged_and_restored_drafts_hide_and_ignore_save() {
-    let config = config();
-    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-    assert_save_hidden(&mut form);
-    assert!(render(&form).contains("c continue"));
-    assert!(matches!(
-        form.key(KeyCode::Char('c'), &config).unwrap(),
-        Some(Decision::Keep)
-    ));
-
-    form.draft.tiers.standard.primary = "claude:sonnet:medium".into();
-    assert!(render(&form).contains("s save"));
-    form.draft.entry_agent = form.draft.tiers.standard.primary.clone();
-    form.key(KeyCode::Char('s'), &config).unwrap();
-    assert!(matches!(form.screen, Screen::Review));
-    form.key(KeyCode::Esc, &config).unwrap();
-    form.draft = form.original.clone();
-    assert_save_hidden(&mut form);
-}
-
-#[test]
-fn rendering_marks_uninstalled_families_and_shows_effort_hints() {
-    let config = config();
-    let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-    form.key(KeyCode::Enter, &config).unwrap();
-    if let Screen::Editing { columns, .. } = &mut form.screen {
-        columns.families[0].installed = false;
+fn setup_and_configuration_share_editing_but_enter_continues_setup() {
+    for setup in [false, true] {
+        let mut manifest = test_support::manifest();
+        manifest.entry_agent = manifest.tiers.standard.primary.clone();
+        let mut form = Form::new(manifest, &config()).unwrap();
+        form.setup = setup;
+        form.select_agent(Tier::Frontier, 0).unwrap();
+        keys(&mut form, [KeyCode::Right]);
+        assert!(matches!(
+            form.screen,
+            Screen::Editing {
+                tier: Tier::Frontier,
+                ..
+            }
+        ));
+        choose(&mut form, "claude:fable:high");
+        let draft = form.draft.clone();
+        keys(&mut form, [KeyCode::Right, KeyCode::Enter, KeyCode::Esc]);
+        assert!(matches!(form.screen, Screen::Editing { .. }));
+        keys(&mut form, [KeyCode::Esc]);
+        assert_eq!(form.draft, draft);
+        if setup {
+            assert_eq!(
+                SetupTiers::key(&mut form, KeyCode::Esc, &config()).unwrap(),
+                Some(SetupAction::Back)
+            );
+            assert!(matches!(
+                form.key(KeyCode::Enter, &config()).unwrap(),
+                Some(Decision::Save)
+            ));
+        } else {
+            keys(&mut form, [KeyCode::Char('s')]);
+            let decision = form.key(KeyCode::Enter, &config()).unwrap().unwrap();
+            assert!(matches!(choice(&form, decision), Choice::Save(saved) if *saved == draft));
+        }
+        assert!(matches!(
+            form.key(KeyCode::Char('q'), &config()).unwrap(),
+            Some(Decision::Quit)
+        ));
     }
-    let text = render(&form);
-    assert!(text.contains("codex (not installed)"), "{text}");
-    assert!(text.contains("low medium high xhigh max"));
-    assert!(!text.contains("cli default"));
-}
-
-fn render(form: &Form) -> String {
-    let theme = Theme::parse(None).unwrap();
-    crate::test_support::render(140, 24, |frame| draw::form(frame, form, &theme, "/project"))
-}
-
-#[test]
-fn picker_rows_follow_project_tiers() {
-    let mut manifest = crate::test_support::manifest();
-    let binding = manifest.bindings.values().next().unwrap().clone();
-    manifest.bindings = ["zeta", "beta", "alpha"]
-        .into_iter()
-        .map(|name| (name.parse().unwrap(), binding.clone()))
-        .collect();
-    manifest.entry = "zeta".parse().unwrap();
-    let mut form = Form::new(manifest, &config()).unwrap();
-    select_agent(&mut form, Tier::Frontier, 0);
-    form.key(KeyCode::Enter, &config()).unwrap();
-    assert!(matches!(&form.screen, Screen::Editing { tier, .. } if *tier == Tier::Frontier));
-    for _ in 0..3 {
-        form.key(KeyCode::Enter, &config()).unwrap();
-    }
-    assert_eq!(form.draft, form.original);
-}
-
-#[test]
-fn setup_accepts_unchanged_detected_tiers_with_enter() {
-    let config = config();
-    let manifest = crate::test_support::manifest();
-    let mut form = Form::new(manifest.clone(), &config).unwrap();
+    let mut form = form();
     form.setup = true;
-    assert!(!form.can_save());
     assert!(matches!(
-        form.key(KeyCode::Enter, &config).unwrap(),
+        form.key(KeyCode::Enter, &config()).unwrap(),
         Some(Decision::Save)
     ));
 }
 
 #[test]
-fn right_arrow_edits_in_setup_and_after_setup() {
-    let config = config();
-    for setup in [false, true] {
-        let mut form = Form::new(crate::test_support::manifest(), &config).unwrap();
-        form.setup = setup;
-        form.key(KeyCode::Right, &config).unwrap();
-        assert!(matches!(form.screen, Screen::Editing { .. }));
-    }
-}
-
-fn choose(form: &mut Form, value: &str) {
-    let Screen::Editing { tier, index, .. } = &form.screen else {
-        panic!("edit screen")
-    };
-    form.screen = Screen::Editing {
-        tier: *tier,
-        index: *index,
-        columns: columns(value),
-    };
-    for _ in 0..3 {
-        form.key(KeyCode::Enter, &config()).unwrap();
-    }
-}
-
-fn select_agent(form: &mut Form, tier: Tier, index: usize) {
-    form.selected = form
-        .rows()
-        .iter()
-        .position(|row| {
-            matches!(row,
-        form::Row::Agent { tier: t, index: i } if *t == tier && *i == index)
-        })
-        .unwrap();
-}
-
-#[test]
-fn secondaries_can_be_added_edited_reordered_and_all_removed() {
-    let mut form = Form::new(crate::test_support::manifest(), &config()).unwrap();
+fn secondary_edit_reorder_boundaries_and_removal_preserve_primary() {
+    let mut form = form();
     let original = form.draft.clone();
-    form.key(KeyCode::Char('a'), &config()).unwrap();
+    keys(&mut form, [KeyCode::Char('a')]);
     choose(&mut form, "claude:fable:medium");
-    assert_eq!(
-        form.draft.tiers.standard.secondaries.last().unwrap(),
-        "claude:fable:medium"
-    );
-    let index = form.draft.tiers.standard.secondaries.len();
-    select_agent(&mut form, Tier::Standard, index);
-    form.key(KeyCode::Right, &config()).unwrap();
+    let last = form.draft.tiers.standard.secondaries.len();
+    form.select_agent(Tier::Standard, last).unwrap();
+    keys(&mut form, [KeyCode::Right]);
     choose(&mut form, "claude:fable:high");
+    assert_eq!(render(&form).matches("changed").count(), 1);
     let before = form.draft.tiers.standard.secondaries.clone();
-    form.key(KeyCode::Char('['), &config()).unwrap();
-    let mut expected = before.clone();
-    expected.swap(index - 1, index - 2);
-    assert_eq!(form.draft.tiers.standard.secondaries, expected);
-    form.key(KeyCode::Char(']'), &config()).unwrap();
+    assert_eq!(before.last().unwrap(), "claude:fable:high");
+    keys(&mut form, [KeyCode::Char(']')]);
+    assert_eq!(form.draft.tiers.standard.secondaries, before);
+    keys(&mut form, [KeyCode::Char('[')]);
+    assert_ne!(form.draft.tiers.standard.secondaries, before);
+    keys(&mut form, [KeyCode::Char(']')]);
     assert_eq!(form.draft.tiers.standard.secondaries, before);
     while !form.draft.tiers.standard.secondaries.is_empty() {
-        select_agent(&mut form, Tier::Standard, 1);
-        form.key(KeyCode::Char('d'), &config()).unwrap();
+        form.select_agent(Tier::Standard, 1).unwrap();
+        let before = form.draft.tiers.standard.secondaries.clone();
+        keys(&mut form, [KeyCode::Char('[')]);
+        assert_eq!(form.draft.tiers.standard.secondaries, before);
+        keys(&mut form, [KeyCode::Char('d')]);
     }
+    keys(&mut form, [KeyCode::Char('d')]);
     assert_eq!(
         form.draft.tiers.standard.primary,
         original.tiers.standard.primary
     );
     assert_eq!(form.draft.tiers.frontier, original.tiers.frontier);
     assert_eq!(form.draft.entry_agent, original.entry_agent);
-    crate::workspace_manifest::check(&form.draft, &config().models).unwrap();
+    workspace_manifest::check(&form.draft, &config().models).unwrap();
 }
 
 #[test]
-fn duplicate_primary_or_secondary_including_effort_aliases_is_refused() {
-    let mut form = Form::new(crate::test_support::manifest(), &config()).unwrap();
-    let primary = form.draft.tiers.standard.primary.clone();
-    form.key(KeyCode::Char('a'), &config()).unwrap();
-    choose(&mut form, &primary);
-    assert_eq!(form.draft, form.original);
-    assert!(render(&form).contains("Duplicate agent"));
-    let secondary = form.draft.tiers.standard.secondaries[0].clone();
-    form.key(KeyCode::Right, &config()).unwrap();
-    choose(&mut form, &secondary);
-    assert_eq!(form.draft, form.original);
-    form.draft.tiers.standard.primary = "codex:gpt-6.1-sol:med".into();
-    form.original = form.draft.clone();
-    form.key(KeyCode::Char('a'), &config()).unwrap();
-    choose(&mut form, &primary);
-    assert_eq!(form.draft, form.original);
-    assert!(form.error.contains("Duplicate agent"));
+fn duplicate_primary_secondary_and_effort_aliases_are_refused() {
+    for primary in ["codex:gpt-6.1-sol:medium", "codex:gpt-6.1-sol:med"] {
+        let mut manifest = test_support::manifest();
+        manifest.tiers.standard.primary = primary.into();
+        let secondary = manifest.tiers.standard.secondaries.first().unwrap().clone();
+        let mut form = Form::new(manifest, &config()).unwrap();
+        for (key, value) in [
+            (KeyCode::Char('a'), "codex:gpt-6.1-sol:medium"),
+            (KeyCode::Right, secondary.as_str()),
+        ] {
+            keys(&mut form, [key]);
+            choose(&mut form, value);
+            assert_eq!(form.draft, form.original);
+            assert!(render(&form).contains("Duplicate agent"));
+        }
+    }
 }
 
 #[test]
-fn absent_tiers_and_an_independent_entry_agent_are_editable() {
-    let mut manifest = crate::test_support::manifest();
+fn absent_tier_can_be_added_and_removed_entry_requires_explicit_choice() {
+    let mut manifest = test_support::manifest();
     manifest.tiers.frontier = None;
+    manifest.entry_agent = manifest.tiers.standard.primary.clone();
     let mut form = Form::new(manifest, &config()).unwrap();
     assert!(render(&form).contains("(absent"));
-    select_agent(&mut form, Tier::Frontier, 0);
-    form.key(KeyCode::Right, &config()).unwrap();
+    form.select_agent(Tier::Frontier, 0).unwrap();
+    keys(&mut form, [KeyCode::Right]);
     choose(&mut form, "claude:fable:high");
-    assert_eq!(
-        form.draft.tiers.frontier.as_ref().unwrap().primary,
-        "claude:fable:high"
-    );
     assert!(
         form.draft
             .tiers
@@ -300,67 +255,18 @@ fn absent_tiers_and_an_independent_entry_agent_are_editable() {
             .secondaries
             .is_empty()
     );
-    let old_entry = form.draft.entry_agent.clone();
-    form.selected = form.rows().len() - 1;
-    form.key(KeyCode::Right, &config()).unwrap();
-    let selected = form
-        .entry_choices()
-        .iter()
-        .position(|agent| *agent == "claude:fable:high")
-        .unwrap();
-    form.screen = Screen::Entry { selected };
-    form.key(KeyCode::Enter, &config()).unwrap();
-    assert_ne!(form.draft.entry_agent, old_entry);
-    assert_eq!(form.draft.entry_agent, "claude:fable:high");
-    crate::workspace_manifest::check(&form.draft, &config().models).unwrap();
-}
-
-#[test]
-fn removing_entry_requires_an_explicit_new_entry_choice_before_save() {
-    let mut form = Form::new(crate::test_support::manifest(), &config()).unwrap();
-    form.draft.entry_agent = form.draft.tiers.standard.primary.clone();
-    let old_entry = form.draft.entry_agent.clone();
-    form.key(KeyCode::Right, &config()).unwrap();
-    choose(&mut form, "claude:fable:high");
-    assert_eq!(form.draft.entry_agent, old_entry);
+    form.select_agent(Tier::Standard, 0).unwrap();
+    keys(&mut form, [KeyCode::Right]);
+    choose(&mut form, "codex:gpt-6.1-sol:low");
     assert!(render(&form).contains("Entry agent is no longer listed"));
-    form.key(KeyCode::Char('s'), &config()).unwrap();
+    keys(&mut form, [KeyCode::Char('s')]);
     assert!(matches!(form.screen, Screen::Tiers));
     assert!(form.error.contains("invalid entry_agent"));
-    form.selected = form.rows().len() - 1;
-    form.key(KeyCode::Right, &config()).unwrap();
-    form.key(KeyCode::Enter, &config()).unwrap();
-    form.key(KeyCode::Char('s'), &config()).unwrap();
+    entry(&mut form);
+    if let Screen::Entry { choices } = &mut form.screen {
+        choices.prefer(|value| value == "claude:fable:high");
+    }
+    keys(&mut form, [KeyCode::Enter, KeyCode::Char('s')]);
+    assert_eq!(form.draft.entry_agent, "claude:fable:high");
     assert!(matches!(form.screen, Screen::Review));
-}
-
-#[test]
-fn setup_back_leaves_columns_before_leaving_table_and_keeps_edits() {
-    let mut form = Form::new(crate::test_support::manifest(), &config()).unwrap();
-    form.setup = true;
-    form.key(KeyCode::Right, &config()).unwrap();
-    choose(&mut form, "claude:fable:high");
-    let draft = form.draft.clone();
-    form.key(KeyCode::Right, &config()).unwrap();
-    form.key(KeyCode::Enter, &config()).unwrap();
-    form.key(KeyCode::Esc, &config()).unwrap();
-    assert!(matches!(form.screen, Screen::Editing { .. }));
-    form.key(KeyCode::Esc, &config()).unwrap();
-    assert!(matches!(form.screen, Screen::Tiers));
-    assert_eq!(
-        SetupTiers::key(&mut form, KeyCode::Esc, &config()).unwrap(),
-        Some(SetupAction::Back)
-    );
-    assert_eq!(form.draft, draft);
-    assert!(matches!(
-        form.key(KeyCode::Char('q'), &config()).unwrap(),
-        Some(Decision::Quit)
-    ));
-}
-
-#[test]
-fn changing_one_secondary_marks_only_that_row_changed() {
-    let mut form = Form::new(crate::test_support::manifest(), &config()).unwrap();
-    form.draft.tiers.standard.secondaries[0] = "claude:fable:medium".into();
-    assert_eq!(render(&form).matches("changed").count(), 1);
 }

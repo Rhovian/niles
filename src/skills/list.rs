@@ -1,13 +1,16 @@
 use super::{SkillName, display_description, global_dir, resolve};
 use crate::workspace_manifest::setup::SetupSelection;
+use crate::{util, workspace_manifest};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
-use std::{collections::BTreeSet, fs, io::ErrorKind};
+use std::collections::BTreeSet;
+use std::io::{self, ErrorKind};
+use std::{fs, iter};
 
 pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
-    let workspace = crate::util::current_dir_utf8()?;
+    let workspace = util::current_dir_utf8()?;
     let global = global_dir()?;
-    let manifest = crate::workspace_manifest::load_for_skill_listing(&workspace, selection)?
+    let manifest = workspace_manifest::load_for_skill_listing(&workspace, selection)?
         .context("skills requires a workspace manifest")?;
     let Discovery {
         mut names,
@@ -18,7 +21,7 @@ pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
     }
     names.extend(manifest.bindings.keys().cloned());
     for name in
-        std::iter::once(&manifest.entry).chain(names.iter().filter(|name| **name != manifest.entry))
+        iter::once(&manifest.entry).chain(names.iter().filter(|name| **name != manifest.entry))
     {
         // Operator policy: discovery warns and continues; launches still reject invalid skills.
         let skill = match resolve(name, &workspace, &global) {
@@ -65,7 +68,7 @@ fn available(workspace: &Utf8Path, global: &Utf8Path) -> Discovery {
     Discovery { names, warnings }
 }
 
-fn candidate(entry: std::io::Result<fs::DirEntry>) -> Result<Option<SkillName>> {
+fn candidate(entry: io::Result<fs::DirEntry>) -> Result<Option<SkillName>> {
     let entry = entry?;
     let kind = entry.file_type()?;
     if !kind.is_dir() && !kind.is_symlink() {

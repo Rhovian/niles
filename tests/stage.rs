@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 mod common;
 use common::*;
 use std::{
@@ -43,7 +43,7 @@ impl Worker {
         assert_failure_contains(kind, &self.command(kind).output().unwrap(), cause);
     }
     fn report(&self) {
-        fs::write(self.dir.join("report.md"), "deliverable").unwrap();
+        atomic_write(self.dir.join("report.md"), "deliverable").unwrap();
     }
 }
 fn skill(env: &TestEnv, name: &str, bytes: usize) {
@@ -139,7 +139,7 @@ fn persisted_round_without_status_is_counted_and_reset_by_done() {
     let worker = Worker::new(Some(1), &["reviewer"]);
     worker.report();
     worker.succeeds("stage");
-    fs::write(worker.dir.join("status.log"), "").unwrap();
+    atomic_write(worker.dir.join("status.log"), "").unwrap();
     worker.fails("stage", "round limit");
     worker.succeeds("done");
     worker.succeeds("stage");
@@ -152,12 +152,16 @@ fn metadata_rounds_are_parsed_and_metadata_errors_do_not_disable_staging() {
     let path = worker.dir.join("meta.json");
     let mut meta = read_json(&path);
     for value in [0, 11] {
-        meta["gates"]["rounds"] = value.into();
-        fs::write(&path, meta.to_string()).unwrap();
+        meta.get_mut("gates")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("rounds".into(), value.into());
+        atomic_write(&path, meta.to_string()).unwrap();
         worker.fails("stage", "gates.rounds must be 1..=10");
         worker.fails("done", "gates.rounds must be 1..=10");
     }
-    fs::write(&path, "invalid json").unwrap();
+    atomic_write(&path, "invalid json").unwrap();
     worker.fails("done", "meta.json");
     fs::remove_file(path).unwrap();
     worker.fails("done", "worker metadata missing");
@@ -207,17 +211,15 @@ fn spawn_snapshot_provenance_and_cap() {
     let workers = state_dir(&env.root).join("worker");
     let dir = workers.join("job");
     let meta = read_json(dir.join("meta.json"));
-    assert_eq!(meta["on_stage"], serde_json::json!(["reviewer"]));
-    assert_eq!(meta["gates"]["rounds"], 2);
-    assert_eq!(
-        meta["gates"]["post"][0]["timeout"],
-        serde_json::json!({"secs": 1, "nanos": 500_000_000})
+    assert_fields(
+        &meta,
+        serde_json::json!({
+            "/on_stage":["reviewer"], "/gates/rounds":2,
+            "/gates/post/0/timeout":{"secs":1,"nanos":500_000_000},
+            "/gates/post/0/run":["printf", "literal; $(false)"],
+        }),
     );
-    assert_eq!(
-        meta["gates"]["post"][0]["run"],
-        serde_json::json!(["printf", "literal; $(false)"])
-    );
-    fs::write(&manifest, text).unwrap();
+    atomic_write(&manifest, text).unwrap();
     let worker = Worker { env, dir };
     worker.report();
     assert!(worker.succeeds("stage").contains("check pass"));
@@ -226,7 +228,7 @@ fn spawn_snapshot_provenance_and_cap() {
         "literal; $(false)"
     );
     skill(&worker.env, "reviewer", 32_769);
-    fs::write(&manifest, configured).unwrap();
+    atomic_write(&manifest, configured).unwrap();
     let output = worker.env.spawn("worker", &["oversized", "task"]);
     assert_failure_contains("spawn body cap", &output, "32768");
     assert!(!workers.join("oversized").exists());

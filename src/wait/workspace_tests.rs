@@ -1,8 +1,10 @@
 use super::*;
-use crate::test_support::{remove_workspace, write_worker_meta};
+use crate::store::atomic_write;
+use crate::telemetry::SessionLink;
+use crate::test_support::{self, TempDir, remove_workspace, write_worker_meta};
 
 struct Fixture {
-    workspace: crate::test_support::TempDir,
+    workspace: TempDir,
     dir: Utf8PathBuf,
     targets: BTreeMap<String, Target>,
     output: Vec<u8>,
@@ -30,7 +32,7 @@ impl Drop for Fixture {
 }
 
 fn fixture(label: &str, log: &str) -> Fixture {
-    let workspace = crate::test_support::temp_dir(label);
+    let workspace = test_support::temp_dir(label);
     write_worker_meta(
         &workspace,
         "worker",
@@ -39,7 +41,7 @@ fn fixture(label: &str, log: &str) -> Fixture {
         None,
     );
     let dir = store::workers_dir(&workspace).unwrap().join("worker");
-    fs::write(dir.join("status.log"), log).unwrap();
+    atomic_write(dir.join("status.log"), log).unwrap();
     Fixture {
         workspace,
         dir,
@@ -53,7 +55,7 @@ fn repeated_polls_retain_scan_offsets_without_persisting_unprinted_lines() {
     let log = "working: busy\n".repeat(10_000);
     let mut f = fixture("wait-scanned", &log);
     assert!(!f.poll().unwrap());
-    assert_eq!(f.targets["worker"].scanned, log.len() as u64);
+    assert_eq!(f.targets.get("worker").unwrap().scanned, log.len() as u64);
     assert_eq!(fs::read_to_string(f.dir.join("status.cursor")).unwrap(), "");
 
     // Make a re-read of the already scanned prefix observable without timing a large log.
@@ -71,6 +73,10 @@ fn repeated_polls_retain_scan_offsets_without_persisting_unprinted_lines() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "exercise same-inode truncation separately from atomic replacement"
+)]
 fn replacing_or_truncating_a_log_invalidates_its_cached_offset() {
     for (replace, lines, taken, expected) in [
         (false, 10, "", &b"worker done: new\n"[..]),
@@ -86,13 +92,12 @@ fn replacing_or_truncating_a_log_invalidates_its_cached_offset() {
             } else {
                 format!("{taken}blocked: next\n")
             };
-            fs::write(f.dir.join("new.log"), replacement).unwrap();
-            fs::rename(f.dir.join("new.log"), f.dir.join("status.log")).unwrap();
+            atomic_write(f.dir.join("status.log"), replacement).unwrap();
         } else {
             fs::write(f.dir.join("status.log"), "done: new\n").unwrap();
         }
         if !taken.is_empty() {
-            fs::write(f.dir.join("status.cursor"), format!("{}\n", taken.len())).unwrap();
+            atomic_write(f.dir.join("status.cursor"), format!("{}\n", taken.len())).unwrap();
         }
         assert!(f.poll().unwrap());
         assert_eq!(f.output, expected);
@@ -117,13 +122,13 @@ fn an_idle_unreported_worker_is_recorded_once_after_the_grace() {
     let mut f = fixture("wait-idle-gone", "working: busy\n");
     let sessions = f.dir.join("sessions");
     fs::create_dir(&sessions).unwrap();
-    fs::write(sessions.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-10-01T16:00:00Z\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\"}}\n").unwrap();
+    atomic_write(sessions.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-10-01T16:00:00Z\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\"}}\n").unwrap();
     write_worker_meta(
         &f.workspace,
         "worker",
         "unresolved",
         "2026-01-02T03:04:05Z".parse().unwrap(),
-        Some(crate::telemetry::SessionLink::Pi {
+        Some(SessionLink::Pi {
             session_dir: sessions,
         }),
     );
@@ -153,7 +158,7 @@ fn corrupt_worker_metadata_stops_the_wait_without_consuming_reports() {
     let mut f = fixture("wait-corrupt-meta", "done: pending\n");
     let broken = f.dir.parent().unwrap().join("broken");
     fs::create_dir_all(&broken).unwrap();
-    fs::write(broken.join("meta.json"), "{").unwrap();
+    atomic_write(broken.join("meta.json"), "{").unwrap();
     let error = f.poll().unwrap_err();
     assert!(format!("{error:#}").contains(broken.join("meta.json").as_str()));
     assert!(f.output.is_empty());
@@ -174,11 +179,11 @@ fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
         "z-broken",
         "unresolved",
         "2026-01-02T03:04:05Z".parse().unwrap(),
-        Some(crate::telemetry::SessionLink::Pi {
+        Some(SessionLink::Pi {
             session_dir: sessions.clone(),
         }),
     );
-    fs::write(broken.join("status.log"), "working: busy\n").unwrap();
+    atomic_write(broken.join("status.log"), "working: busy\n").unwrap();
     let error = f.poll().unwrap_err();
     assert_eq!(f.output, b"worker done: ready\n");
     assert_eq!(
@@ -192,7 +197,7 @@ fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
     assert_eq!(error.to_string(), "failed to probe worker z-broken");
     assert!(format!("{error:#}").contains(sessions.join("unreadable.jsonl").as_str()));
 
-    fs::write(broken.join("status.log"), "done: repaired\n").unwrap();
+    atomic_write(broken.join("status.log"), "done: repaired\n").unwrap();
     f.targets.clear();
     f.output.clear();
     assert!(f.poll().unwrap());

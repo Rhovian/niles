@@ -1,10 +1,11 @@
 use super::support::*;
+use std::iter;
 
 #[test]
 fn corrupt_cursor_fails_loudly_and_names_the_file() {
     let workspace = temp_workspace("niles-wait-corrupt");
     let worker_dir = worker_with_status(&workspace, "auth-fix", b"done: ready\n");
-    fs::write(worker_dir.join("status.cursor"), "not-a-number\n").unwrap();
+    atomic_write(worker_dir.join("status.cursor"), "not-a-number\n").unwrap();
 
     let output = run_wait(&workspace, &["--interval", "50ms", "--timeout", "0"]);
 
@@ -19,7 +20,7 @@ fn corrupt_cursor_fails_loudly_and_names_the_file() {
 fn caps_an_enormous_status_line_instead_of_flooding_the_manager() {
     let workspace = temp_workspace("niles-wait-huge");
     let mut status = b"done: ".to_vec();
-    status.extend(std::iter::repeat_n(b'x', 64 * 1024));
+    status.extend(iter::repeat_n(b'x', 64 * 1024));
     status.push(b'\n');
     worker_with_status(&workspace, "auth-fix", &status);
 

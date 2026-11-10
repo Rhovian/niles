@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::selection::Selection;
+use crate::theme::{StyleKey, Theme};
+use anyhow::{Context, Result};
 use camino::Utf8Path;
-use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Layout},
-    widgets::{List, ListState, Paragraph, Wrap},
-};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::widgets::{List, ListState, Paragraph, Wrap};
 
 pub(super) fn screen<T>(
     mut run: impl FnMut(&mut ratatui::DefaultTerminal) -> Result<T>,
@@ -31,24 +31,18 @@ pub(super) enum Action {
     Quit,
 }
 
-const FIRST_OPTION: usize = 0;
-
 // crossterm 0.29.0 event::read supplies key events, not selection or checklist state.
 pub(super) struct Options {
-    rows: Vec<(String, String)>,
-    checked: Vec<bool>,
-    cursor: usize,
+    rows: Selection<((String, String), bool)>,
     checklist: bool,
 }
 impl Options {
-    pub fn new(rows: Vec<(String, String)>, checklist: bool) -> Self {
-        debug_assert!(!rows.is_empty(), "a picker needs at least one option");
-        Self {
-            checked: vec![false; rows.len()],
-            rows,
-            cursor: 0,
+    pub fn new(rows: Vec<(String, String)>, checklist: bool) -> Result<Self> {
+        Ok(Self {
+            rows: Selection::new(rows.into_iter().map(|row| (row, false)))
+                .context("a picker needs at least one option")?,
             checklist,
-        }
+        })
     }
     #[expect(clippy::wildcard_enum_match_arm, reason = "ignore unbound picker keys")]
     pub fn key(&mut self, key: KeyCode) -> Option<Action> {
@@ -57,36 +51,32 @@ impl Options {
             KeyCode::Char('q') => Some(Action::Quit),
             KeyCode::Enter => {
                 if !self.checklist {
-                    self.checked[self.cursor] = true;
+                    self.rows.current_mut().1 = true;
                 }
                 Some(Action::Next)
             }
-            KeyCode::Up => {
-                self.cursor = self.cursor.saturating_sub(1);
-                None
-            }
-            KeyCode::Down => {
-                self.cursor = (self.cursor + 1).min(self.rows.len() - 1);
+            KeyCode::Up | KeyCode::Down => {
+                self.rows.move_focus(key == KeyCode::Down);
                 None
             }
             KeyCode::Char(' ') if self.checklist => {
-                self.checked[self.cursor] = !self.checked[self.cursor];
+                let checked = &mut self.rows.current_mut().1;
+                *checked = !*checked;
                 None
             }
             _ => None,
         }
     }
     pub fn pick(&mut self, header: &str, question: &str) -> Result<Action> {
-        let theme = crate::theme::Theme::load()?;
+        let theme = Theme::load()?;
         let mut state = ListState::default();
         screen(|terminal| {
             loop {
                 let rows = self
                     .rows
                     .iter()
-                    .enumerate()
-                    .map(|(i, (name, description))| {
-                        let mark = if self.checked[i] { "[x] " } else { "[ ] " };
+                    .map(|((name, description), checked)| {
+                        let mark = if *checked { "[x] " } else { "[ ] " };
                         format!(
                             "{}{name} — {description}",
                             if self.checklist { mark } else { "" }
@@ -118,11 +108,11 @@ impl Options {
                     ])
                     .areas(frame.area());
                     frame.render_widget(question, heading);
-                    state.select(Some(self.cursor));
+                    state.select(Some(self.rows.position()));
                     frame.render_stateful_widget(
                         List::new(rows)
                             .highlight_symbol("› ")
-                            .highlight_style(theme.style(crate::theme::StyleKey::Selection)),
+                            .highlight_style(theme.style(StyleKey::Selection)),
                         body,
                         &mut state,
                     );
@@ -139,35 +129,31 @@ impl Options {
             }
         })
     }
-    pub fn replace_rows(&mut self, rows: Vec<(String, String)>) {
-        let cursor = self.rows[self.cursor].0.clone();
-        self.checked = rows
-            .iter()
-            .map(|(name, _)| {
-                self.rows
-                    .iter()
-                    .position(|(old, _)| old == name)
-                    .is_some_and(|i| self.checked[i])
-            })
-            .collect();
-        self.cursor = match rows.iter().position(|(name, _)| name == &cursor) {
-            Some(i) => i,
-            None => FIRST_OPTION,
-        };
-        self.rows = rows;
+    pub fn replace_rows(&mut self, rows: Vec<(String, String)>) -> Result<()> {
+        let mut next = Selection::new(rows.into_iter().map(|row| {
+            let checked = self
+                .rows
+                .iter()
+                .any(|((name, _), checked)| *name == row.0 && *checked);
+            (row, checked)
+        }))
+        .context("a picker needs at least one option")?;
+        next.prefer(|(row, _)| row.0 == self.rows.current().0.0);
+        self.rows = next;
+        Ok(())
     }
     pub fn chosen(&self) -> &(String, String) {
         debug_assert!(!self.checklist);
-        &self.rows[self.cursor]
+        &self.rows.current().0
     }
     pub fn selected(&self) -> impl Iterator<Item = &str> {
         self.rows
             .iter()
-            .zip(&self.checked)
-            .filter(|(_, checked)| **checked)
+            .filter(|(_, checked)| *checked)
             .map(|((name, _), _)| name.as_str())
     }
 }
+
 pub(super) fn confirm(options: &mut Options, header: &str, text: &str) -> Result<Action> {
     let action = options.pick(header, text)?;
     Ok(
@@ -213,20 +199,24 @@ pub(super) fn register(root: &Utf8Path) -> Result<Option<super::registry::Entry>
 mod tests {
     use super::super::defaults;
     use super::*;
+    use crate::store;
+
     #[test]
     fn checklist_rebuild_keeps_other_checks_and_cursor() {
         use ratatui::crossterm::event::KeyCode;
-        let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS).unwrap();
-        let mut options = Options::new(rows.clone(), true);
+        let rows: Vec<(String, String)> = store::parse_yaml(defaults::SKILLS).unwrap();
+        let mut options = Options::new(rows.clone(), true).unwrap();
         options.key(KeyCode::Down);
         options.key(KeyCode::Char(' '));
-        options.replace_rows(
-            rows.into_iter()
-                .filter(|(name, _)| name != "lead")
-                .collect(),
-        );
+        options
+            .replace_rows(
+                rows.into_iter()
+                    .filter(|(name, _)| name != "lead")
+                    .collect(),
+            )
+            .unwrap();
         assert_eq!(options.selected().collect::<Vec<_>>(), ["design"]);
-        assert_eq!(options.cursor, 0);
+        assert_eq!(options.rows.position(), 0);
         options.key(KeyCode::Char(' '));
         assert_eq!(options.selected().count(), 0);
     }

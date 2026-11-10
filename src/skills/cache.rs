@@ -1,12 +1,14 @@
 use super::reference::{GithubRef, PinnedRef};
+use crate::util;
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
-use std::{collections::BTreeMap, fs};
+use std::collections::BTreeMap;
+use std::fs;
 
 const MAX_DIRECTORY_BYTES: u64 = 8 * 1024 * 1024;
 
 fn git(dir: &Utf8Path, args: &[&str]) -> Result<String> {
-    let output = crate::util::git_command()
+    let output = util::git_command()
         .args([
             "--literal-pathspecs",
             "-c",
@@ -22,7 +24,7 @@ fn git(dir: &Utf8Path, args: &[&str]) -> Result<String> {
     ensure!(
         output.status.success(),
         "skill git {} failed: {}",
-        args[0],
+        args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).context("skill git output is not UTF-8")
@@ -38,7 +40,7 @@ pub(crate) fn pin(reference: GithubRef) -> Result<PinnedRef> {
     if reference.is_pinned() {
         return reference.try_into();
     }
-    let cwd = crate::util::current_dir_utf8()?;
+    let cwd = util::current_dir_utf8()?;
     let rev = &reference.rev;
     let output = git(
         &cwd,
@@ -74,13 +76,12 @@ pub(crate) fn pin(reference: GithubRef) -> Result<PinnedRef> {
         .iter()
         .filter(|(name, _)| !name.ends_with("^{}"))
         .collect();
-    ensure!(
-        candidates.len() == 1,
-        "skill revision {rev:?} is missing or ambiguous"
-    );
-    let (name, sha) = candidates[0];
+    let [(name, sha)] = candidates.as_slice() else {
+        anyhow::bail!("skill revision {rev:?} is missing or ambiguous");
+    };
     let peeled = format!("{name}^{{}}");
-    let sha = refs.get(peeled.as_str()).copied().map_or(*sha, |sha| sha);
+    #[expect(clippy::disallowed_methods, reason = "unpeeled branch")]
+    let sha = refs.get(peeled.as_str()).copied().unwrap_or(**sha);
     reference.with_sha(sha.to_owned())
 }
 
@@ -174,7 +175,7 @@ fn finish_fetch(staging: &Utf8Path, result: Result<()>) -> Result<()> {
 }
 
 pub(super) fn check_size(root: &Utf8Path) -> Result<()> {
-    let mut total = 0;
+    let mut total = 0u64;
     let mut pending = vec![root.to_owned()];
     // std::fs::read_dir (Rust 1.89 std/fs.rs) is nonrecursive and has no byte limit.
     // Sum regular-file sizes before publishing or reading the immutable cache tree.
@@ -195,7 +196,9 @@ pub(super) fn check_size(root: &Utf8Path) -> Result<()> {
                     metadata.is_file(),
                     "skill cache file must be regular: {path}"
                 );
-                total += metadata.len();
+                total = total
+                    .checked_add(metadata.len())
+                    .context("skill directory size overflow")?;
                 ensure!(
                     total <= MAX_DIRECTORY_BYTES,
                     "skill directory exceeds 8 MiB: {root}"

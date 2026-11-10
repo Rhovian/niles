@@ -1,11 +1,12 @@
-use crate::{
-    agents::AgentSpec,
-    skills::{self, SkillName},
-    tmux,
-    workspace_manifest::{self, Tiers, WorkspaceManifest},
-};
+use crate::agents::AgentSpec;
+use crate::config::spec;
+use crate::skills::{self, SkillName};
+use crate::theme::Theme;
+use crate::workspace_manifest::{self, Tiers, WorkspaceManifest};
+use crate::{tmux, util};
 use anyhow::{Result, ensure};
 use clap::Args;
+use std::iter;
 
 #[derive(Debug, Args)]
 pub(crate) struct Options {
@@ -27,7 +28,7 @@ pub(crate) struct Options {
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
-    let cwd = crate::util::current_dir_utf8()?;
+    let cwd = util::current_dir_utf8()?;
     let path = workspace_manifest::manifest_path(&cwd, None)?;
     ensure!(!path.try_exists()?, "manifest already exists: {path}");
     let global = skills::global_dir()?;
@@ -37,13 +38,13 @@ pub(crate) fn run(options: Options) -> Result<()> {
         .map(SkillName::as_str)
         .collect::<Vec<_>>()
         .join(", ");
-    for name in std::iter::once(&options.entry_skill).chain(&options.starter_skills) {
+    for name in iter::once(&options.entry_skill).chain(&options.starter_skills) {
         ensure!(
             skills::find(name, &cwd, &global)?.is_some() || fetchable.contains(name),
             "unknown skill {name}; fetchable: {choices}; import custom skills first"
         );
     }
-    let config = crate::config::spec::load_project_config_from(&cwd)?;
+    let config = spec::load_project_config_from(&cwd)?;
     let mut manifest = WorkspaceManifest {
         entry: options.entry_skill,
         entry_agent: options.entry_agent,
@@ -59,7 +60,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
         let spec = AgentSpec::parse(agent, &config.models)?;
         let binary = spec.profile().binary;
         ensure!(
-            crate::util::find_on_path(binary).is_some(),
+            util::find_on_path(binary).is_some(),
             "CLI not found on PATH: {binary}"
         );
     }
@@ -87,7 +88,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
         .transpose()?;
     if project.is_some() {
         ensure!(
-            crate::util::find_on_path("tmux").is_some(),
+            util::find_on_path("tmux").is_some(),
             "CLI not found on PATH: tmux"
         );
     }
@@ -108,11 +109,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
             Some(entry) => entry,
             None => super::register::register(name.as_str(), &cwd)?,
         };
-        super::super::lifecycle::start_entry(
-            &entry,
-            tmux::LeadStart::Unattended,
-            &crate::theme::Theme::load()?,
-        )?;
+        super::super::lifecycle::start_entry(&entry, tmux::LeadStart::Unattended, &Theme::load()?)?;
         println!("entry session: {} (open with niles)", name.as_str());
     }
     Ok(())

@@ -5,14 +5,13 @@
 //! tick passes `now`), no filesystem, no tmux. `watch.rs` reads the state, asks here, and delivers
 //! whatever comes back through the one edge it owns.
 
-use std::collections::{BTreeMap, BTreeSet};
-
+use super::checkin::Checkin;
+use super::digest::Item;
+use crate::telemetry::SessionState;
+use crate::worker::WorkerSnapshot;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, TimeDelta, Utc};
-
-use crate::{telemetry::SessionState, worker::WorkerSnapshot};
-
-use super::{checkin::Checkin, digest::Item};
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_NUDGE_HOLD: TimeDelta = TimeDelta::minutes(5);
 
@@ -55,7 +54,7 @@ impl WatchMemory {
             return false;
         }
         let since = *self.held_since.get_or_insert(now);
-        now - since < MAX_NUDGE_HOLD
+        now.signed_duration_since(since) < MAX_NUDGE_HOLD
     }
     /// Memory for a watcher that is starting now.
     ///
@@ -100,29 +99,30 @@ impl WatchMemory {
             let accounted = (*seen).max(taken);
 
             if let Some(checkin) = checkins.get(&worker.id) {
-                match worker.last_actionable {
-                    Some(wake) if checkin.answered_by(wake) => plan.disarms.push(Disarm {
+                if worker
+                    .last_actionable
+                    .is_some_and(|wake| checkin.answered_by(wake))
+                {
+                    plan.disarms.push(Disarm {
                         id: worker.id.clone(),
                         worker_dir: worker.worker_dir.clone(),
                         planned: *checkin,
-                    }),
-                    _ if now >= checkin.deadline => {
-                        let state = self
-                            .activity
-                            .get(&worker.id)
-                            .filter(|(deadline, _)| *deadline == checkin.deadline)
-                            .and_then(|(_, state)| *state);
-                        plan.nudges.push(Item::Checkin {
-                            id: worker.id.clone(),
-                            worker_dir: worker.worker_dir.clone(),
-                            state,
-                            planned: *checkin,
-                            next: (state != Some(SessionState::Waiting))
-                                .then(|| checkin.rearmed(now))
-                                .transpose()?,
-                        });
-                    }
-                    _ => {}
+                    });
+                } else if now >= checkin.deadline {
+                    let state = self
+                        .activity
+                        .get(&worker.id)
+                        .filter(|(deadline, _)| *deadline == checkin.deadline)
+                        .and_then(|(_, state)| *state);
+                    plan.nudges.push(Item::Checkin {
+                        id: worker.id.clone(),
+                        worker_dir: worker.worker_dir.clone(),
+                        state,
+                        planned: *checkin,
+                        next: (state != Some(SessionState::Waiting))
+                            .then(|| checkin.rearmed(now))
+                            .transpose()?,
+                    });
                 }
             }
 
@@ -155,13 +155,13 @@ impl WatchMemory {
 
 #[cfg(test)]
 mod tests {
-    use crate::watch::cadence::Delay;
-
+    use super::{super::cadence::Recheck, *};
+    use crate::test_support::only;
+    use crate::{
+        test_support::at,
+        watch::{cadence::Delay, tests::reported},
+    };
     use std::path::PathBuf;
-
-    use super::super::cadence::Recheck;
-    use super::*;
-    use crate::{test_support::at, watch::tests::reported};
 
     const WINDOW: &str = "working: launch\n";
 
@@ -218,42 +218,26 @@ mod tests {
     }
 
     #[test]
-    fn a_report_right_after_dispatch_nudges_once() {
-        let now = at(1_000);
-        let checkins = armed_over(WINDOW, 300, now);
-        let mut memory = fresh();
-        let dispatched = || worker("impl", &format!("{WINDOW}{DONE}"));
-
-        let plan = memory.plan(&[dispatched()], &checkins, at(1060)).unwrap();
-        assert_eq!(reports(&plan), vec![reported("impl", "done")]);
-        // The worker answered the assignment, so the check-in goes with it.
-        assert_eq!(plan.disarms.len(), 1);
-        assert_eq!(plan.disarms[0].id, "impl");
-
-        // Nothing has changed since: the same state is not nudged again.
-        memory.commit(&plan.nudges[0]);
-        let quiet = memory
-            .plan(&[dispatched()], &BTreeMap::new(), at(1061))
-            .unwrap();
-        assert!(quiet.nudges.is_empty(), "{quiet:?}");
-    }
-
-    #[test]
-    fn done_send_done_nudges_twice() {
+    fn reports_disarm_then_only_new_report_text_nudges() {
+        let checkins = armed_over(WINDOW, 300, at(1000));
         let mut memory = fresh();
         let first = format!("{WINDOW}{DONE}");
-        let second = format!("{first}done: shipped again\n");
-
         let plan = memory
-            .plan(&[worker("impl", &first)], &BTreeMap::new(), at(1030))
+            .plan(&[worker("impl", &first)], &checkins, at(1060))
             .unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
-        memory.commit(&plan.nudges[0]);
-
-        // `send` appends nothing to the log; the second report is later text of the same shape,
-        // and the length is what tells it apart from a replay.
+        assert_eq!(only(&plan.disarms).id, "impl");
+        memory.commit(only(&plan.nudges));
+        assert!(
+            memory
+                .plan(&[worker("impl", &first)], &BTreeMap::new(), at(1061))
+                .unwrap()
+                .nudges
+                .is_empty()
+        );
+        let second = format!("{first}done: shipped again\n");
         let plan = memory
-            .plan(&[worker("impl", &second)], &BTreeMap::new(), at(1060))
+            .plan(&[worker("impl", &second)], &BTreeMap::new(), at(1062))
             .unwrap();
         assert_eq!(reports(&plan), vec![reported("impl", "done")]);
     }
@@ -291,21 +275,31 @@ mod tests {
         let mut armed = armed_over(WINDOW, 300, now);
         let busy = || worker("impl", WINDOW);
 
-        // Not due yet.
         let early = memory.plan(&[busy()], &armed, at(1299)).unwrap();
         assert!(early.nudges.is_empty(), "{early:?}");
 
-        memory.activity.insert(
-            "impl".to_owned(),
-            (armed["impl"].deadline, Some(SessionState::Waiting)),
-        );
-        let idle = memory.plan(&[busy()], &armed, at(1300)).unwrap();
-        assert_eq!(
-            idle.nudges[0].text(),
-            "niles: impl stopped without a report — check workers"
-        );
-        // An idle worker is told about once; it stays idle until the lead acts.
-        assert!(matches!(idle.nudges[0], Item::Checkin { next: None, .. }));
+        for (state, text, rearm) in [
+            (
+                Some(SessionState::Waiting),
+                "niles: impl stopped without a report — check workers",
+                false,
+            ),
+            (
+                Some(SessionState::Unknown),
+                "niles: no report from impl — check workers",
+                true,
+            ),
+            (None, "niles: no report from impl — check workers", true),
+        ] {
+            memory.activity.insert(
+                "impl".to_owned(),
+                (armed.get("impl").unwrap().deadline, state),
+            );
+            let idle = memory.plan(&[busy()], &armed, at(1300)).unwrap();
+            let nudge = only(&idle.nudges);
+            assert_eq!(nudge.text(), text);
+            assert!(matches!(nudge, Item::Checkin { next, .. } if next.is_some() == rearm));
+        }
 
         memory.activity.clear();
         // The gap doubles after each fire: a silence of 5m, then 15m, then 35m, rather than a
@@ -324,38 +318,20 @@ mod tests {
 
             // The re-arm only happens because the nudge landed; it is what stops the next tick
             // from firing the same check-in again.
-            let nudge = plan.nudges[0].clone();
+            let retry = memory
+                .plan(&[busy()], &armed, at(1_001i64.checked_add(offset).unwrap()))
+                .unwrap();
+            assert_eq!(only(&plan.nudges).text(), only(&retry.nudges).text());
+            assert_ne!(only(&plan.nudges), only(&retry.nudges));
+            let nudge = only(&plan.nudges).clone();
             memory.commit(&nudge);
-            let Item::Checkin {
-                next: Some(next), ..
-            } = nudge
-            else {
-                panic!("a check-in nudge must carry its re-arm");
-            };
+            let next = match nudge {
+                Item::Checkin { next, .. } => next,
+                Item::Reported { .. } => None,
+            }
+            .expect("a check-in nudge must carry its re-arm");
             armed = BTreeMap::from([("impl".to_owned(), next)]);
         }
-    }
-
-    #[test]
-    fn a_failed_check_in_nudge_is_not_recorded_so_the_next_tick_fires_it_again() {
-        let now = at(1_000);
-        let checkins = armed_over(WINDOW, 300, now);
-        let mut memory = fresh();
-        let busy = || worker("impl", WINDOW);
-
-        let first = memory.plan(&[busy()], &checkins, at(1300)).unwrap();
-        // No commit: the send failed, so nothing moved.
-        let retry = memory.plan(&[busy()], &checkins, at(1301)).unwrap();
-
-        assert_eq!(first.nudges.len(), 1);
-        assert_eq!(
-            first.nudges[0].text(),
-            retry.nudges[0].text(),
-            "the same check-in comes round again rather than being lost"
-        );
-        // Only the re-arm deadline moved: it is computed from the tick that is trying, since the
-        // nudge it belongs to has not landed yet.
-        assert_ne!(first.nudges[0], retry.nudges[0]);
     }
 
     #[test]
@@ -375,7 +351,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(plan.disarms.is_empty(), "{plan:?}");
-            memory.commit(&plan.nudges[0]);
+            memory.commit(plan.nudges.first().unwrap());
         }
 
         // A report that lands after arming does answer it.
@@ -390,33 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn unknown_and_unread_state_nudge_and_rearm() {
-        let checkins = armed_over(WINDOW, 300, at(1000));
-        for state in [None, Some(SessionState::Unknown)] {
-            let mut memory = fresh();
-            let deadline = checkins["impl"].deadline;
-            memory.activity.insert("impl".into(), (deadline, state));
-            let plan = memory
-                .plan(&[worker("impl", WINDOW)], &checkins, at(1300))
-                .unwrap();
-            assert_eq!(
-                plan.nudges[0].text(),
-                "niles: no report from impl — check workers"
-            );
-            assert!(matches!(
-                plan.nudges[0],
-                Item::Checkin { next: Some(_), .. }
-            ));
-        }
-    }
-
-    #[test]
     fn a_worker_that_is_gone_is_forgotten() {
         let now = at(1_000);
         let mut memory = fresh();
         let report = worker("impl", &format!("{WINDOW}{DONE}"));
 
-        // Gone for a tick: nothing to say about it.
         let gone = memory.plan(&[], &BTreeMap::new(), now).unwrap();
         assert!(gone.nudges.is_empty(), "{gone:?}");
 

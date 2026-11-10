@@ -1,22 +1,18 @@
+use super::status::Segment;
+use crate::skills::SkillName;
+use crate::telemetry::{SessionState, Usage};
+use crate::tmux::{self, SessionName};
+use crate::{session, theme, worker};
 use anyhow::Result;
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
-
-use super::status::Segment;
-use crate::{
-    session,
-    telemetry::{SessionState, Usage},
-    theme,
-    tmux::{self, SessionName},
-    worker,
-};
 
 /// The lead's window in every project session.
 pub(super) const LEAD_WINDOW: &str = "niles";
 
 pub(super) enum WindowKind {
     Lead,
-    Worker(String, crate::skills::SkillName),
+    Worker(String, SkillName),
     Plain,
 }
 
@@ -32,7 +28,7 @@ pub(super) struct AgentWindow {
 pub(super) struct SessionAgents {
     pub windows: Vec<AgentWindow>,
     /// Ids of live workers whose recorded window is not in the session.
-    pub lost: Vec<(String, crate::skills::SkillName)>,
+    pub lost: Vec<(String, SkillName)>,
 }
 
 pub(super) fn session_agents(
@@ -69,14 +65,14 @@ pub(super) fn session_agents(
                     .as_ref()
                     .map_or(SessionState::Unknown, |record| record.state);
                 let usage = record.and_then(|record| record.usage);
-                let (state, tokens) = usage_fields(state, usage.as_ref());
+                let (state, tokens) = usage_fields(state, usage.as_ref())?;
                 let runtime = lead.as_ref().map(|lead| age(now, lead.created_at));
                 (WindowKind::Lead, state, tokens, runtime)
             } else if let Some(worker) = workers
                 .iter()
                 .find(|worker| worker.window == recorded(&window.name))
             {
-                let (state, tokens) = usage_fields(worker.state, worker.usage.as_ref());
+                let (state, tokens) = usage_fields(worker.state, worker.usage.as_ref())?;
                 (
                     WindowKind::Worker(worker.id.clone(), worker.skill.clone()),
                     state,
@@ -141,17 +137,20 @@ fn window_label(name: &str, project: bool, worker: Option<&str>) -> String {
     .to_owned()
 }
 
-fn usage_fields(state: SessionState, usage: Option<&Usage>) -> (Option<theme::State>, Option<u64>) {
+fn usage_fields(
+    state: SessionState,
+    usage: Option<&Usage>,
+) -> Result<(Option<theme::State>, Option<u64>)> {
     let state = match state {
         SessionState::Working => theme::State::Running,
         SessionState::Starting => theme::State::Starting,
         SessionState::Waiting | SessionState::Unknown => theme::State::Idle,
     };
-    (Some(state), usage.map(Usage::total_tokens))
+    Ok((Some(state), usage.map(Usage::total_tokens).transpose()?))
 }
 
 pub(super) fn age(now: DateTime<Utc>, since: DateTime<Utc>) -> String {
-    let minutes = (now - since).num_minutes().max(0);
+    let minutes = now.signed_duration_since(since).num_minutes().max(0);
     if minutes >= 60 {
         format!("{}h", minutes / 60)
     } else {

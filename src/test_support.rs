@@ -1,17 +1,23 @@
 //! Test-only scaffolding shared across the crate.
-
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
+use crate::config::spec::{self, ProjectConfig};
+use crate::skills::SkillName;
+use crate::store::{self, atomic_write, paths};
+use crate::telemetry::SessionLink;
+use crate::util;
+use crate::workspace_manifest::WorkspaceManifest;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use ratatui::backend::TestBackend;
+use std::fmt::Debug;
+use std::ops::Deref;
+use std::path::Path;
+use std::sync::OnceLock;
+use std::{env, fs};
 
 mod process;
 pub(crate) use process::write_executable as write_executable_script;
 
-pub(crate) fn skill(name: &str) -> crate::skills::SkillName {
+pub(crate) fn skill(name: &str) -> SkillName {
     name.parse().unwrap()
 }
 
@@ -21,23 +27,15 @@ pub(crate) fn at(seconds: i64) -> DateTime<Utc> {
 
 /// A unique, labeled path under the system temp directory.
 pub(crate) fn temp_test_path(label: &str) -> Utf8PathBuf {
-    // The clock alone collides across parallel tests: macOS reports microsecond resolution.
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-        "niles-test-{label}-{}-{nanos}-{sequence}",
-        std::process::id()
-    )))
+    Utf8PathBuf::from_path_buf(
+        env::temp_dir().join(format!("niles-test-{label}-{}", uuid::Uuid::new_v4())),
+    )
     .unwrap()
 }
 
 pub(crate) struct TempDir(Utf8PathBuf);
 
-impl std::ops::Deref for TempDir {
+impl Deref for TempDir {
     type Target = Utf8Path;
 
     fn deref(&self) -> &Self::Target {
@@ -45,25 +43,25 @@ impl std::ops::Deref for TempDir {
     }
 }
 
-impl AsRef<std::path::Path> for TempDir {
-    fn as_ref(&self) -> &std::path::Path {
+impl AsRef<Path> for TempDir {
+    fn as_ref(&self) -> &Path {
         self.0.as_std_path()
     }
 }
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        crate::util::remove_dir_all_if_exists(&self.0).unwrap();
+        util::remove_dir_all_if_exists(&self.0).unwrap();
     }
 }
 
 pub(crate) fn temp_dir(label: &str) -> TempDir {
     let path = temp_test_path(label);
-    std::fs::create_dir_all(&path).unwrap();
+    fs::create_dir_all(&path).unwrap();
     TempDir(path)
 }
 
-pub(crate) fn assert_err_contains<T: std::fmt::Debug>(result: anyhow::Result<T>, needle: &str) {
+pub(crate) fn assert_err_contains<T: Debug>(result: anyhow::Result<T>, needle: &str) {
     let error = format!("{:#}", result.unwrap_err());
     assert!(error.contains(needle), "expected {needle:?} in {error}");
 }
@@ -73,11 +71,11 @@ pub(crate) fn write_worker_meta(
     id: &str,
     window: &str,
     created_at: DateTime<Utc>,
-    session_link: Option<crate::telemetry::SessionLink>,
+    session_link: Option<SessionLink>,
 ) {
-    let dir = crate::store::workers_dir(workspace).unwrap().join(id);
-    std::fs::create_dir_all(&dir).unwrap();
-    crate::store::write_json(
+    let dir = store::workers_dir(workspace).unwrap().join(id);
+    fs::create_dir_all(&dir).unwrap();
+    store::write_json(
         &dir.join("meta.json"),
         &serde_json::json!({
             "id": id, "skill": "worker", "agent": "codex", "created_at": created_at,
@@ -89,7 +87,7 @@ pub(crate) fn write_worker_meta(
 }
 
 pub(crate) fn render(w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame<'_>)) -> String {
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(w, h)).unwrap();
     terminal.draw(draw).unwrap();
     terminal
         .backend()
@@ -100,33 +98,33 @@ pub(crate) fn render(w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame<'_>))
         .collect()
 }
 
-pub(crate) fn project_config(body: &str) -> anyhow::Result<crate::config::spec::ProjectConfig> {
+pub(crate) fn project_config(body: &str) -> anyhow::Result<ProjectConfig> {
     let root = temp_dir("project-config");
-    std::fs::write(root.join("niles.yaml"), body)?;
-    crate::config::spec::load_project_config_from(&root)
+    atomic_write(root.join("niles.yaml"), body)?;
+    spec::load_project_config_from(&root)
 }
 
 /// Remove both the workspace fixture and its global orchestration state.
 pub(crate) fn remove_workspace(workspace: &camino::Utf8Path) -> anyhow::Result<()> {
-    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_dir(workspace)?)?;
-    crate::util::remove_dir_all_if_exists(workspace)
+    util::remove_dir_all_if_exists(&paths::project_dir(workspace)?)?;
+    util::remove_dir_all_if_exists(workspace)
 }
 
 /// OnceLock isolates all unit-test home consumers without racing process environment changes.
 pub(crate) fn home_dir() -> &'static camino::Utf8Path {
-    static HOME_DIR: std::sync::OnceLock<Utf8PathBuf> = std::sync::OnceLock::new();
+    static HOME_DIR: OnceLock<Utf8PathBuf> = OnceLock::new();
     HOME_DIR.get_or_init(|| {
         let home = temp_test_path("unit-home");
         let skills = home.join(".niles/skills");
-        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/skills")).unwrap() {
+        for entry in fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/skills")).unwrap() {
             let entry = entry.unwrap();
             if !entry.file_type().unwrap().is_dir() {
                 continue;
             }
             let source = entry.path();
             let dest = skills.join(source.file_name().unwrap().to_str().unwrap());
-            std::fs::create_dir_all(&dest).unwrap();
-            std::fs::copy(source.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
+            fs::create_dir_all(&dest).unwrap();
+            fs::copy(source.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
         }
         home
     })
@@ -137,11 +135,11 @@ fn orchestration_state_uses_the_private_unit_test_home() {
     let workspace = temp_test_path("isolated-state");
     let home = home_dir();
     assert!(home.is_absolute());
-    let state = crate::store::paths::project_dir(&workspace).unwrap();
+    let state = paths::project_dir(&workspace).unwrap();
     assert!(state.starts_with(home.join(".niles/state")));
     assert_eq!(state.file_name(), Some("@state"));
-    std::fs::create_dir_all(&state).unwrap();
-    assert_eq!(crate::util::home_dir().unwrap(), home);
+    fs::create_dir_all(&state).unwrap();
+    assert_eq!(util::home_dir().unwrap(), home);
     remove_workspace(&workspace).unwrap();
     assert!(!state.exists());
 }
@@ -166,8 +164,16 @@ pub(crate) fn manifest_body() -> &'static str {
     include_str!("test_support/manifest.yaml")
 }
 
-pub(crate) fn manifest() -> crate::workspace_manifest::WorkspaceManifest {
-    crate::store::parse_yaml(manifest_body()).unwrap()
+pub(crate) fn manifest() -> WorkspaceManifest {
+    store::parse_yaml(manifest_body()).unwrap()
 }
 
 pub(crate) mod telemetry;
+
+mod assertions;
+pub(crate) use assertions::*;
+
+#[cfg(feature = "remote")]
+mod json;
+#[cfg(feature = "remote")]
+pub(crate) use json::json_field;

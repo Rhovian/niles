@@ -1,8 +1,9 @@
-use std::fs::{self, File};
-
+use crate::util;
+use crate::wait::cursor;
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
+use std::fs::{self, File, TryLockError};
 
 pub(crate) const WORKERS_DIR: &str = "worker";
 pub(crate) const ARCHIVE_DIR: &str = "archive";
@@ -11,7 +12,7 @@ pub(crate) fn project_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     if !workspace.is_absolute() {
         bail!("workspace path is not absolute: {workspace}");
     }
-    let home = crate::util::home_dir()?;
+    let home = util::home_dir()?;
     Ok(home
         .join(".niles/state")
         .join(format!(
@@ -45,14 +46,14 @@ pub(crate) struct Lock {
 impl Scope<'_> {
     pub(crate) fn reserve(self) -> Result<Lock> {
         // Never unlink these global lock inodes, including during deregistration.
-        let root = crate::util::home_dir()?.join(".niles/locks");
+        let root = util::home_dir()?.join(".niles/locks");
         fs::create_dir_all(&root)?;
         let path = root.join(format!("{:x}", Sha256::digest(serde_json::to_vec(&self)?)));
-        let file = crate::wait::cursor::open_lock_file(&path)?;
+        let file = cursor::open_lock_file(&path)?;
         // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html#method.try_lock
         match self {
             Self::Project(_) => file.try_lock_shared(),
-            Self::Pane(_) => file.lock().map_err(std::fs::TryLockError::Error),
+            Self::Pane(_) => file.lock().map_err(TryLockError::Error),
             Self::Deregister(_) | Self::Worker(..) | Self::Tree(_) => file.try_lock(),
         }
         .with_context(|| format!("{self:?} is busy; cannot lock {path}"))?;
@@ -63,6 +64,8 @@ impl Scope<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util;
+    use std::fs;
 
     #[test]
     fn keys_separate_separators_case_and_reserved_names() {
@@ -81,7 +84,7 @@ mod tests {
             .map(|path| project_dir(Utf8Path::new(path)).unwrap())
             .collect();
         for (index, dir) in dirs.iter().enumerate() {
-            for other in &dirs[index + 1..] {
+            for other in dirs.iter().skip(index).skip(1) {
                 assert_ne!(dir.as_str().to_lowercase(), other.as_str().to_lowercase());
                 assert!(!dir.starts_with(other) && !other.starts_with(dir));
             }
@@ -90,7 +93,7 @@ mod tests {
 
     #[test]
     fn long_keys_use_bounded_components_and_disjoint_state_leaves() {
-        let root = crate::util::home_dir().unwrap().join(".niles/state");
+        let root = util::home_dir().unwrap().join(".niles/state");
         for workspace in [
             "/".to_owned(),
             "/é".into(),
@@ -101,8 +104,8 @@ mod tests {
             assert_eq!(key.iter().count(), 2);
             assert_eq!(key.iter().next().unwrap().len(), 64);
             assert_eq!(key.file_name(), Some("@state"));
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::remove_dir_all(&dir).unwrap();
+            fs::create_dir_all(&dir).unwrap();
+            fs::remove_dir_all(&dir).unwrap();
         }
         assert!(project_dir(Utf8Path::new("relative/path")).is_err());
     }

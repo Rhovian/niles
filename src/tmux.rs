@@ -1,10 +1,7 @@
-use std::{
-    env,
-    process::{Command, Output, Stdio},
-};
-
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
+use std::env;
+use std::process::{Command, Output, Stdio};
 
 mod home;
 mod panels;
@@ -55,7 +52,8 @@ fn query(args: &[&str]) -> Result<String> {
             normalize_stderr(&output.stderr)
         );
     }
-    String::from_utf8(output.stdout).with_context(|| format!("tmux {} printed non-UTF-8", args[0]))
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("tmux {} printed non-UTF-8", args.join(" ")))
 }
 
 fn output(args: &[&str]) -> Result<Output> {

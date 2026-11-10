@@ -1,10 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 
 mod common;
 
-use std::{fs, process::Command};
-
 use common::{TestEnv, assert_command_success, path_with_bin, stdout_of, write_executable};
+use std::{fs, process::Command};
 
 #[test]
 fn builds_shell_before_installing_from_any_directory() {

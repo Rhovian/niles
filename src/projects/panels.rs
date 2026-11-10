@@ -1,14 +1,10 @@
+use super::registry::{self, ProjectName};
+use crate::theme::{StyleRender, Theme};
+use crate::worker::usage::{self, SessionUsage};
+use crate::{session, tmux};
 use anyhow::{Context, Result};
 use clap::{Subcommand, ValueEnum};
 use ratatui::style::Style;
-
-use super::registry::{self, ProjectName};
-use crate::{
-    session,
-    theme::{StyleRender, Theme},
-    tmux,
-    worker::usage::{self, SessionUsage},
-};
 
 mod config;
 mod help;
@@ -133,6 +129,10 @@ fn table(rows: &[Vec<Cell>]) -> (Vec<String>, usize) {
                 .join("  ")
         })
         .collect();
-    let width = widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
+    let width = widths
+        .iter()
+        .copied()
+        .fold(0, usize::saturating_add)
+        .saturating_add(widths.len().saturating_sub(1).saturating_mul(2));
     (lines, width)
 }

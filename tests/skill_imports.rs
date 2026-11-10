@@ -1,11 +1,11 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-mod common;
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 use common::*;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::{Command, Output},
-};
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+mod common;
 
 struct Pack {
     env: TestEnv,
@@ -26,12 +26,12 @@ impl Pack {
         document(&repo, "skills/guide", "guide", "guide version one");
         document(&repo, "odd[dir]/guide", "guide", "literal pattern guide");
         fs::create_dir_all(repo.join("skills/pdf/scripts")).unwrap();
-        fs::write(
+        atomic_write(
             repo.join("skills/pdf/scripts/check.sh"),
             "#!/bin/sh\nprintf support\n",
         )
         .unwrap();
-        fs::write(repo.join("not-a-dir"), "file").unwrap();
+        atomic_write(repo.join("not-a-dir"), "file").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "initial"]);
         let sha = git(&repo, &["rev-parse", "HEAD"]).trim().to_owned();
@@ -46,7 +46,7 @@ impl Pack {
         );
         // The executable always names github.com. Only this isolated test HOME
         // rewrites that URL base to a local bare repository; CI needs no network.
-        fs::write(
+        atomic_write(
             env.home.join(".gitconfig"),
             format!(
                 "[url \"file://{}/\"]\n insteadOf = https://github.com/\n",
@@ -191,7 +191,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     let pointer = pack.env.home.join(".niles/skills/pdf/SKILL.ref");
     let external = pack.env.root.join("global-pointer");
     fs::rename(&pointer, &external).unwrap();
-    std::os::unix::fs::symlink(&external, &pointer).unwrap();
+    symlink(&external, &pointer).unwrap();
     edit_manifest(&pack.env.root, |body| {
         body.replace(
             "worker: {}\n",
@@ -217,7 +217,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     let launch =
         fs::read_to_string(state_dir(&pack.env.root).join("worker/job/launch.sh")).unwrap();
     assert_eq!(launch.matches("pdf version one").count(), 1);
-    fs::write(
+    atomic_write(
         state_dir(&pack.env.root).join("worker/job/report.md"),
         "report",
     )
@@ -226,7 +226,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     assert_success_contains("imported stage skill", &staged, "pdf version one");
     let listing = pack.run(&["skills"]);
     assert_command_success("listing", &listing);
-    fs::write(
+    atomic_write(
         state_dir(&pack.env.root).join("manifest.yaml"),
         "entry: pdf\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\npdf: {}\n",
     )
@@ -246,9 +246,9 @@ fn ephemeral_menu_remains_pinned_and_does_not_install_or_inject() {
     assert!(!pack.env.home.join(".niles/skills/pdf").exists());
     let dir = state_dir(&pack.env.root).join("worker/job");
     let meta = read_json(dir.join("meta.json"));
-    assert_eq!(meta["menu"], serde_json::json!(["pdf"]));
+    assert_eq!(*json_field(&meta, "/menu"), serde_json::json!(["pdf"]));
     assert_eq!(
-        meta["imports"]["pdf"],
+        *json_field(&meta, "/imports/pdf"),
         format!("github.com/acme/pack/skills/pdf@{}", pack.sha)
     );
     assert!(
@@ -315,7 +315,7 @@ fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
     let pointer = pack.pointer("pdf");
     let outside = pack.env.root.join("pointer");
     fs::rename(&pointer, &outside).unwrap();
-    std::os::unix::fs::symlink(&outside, &pointer).unwrap();
+    symlink(&outside, &pointer).unwrap();
     assert_failure_contains(
         "workspace pointer symlink",
         &pack.run(&["models"]),

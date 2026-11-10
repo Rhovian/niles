@@ -1,14 +1,15 @@
-use std::{
-    env, fs,
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::PathBuf,
-    process::Command,
-};
-
+#[cfg(test)]
+use crate::store::atomic_write;
+#[cfg(test)]
+use crate::test_support;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::PathBuf;
+use std::process::Command;
+use std::{env, fs};
 
 /// Clears repository-routing environment variables while retaining operator credential config.
 pub(crate) fn git_command() -> Command {
@@ -35,7 +36,7 @@ pub(crate) fn git_command() -> Command {
 /// All home-scoped paths share one boundary, including the isolated unit-test home.
 pub(crate) fn home_dir() -> Result<Utf8PathBuf> {
     #[cfg(test)]
-    let home = crate::test_support::home_dir().to_owned();
+    let home = test_support::home_dir().to_owned();
     #[cfg(not(test))]
     let home = Utf8PathBuf::from(env::var("HOME").context("HOME is missing")?);
     anyhow::ensure!(home.is_absolute(), "HOME must be absolute: {home}");
@@ -162,21 +163,20 @@ pub fn render_template(template: &str, replacements: &[(&str, &str)]) -> String 
     let mut rendered = String::with_capacity(template.len());
     let mut rest = template;
 
-    while let Some(start) = rest.find('{') {
-        rendered.push_str(&rest[..start]);
-        let candidate = &rest[start..];
-        let Some(end) = candidate.find('}') else {
+    while let Some((prefix, candidate)) = rest.split_once('{') {
+        rendered.push_str(prefix);
+        let Some((name, tail)) = candidate.split_once('}') else {
+            rendered.push('{');
             rendered.push_str(candidate);
             return rendered;
         };
-
-        let placeholder = &candidate[..=end];
+        let placeholder = format!("{{{name}}}");
         if let Some((_, value)) = replacements.iter().find(|(key, _)| *key == placeholder) {
             rendered.push_str(value);
         } else {
-            rendered.push_str(placeholder);
+            rendered.push_str(&placeholder);
         }
-        rest = &candidate[end + 1..];
+        rest = tail;
     }
 
     rendered.push_str(rest);
@@ -204,17 +204,16 @@ pub fn remove_dir_all_if_exists(path: &Utf8Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::symlink;
-
     use super::*;
     use crate::test_support::temp_dir;
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn appending_through_a_symlink_fails() {
         let dir = temp_dir("append-symlink");
         let target = dir.join("target");
         let link = dir.join("status.log");
-        fs::write(&target, "working: safe\n").unwrap();
+        atomic_write(&target, "working: safe\n").unwrap();
         symlink(&target, &link).unwrap();
 
         assert!(append_line(&link, "done: redirected").is_err());
@@ -226,8 +225,8 @@ mod tests {
         let dir = temp_dir("read-dir-sorted");
         let missing = dir.join("missing");
         assert!(read_dir_utf8_paths(&missing).unwrap().is_empty());
-        fs::write(dir.join("b"), "").unwrap();
-        fs::write(dir.join("a"), "").unwrap();
+        atomic_write(dir.join("b"), "").unwrap();
+        atomic_write(dir.join("a"), "").unwrap();
 
         let paths = read_dir_utf8_paths(&dir).unwrap();
 

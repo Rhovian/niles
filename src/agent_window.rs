@@ -1,13 +1,8 @@
-use std::fs;
-
-use anyhow::{Context, Result};
+use crate::store::atomic_write;
+use crate::tmux::{self, SessionName, WindowTarget};
+use crate::{agents, wake};
+use anyhow::Result;
 use camino::Utf8Path;
-
-use crate::{
-    agents,
-    tmux::{self, SessionName, WindowTarget},
-    wake,
-};
 
 pub(crate) fn worker_window_name(id: &str) -> String {
     format!("niles-{id}")
@@ -32,11 +27,10 @@ pub(crate) fn launch_worker_window(
         launch: launch_path,
         status: status_path,
     } = *paths;
-    fs::write(
+    atomic_write(
         launch_path,
         launch_script(invocation, brief_path, status_path),
-    )
-    .with_context(|| format!("failed to write {launch_path}"))?;
+    )?;
     let command = format!("sh {}", shell_quote(launch_path.as_str()));
     tmux::ensure_window_available(session, window_name)?;
     let target = WindowTarget::new(session.clone(), window_name.to_owned())?;
@@ -148,12 +142,12 @@ mod tests {
             );
             let brief = dir.join("brief.md");
             let text = "line one\n'$(exit 99)' \"quoted\"\nline two";
-            fs::write(&brief, text).unwrap();
+            atomic_write(&brief, text).unwrap();
             let invocation =
                 agents::invocation(profile.id, agents::InvocationDefaults::Worker, &models)
                     .unwrap();
             let launch = dir.join("launch.sh");
-            fs::write(
+            atomic_write(
                 &launch,
                 launch_script(&invocation, &brief, &dir.join("status.log")),
             )

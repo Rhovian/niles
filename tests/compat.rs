@@ -1,9 +1,11 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use std::fs;
+use std::path::Path;
+use std::process::Output;
 
 mod common;
 
 use common::*;
-use std::fs;
 
 const VERSION: &str = r#"if [ "$1" = --version ]; then
   if [ -f "$0.changed" ]; then printf 'Fake CLI 2.0.0\n'; else printf 'Fake CLI 1.0.0\n'; fi
@@ -25,7 +27,7 @@ sample_label=${primary##* }
 "$NILES_TEST_BINARY" agent status working "$sample_label"
 "#;
 
-fn run_fake(body: &str) -> std::process::Output {
+fn run_fake(body: &str) -> Output {
     let env = TestEnv::new("niles-compat");
     write_executable(
         &env.bin.join("claude"),
@@ -44,7 +46,7 @@ fn assert_failed_turn(body: &str, detail: &str) {
     let stdout = stdout_of(&output);
     assert!(stdout.contains(&format!("\tfail\t{detail}")), "{stdout}");
     let dir = stdout.trim_end().rsplit_once("; evidence: ").unwrap().1;
-    assert!(std::path::Path::new(dir).join("stderr").exists());
+    assert!(Path::new(dir).join("stderr").exists());
     fs::remove_dir_all(dir).unwrap();
 }
 

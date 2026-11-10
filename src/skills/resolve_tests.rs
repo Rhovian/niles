@@ -1,11 +1,16 @@
 use super::*;
+use crate::store::atomic_write;
 use crate::test_support::{skill, temp_dir};
-use std::{fs, os::unix::fs::symlink};
+use std::os::unix::fs::symlink;
+use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
+use std::{fs, io, thread};
 
 fn write(root: &Utf8Path, name: &str, text: &str) -> Utf8PathBuf {
     let path = root.join("skills").join(name).join("SKILL.md");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, text).unwrap();
+    atomic_write(&path, text).unwrap();
     path
 }
 fn document(name: &str, description: &str, body: &str) -> String {
@@ -30,7 +35,7 @@ fn roots_override_without_reading_shadowed_content() {
     let global = resolve(&name, &workspace, root).unwrap();
     assert_eq!(global.body, "global body\n");
     assert_eq!(global.to_string(), format!("worker (global {path})"));
-    fs::write(path, "broken lower-priority content").unwrap();
+    atomic_write(path, "broken lower-priority content").unwrap();
     let body = "\nexact \" {workspace}\r\n";
     let path = write(
         &workspace.join(".niles"),
@@ -41,11 +46,11 @@ fn roots_override_without_reading_shadowed_content() {
     assert_eq!(winner.body, body);
     assert_eq!(winner.to_string(), format!("worker (workspace {path})"));
     let blocked = root.join("blocked-global-root");
-    fs::write(&blocked, "not a directory").unwrap();
+    atomic_write(&blocked, "not a directory").unwrap();
     assert_eq!(resolve(&name, &workspace, &blocked).unwrap().body, body);
     fs::remove_file(&path).unwrap();
     let pointer = path.with_file_name("SKILL.ref");
-    fs::write(&pointer, "junk").unwrap();
+    atomic_write(&pointer, "junk").unwrap();
     assert!(find(&name, &workspace, root).is_err());
     assert_eq!(fs::read_to_string(pointer).unwrap(), "junk");
 }
@@ -113,18 +118,13 @@ fn oversized_and_special_files_are_rejected_without_blocking() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     for (create, remove, expected) in [
         (
-            (|path: &Utf8Path| fs::create_dir(path)) as fn(&Utf8Path) -> std::io::Result<()>,
-            (|path: &Utf8Path| fs::remove_dir(path)) as fn(&Utf8Path) -> std::io::Result<()>,
+            (|path: &Utf8Path| fs::create_dir(path)) as fn(&Utf8Path) -> io::Result<()>,
+            (|path: &Utf8Path| fs::remove_dir(path)) as fn(&Utf8Path) -> io::Result<()>,
             &["regular file"][..],
         ),
         (
             |path| {
-                assert!(
-                    std::process::Command::new("mkfifo")
-                        .arg(path)
-                        .status()?
-                        .success()
-                );
+                assert!(Command::new("mkfifo").arg(path).status()?.success());
                 Ok(())
             },
             |path| fs::remove_file(path),
@@ -132,7 +132,7 @@ fn oversized_and_special_files_are_rejected_without_blocking() {
         ),
         (
             |path| {
-                fs::write(path, document("example", "valid", "body"))?;
+                atomic_write(path, document("example", "valid", "body")).unwrap();
                 fs::OpenOptions::new()
                     .write(true)
                     .open(path)?
@@ -143,12 +143,12 @@ fn oversized_and_special_files_are_rejected_without_blocking() {
         ),
     ] {
         create(&path).unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let root = root.to_owned();
-        std::thread::spawn(move || tx.send(resolve(&skill("example"), &root, &root)).unwrap());
+        thread::spawn(move || tx.send(resolve(&skill("example"), &root, &root)).unwrap());
         let error = format!(
             "{:#}",
-            rx.recv_timeout(std::time::Duration::from_secs(3))
+            rx.recv_timeout(Duration::from_secs(3))
                 .expect("skill read blocked")
                 .unwrap_err()
         );

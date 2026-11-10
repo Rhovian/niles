@@ -1,10 +1,10 @@
-use std::{cmp::Reverse, collections::BTreeMap};
-
-use super::{
-    Window,
-    collect::{EventKind, Project, Session},
-};
+use super::Window;
+use super::collect::{EventKind, Project, Session};
 use crate::skills::SkillName;
+use crate::telemetry::sum;
+use anyhow::{Context, Result};
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
 
 /// The newest events the panel lists.
 const EVENTS: usize = 8;
@@ -39,23 +39,28 @@ pub(super) struct ContextRow<'a> {
     pub(super) percent: Option<u128>,
 }
 
-pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "counts are bounded by the owned session vectors"
+)]
+pub(super) fn dashboard(projects: &[Project], window: Window) -> Result<Dashboard<'_>> {
     let mut bins = vec![0; window.count.cast_unsigned() as usize];
     let mut models = BTreeMap::<&str, ModelRow<'_>>::new();
     let mut project_tokens = Vec::new();
     let mut context = Vec::new();
-    let mut sessions = 0;
+    let mut sessions = 0usize;
     for project in projects {
         let mut spent = 0;
         for session in &project.sessions {
             let mut tokens = 0;
             for (bucket, bucket_tokens) in session.buckets.iter() {
                 if let Some(bin) = window.bin_of(bucket) {
-                    bins[bin] += bucket_tokens;
-                    tokens += bucket_tokens;
+                    let total = bins.get_mut(bin).context("bucket outside telemetry bins")?;
+                    *total = sum([*total, bucket_tokens])?;
+                    tokens = sum([tokens, bucket_tokens])?;
                 }
             }
-            spent += tokens;
+            spent = sum([spent, tokens])?;
             if let Some(live) = &session.live
                 && let Some(prompt_tokens) = live.prompt_tokens
             {
@@ -78,7 +83,7 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
                 skills: BTreeMap::new(),
                 tokens: 0,
             });
-            row.tokens += tokens;
+            row.tokens = sum([row.tokens, tokens])?;
             *row.skills.entry(&session.skill).or_insert(0) += 1;
         }
         project_tokens.push((project.name.as_str(), spent));
@@ -106,7 +111,7 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
     let wakes = count(|kind| matches!(kind, EventKind::Reported(_)));
     events.sort_by_key(|(_, event)| Reverse(event.at));
     events.truncate(EVENTS);
-    Dashboard {
+    Ok(Dashboard {
         window,
         sessions,
         spawns,
@@ -116,5 +121,5 @@ pub(super) fn dashboard(projects: &[Project], window: Window) -> Dashboard<'_> {
         bins,
         context,
         events,
-    }
+    })
 }

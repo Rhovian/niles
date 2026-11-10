@@ -1,13 +1,14 @@
-use std::io::Write;
-
+use super::snapshot::{WorkerSnapshot, worker_snapshot};
+use crate::skills::SkillName;
+use crate::telemetry::SessionState;
+use crate::tmux::TargetState;
+use crate::util::current_dir_utf8;
+use crate::{wake, watch};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-
-use crate::{tmux::TargetState, util::current_dir_utf8, wake, watch};
-
-use super::snapshot::{WorkerSnapshot, worker_snapshot};
+use std::io::{self, Write};
 
 /// Renders the workspace's live workers as one compact JSON object.
 ///
@@ -32,7 +33,7 @@ pub fn workers() -> Result<()> {
 }
 
 pub(super) fn print_json(value: &impl Serialize) -> Result<()> {
-    let stdout = std::io::stdout();
+    let stdout = io::stdout();
     let mut output = stdout.lock();
     serde_json::to_writer(&mut output, value).context("failed to serialize JSON")?;
     writeln!(output).context("failed to write JSON")
@@ -46,7 +47,7 @@ struct WorkersOutput {
 #[derive(Serialize)]
 struct WorkerOutput {
     id: String,
-    skill: Option<crate::skills::SkillName>,
+    skill: Option<SkillName>,
     agent: Option<String>,
     tree: Option<Utf8PathBuf>,
     task_label: Option<String>,
@@ -54,7 +55,7 @@ struct WorkerOutput {
     window: Option<TargetState>,
     wake: Option<WakeState>,
     last_status: Option<String>,
-    state: Option<crate::telemetry::SessionState>,
+    state: Option<SessionState>,
     checkin: Option<CheckinOutput>,
     error: Option<String>,
 }

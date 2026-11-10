@@ -1,4 +1,5 @@
 pub(crate) use crate::common::*;
+use std::process::{self, Child};
 pub(crate) use std::{
     fs,
     path::{Path, PathBuf},
@@ -9,7 +10,7 @@ pub(crate) use std::{
 };
 
 /// Starts a workspace wait and returns the child.
-pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> std::process::Child {
+pub(crate) fn spawn_wait(workspace: &Path, args: &[&str]) -> Child {
     niles_bare(workspace, &niles_home(workspace))
         .arg("wait")
         .args(args)
@@ -39,7 +40,7 @@ pub(crate) fn wait_once(status: &[u8]) -> (PathBuf, PathBuf, Output) {
     (workspace, dir, output)
 }
 
-pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> std::path::PathBuf {
+pub(crate) fn worker_with_status(workspace: &Path, id: &str, status: &[u8]) -> PathBuf {
     // Log-only fixtures have no confirmed tmux route; liveness stays unknown.
     write_worker(workspace, id, "unresolved", None, status)
 }
@@ -52,7 +53,7 @@ pub(crate) fn cursor(worker_dir: &Path) -> String {
 ///
 /// A per-test socket keeps parallel tests isolated from each other and the developer's tmux.
 pub(crate) struct TmuxServer {
-    pub(crate) socket: std::path::PathBuf,
+    pub(crate) socket: PathBuf,
     pub(crate) session: String,
 }
 
@@ -64,8 +65,7 @@ impl TmuxServer {
         // Counter, not timestamp: two tests in the same microsecond shared a socket.
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let unique = NEXT.fetch_add(1, Ordering::Relaxed);
-        let socket =
-            std::path::PathBuf::from(format!("/tmp/nt-{}-{unique}.sock", std::process::id()));
+        let socket = PathBuf::from(format!("/tmp/nt-{}-{unique}.sock", process::id()));
         let server = Self {
             socket,
             session: session.to_owned(),
@@ -110,10 +110,7 @@ impl TmuxServer {
 
     /// Whatever tmux says about this server right now, for failure messages.
     pub(crate) fn diagnostics(&self) -> String {
-        let sessions = Command::new("tmux")
-            .args(["-S", &self.socket.display().to_string(), "list-sessions"])
-            .output()
-            .unwrap();
+        let sessions = self.output(&["list-sessions"]);
         format!(
             "socket={} exists={} sessions={:?}/{:?} windows={:?}",
             self.socket.display(),
@@ -125,36 +122,32 @@ impl TmuxServer {
     }
 
     pub(crate) fn windows(&self) -> String {
-        let output = Command::new("tmux")
-            .args(["-S", &self.socket.display().to_string()])
-            .args([
-                "list-windows",
-                "-t",
-                &format!("={}", self.session),
-                "-F",
-                "#{window_name}",
-            ])
-            .output()
-            .unwrap();
+        let output = self.output(&[
+            "list-windows",
+            "-t",
+            &format!("={}", self.session),
+            "-F",
+            "#{window_name}",
+        ]);
         stdout_of(&output)
     }
 
     pub(crate) fn pane_in_mode(&self, target: &str) -> String {
-        let output = Command::new("tmux")
-            .args(["-S", &self.socket.display().to_string()])
-            .args(["display-message", "-p", "-t", target, "#{pane_in_mode}"])
-            .output()
-            .unwrap();
+        let output = self.output(&["display-message", "-p", "-t", target, "#{pane_in_mode}"]);
         assert!(output.status.success(), "{}", self.diagnostics());
         stdout_of(&output).trim().to_owned()
     }
 
-    pub(crate) fn run(&self, args: &[&str]) {
-        let output = Command::new("tmux")
+    fn output(&self, args: &[&str]) -> Output {
+        Command::new("tmux")
             .args(["-S", &self.socket.display().to_string()])
             .args(args)
             .output()
-            .unwrap();
+            .unwrap()
+    }
+
+    pub(crate) fn run(&self, args: &[&str]) {
+        let output = self.output(args);
         assert!(
             output.status.success(),
             "tmux {args:?} failed: {}",
@@ -216,12 +209,16 @@ impl Lab {
 
 impl Drop for Lab {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            let _ = fs::remove_dir_all(&self.workspace);
+        if !thread::panicking() {
+            fs::remove_dir_all(&self.workspace).unwrap();
         }
     }
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "cleanup also runs after a panic or a server that already exited"
+)]
 impl Drop for TmuxServer {
     fn drop(&mut self) {
         let _ = Command::new("tmux")
@@ -235,12 +232,12 @@ impl Drop for TmuxServer {
 
 /// Blocks until `path` exists, or fails the test saying it never appeared.
 pub(crate) fn wait_for_file(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now().checked_add(Duration::from_secs(10)).unwrap();
     while Instant::now() < deadline {
         if path.exists() {
             return;
         }
         thread::sleep(Duration::from_millis(20));
     }
-    panic!("{} never appeared", path.display());
+    assert!(path.exists(), "{} never appeared", path.display());
 }

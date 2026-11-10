@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use crate::common::atomic_write;
 
 mod common;
 
@@ -37,7 +38,7 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
     ];
     for dir in removed[1..].iter().chain(&kept) {
         fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("payload"), "keep or remove with directory").unwrap();
+        atomic_write(dir.join("payload"), "keep or remove with directory").unwrap();
     }
     let files = [
         archive.join("file-20000101T000000000000000Z"),
@@ -46,7 +47,7 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
         state_dir(&env.root).join("manifest.yaml"),
     ];
     for file in &files {
-        fs::write(file, "keep").unwrap();
+        atomic_write(file, "keep").unwrap();
     }
     let links = [
         archive.join("link-20000101T000000000000000Z"),

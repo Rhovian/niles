@@ -5,21 +5,25 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Duration, Local, LocalResult, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "invalid usage rejects the transcript after successful file reads"
+)]
 pub(super) fn read_codex(
     home: &Utf8Path,
     workspace: &Utf8Path,
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<super::SessionRecord>> {
-    read_codex_source(home, workspace, needle, created_at)?
-        .map(|(path, lines)| {
-            Ok(super::SessionRecord {
+    Ok(
+        read_codex_source(home, workspace, needle, created_at)?.and_then(|(_, lines)| {
+            let usage = codex_usage(&lines).ok()?;
+            Some(super::SessionRecord {
                 turn: codex_activity(&lines),
-                usage: codex_usage(&lines)
-                    .with_context(|| format!("invalid Codex transcript {path}"))?,
+                usage,
             })
-        })
-        .transpose()
+        }),
+    )
 }
 
 pub(super) fn read_codex_source(
@@ -29,7 +33,9 @@ pub(super) fn read_codex_source(
     created_at: DateTime<Utc>,
 ) -> Result<Option<(Utf8PathBuf, Vec<CodexLine>)>> {
     let start = created_at.with_timezone(&Local);
-    let deadline = start + Duration::minutes(2);
+    let deadline = start
+        .checked_add_signed(Duration::minutes(2))
+        .context("rollout deadline overflow")?;
     for day in [start.date_naive(), deadline.date_naive()]
         .into_iter()
         .enumerate()
@@ -75,7 +81,10 @@ fn rollout_in_window(candidates: LocalResult<DateTime<Local>>, start: DateTime<L
     [candidates.earliest(), candidates.latest()]
         .into_iter()
         .flatten()
-        .any(|local| local + Duration::seconds(1) >= start && local <= start + Duration::minutes(2))
+        .any(|local| {
+            local.signed_duration_since(start) >= Duration::seconds(-1)
+                && local.signed_duration_since(start) <= Duration::minutes(2)
+        })
 }
 
 #[expect(clippy::disallowed_methods, reason = "non-rollout names are skipped")]
@@ -160,11 +169,8 @@ impl CodexCounters {
             cache_read_tokens: self.cached_input_tokens,
             cache_write_tokens: self.cache_write_input_tokens,
             reasoning_tokens: Some(self.reasoning_output_tokens),
-            last_turn_at: None,
-            estimated_cost_usd: None,
-            buckets: Buckets::default(),
             prompt_tokens: Some(prompt),
-            context_window: None,
+            ..Usage::default()
         })
     }
 }
@@ -221,11 +227,11 @@ pub(super) fn codex_usage(lines: &[CodexLine]) -> Result<Option<Usage>> {
         let mut usage = counts
             .checked()
             .with_context(|| format!("invalid Codex token record at {timestamp}"))?;
-        let total = usage.total_tokens();
+        let total = usage.total_tokens()?;
         let delta = total
             .checked_sub(spent)
             .context("Codex token totals decreased")?;
-        buckets.add(*timestamp, delta);
+        buckets.add(*timestamp, delta)?;
         spent = total;
         usage.last_turn_at = Some(*timestamp);
         last = Some(usage);
@@ -268,7 +274,7 @@ pub(super) fn codex_activity(lines: &[CodexLine]) -> Option<Turn> {
                 })
             }
             "turn_aborted" => turn = Some(TurnState::Ended),
-            _ => {}
+            _ => continue,
         }
     }
     turn.map(|state| Turn { state, started_at })
@@ -284,10 +290,8 @@ mod refusal_tests {
             "\n"
         );
         let lines = parse_lines::<CodexLine>(body).unwrap();
-        let Some(TurnState::Failed(failure)) = codex_activity(&lines).map(|turn| turn.state) else {
-            panic!("terminal error must end the turn");
-        };
-        assert_eq!(failure.message, "Provider stopped");
+        assert!(matches!(codex_activity(&lines).map(|turn| turn.state),
+            Some(TurnState::Failed(failure)) if failure.message == "Provider stopped"));
         assert!(codex_usage(&lines).unwrap().is_none());
     }
 

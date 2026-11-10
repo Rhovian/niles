@@ -1,7 +1,9 @@
 use super::{SessionLink, SessionState, Usage};
-use crate::watch;
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::watch::{self, Delay};
 use SessionState::{Starting, Unknown, Waiting, Working};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -44,13 +46,15 @@ pub(crate) struct ResolvedSession {
 
 pub(crate) fn initial_deadline(
     created_at: DateTime<Utc>,
-    delay: Option<std::time::Duration>,
-) -> DateTime<Utc> {
+    delay: Option<Delay>,
+) -> Result<DateTime<Utc>> {
     let delay = match delay {
-        Some(delay) => delay,
+        Some(delay) => delay.duration(),
         None => watch::DEFAULT_DELAY,
     };
-    created_at + TimeDelta::seconds(delay.as_secs() as i64)
+    created_at
+        .checked_add_signed(TimeDelta::from_std(delay)?)
+        .context("initial deadline overflow")
 }
 
 pub(crate) fn resolve_session(
@@ -100,10 +104,12 @@ pub(crate) fn resolve_session(
 mod tests {
     use super::*;
     use crate::test_support::{at, temp_test_path};
+    use std::fs;
     #[test]
     fn session_lifecycle_requires_turn_evidence_deadline_and_liveness() {
+        assert!(initial_deadline(DateTime::<Utc>::MAX_UTC, None).is_err());
         let dir = temp_test_path("session-lifecycle");
-        std::fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).unwrap();
         let link = SessionLink::Pi {
             session_dir: dir.clone(),
         };
@@ -127,11 +133,11 @@ mod tests {
         assert_eq!(resolve(1299, Some(true)), (Starting, false));
         assert_eq!(resolve(1300, Some(true)), (Unknown, true));
         assert_eq!(Unknown.displayed(), Waiting);
-        std::fs::write(&path, concat!(r#"{"type":"message","timestamp":"1970-01-01T00:16:40Z","message":{"role":"user"}}"#, "\n")).unwrap();
+        atomic_write(&path, concat!(r#"{"type":"message","timestamp":"1970-01-01T00:16:40Z","message":{"role":"user"}}"#, "\n")).unwrap();
         assert_eq!(resolve(100000, Some(true)), (Working, false));
         assert_eq!(resolve(100000, Some(false)), (Waiting, false));
         assert_eq!(resolve(100000, None), (Unknown, false));
-        std::fs::write(&path, concat!(r#"{"type":"message","timestamp":"1970-01-01T00:16:40Z","message":{"role":"user"}}"#, "\n",
+        atomic_write(&path, concat!(r#"{"type":"message","timestamp":"1970-01-01T00:16:40Z","message":{"role":"user"}}"#, "\n",
             r#"{"type":"message","timestamp":"1970-01-01T00:17:00Z","message":{"role":"assistant","stopReason":"stop"}}"#, "\n")).unwrap();
         for (pending, expected) in [
             (Some(true), Working),
@@ -154,6 +160,6 @@ mod tests {
             assert_eq!(session.state, expected);
             assert!(session.blocker.is_none());
         }
-        std::fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(dir).unwrap();
     }
 }

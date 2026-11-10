@@ -1,17 +1,14 @@
+use crate::agents::AgentSpec;
+use crate::config::spec::load_project_config_from;
+use crate::util::{self, current_dir_utf8, find_on_path};
 use crate::workspace_manifest::setup::SetupSelection;
-use std::{collections::BTreeMap, fs, process::Command};
-
+use crate::{build_info, workspace_manifest};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
-
-use crate::{
-    agents::AgentSpec,
-    build_info,
-    config::spec::load_project_config_from,
-    util::{current_dir_utf8, find_on_path},
-    workspace_manifest,
-};
+use std::collections::BTreeMap;
+use std::fs;
+use std::process::Command;
 
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
 const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
@@ -185,7 +182,7 @@ fn git_output(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
     reason = "doctor dev-mode git metadata is advisory; git launch failure should be reported as unknown metadata"
 )]
 fn git_output_raw(workspace: &Utf8Path, args: &[&str]) -> Option<String> {
-    let output = crate::util::git_command()
+    let output = util::git_command()
         .arg("-C")
         .arg(workspace.as_str())
         .args(args)

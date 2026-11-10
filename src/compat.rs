@@ -1,22 +1,16 @@
+use crate::agent_window::shell_quote;
+use crate::agents::{self, AgentSpec, InvocationDefaults};
+use crate::config::spec::load_project_config_from;
+use crate::doctor::version_line;
+use crate::store::atomic_write;
+use crate::util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path};
+use crate::workspace_manifest;
 use crate::workspace_manifest::setup::SetupSelection;
-use std::{
-    fs,
-    process::{Command, ExitCode, Stdio},
-    thread,
-    time::{Duration, Instant},
-};
-
 use anyhow::{Context, Result};
+use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, Instant};
+use std::{env, fs, iter, thread};
 use uuid::Uuid;
-
-use crate::{
-    agent_window::shell_quote,
-    agents::{self, AgentSpec, InvocationDefaults},
-    config::spec::load_project_config_from,
-    doctor::version_line,
-    util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path},
-    workspace_manifest,
-};
 
 const COMPAT_TURN_TIMEOUT: Duration = Duration::from_secs(300);
 const COMPAT_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -57,11 +51,11 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
         let mut invocation =
             agents::invocation(&spec.canonical(), InvocationDefaults::Headless, &models)?;
         let dir = utf8_path(
-            std::env::temp_dir().join(format!("niles-compat-{}", Uuid::new_v4())),
+            env::temp_dir().join(format!("niles-compat-{}", Uuid::new_v4())),
             "compat directory",
         )?;
         fs::create_dir(&dir)?;
-        fs::write(dir.join("status.log"), "")?;
+        atomic_write(dir.join("status.log"), "")?;
         invocation
             .env
             .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
@@ -73,7 +67,7 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
         invocation.args.push(prompt);
         eprintln!(
             "{}",
-            std::iter::once(path.as_str())
+            iter::once(path.as_str())
                 .chain(invocation.args.iter().map(String::as_str))
                 .map(shell_quote)
                 .collect::<Vec<_>>()

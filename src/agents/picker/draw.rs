@@ -1,17 +1,12 @@
-use ratatui::{
-    Frame,
-    layout::{Constraint, Layout, Rect},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
-};
-
-use super::{
-    columns::{Column, Columns},
-    form::{Form, Row as FormRow, Screen},
-};
-use crate::{
-    theme::{StyleKey, Theme},
-    workspace_manifest::clamp,
+use super::columns::{Column, Columns};
+use super::form::{Form, Screen};
+use crate::theme::{StyleKey, Theme};
+use crate::workspace_manifest::clamp;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
 };
 
 const ABSENT_TIER: &str = "(absent — → add)";
@@ -53,10 +48,10 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
             tiers(frame, body, form, theme, true);
             "↵ save · esc back"
         }
-        Screen::Entry { selected } => {
-            let items = form
-                .entry_choices()
-                .into_iter()
+        Screen::Entry { choices } => {
+            let items = choices
+                .iter()
+                .map(String::as_str)
                 .map(ListItem::new)
                 .collect();
             list(
@@ -64,7 +59,7 @@ pub(super) fn form(frame: &mut Frame, form: &Form, theme: &Theme, root: &str) {
                 body,
                 "ENTRY AGENT — choose from tier agents",
                 items,
-                *selected,
+                choices.position(),
                 true,
                 theme,
             );
@@ -136,17 +131,12 @@ fn footer_text(
 
 fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool) {
     let mut rows = Vec::new();
-    for row in form.rows() {
-        let label = match row {
-            FormRow::Entry => "entry_agent".to_owned(),
-            FormRow::Agent { tier, index: 0 } => tier.as_str().to_owned(),
-            FormRow::Agent { index, .. } => format!("  secondary {index}"),
-        };
-        let value = match row.value(&form.draft) {
+    for (label, value, original) in form.rows() {
+        let changed = value != original;
+        let value = match value {
             Some(value) => value,
             None => ABSENT_TIER,
         };
-        let changed = row.value(&form.draft) != row.value(&form.original);
         let status = if changed { "changed" } else { "kept" };
         let row = Row::new([label, value.to_owned(), status.to_owned()]);
         rows.push(if changed {
@@ -168,7 +158,8 @@ fn tiers(frame: &mut Frame, area: Rect, form: &Form, theme: &Theme, review: bool
             .style(theme.style(StyleKey::Heading)),
     )
     .row_highlight_style(theme.style(StyleKey::Selection));
-    let mut state = TableState::default().with_selected((!review).then_some(form.selected));
+    let mut state =
+        TableState::default().with_selected((!review).then_some(form.selection.position()));
     frame.render_stateful_widget(table, area, &mut state);
 }
 
@@ -203,13 +194,17 @@ impl Columns {
                 }
             })
             .collect();
-        render_list(families, "FAMILY", items, self.family, Column::Family);
-        let family = &self.families[self.family];
-        if family.models.is_empty() {
+        render_list(
+            families,
+            "FAMILY",
+            items,
+            self.families.position(),
+            Column::Family,
+        );
+        let Some(model_choices) = &self.models else {
             return;
-        }
-        let items = family
-            .models
+        };
+        let items = model_choices
             .iter()
             .map(|model| {
                 ListItem::new(Line::from(vec![
@@ -221,17 +216,27 @@ impl Columns {
                 ]))
             })
             .collect();
-        render_list(models, "MODEL", items, self.model, Column::Model);
-        let model = &family.models[self.model];
-        if model.efforts.is_empty() {
+        render_list(
+            models,
+            "MODEL",
+            items,
+            model_choices.position(),
+            Column::Model,
+        );
+        let Some(effort_choices) = &self.efforts else {
             return;
-        }
-        let items = model
-            .efforts
+        };
+        let items = effort_choices
             .iter()
             .map(|effort| ListItem::new(effort.as_str()))
             .collect();
-        render_list(efforts, "EFFORT", items, self.effort, Column::Effort);
+        render_list(
+            efforts,
+            "EFFORT",
+            items,
+            effort_choices.position(),
+            Column::Effort,
+        );
     }
 }
 

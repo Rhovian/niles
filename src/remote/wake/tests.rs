@@ -1,7 +1,12 @@
 use super::*;
-use crate::{config::user, remote::tests::relay_request, test_support::temp_dir};
-use axum::{body::Body, extract::ConnectInfo};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use crate::config::user;
+use crate::remote::tests::relay_request;
+use crate::test_support::temp_dir;
+use axum::body::Body;
+use axum::extract::ConnectInfo;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tower::ServiceExt;
 
 fn config(id: &str, mac: &str) -> BTreeMap<String, FileWakeHost> {
@@ -36,7 +41,10 @@ fn wake_configuration_rejects_invalid_ids_and_macs_and_survives_save() {
     let path = root.join("config.yaml");
     file.save(&path).unwrap();
     let hosts = configured(user::FileConfig::load(&path).unwrap().remote.wake_hosts).unwrap();
-    assert_eq!(hosts["desk_1-A"].mac, [1, 0x23, 0x45, 0x67, 0x89, 0xab]);
+    assert_eq!(
+        hosts.get("desk_1-A").unwrap().mac,
+        [1, 0x23, 0x45, 0x67, 0x89, 0xab]
+    );
 }
 
 #[test]
@@ -46,10 +54,8 @@ fn wake_sends_exact_magic_packet_and_propagates_socket_errors() {
     receiver
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
-    let SocketAddr::V4(destination) = receiver.local_addr().unwrap() else {
-        panic!()
-    };
-    hosts["desk"].send(destination).unwrap();
+    let destination = SocketAddrV4::new(Ipv4Addr::LOCALHOST, receiver.local_addr().unwrap().port());
+    hosts.get("desk").unwrap().send(destination).unwrap();
     let mut packet = [0; 103];
     assert_eq!(receiver.recv(&mut packet).unwrap(), 102);
     assert_eq!(&packet[..6], &[0xff; 6]);
@@ -57,7 +63,9 @@ fn wake_sends_exact_magic_packet_and_propagates_socket_errors() {
         assert_eq!(mac, &[1, 0x23, 0x45, 0x67, 0x89, 0xab]);
     }
     assert!(
-        hosts["desk"]
+        hosts
+            .get("desk")
+            .unwrap()
             .send(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
             .is_err()
     );

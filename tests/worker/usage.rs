@@ -4,14 +4,12 @@ use super::support::*;
 fn usage_reads_worker_and_live_lead_from_claude_store() {
     let env = TestEnv::new("niles-usage");
     let worker = write_worker(&env.root, "impl", "niles:niles-impl", None, b"");
-    let path = worker.join("meta.json");
-    let mut meta = read_json(&path);
-    meta["skill"] = "lead".into();
-    meta["session_link"] = serde_json::json!({"family":"claude","session_id":"worker-session"});
-    fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    edit_json(worker.join("meta.json"), |meta| {
+        meta.as_object_mut().unwrap().extend(serde_json::json!({"skill":"lead","session_link":{"family":"claude","session_id":"worker-session"}}).as_object().unwrap().clone());
+    });
     let lead = state_dir(&env.root).join("sessions/lead-one");
     fs::create_dir_all(&lead).unwrap();
-    fs::write(
+    atomic_write(
         lead.join("session.json"),
         serde_json::to_vec(&serde_json::json!({
             "id":"lead-one","entry_skill":"coordinator","agent":"claude","agent_family":null,"model":null,"effort":null,
@@ -24,7 +22,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
     let store = env.home.join(".claude/projects/project");
     fs::create_dir_all(&store).unwrap();
     for (id, tokens) in [("worker-session", 7), ("lead-session", 11)] {
-        fs::write(store.join(format!("{id}.jsonl")), format!(
+        atomic_write(store.join(format!("{id}.jsonl")), format!(
             "{{\"type\":\"assistant\",\"timestamp\":\"2026-01-02T04:00:00Z\",\"message\":{{\"id\":\"{id}\",\"model\":\"opus\",\"usage\":{{\"input_tokens\":{tokens},\"output_tokens\":2,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":4}}}}}}\n"
         )).unwrap();
     }
@@ -35,20 +33,22 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
         .unwrap();
     assert_command_success("usage", &output);
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let rows = json["sessions"].as_array().unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["id"], "impl");
-    assert_eq!(rows[0]["skill"], "lead");
-    assert_eq!(rows[0]["entry"], false);
-    assert_eq!(rows[0]["agent"], "codex");
-    assert_eq!(rows[0]["usage"]["input_tokens"], 7);
-    assert_eq!(rows[1]["skill"], "coordinator");
-    assert_eq!(rows[1]["entry"], true);
-    assert_eq!(rows[1]["id"], "lead-one");
-    assert_eq!(rows[1]["agent"], "claude");
-    assert_eq!(rows[1]["usage"]["input_tokens"], 11);
-    assert_eq!(rows[1]["state"], "working");
-    assert!(rows[1]["usage"].get("state").is_none());
+    let rows = json.get("sessions").unwrap().as_array().unwrap();
+    let [_, lead] = array(rows);
+    let paths = ["/id", "/skill", "/entry", "/agent", "/usage/input_tokens"];
+    assert_eq!(
+        serde_json::json!(
+            rows.iter()
+                .map(|row| paths.map(|path| row.pointer(path).unwrap()))
+                .collect::<Vec<_>>()
+        ),
+        serde_json::json!([
+            ["impl", "lead", false, "codex", 7],
+            ["lead-one", "coordinator", true, "claude", 11]
+        ])
+    );
+    assert_eq!(lead.get("state"), Some(&serde_json::json!("working")));
+    assert!(lead.pointer("/usage/state").is_none());
     for flag in [
         "TMUX_PANE_MISSING",
         "TMUX_PANE_EMPTY",
@@ -63,7 +63,7 @@ fn usage_reads_worker_and_live_lead_from_claude_store() {
             .unwrap();
         assert_command_success("usage with unavailable lead", &output);
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(json["sessions"][1]["state"], "waiting");
-        assert_eq!(json["sessions"][1]["usage"]["input_tokens"], 11);
+        assert_eq!(json_field(&json, "/sessions/1/state"), "waiting");
+        assert_eq!(json_field(&json, "/sessions/1/usage/input_tokens"), 11);
     }
 }

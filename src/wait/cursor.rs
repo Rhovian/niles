@@ -1,11 +1,9 @@
-use std::{
-    fs::{self, File, TryLockError},
-    io::{ErrorKind, Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
-};
-
+use crate::store;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use std::fs::{self, File, TryLockError};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::OpenOptionsExt;
 
 const CURSOR_FILE: &str = "status.cursor";
 pub(crate) fn cursor_path(dir: &Utf8Path) -> Utf8PathBuf {
@@ -14,7 +12,7 @@ pub(crate) fn cursor_path(dir: &Utf8Path) -> Utf8PathBuf {
 
 /// Presence is separate from the delivery lock so probing cannot replace a wait.
 pub(crate) fn wait_running(workspace: &Utf8Path) -> Result<bool> {
-    let path = crate::store::workers_dir(workspace)?.join("wait.running");
+    let path = store::workers_dir(workspace)?.join("wait.running");
     let file = match fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)

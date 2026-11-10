@@ -1,8 +1,7 @@
-use std::fmt;
-
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
 use serde::{Serialize, Serializer};
+use std::{fmt, result};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SessionName(String);
@@ -34,7 +33,7 @@ pub(crate) struct WindowTarget {
 }
 
 impl Serialize for WindowTarget {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -297,32 +296,29 @@ fn list_tagged_windows() -> Result<Vec<TaggedWindow>> {
 fn parse_tagged_windows(stdout: &[u8]) -> Result<Vec<TaggedWindow>> {
     let text = String::from_utf8_lossy(stdout);
     let mut rows = Vec::new();
-    for (line_number, line) in text.lines().enumerate() {
+    for (line_number, line) in (1..).zip(text.lines()) {
         if line.is_empty() {
             continue;
         }
         let fields = line.split('\t').collect::<Vec<_>>();
-        if fields.len() != 4 {
+        let [target, project, worker_id, dead] = fields.as_slice() else {
             bail!(
                 "malformed tmux tagged window line {}: expected 4 fields, got {}",
-                line_number + 1,
+                line_number,
                 fields.len()
             );
-        }
+        };
         // A window whose pane has exited is kept for its output, but it is not somewhere a
         // worker can still be recovered to.
-        if is_dead_pane(fields[3]) {
+        if is_dead_pane(dead) {
             continue;
         }
         rows.push(TaggedWindow {
-            target: WindowTarget::parse(fields[0]).with_context(|| {
-                format!(
-                    "invalid tmux target on tagged window line {}",
-                    line_number + 1
-                )
+            target: WindowTarget::parse(target).with_context(|| {
+                format!("invalid tmux target on tagged window line {}", line_number)
             })?,
-            project: nonempty(fields[1]),
-            worker_id: nonempty(fields[2]),
+            project: nonempty(project),
+            worker_id: nonempty(worker_id),
         });
     }
     Ok(rows)
@@ -344,15 +340,14 @@ pub(super) enum WindowPresence {
 
 pub(super) fn window_presence(stdout: &[u8], window_name: &str) -> WindowPresence {
     for line in String::from_utf8_lossy(stdout).lines() {
-        match line.split_once('\t') {
-            Some((name, dead)) if name == window_name => {
-                return if is_dead_pane(dead) {
-                    WindowPresence::PaneExited
-                } else {
-                    WindowPresence::Live
-                };
-            }
-            _ => {}
+        if let Some((name, dead)) = line.split_once('\t')
+            && name == window_name
+        {
+            return if is_dead_pane(dead) {
+                WindowPresence::PaneExited
+            } else {
+                WindowPresence::Live
+            };
         }
     }
     WindowPresence::Absent
@@ -384,6 +379,7 @@ enum RecordedWindowState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
 
     #[test]
     fn recorded_session_names_stay_permissive() {
@@ -410,7 +406,7 @@ mod tests {
             (":niles-auth-fix", "session name cannot be empty"),
             ("aquila:", "window name cannot be empty"),
         ] {
-            crate::test_support::assert_err_contains(WindowTarget::parse(input), message);
+            test_support::assert_err_contains(WindowTarget::parse(input), message);
         }
     }
 
@@ -422,11 +418,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].target.render(), "home:niles-auth");
-        assert_eq!(rows[0].project.as_deref(), Some("/Users/j/code/niles"));
-        assert_eq!(rows[0].worker_id.as_deref(), Some("auth"));
-        assert_eq!(rows[1].project, None);
-        assert_eq!(rows[1].worker_id, None);
+        let [worker, untagged] = test_support::array(&rows);
+        assert_eq!(worker.target.render(), "home:niles-auth");
+        assert_eq!(worker.project.as_deref(), Some("/Users/j/code/niles"));
+        assert_eq!(worker.worker_id.as_deref(), Some("auth"));
+        assert_eq!(untagged.project, None);
+        assert_eq!(untagged.worker_id, None);
     }
 
     /// Worker windows outlive their agent, so listed and live are different states.
@@ -456,6 +453,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].worker_id.as_deref(), Some("docs"));
+        assert_eq!(test_support::only(&rows).worker_id.as_deref(), Some("docs"));
     }
 }

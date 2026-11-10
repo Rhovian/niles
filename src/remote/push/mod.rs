@@ -1,36 +1,34 @@
-use super::{
-    ApiError, AppState, AuthorizedUser, POLL, Session, Source, blocking,
-    chat::Chat,
-    feed::{Follower, mobile_text},
-};
+use super::chat::Chat;
+use super::feed::{Follower, mobile_text};
+use super::{ApiError, AppState, AuthorizedUser, POLL, Session, Source, blocking};
+use crate::projects::status::ForegroundSession;
+use crate::telemetry::transcript::TextRole;
+use crate::util;
 use anyhow::Result;
-use axum::{
-    Extension, Json,
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use isahc::{
-    HttpClient,
-    config::{Configurable, RedirectPolicy},
-};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
-};
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
+use isahc::HttpClient;
+use isahc::config::{Configurable, RedirectPolicy};
+use std::collections::{HashMap, HashSet};
+use std::io::Error;
+use std::mem;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
+use tokio::time::{self, MissedTickBehavior};
 use web_push::{IsahcWebPushClient, WebPushClient, WebPushError};
+
 mod store;
 pub(crate) use store::Store;
 pub(super) use store::{DeviceId, Subscription};
 #[cfg(test)]
 mod tests;
-use crate::{projects::status::ForegroundSession, telemetry::transcript::TextRole};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) fn init(subject: &str) -> Result<()> {
-    Store::create(crate::util::home_dir()?.join(".niles/remote"), subject)?;
+    Store::create(util::home_dir()?.join(".niles/remote"), subject)?;
     eprintln!("Web Push initialized; restart niles remote to enable notifications");
     Ok(())
 }
@@ -144,7 +142,7 @@ fn observation_diagnostic(error: &anyhow::Error) -> String {
             json.line(),
             json.column()
         )
-    } else if let Some(io) = error.downcast_ref::<std::io::Error>() {
+    } else if let Some(io) = error.downcast_ref::<Error>() {
         format!("I/O {:?} (OS code {:?})", io.kind(), io.raw_os_error())
     } else {
         "invalid transcript or session metadata".to_owned()
@@ -207,7 +205,7 @@ impl Tracker {
             current.insert(session.id);
         }
         self.sessions.retain(|id, _| current.contains(id));
-        std::mem::take(&mut self.notifications)
+        mem::take(&mut self.notifications)
     }
 }
 pub(super) async fn watch(
@@ -221,8 +219,8 @@ pub(super) async fn watch(
             .redirect_policy(RedirectPolicy::None)
             .build()?,
     );
-    let mut timer = tokio::time::interval(POLL);
-    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut timer = time::interval(POLL);
+    timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         timer.tick().await;
         let source = source.clone();

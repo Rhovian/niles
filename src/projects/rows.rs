@@ -1,12 +1,8 @@
+use super::registry::Entry;
+use crate::telemetry::{SessionState, Usage};
+use crate::{session, worker};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-
-use super::registry::Entry;
-use crate::{
-    session,
-    telemetry::{SessionState, Usage},
-    worker,
-};
 
 pub(super) struct Row {
     pub entry: Entry,
@@ -132,13 +128,7 @@ mod tests {
             input_tokens: 1,
             output_tokens: 2,
             cache_read_tokens: 3,
-            cache_write_tokens: None,
-            reasoning_tokens: None,
-            last_turn_at: None,
-            estimated_cost_usd: None,
-            buckets: Default::default(),
-            prompt_tokens: None,
-            context_window: None,
+            ..Usage::default()
         };
         for lead_state in [
             SessionState::Waiting,

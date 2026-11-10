@@ -1,8 +1,7 @@
 use super::{WatchLog, composer};
-use crate::{
-    tmux::{self, TmuxTarget},
-    worker,
-};
+use crate::telemetry::ResolvedSession;
+use crate::tmux::{self, TmuxTarget};
+use crate::worker;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
@@ -12,7 +11,7 @@ pub(super) trait Sink {
         &mut self,
         worker: &worker::WorkerSnapshot,
         now: DateTime<Utc>,
-    ) -> Result<crate::telemetry::ResolvedSession> {
+    ) -> Result<ResolvedSession> {
         worker::worker_session(worker, now)
     }
     fn nudge(&mut self, text: &str) -> Result<()>;

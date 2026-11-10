@@ -1,5 +1,9 @@
+use crate::config::user::UserConfig;
 use anyhow::Result;
+#[cfg(test)]
+use ratatui::crossterm::style;
 use ratatui::style::{Modifier, Style};
+use ratatui::symbols::line::VERTICAL;
 use ratatui_themes::{ThemeName, ThemePalette};
 
 mod render;
@@ -11,7 +15,7 @@ pub(crate) const IDLE: &str = "○";
 pub(crate) const SPINNER: [&str; 8] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 pub(crate) const BRANCH: &str = "├─";
 pub(crate) const LAST: &str = "└─";
-pub(crate) const STEM: &str = ratatui::symbols::line::VERTICAL;
+pub(crate) const STEM: &str = VERTICAL;
 pub(crate) const EXPANDED: &str = "▾";
 pub(crate) const COLLAPSED: &str = "▸";
 
@@ -45,14 +49,14 @@ pub(crate) struct Theme {
 
 impl Theme {
     pub(crate) fn load() -> Result<Self> {
-        Ok(crate::config::user::UserConfig::load()?.theme)
+        Ok(UserConfig::load()?.theme)
     }
 
     /// Test themes always emit colors, independent of the caller's environment.
     #[cfg(test)]
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
-        ratatui::crossterm::style::force_color_output(true);
-        Ok(crate::config::user::UserConfig::parse(text)?.theme)
+        style::force_color_output(true);
+        Ok(UserConfig::parse(text)?.theme)
     }
 
     pub(crate) fn new(name: ThemeName) -> Self {
@@ -88,6 +92,12 @@ impl Theme {
         (glyph, self.style(key))
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::indexing_slicing,
+        reason = "the Euclidean remainder is in 0..8, the fixed spinner length"
+    )]
     pub(crate) fn spinner(&self, frame: i64) -> &'static str {
         SPINNER[frame.rem_euclid(SPINNER.len() as i64) as usize]
     }

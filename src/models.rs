@@ -1,12 +1,9 @@
+use crate::agents::{AgentSpec, ModelRoster};
+use crate::config::spec::load_project_config_from;
+use crate::util::{current_dir_utf8, print_structured_rows};
 use crate::workspace_manifest::setup::SetupSelection;
+use crate::workspace_manifest::{self, WorkspaceManifest};
 use anyhow::Result;
-
-use crate::{
-    agents::{AgentSpec, ModelRoster},
-    config::spec::load_project_config_from,
-    util::{current_dir_utf8, print_structured_rows},
-    workspace_manifest::{self, WorkspaceManifest},
-};
 
 pub(crate) fn models(selection: Option<&SetupSelection>) -> Result<()> {
     let root = current_dir_utf8()?;
@@ -46,12 +43,13 @@ fn allowed_rows(
 mod tests {
     use super::*;
     use crate::agents::roster::{FIXTURE_REGISTRY, parse};
+    use crate::test_support;
 
     #[test]
     fn registry_fixture_models_filters_manifest_union_and_efforts() {
         let models = parse(FIXTURE_REGISTRY).unwrap();
         assert_eq!(allowed_rows(&models, None).unwrap().len(), 4);
-        let mut manifest = crate::test_support::manifest();
+        let mut manifest = test_support::manifest();
         manifest.tiers.standard.primary = "codex:fixture:medium".into();
         manifest.tiers.standard.secondaries = vec!["claude:haiku".into()];
         manifest.tiers.frontier = None;

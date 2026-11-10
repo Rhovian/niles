@@ -1,10 +1,8 @@
-use std::io::Write;
-
-use anyhow::Result;
-
-use crate::{agents::roster::Tier, config::spec::ProjectConfig};
-
 use super::{TierBinding, WorkspaceManifest};
+use crate::agents::roster::Tier;
+use crate::config::spec::ProjectConfig;
+use anyhow::Result;
+use std::io::Write;
 
 /// Manifest values are arbitrary strings from a file on disk. Capping every
 /// cell keeps a runaway value from wrecking the layout, and keeps the padding
@@ -115,10 +113,10 @@ fn cells(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents;
+    use crate::{agents, test_support};
 
     fn manifest(primary: &str) -> WorkspaceManifest {
-        let mut manifest = crate::test_support::manifest();
+        let mut manifest = test_support::manifest();
         manifest.tiers.standard.primary = primary.to_owned();
         manifest
     }
@@ -139,10 +137,15 @@ mod tests {
             .lines()
             .map(|line| line.split_whitespace().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], ["standard", "claude", "opus", "max"]);
-        assert_eq!(rows[1], ["frontier", "claude", "opus", "high"]);
-        assert_eq!(rows[2], ["economy", "codex", "gpt-6-luna", "medium"]);
-        assert_eq!(rows[3], ["mechanical", "codex", "gpt-6-luna", "low"]);
+        assert_eq!(
+            rows,
+            [
+                ["standard", "claude", "opus", "max"],
+                ["frontier", "claude", "opus", "high"],
+                ["economy", "codex", "gpt-6-luna", "medium"],
+                ["mechanical", "codex", "gpt-6-luna", "low"],
+            ]
+        );
     }
 
     #[test]
@@ -221,7 +224,9 @@ mod tests {
             rendered.lines().map(|line| line.rfind("  ")).collect();
         assert_eq!(effort_columns.len(), 4);
         assert!(
-            effort_columns.windows(2).all(|pair| pair[0] == pair[1]),
+            effort_columns
+                .iter()
+                .all(|column| Some(column) == effort_columns.first()),
             "{rendered}"
         );
     }

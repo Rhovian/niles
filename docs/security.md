@@ -56,9 +56,11 @@ this does not promise fsync durability.
 Reservations use hashed, typed keys under `~/.niles/locks/`. These small lock files persist after
 worker close, pane exit and project deregistration: unlinking an active flock inode would let
 another process bypass it. Managed tree paths resolve HOME symlinks before selecting a key.
-Atomic JSON/YAML publication replaces destination symlinks instead of following them and publishes
-files with mode 0600. This includes user config and workspace manifests: a dotfiles symlink becomes
-a regular file, its former target is unchanged, and previous destination modes are not preserved.
+Replacement publication replaces destination symlinks instead of following them and publishes
+files with mode 0600. This covers JSON/YAML, generated briefs and launch files, archived pane text,
+and initial compatibility logs. A user-config or workspace-manifest symlink becomes a regular file;
+its former target is unchanged, and previous destination modes are not preserved. Append-only status
+logs and lock files retain their existing in-place operations.
 
 The global project manifest at `~/.niles/state/<workspace key>/@state/manifest.yaml` is yours, not the
 repository's. Its `worktree.setup` and `gates.post` run with your permissions, so only put

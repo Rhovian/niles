@@ -1,8 +1,16 @@
 use super::*;
+use crate::remote::message::{self, Sender};
+use crate::remote::tests::{self, Fixture};
+use crate::store::atomic_write;
+use crate::test_support::{array, only, only_mut};
+use crate::tmux::TmuxTarget;
+use std::io::{Error, ErrorKind};
+use std::mem;
+use tokio::time;
 
 #[test]
 fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessions() {
-    let fixture = crate::remote::tests::Fixture::new(1);
+    let fixture = Fixture::new(1);
     let observer = Arc::new(Observer::default());
     let poll = || {
         observer
@@ -26,24 +34,29 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     }
     let devices = store.subscriptions().unwrap();
     let send = |text: &str, subscription: &Subscription, success: bool| {
-        let record = fixture.records.lock().unwrap()[0].clone();
+        let record = only_mut(&mut fixture.records.lock().unwrap()).clone();
         let mut chat = Chat::lead(&record).unwrap();
-        chat.target = Some(crate::tmux::TmuxTarget::pane("%1").unwrap());
+        chat.target = Some(TmuxTarget::pane("%1").unwrap());
         let message = serde_json::from_value(
             serde_json::json!({"text": text, "sender_device": DeviceId::from_endpoint(&subscription.0.endpoint)}),
         )
         .unwrap();
-        let sender = crate::remote::message::Sender {
+        let sender = Sender {
             user: "alice".into(),
             observer: observer.clone(),
         };
-        crate::remote::message::deliver(chat, message, Some(sender), |_, text| {
+        message::deliver(chat, message, Some(sender), |_, text| {
             let mut tracker = observer
                 .0
                 .try_lock()
                 .expect("paste must not hold the observer lock");
             assert_eq!(
-                tracker.sessions["project:session"].pending.len(),
+                tracker
+                    .sessions
+                    .get("project:session")
+                    .unwrap()
+                    .pending
+                    .len(),
                 1,
                 "record before paste"
             );
@@ -60,10 +73,10 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     };
     append_user("history");
     let waiting = poll();
-    assert_eq!(waiting[0].reason, Reason::Waiting);
-    assert!(devices.iter().all(|device| waiting[0].includes(device)));
+    assert_eq!(only(&waiting).reason, Reason::Waiting);
+    assert!(devices.iter().all(|device| only(&waiting).includes(device)));
     assert!(poll().is_empty());
-    fixture.append(&crate::remote::tests::message("assistant response"));
+    fixture.append(&tests::message("assistant response"));
     for text in [
         "niles: w1 reported (done) — check workers",
         "niles: no report from w1 — check workers",
@@ -77,7 +90,7 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     }
     assert!(poll().is_empty());
     for waiting in [true, false] {
-        fixture.records.lock().unwrap()[0].waiting = waiting;
+        only_mut(&mut fixture.records.lock().unwrap()).waiting = waiting;
         for sender in [None, Some(&subscription), Some(&other)] {
             if let Some(sender) = sender {
                 assert_eq!(
@@ -88,11 +101,11 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
                 append_user("identical text");
             }
             let notifications = poll();
-            assert_eq!(notifications.len(), 1);
-            assert_eq!(notifications[0].reason, Reason::OperatorMessage);
+
+            assert_eq!(only(&notifications).reason, Reason::OperatorMessage);
             for device in &devices {
                 assert_eq!(
-                    notifications[0].includes(device),
+                    only(&notifications).includes(device),
                     sender.map(|s| &s.0.endpoint) != Some(&device.subscription.0.endpoint)
                 );
             }
@@ -104,22 +117,14 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     send("same", &other, true).unwrap();
     append_user("terminal");
     let notifications = poll();
-    assert_eq!(notifications.len(), 3);
-    assert_eq!(
-        notifications[0]
-            .excluded
-            .as_ref()
-            .map(|sender| &sender.device),
-        Some(&DeviceId::from_endpoint(&subscription.0.endpoint))
-    );
-    assert_eq!(
-        notifications[1]
-            .excluded
-            .as_ref()
-            .map(|sender| &sender.device),
-        Some(&DeviceId::from_endpoint(&other.0.endpoint))
-    );
-    assert!(notifications[2].excluded.is_none());
+    let [first, second, third] = array(&notifications);
+    for (notification, subscription) in [(first, &subscription), (second, &other)] {
+        assert_eq!(
+            notification.excluded.as_ref().map(|sender| &sender.device),
+            Some(&DeviceId::from_endpoint(&subscription.0.endpoint))
+        );
+    }
+    assert!(third.excluded.is_none());
     let mut unregistered = subscription.clone();
     unregistered.0.endpoint = "https://wns.example/unregistered".into();
     assert_eq!(
@@ -130,31 +135,36 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     assert!(
         devices
             .iter()
-            .all(|device| notifications[0].includes(device))
+            .all(|device| only(&notifications).includes(device))
     );
     assert_err_contains(send("failed", &subscription, false), "paste failed");
     assert!(
-        observer.lock().unwrap().sessions["project:session"]
+        observer
+            .lock()
+            .unwrap()
+            .sessions
+            .get("project:session")
+            .unwrap()
             .pending
             .is_empty()
     );
     append_user("terminal finishes");
-    fixture.records.lock().unwrap()[0].waiting = true;
+    only_mut(&mut fixture.records.lock().unwrap()).waiting = true;
     let notifications = poll();
     assert_eq!(
         notifications.iter().map(|n| n.reason).collect::<Vec<_>>(),
         vec![Reason::OperatorMessage, Reason::Waiting]
     );
-    let records = std::mem::take(&mut *fixture.records.lock().unwrap());
+    let records = mem::take(&mut *fixture.records.lock().unwrap());
     assert!(poll().is_empty());
     *fixture.records.lock().unwrap() = records;
-    assert_eq!(poll()[0].reason, Reason::Waiting);
+    assert_eq!(only(&poll()).reason, Reason::Waiting);
 }
 #[tokio::test]
 async fn polling_failure_is_reported_without_any_browser_connection() {
     let sensitive = "private/session-and-prompt";
     let json = serde_json::from_str::<u64>(&format!("\"{sensitive}\"")).unwrap_err();
-    let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, sensitive);
+    let io = Error::new(ErrorKind::PermissionDenied, sensitive);
     for (error, detail) in [
         (anyhow::Error::new(json), "JSON Data at line 1, column"),
         (anyhow::Error::new(io), "I/O PermissionDenied"),
@@ -170,7 +180,7 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
     let (_root, store, _) = fixture();
     let source: Source = Arc::new(|| anyhow::bail!("catalog failure"));
     assert_err_contains(
-        tokio::time::timeout(
+        time::timeout(
             Duration::from_secs(3),
             watch(source, Arc::new(store), Arc::default()),
         )
@@ -178,9 +188,9 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
         .unwrap(),
         "catalog failure",
     );
-    let good = crate::remote::tests::Fixture::new(0);
-    let late = crate::remote::tests::Fixture::new(0);
-    late.records.lock().unwrap()[0].meta.id = "late".into();
+    let good = Fixture::new(0);
+    let late = Fixture::new(0);
+    only_mut(&mut late.records.lock().unwrap()).meta.id = "late".into();
     fs::remove_file(late.root.join("001.jsonl")).unwrap();
     let mut tracker = Tracker::default();
     let records = || {
@@ -191,7 +201,7 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
         .concat()
     };
     tracker.changes(records());
-    fs::write(
+    atomic_write(
         late.root.join("001.jsonl"),
         "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"old prompt\"}}\n",
     )
@@ -206,13 +216,20 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
         tracker.changes(records());
         late.append(bad);
         assert!(tracker.changes(records()).is_empty());
-        assert!(tracker.sessions["project:late"].follower.is_err());
+        assert!(
+            tracker
+                .sessions
+                .get("project:late")
+                .unwrap()
+                .follower
+                .is_err()
+        );
         good.append(
             "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"new prompt\"}}\n",
         );
         let notifications = tracker.changes(records());
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].session.id, "project:session");
-        fs::write(late.root.join("001.jsonl"), "").unwrap();
+
+        assert_eq!(only(&notifications).session.id, "project:session");
+        atomic_write(late.root.join("001.jsonl"), "").unwrap();
     }
 }

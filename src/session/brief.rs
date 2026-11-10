@@ -1,19 +1,16 @@
-use std::{env, fs};
-
+use super::sessions_dir;
+use super::startup::startup_context;
+use crate::skills::SkillName;
+use crate::store::{self, atomic_write};
+use crate::telemetry::SessionLink;
+use crate::util::{read_dir_utf8_paths, render_template, timestamp_id};
+use crate::workspace_manifest::setup::Setup;
+use crate::{agents, workspace_manifest};
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    agents,
-    skills::SkillName,
-    telemetry::SessionLink,
-    util::{read_dir_utf8_paths, render_template, timestamp_id},
-    workspace_manifest,
-};
-
-use super::{sessions_dir, startup::startup_context};
+use std::{env, fs};
 
 /// The environment variable tmux sets for the pane a process runs in.
 const LEAD_PANE_ENV: &str = "TMUX_PANE";
@@ -21,7 +18,7 @@ const LEAD_PANE_ENV: &str = "TMUX_PANE";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub setup: Option<crate::workspace_manifest::setup::Setup>,
+    pub setup: Option<Setup>,
     pub id: String,
     pub agent: String,
     pub entry_skill: SkillName,
@@ -84,15 +81,14 @@ pub(super) fn prepare_manager_session(
 impl ManagerSession {
     pub fn write(&self) -> Result<()> {
         fs::create_dir_all(&self.dir).with_context(|| format!("failed to create {}", self.dir))?;
-        fs::write(&self.meta.brief, &self.brief)
-            .with_context(|| format!("failed to write {}", self.meta.brief))?;
+        atomic_write(&self.meta.brief, &self.brief)?;
         write_session_meta(&self.meta.workspace, &self.meta)
     }
 }
 
 pub(super) fn write_session_meta(workspace: &Utf8Path, meta: &SessionMeta) -> Result<()> {
     let meta_path = session_meta_path(workspace, &meta.id)?;
-    crate::store::write_json(&meta_path, meta)
+    store::write_json(&meta_path, meta)
 }
 
 fn render_entry_brief(
@@ -145,7 +141,7 @@ pub(crate) fn latest_lead(workspace: &Utf8Path) -> Result<Option<SessionMeta>> {
 }
 
 pub(crate) fn read_session_meta(dir: &Utf8Path) -> Result<Option<SessionMeta>> {
-    let meta: Option<SessionMeta> = crate::store::read_optional_json(&dir.join("session.json"))?;
+    let meta: Option<SessionMeta> = store::read_optional_json(&dir.join("session.json"))?;
     if let Some(meta) = &meta {
         ensure!(
             Some(meta.id.as_str()) == dir.file_name(),
@@ -168,7 +164,7 @@ fn recorded_lead_pane() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{temp_dir, temp_test_path};
+    use crate::test_support::{self, temp_dir, temp_test_path};
 
     #[test]
     fn session_meta_records_the_lead_pane() {
@@ -200,7 +196,7 @@ mod tests {
         let body = fs::read_to_string(&file).unwrap();
         assert!(!body.contains("lead_pane"), "{body}");
 
-        crate::test_support::remove_workspace(&workspace).unwrap();
+        test_support::remove_workspace(&workspace).unwrap();
     }
 
     #[test]

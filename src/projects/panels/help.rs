@@ -1,19 +1,14 @@
+use crate::theme::{State, StyleKey, Theme};
+use crate::tmux;
 use anyhow::Result;
-use ratatui::{
-    Frame,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Layout},
-    text::{Line, Span, Text},
-    widgets::{Paragraph, Wrap},
-};
-
-use crate::{
-    theme::{State, StyleKey, Theme},
-    tmux,
-};
+use ratatui::Frame;
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Paragraph, Wrap};
+use splash::Splash;
 
 mod splash;
-use splash::Splash;
 
 const FIRST_RUN: &str = "niles
 
@@ -88,16 +83,21 @@ fn help_text(first_run: bool, theme: &Theme) -> Text<'static> {
 
 // ratatui-widgets 0.3.2 measures wrapped help but does not reserve space for another widget:
 // https://docs.rs/ratatui-widgets/0.3.2/ratatui_widgets/paragraph/struct.Paragraph.html#method.line_count
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "help and splash heights are bounded by the u16 frame height"
+)]
 fn draw(frame: &mut Frame, text: &Text<'_>, splash: &Splash, theme: &Theme) {
     let area = frame.area();
     let help = Paragraph::new(text.clone()).wrap(Wrap { trim: false });
-    let available = usize::from(area.height).saturating_sub(help.line_count(area.width) + 1);
+    let available =
+        usize::from(area.height).saturating_sub(help.line_count(area.width).saturating_add(1));
     // Available rows are bounded by the frame's u16 height.
     let art = splash.text(area.width, available as u16);
     let height = if art.height() == 0 {
         0
     } else {
-        art.height() + 1
+        art.height().saturating_add(1)
     };
     debug_assert!(height <= usize::from(area.height));
     let [banner, body] =

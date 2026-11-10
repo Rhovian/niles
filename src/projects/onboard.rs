@@ -1,22 +1,26 @@
+use super::{register, registry};
+use crate::agents::picker::{SetupAction, SetupTiers};
+use crate::agents::{self, ModelRoster};
+use crate::config::spec;
+use crate::store::{self, Publication};
+use crate::{skills, util, workspace_manifest as manifest};
+use anyhow::{Context, Result, ensure};
+use camino::Utf8Path;
+use manifest::WorkspaceManifest;
+use std::collections::BTreeSet;
+use std::io::{self, IsTerminal, Write};
+use std::{fs, iter};
+
 mod custom;
 mod defaults;
 #[cfg(test)]
 mod tests;
 mod ui;
 pub(crate) mod unattended;
-use super::{register, registry};
-use crate::{skills, workspace_manifest as manifest};
-use anyhow::{Context, Result, ensure};
-use camino::Utf8Path;
-use manifest::WorkspaceManifest;
-use std::{
-    fs,
-    io::{self, IsTerminal, Write},
-};
 
 pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
-    let installed: Vec<_> = crate::agents::profiles()
-        .filter(|p| crate::util::find_on_path(p.binary).is_some())
+    let installed: Vec<_> = agents::profiles()
+        .filter(|p| util::find_on_path(p.binary).is_some())
         .map(|p| p.id)
         .collect();
     ensure!(
@@ -29,19 +33,19 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     );
     let global = skills::global_dir()?;
     let mut modes = ui::Options::new(
-        crate::store::parse_yaml(include_str!("onboard/modes.yaml"))?,
+        store::parse_yaml(include_str!("onboard/modes.yaml"))?,
         false,
-    );
-    let config = crate::config::spec::load_project_config_from(cwd)?;
+    )?;
+    let config = spec::load_project_config_from(cwd)?;
     let generated = defaults::manifest(&installed)?;
     let entry = generated.entry.clone();
-    let mut tiers = crate::agents::picker::SetupTiers::new(generated, &config)?;
+    let mut tiers = SetupTiers::new(generated, &config)?;
     let mut entries = ui::Options::new(
-        crate::store::parse_yaml(include_str!("onboard/leads.yaml"))?,
+        store::parse_yaml(include_str!("onboard/leads.yaml"))?,
         false,
-    );
-    let rows: Vec<(String, String)> = crate::store::parse_yaml(defaults::SKILLS)?;
-    let mut starters = ui::Options::new(rows.clone(), true);
+    )?;
+    let rows: Vec<(String, String)> = store::parse_yaml(defaults::SKILLS)?;
+    let mut starters = ui::Options::new(rows.clone(), true)?;
     let mut confirmation = ui::Options::new(
         vec![
             ("Continue".into(), "Accept, write manifest and start".into()),
@@ -51,7 +55,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
             ),
         ],
         false,
-    );
+    )?;
     let mut custom_text = String::new();
     enum EntrySkill {
         Named(skills::SkillName),
@@ -104,8 +108,8 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                 }
             },
             Step::Tiers => match tiers.pick(cwd, &config)? {
-                crate::agents::picker::SetupAction::Quit => return Ok(None),
-                crate::agents::picker::SetupAction::Back => {
+                SetupAction::Quit => return Ok(None),
+                SetupAction::Back => {
                     if modes.chosen().0 != "lead" {
                         Step::Mode
                     } else if entries.chosen().0 == "Custom" {
@@ -114,7 +118,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                         Step::Entry
                     }
                 }
-                crate::agents::picker::SetupAction::Next => Step::Starters,
+                SetupAction::Next => Step::Starters,
             },
             Step::Starters => {
                 starters.replace_rows(
@@ -122,7 +126,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                         .filter(|(name, _)| name != entry_skill.name().as_str())
                         .cloned()
                         .collect(),
-                );
+                )?;
                 let question = format!(
                     "Optional starter skills — instructions that give agents a role. None selected by default.\n\
                      Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Existing skills are kept.",
@@ -192,16 +196,16 @@ fn finish(
     global: &Utf8Path,
     manifest: &WorkspaceManifest,
     starter_skills: &[skills::SkillName],
-    models: &crate::agents::ModelRoster,
+    models: &ModelRoster,
 ) -> Result<ManifestWrite> {
     manifest::check(manifest, models)?;
     let body = serde_saphyr::to_string(manifest)?;
-    let names: std::collections::BTreeSet<_> = manifest
+    let names: BTreeSet<_> = manifest
         .bindings
         .iter()
-        .flat_map(|(name, binding)| std::iter::once(name).chain(binding.attached_skills()))
+        .flat_map(|(name, binding)| iter::once(name).chain(binding.attached_skills()))
         .chain(starter_skills)
-        .chain(std::iter::once(&manifest.entry))
+        .chain(iter::once(&manifest.entry))
         .collect();
     for name in names {
         if skills::find(name, cwd, global)?.is_none() {
@@ -215,7 +219,7 @@ fn finish(
     }
     let path = manifest::manifest_path(cwd, None)?;
     fs::create_dir_all(path.parent().context("manifest has no parent")?)?;
-    match crate::store::publish(&path, crate::store::Publication::Create, |file| {
+    match store::publish(&path, Publication::Create, |file| {
         file.write_all(body.as_bytes())
     }) {
         Ok(_) => Ok(ManifestWrite::Written),

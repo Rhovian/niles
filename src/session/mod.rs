@@ -1,28 +1,25 @@
+use crate::tmux::{self, LeadStart};
+use crate::util::{current_dir_utf8, dated_directories, parse_timestamp_id};
 use crate::workspace_manifest::setup::SetupSelection;
+use crate::{store, workspace_manifest};
+use anyhow::Result;
+use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, Utc};
+use foreground::launch_foreground_agent;
+
 mod brief;
 mod foreground;
 pub(crate) mod log;
 mod startup;
 
-use anyhow::Result;
-use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
-
-use crate::{
-    store, tmux,
-    util::{current_dir_utf8, dated_directories, parse_timestamp_id},
-    workspace_manifest,
-};
-
 pub(crate) use brief::{SessionMeta, latest_lead, live_lead, read_session_meta};
-use foreground::launch_foreground_agent;
 
 /// Turns the current project's lead pane into the manager agent.
 ///
 /// Niles creates one session per project, named after its registry entry and tagged with its path.
 /// Its lead and workers run in that session.
 pub(crate) fn run(
-    start: crate::tmux::LeadStart,
+    start: LeadStart,
     agent: Option<&str>,
     selection: Option<SetupSelection>,
 ) -> Result<()> {

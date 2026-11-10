@@ -1,12 +1,12 @@
-use std::{collections::BTreeMap, fs, net::Ipv4Addr};
-
+use crate::theme::Theme;
+use crate::{store, util};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde::{Deserialize, Serialize};
-
 use ratatui_themes::ThemeName;
-
-use crate::theme::Theme;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::net::Ipv4Addr;
 
 pub(crate) const DEFAULT_THEME: ThemeName = ThemeName::TokyoNight;
 pub(crate) const DEFAULT_BINDINGS: bool = false;
@@ -58,12 +58,12 @@ fn tmux_is_empty(tmux: &FileTmux) -> bool {
 impl FileConfig {
     pub(crate) fn save(&self, path: &Utf8Path) -> Result<()> {
         fs::create_dir_all(path.parent().context("config path has no parent")?)?;
-        crate::store::write_yaml(path, self)
+        store::write_yaml(path, self)
     }
 
     /// The file at `path`, or an empty config when there is no file.
     pub(crate) fn load(path: &Utf8Path) -> Result<Self> {
-        match crate::store::read_optional_yaml(path)? {
+        match store::read_optional_yaml(path)? {
             Some(file) => Ok(file),
             None => Ok(Self::default()),
         }
@@ -87,7 +87,7 @@ impl UserConfig {
     #[cfg(test)]
     pub(crate) fn parse(text: Option<&str>) -> Result<Self> {
         let file = match text {
-            Some(text) => crate::store::parse_yaml(text)?,
+            Some(text) => store::parse_yaml(text)?,
             None => FileConfig::default(),
         };
         Ok(Self::resolve(file))
@@ -108,7 +108,7 @@ impl UserConfig {
 }
 
 pub(crate) fn path() -> Result<Utf8PathBuf> {
-    Ok(crate::util::home_dir()?.join(".niles/config.yaml"))
+    Ok(util::home_dir()?.join(".niles/config.yaml"))
 }
 
 #[cfg(test)]

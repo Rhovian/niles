@@ -5,7 +5,11 @@ fn session_activity_lifecycle_requires_a_record_and_a_live_pane() {
     let fixture = fixture("niles-session-lifecycle");
     assert_command_success("spawn", &fixture.spawn("impl", None));
     let meta = read_json(fixture.worker_file("impl", "meta.json"));
-    let session = meta["session_link"]["session_id"].as_str().unwrap();
+    let session = meta
+        .pointer("/session_link/session_id")
+        .unwrap()
+        .as_str()
+        .unwrap();
     let workers = |dead: bool| {
         let output = fixture
             .env
@@ -22,17 +26,22 @@ fn session_activity_lifecycle_requires_a_record_and_a_live_pane() {
             .unwrap();
         assert_command_success("workers", &output);
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        value["workers"][0]["state"].as_str().unwrap().to_owned()
+        value
+            .pointer("/workers/0/state")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
     };
     assert_eq!(workers(false), "starting");
     let store = fixture.env.home.join(".claude/projects/project");
     fs::create_dir_all(&store).unwrap();
     let path = store.join(format!("{session}.jsonl"));
-    fs::write(&path, "").unwrap();
+    atomic_write(&path, "").unwrap();
     assert_eq!(workers(false), "starting");
     let turn = serde_json::json!({"type":"assistant","timestamp":chrono::Utc::now(),"message":{
         "id":"working","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"tool_use","content":[]}});
-    fs::write(&path, format!("{turn}\n")).unwrap();
+    atomic_write(&path, format!("{turn}\n")).unwrap();
     assert_eq!(workers(false), "working");
     assert_eq!(workers(true), "waiting");
 }
@@ -49,7 +58,7 @@ fn session_activity_missing_after_one_interval_reports_unknown_once() {
             .into();
         meta["starting_until"] = deadline.to_rfc3339().into();
     });
-    fs::write(
+    atomic_write(
         fixture.checkin_path("impl"),
         format!(
             "deadline={}\ndelay=300\nrecheck=backoff\narmed_len=0\n",

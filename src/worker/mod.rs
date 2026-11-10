@@ -1,3 +1,10 @@
+use crate::skills::SkillName;
+use crate::store::{self, WorkerListEntry};
+#[cfg(feature = "remote")]
+use crate::telemetry::transcript::TranscriptSource;
+use crate::telemetry::{SessionState, Usage};
+#[cfg(feature = "remote")]
+use crate::tmux::{TargetState, WindowTarget};
 use anyhow::Context;
 
 pub(crate) mod agent_status;
@@ -19,27 +26,26 @@ mod worktree;
 
 pub use close::worker_close;
 pub use list::workers;
+pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub use pane::{peek, send};
 pub use report::report;
+pub(crate) use resolve::resolve_worker as worker_dir;
+pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
 pub use spawn::{Assignment, SpawnTask, spawn};
+pub(crate) use usage::lead_session;
 pub use usage::usage;
+pub(crate) use usage::worker_session;
+pub(crate) use validation::validate_task_label;
 pub use worktree::SpawnTree;
 pub(crate) use worktree::remove_project_worktrees;
 
-pub(crate) use pane::DEFAULT_PEEK_LINES;
-pub(crate) use resolve::resolve_worker as worker_dir;
-pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
-pub(crate) use usage::lead_session;
-pub(crate) use usage::worker_session;
-pub(crate) use validation::validate_task_label;
-
 pub(crate) struct StatusWorker {
     pub id: String,
-    pub skill: crate::skills::SkillName,
+    pub skill: SkillName,
     pub window: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    pub usage: Option<crate::telemetry::Usage>,
-    pub state: crate::telemetry::SessionState,
+    pub usage: Option<Usage>,
+    pub state: SessionState,
 }
 
 pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<StatusWorker>> {
@@ -68,7 +74,7 @@ pub(crate) fn status_workers(workspace: &camino::Utf8Path) -> anyhow::Result<Vec
 /// Live worker directory identities and their recorded windows, without activity or logs.
 pub(crate) fn window_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<(String, String)>> {
     let mut labels = Vec::new();
-    for entry in crate::store::worker_locations(workspace)? {
+    for entry in store::worker_locations(workspace)? {
         if let Some(meta) = meta::read_meta_if_exists(&entry.worker_dir)? {
             labels.push((entry.id, meta.window));
         }
@@ -93,9 +99,9 @@ pub(crate) fn model_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<(
 /// Worker directories whose metadata is present and readable.
 pub(crate) fn live_worker_locations(
     workspace: &camino::Utf8Path,
-) -> anyhow::Result<Vec<crate::store::WorkerListEntry>> {
+) -> anyhow::Result<Vec<WorkerListEntry>> {
     let mut live = Vec::new();
-    for entry in crate::store::worker_locations(workspace)? {
+    for entry in store::worker_locations(workspace)? {
         if meta::read_meta_if_exists(&entry.worker_dir)?.is_some() {
             validation::validate_id(&entry.id)?;
             live.push(entry);
@@ -125,18 +131,16 @@ pub(crate) fn wait_health(
     let mut snapshot = WorkerSnapshot::new(meta.id.clone(), dir.to_path_buf(), None);
     snapshot.meta = Some(meta);
     Ok(Some(match worker_session(&snapshot, now)?.state {
-        crate::telemetry::SessionState::Waiting => WaitHealth::Idle,
-        crate::telemetry::SessionState::Starting | crate::telemetry::SessionState::Working => {
-            WaitHealth::Running
-        }
-        crate::telemetry::SessionState::Unknown => WaitHealth::Unknown,
+        SessionState::Waiting => WaitHealth::Idle,
+        SessionState::Starting | SessionState::Working => WaitHealth::Running,
+        SessionState::Unknown => WaitHealth::Unknown,
     }))
 }
 
 #[cfg(feature = "remote")]
 pub(crate) struct ChatTarget {
-    pub transcript: crate::telemetry::transcript::TranscriptSource,
-    pub window: Option<crate::tmux::WindowTarget>,
+    pub transcript: TranscriptSource,
+    pub window: Option<WindowTarget>,
 }
 
 #[cfg(feature = "remote")]
@@ -152,15 +156,15 @@ pub(crate) fn chat_target(
     };
     let meta = meta::read_meta(&entry.worker_dir)?;
     let window = match resolve::window_state(&meta) {
-        crate::tmux::TargetState::Live => Some(crate::tmux::WindowTarget::parse(&meta.window)?),
-        crate::tmux::TargetState::OrphanRecovered { actual } => Some(actual),
-        crate::tmux::TargetState::PaneExited
-        | crate::tmux::TargetState::WindowDead
-        | crate::tmux::TargetState::OrphanGone
-        | crate::tmux::TargetState::Unknown { .. } => None,
+        TargetState::Live => Some(WindowTarget::parse(&meta.window)?),
+        TargetState::OrphanRecovered { actual } => Some(actual),
+        TargetState::PaneExited
+        | TargetState::WindowDead
+        | TargetState::OrphanGone
+        | TargetState::Unknown { .. } => None,
     };
     Ok(Some(ChatTarget {
-        transcript: crate::telemetry::transcript::TranscriptSource {
+        transcript: TranscriptSource {
             workspace: meta.agent_dir().to_owned(),
             needle: meta::report_path(meta.brief.parent().context("worker brief has no parent")?),
             link: meta.session_link,

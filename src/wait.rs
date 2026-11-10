@@ -2,19 +2,15 @@
 //! The workspace lock serializes presence replacement with delivery; worker cursor locks
 //! serialize delivery with `send`. Output is flushed before its cursor is advanced.
 
-use crate::{
-    duration::parse_duration,
-    wake::{self, WakeKind},
-    worker,
-};
+use crate::duration::parse_duration;
+use crate::wake::{self, WakeKind};
+use crate::worker;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-use std::{
-    fs,
-    io::{ErrorKind, Read, Seek, SeekFrom},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
-    time::Duration,
-};
+use std::fs;
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::time::Duration;
 pub(crate) mod cursor;
 mod exit;
 mod liveness;
@@ -68,6 +64,10 @@ impl Target {
     /// with the offset just past it. A trailing partial line is left for the next poll.
     /// Logs are append-only: an in-place rewrite that regrows to or beyond the cached offset
     /// between polls cannot be distinguished from an append and its rewritten prefix is skipped.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "take caps consumed bytes at metadata length"
+    )]
     fn next_actionable(&mut self, persisted: u64) -> Result<Option<(WakeKind, String, u64)>> {
         let mut file = match fs::OpenOptions::new()
             .read(true)
@@ -104,7 +104,10 @@ impl Target {
         file.seek(SeekFrom::Start(self.scanned))
             .with_context(|| format!("failed to seek {}", self.status))?;
         let mut appended = Vec::new();
-        file.take(len - self.scanned)
+        let unread = len
+            .checked_sub(self.scanned)
+            .context("status cursor exceeds log length")?;
+        file.take(unread)
             .read_to_end(&mut appended)
             .with_context(|| format!("failed to read {}", self.status))?;
 
@@ -177,9 +180,11 @@ fn render(line: &str) -> String {
     if rendered.len() < MAX_LINE_BYTES {
         return rendered;
     }
-    let mut cut = MAX_LINE_BYTES - 1 - "... (truncated)".len();
+    let mut cut = MAX_LINE_BYTES
+        .saturating_sub(1)
+        .saturating_sub("... (truncated)".len());
     while cut > 0 && !rendered.is_char_boundary(cut) {
-        cut -= 1;
+        cut = cut.saturating_sub(1);
     }
     rendered.truncate(cut);
     rendered.push_str("... (truncated)");

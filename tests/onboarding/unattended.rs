@@ -1,18 +1,19 @@
 use super::{environment, manifest, support};
-use crate::common::*;
-use std::{fs, sync::LazyLock};
+use crate::common::{atomic_write, *};
+use std::fs;
+use std::sync::LazyLock;
 
 static FIXTURE: LazyLock<serde_json::Value> =
     LazyLock::new(|| serde_saphyr::from_str(setup_manifest_body()).unwrap());
 static TIERS: LazyLock<String> =
-    LazyLock::new(|| serde_saphyr::to_string(&FIXTURE["tiers"]).unwrap());
+    LazyLock::new(|| serde_saphyr::to_string(&json_field(&FIXTURE, "/tiers")).unwrap());
 pub(super) fn args() -> Vec<&'static str> {
     vec![
         "setup",
         "--entry-skill",
         "solo",
         "--entry-agent",
-        FIXTURE["entry_agent"].as_str().unwrap(),
+        json_field(&FIXTURE, "/entry_agent").as_str().unwrap(),
         "--tiers",
         &TIERS,
         "--start",
@@ -37,9 +38,12 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
     assert_success_contains("explicit setup", &output, "entry session: installed");
     let body = fs::read_to_string(manifest(&env)).unwrap();
     let value: serde_json::Value = serde_saphyr::from_str(&body).unwrap();
-    assert_eq!(value["entry"], "solo");
-    assert_eq!(value["entry_agent"], FIXTURE["entry_agent"]);
-    assert_eq!(value["tiers"], FIXTURE["tiers"]);
+    assert_eq!(json_field(&value, "/entry"), "solo");
+    assert_eq!(
+        json_field(&value, "/entry_agent"),
+        json_field(&FIXTURE, "/entry_agent")
+    );
+    assert_eq!(json_field(&value, "/tiers"), json_field(&FIXTURE, "/tiers"));
     assert!(env.home.join(".niles/skills/solo/SKILL.ref").exists());
     assert_eq!(
         fs::read_link(env.home.join(".niles/projects/installed")).unwrap(),
@@ -67,9 +71,18 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
     ] {
         let mut args = args();
         args.extend(["--starter-skills", "design"]);
-        match args.iter().position(|arg| *arg == flag) {
-            Some(index) => args[index + 1] = value,
-            None => args.extend([flag, value]),
+        if let Some([_, target]) = args
+            .split_first_mut()
+            .unwrap()
+            .1
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .find(|pair| pair.first() == Some(&flag))
+        {
+            *target = value;
+        } else {
+            args.extend([flag, value]);
         }
         assert_failure_contains(flag, &env.run(&args), message);
         assert!(!manifest(&env).exists());
@@ -135,7 +148,7 @@ fn explicit_setup_refuses_manifest_created_during_skill_fetch() {
     write_executable(&git, &script);
     fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
     let winner = env.root.join("winner.yaml");
-    fs::write(&winner, setup_manifest_body()).unwrap();
+    atomic_write(&winner, setup_manifest_body()).unwrap();
     let output = env
         .niles(&env.root, &args())
         .env("NILES_TEST_WINNER", winner)

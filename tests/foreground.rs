@@ -1,9 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use std::fs;
+use std::path::Path;
 
 mod common;
 
 use common::*;
-use std::fs;
 
 #[test]
 fn entry_delivers_entry_agent_and_session_header_to_builtin_cli() {
@@ -116,9 +117,9 @@ fn assert_entry(entry: &str, model: &str) {
         .expect(entry)
         .strip_suffix("\n\nStart the Niles manager session.")
         .expect(entry);
-    let dir = std::path::Path::new(dir);
+    let dir = Path::new(dir);
     let meta = read_json(dir.join("session.json"));
-    assert_eq!(meta["entry_skill"], entry, "{entry}");
+    assert_eq!(json_field(&meta, "/entry_skill"), entry, "{entry}");
     assert!(meta.get("setup").is_none(), "{entry}");
     let primary = fs::read_to_string(dir.join("lead.md")).expect(entry);
     assert_eq!(

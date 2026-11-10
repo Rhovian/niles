@@ -1,11 +1,11 @@
-use crate::test_support::default_manifest as workspace_manifest;
-use crate::test_support::manifest_body;
-use std::fs;
-
-use camino::Utf8PathBuf;
-
 use super::*;
-use crate::test_support::temp_test_path;
+use crate::store::{atomic_write, paths};
+use crate::test_support::{
+    self, default_manifest as workspace_manifest, manifest_body, temp_test_path,
+};
+use crate::workspace_manifest as manifest;
+use camino::Utf8PathBuf;
+use std::fs;
 
 /// Each row as `key | value | from | note`, so a whole scope reads as one table.
 fn table(items: &[Item]) -> Vec<String> {
@@ -58,7 +58,7 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
             "api | /w/api | registry | ",
         ],
     );
-    fs::write(&path, "theme: nord\ntmux: {bindings: false}\n").unwrap();
+    atomic_write(&path, "theme: nord\ntmux: {bindings: false}\n").unwrap();
     assert_rows(
         &items::global(&path, &[]),
         &[
@@ -68,23 +68,23 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
             "[registry]",
         ],
     );
-    fs::write(&path, "theme: nord\nbogus: 1\n").unwrap();
+    atomic_write(&path, "theme: nord\nbogus: 1\n").unwrap();
     let items = items::global(&path, &[]);
     assert_rows(&items, &["[config.yaml]", "✗ ", "[registry]"]);
-    assert!(table(&items)[1].contains("bogus"), "{:?}", table(&items));
-    assert_eq!(items[1].edit(), None);
+    assert!(table(&items).iter().any(|row| row.contains("bogus")));
+    assert!(items.iter().all(|item| item.edit().is_none()));
     fs::remove_dir_all(dir).unwrap();
 }
 
 fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
     let root = temp_test_path(label);
     fs::create_dir_all(&root).unwrap();
-    fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
+    fs::create_dir_all(paths::project_dir(&root).unwrap()).unwrap();
     if let Some(manifest) = manifest {
-        fs::write(workspace_manifest::manifest_path(&root).unwrap(), manifest).unwrap();
+        atomic_write(workspace_manifest::manifest_path(&root).unwrap(), manifest).unwrap();
     }
     if let Some(file) = file {
-        fs::write(root.join(".niles.yaml"), file).unwrap();
+        atomic_write(root.join(".niles.yaml"), file).unwrap();
     }
     root
 }
@@ -100,13 +100,13 @@ fn project_rows_show_tiers_and_standard_primary_is_editable() {
             .any(|row| row.starts_with("model | gpt-6.1-sol"))
     );
     assert_eq!(
-        items[1].edit(),
+        items.iter().find_map(Item::edit),
         Some(&Edit::Tier {
             root: root.clone(),
             tier: Tier::Standard
         })
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -122,10 +122,8 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
             "- | - | builtin | ",
         ],
     );
-    for index in [1, 3] {
-        assert_eq!(items[index].edit(), None);
-    }
-    crate::test_support::remove_workspace(&root).unwrap();
+    assert!(items.iter().all(|item| item.edit().is_none()));
+    test_support::remove_workspace(&root).unwrap();
 
     let root = project(
         "config-invalid",
@@ -133,14 +131,15 @@ fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
         Some("agents: {lead: {}}\n"),
     );
     let rows = table(&items::project(&root).unwrap());
-    assert_eq!(rows[0], "[manifest]");
-    assert!(rows[1].contains("unknown field `agents`"), "{rows:?}");
-    assert_eq!(rows[rows.len() - 2], "[.niles.yaml]");
-    assert!(
-        rows[rows.len() - 1].contains("unknown field `agents`"),
-        "{rows:?}"
+    assert_eq!(rows.first().unwrap(), "[manifest]");
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.contains("unknown field `agents`"))
+            .count(),
+        2
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    assert_eq!(rows.iter().rev().nth(1).unwrap(), "[.niles.yaml]");
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -153,17 +152,17 @@ fn saving_a_skill_and_checkin_keeps_the_other_fields() {
     })
     .unwrap();
     let rows = items::project(&root).unwrap();
-    let Item::Setting(setting) = rows
+    let (setting, step) = rows
         .iter()
-        .find(|item| matches!(item, Item::Setting(setting) if setting.key == "checkin"))
-        .unwrap()
-    else {
-        panic!("missing checkin row")
-    };
-    let Some(Edit::Step(step)) = &setting.edit else {
-        panic!("missing checkin step")
-    };
-    step.save(cycle(&step.options(), &setting.value, false))
+        .find_map(|item| match item {
+            Item::Setting(setting) if setting.key == "checkin" => match &setting.edit {
+                Some(Edit::Step(step)) => Some((setting, step)),
+                Some(Edit::Registry | Edit::Tier { .. }) | None => None,
+            },
+            Item::Setting(_) | Item::Section(_) | Item::Broken(_) => None,
+        })
+        .expect("checkin step");
+    step.save(cycle(&step.options(), &setting.value, false).unwrap())
         .unwrap();
     let after = workspace_manifest::load(&root).unwrap().unwrap();
     let mut before = before;
@@ -175,19 +174,15 @@ fn saving_a_skill_and_checkin_keeps_the_other_fields() {
             ..before
         }
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
-fn stepping_theme_creates_sparse_config_and_reloads_rows() {
+fn stepping_theme_creates_sparse_config() {
     let dir = temp_test_path("config-theme");
     let path = dir.join(".niles/config.yaml");
     let step = Step::Theme(path.clone());
-    let rows = items::global(&path, &[]);
-    let Item::Setting(setting) = &rows[1] else {
-        panic!("missing theme row")
-    };
-    step.save(cycle(&step.options(), &setting.value, false))
+    step.save(cycle(&step.options(), "tokyo-night", false).unwrap())
         .unwrap();
     let next = ThemeName::SolarizedDark;
     assert_eq!(
@@ -200,10 +195,10 @@ fn stepping_theme_creates_sparse_config_and_reloads_rows() {
 #[test]
 fn cycle_wraps_and_starts_at_an_end_when_unmatched() {
     let options = ["one", "two", "three"];
-    assert_eq!(cycle(&options, "three", false), "one");
-    assert_eq!(cycle(&options, "one", true), "three");
-    assert_eq!(cycle(&options, "unknown", false), "one");
-    assert_eq!(cycle(&options, "unknown", true), "three");
+    assert_eq!(cycle(&options, "three", false).unwrap(), "one");
+    assert_eq!(cycle(&options, "one", true).unwrap(), "three");
+    assert_eq!(cycle(&options, "unknown", false).unwrap(), "one");
+    assert_eq!(cycle(&options, "unknown", true).unwrap(), "three");
 }
 
 #[test]
@@ -221,11 +216,9 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
     let named = first.join(".niles/setups/tdd.yaml");
     fs::create_dir_all(named.parent().unwrap()).unwrap();
     let named_body = format!("{}checkin: 15m\n", manifest_body());
-    fs::write(&named, &named_body).unwrap();
+    atomic_write(&named, &named_body).unwrap();
     let selection = "workspace:tdd".parse().unwrap();
-    let selected = crate::workspace_manifest::load(&first, Some(&selection))
-        .unwrap()
-        .unwrap();
+    let selected = manifest::load(&first, Some(&selection)).unwrap().unwrap();
     assert_eq!(selected.checkin.as_deref(), Some("15m"));
     for (root, cadence) in [(&first, "2m"), (&second, "5m")] {
         let rows = table(&items::project(root).unwrap());
@@ -246,7 +239,7 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
         Some("5m")
     );
     for root in [first, second] {
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }
 
@@ -264,7 +257,7 @@ fn config_tier_edit_saves_secondaries_and_entry_agent_on_the_latest_manifest() {
     edit_tiers(&root, Tier::Standard, |received, config, tier| {
         assert_eq!(received, before);
         assert_eq!(tier, Tier::Standard);
-        crate::workspace_manifest::check(&draft, &config.models).unwrap();
+        manifest::check(&draft, &config.models).unwrap();
         let mut concurrent = received;
         concurrent.checkin = Some("1h".into());
         workspace_manifest::save(&root, &concurrent).unwrap();
@@ -273,5 +266,5 @@ fn config_tier_edit_saves_secondaries_and_entry_agent_on_the_latest_manifest() {
     .unwrap();
     draft.checkin = Some("1h".into());
     assert_eq!(load_manifest(&root).unwrap(), draft);
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }

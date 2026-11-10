@@ -1,9 +1,10 @@
+use super::chat::Lookup;
+use super::{ApiError, blocking, push};
+use crate::tmux::{self, TmuxTarget};
 use anyhow::{Result, ensure};
-use axum::{Json, http::StatusCode};
+use axum::Json;
+use axum::http::StatusCode;
 use serde::Deserialize;
-
-use super::{ApiError, blocking, chat::Lookup, push};
-use crate::tmux;
 use std::sync::Arc;
 
 pub(super) const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -55,7 +56,7 @@ pub(super) fn deliver(
     session: super::chat::Chat,
     message: Message,
     sender: Option<Sender>,
-    paste: impl FnOnce(&crate::tmux::TmuxTarget, &str) -> Result<()>,
+    paste: impl FnOnce(&TmuxTarget, &str) -> Result<()>,
 ) -> Result<StatusCode> {
     let origin = match (sender, message.sender_device) {
         (Some(sender), Some(device)) => Some((

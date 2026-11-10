@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::store::parse_yaml;
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
-
-use serde::{Deserialize, Deserializer, Serialize, de::Error};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +38,7 @@ fn environment<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store;
 
     #[test]
     fn worktree_schema_rejects_invalid_process_environment_and_unknown_fields() {
@@ -47,16 +50,13 @@ mod tests {
             r#"env: {KEY: "nul\0value"}"#,
             "unknown: value",
         ] {
-            assert!(
-                crate::store::parse_yaml::<WorktreeConfig>(body).is_err(),
-                "{body}"
-            );
+            assert!(parse_yaml::<WorktreeConfig>(body).is_err(), "{body}");
         }
-        let config: WorktreeConfig = crate::store::parse_yaml("setup: 'echo ready'").unwrap();
+        let config: WorktreeConfig = store::parse_yaml("setup: 'echo ready'").unwrap();
         assert!(config.env.is_empty());
         assert_eq!(config.setup.as_deref(), Some("echo ready"));
-        let config: WorktreeConfig = crate::store::parse_yaml("env: {_KEY_1: value}").unwrap();
+        let config: WorktreeConfig = store::parse_yaml("env: {_KEY_1: value}").unwrap();
         assert!(config.setup.is_none());
-        assert_eq!(config.env["_KEY_1"], "value");
+        assert_eq!(config.env.get("_KEY_1").unwrap(), "value");
     }
 }

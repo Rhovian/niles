@@ -1,7 +1,11 @@
 //! Pending lead messages share one delivery and landing-only commit path.
+
 use super::checkin::Checkin;
-use crate::{telemetry::SessionState, wake::WakeKind};
+use crate::telemetry::SessionState;
+use crate::wake::WakeKind;
 use camino::Utf8PathBuf;
+#[cfg(test)]
+use std::slice;
 
 const PREFIX: &str = "niles: ";
 const SUFFIX: &str = " — check workers";
@@ -43,7 +47,7 @@ impl Item {
     }
     #[cfg(test)]
     pub(super) fn text(&self) -> String {
-        text(std::slice::from_ref(self))
+        text(slice::from_ref(self))
     }
 }
 
@@ -74,6 +78,7 @@ pub(super) fn parse_reports(text: &str) -> impl Iterator<Item = (&str, WakeKind)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::slice;
     #[test]
     fn single_and_mixed_batches_parse() {
         for kind in WakeKind::ALL {
@@ -83,7 +88,7 @@ mod tests {
                 log_len: 4,
             };
             assert_eq!(
-                parse_reports(&text(std::slice::from_ref(&item))).collect::<Vec<_>>(),
+                parse_reports(&text(slice::from_ref(&item))).collect::<Vec<_>>(),
                 vec![("w1", kind)]
             );
             assert!(is_nudge(&text(&[item])));

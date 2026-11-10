@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use crate::common::atomic_write;
 
 mod common;
 
@@ -66,8 +67,13 @@ esac
         "select-pane -t %0".to_owned(),
         "switch-client -t =niles+home:".to_owned(),
     ];
-    let positions = steps.map(|step| log.find(&step).unwrap_or_else(|| panic!("{step}\n{log}")));
-    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{log}");
+    let positions = steps.map(|step| log.find(&step).expect(&step));
+    assert!(
+        positions
+            .windows(2)
+            .all(|pair| matches!(pair, [a, b] if a < b)),
+        "{log}"
+    );
     assert_ok(
         "home ignores workspace selection",
         &env.run(&["--setup", "workspace:missing"]),
@@ -121,7 +127,7 @@ fn home_bindings_install_on_a_real_server() {
     assert_ok("start tmux", &tmux(&start));
     fs::create_dir_all(env.home.join(".niles")).unwrap();
     let config = "tmux: {bindings: true}";
-    fs::write(env.home.join(".niles/config.yaml"), config).unwrap();
+    atomic_write(env.home.join(".niles/config.yaml"), config).unwrap();
     let mut niles = env.niles(&env.root, &[]);
     niles.envs([
         ("HOME", env.home.to_str().unwrap()),
@@ -137,7 +143,7 @@ fn home_bindings_install_on_a_real_server() {
     let line = |key| {
         keys.lines()
             .find(|l| l.split_whitespace().nth(3) == Some(key))
-            .unwrap_or_else(|| panic!("missing {key}: {keys}"))
+            .expect(key)
     };
     assert!(line("M-n").contains(&popup), "{keys}");
     let toggle = line(r"M-\\");

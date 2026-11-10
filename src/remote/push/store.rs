@@ -1,16 +1,15 @@
+use crate::util;
 use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use camino::{Utf8Path, Utf8PathBuf};
-use openssl::{
-    ec::{EcGroup, EcKey},
-    nid::Nid,
-};
+use openssl::ec::{EcGroup, EcKey};
+use openssl::nid::Nid;
+use openssl::sha;
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
-};
+use std::fs;
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use web_push::{
     ContentEncoding, SubscriptionInfo, VapidSignatureBuilder, WebPushMessage, WebPushMessageBuilder,
 };
@@ -61,7 +60,7 @@ pub(crate) struct Registration {
 pub(in crate::remote) struct DeviceId(String);
 impl DeviceId {
     pub(in crate::remote) fn from_endpoint(endpoint: &str) -> Self {
-        Self(URL_SAFE_NO_PAD.encode(openssl::sha::sha256(endpoint.as_bytes())))
+        Self(URL_SAFE_NO_PAD.encode(sha::sha256(endpoint.as_bytes())))
     }
 }
 impl TryFrom<String> for DeviceId {
@@ -82,7 +81,7 @@ impl Device {
 
     pub(super) fn topic(&self, session: &super::Session) -> Result<String> {
         let identity = serde_json::to_vec(&(self.host.as_ref().map(|host| &host.id), &session.id))?;
-        Ok(URL_SAFE_NO_PAD.encode(&openssl::sha::sha256(&identity)[..24]))
+        Ok(URL_SAFE_NO_PAD.encode(&sha::sha256(&identity)[..24]))
     }
 
     pub(super) fn payload(
@@ -154,10 +153,10 @@ impl Store {
         Ok(Self { root, key })
     }
     pub(crate) fn load_optional() -> Result<Option<Self>> {
-        let root = crate::util::home_dir()?.join(".niles/remote");
+        let root = util::home_dir()?.join(".niles/remote");
         match fs::symlink_metadata(root.join("vapid.json")) {
             Ok(_) => Ok(Some(Self::load(root)?)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
     }
@@ -195,7 +194,7 @@ impl Store {
     fn path(&self, subscription: &Subscription) -> Utf8PathBuf {
         self.root.join("subscriptions").join(format!(
             "{}.json",
-            URL_SAFE_NO_PAD.encode(openssl::sha::sha256(subscription.0.endpoint.as_bytes()))
+            URL_SAFE_NO_PAD.encode(sha::sha256(subscription.0.endpoint.as_bytes()))
         ))
     }
     pub(super) fn subscriptions(&self) -> Result<Vec<Device>> {
@@ -262,7 +261,7 @@ impl TryFrom<SubscriptionInfo> for Subscription {
                         | "web.push.apple.com"
                 )
             ),
-            "unsupported push service"
+            "invalid push service"
         );
         let mut builder = WebPushMessageBuilder::new(&info);
         builder.set_payload(ContentEncoding::Aes128Gcm, b"validation");

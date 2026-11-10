@@ -1,4 +1,6 @@
-use super::{Origin, SkillName, reference::PinnedRef};
+use super::reference::PinnedRef;
+use super::{Origin, SkillName};
+use crate::{store, util};
 use anyhow::{Context, Result, bail, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
@@ -51,7 +53,7 @@ impl Skill {
 }
 
 pub(crate) fn global_dir() -> Result<Utf8PathBuf> {
-    Ok(crate::util::home_dir()?.join(".niles"))
+    Ok(util::home_dir()?.join(".niles"))
 }
 
 pub(crate) fn find(
@@ -144,8 +146,10 @@ fn parse(name: &SkillName, text: &str) -> Result<(String, String)> {
         .strip_prefix("---\r\n")
         .or_else(|| text.strip_prefix("---\n"))
         .context("frontmatter must start with --- on its own line")?;
-    let mut end = 0;
+    let mut rest = text;
     for line in text.split_inclusive('\n') {
+        let remaining = rest;
+        rest = rest.strip_prefix(line).context("frontmatter boundary")?;
         if line.trim_end_matches(['\r', '\n']) == "---" {
             #[derive(Deserialize)]
             struct Header {
@@ -153,7 +157,11 @@ fn parse(name: &SkillName, text: &str) -> Result<(String, String)> {
                 description: String,
             }
             // Never include parser errors: serde type errors can quote repository text.
-            let header: Header = crate::store::parse_yaml(&text[..end]).map_err(|_| {
+            let header: Header = store::parse_yaml(
+                text.strip_suffix(remaining)
+                    .context("frontmatter boundary")?,
+            )
+            .map_err(|_| {
                 anyhow::anyhow!("frontmatter requires valid YAML with name and description strings")
             })?;
             ensure!(
@@ -165,9 +173,8 @@ fn parse(name: &SkillName, text: &str) -> Result<(String, String)> {
                 !header.description.trim().is_empty() && count <= 1024,
                 "frontmatter description must be nonempty and at most 1024 characters (got {count})"
             );
-            return Ok((header.description, text[end + line.len()..].to_owned()));
+            return Ok((header.description, rest.to_owned()));
         }
-        end += line.len();
     }
     bail!("frontmatter is missing its closing --- line")
 }

@@ -1,4 +1,5 @@
 pub(crate) use crate::common::*;
+use std::process::Output;
 pub(crate) use std::{
     fs,
     path::{Path, PathBuf},
@@ -7,16 +8,10 @@ pub(crate) use std::{
 pub(crate) fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBuf {
     let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();
-    fs::write(worker_dir.join("status.log"), "working: bad metadata\n").unwrap();
-    fs::write(
+    atomic_write(worker_dir.join("status.log"), "working: bad metadata\n").unwrap();
+    atomic_write(
         worker_dir.join("meta.json"),
-        format!(
-            r#"{{
-  "id": "{id}",
-  "agent": "codex"
-}}
-"#
-        ),
+        serde_json::to_vec_pretty(&serde_json::json!({"id": id, "agent": "codex"})).unwrap(),
     )
     .unwrap();
     worker_dir
@@ -61,7 +56,7 @@ pub(crate) fn close_auth_fix(
     window: &str,
     status: &[u8],
     envs: &[(&str, &str)],
-) -> std::process::Output {
+) -> Output {
     write_worker(&env.root, "auth-fix", window, None, status);
     env.niles(&env.root, &["close", "auth-fix"])
         .envs(envs.iter().copied())

@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 
 mod common;
 
@@ -105,7 +105,7 @@ fn doctor_reports_missing_and_unavailable_builtin_versions() {
 fn doctor_dirty_source_tree_ignores_inherited_repository_routing() {
     let workspace = temp_workspace("niles-doctor-dirty-test");
     fs::create_dir_all(workspace.join("src")).unwrap();
-    fs::write(
+    atomic_write(
         workspace.join("Cargo.toml"),
         r#"[package]
 name = "niles"
@@ -114,13 +114,13 @@ edition = "2024"
 "#,
     )
     .unwrap();
-    fs::write(workspace.join("src/main.rs"), "fn main() {}\n").unwrap();
+    atomic_write(workspace.join("src/main.rs"), "fn main() {}\n").unwrap();
     git(&workspace, &["init"]);
     git(&workspace, &["add", "."]);
     git(&workspace, &["commit", "-m", "initial"]);
     let caller = temp_workspace("niles-doctor-caller");
     git(&workspace, &["clone", ".", caller.to_str().unwrap()]);
-    fs::write(
+    atomic_write(
         workspace.join("src/main.rs"),
         "fn main() { println!(\"dirty\"); }\n",
     )

@@ -1,4 +1,6 @@
 use super::*;
+use crate::store::atomic_write;
+use crate::test_support;
 
 fn setup(label: &str, failure: Option<&str>, finished_at: DateTime<Utc>) -> Utf8PathBuf {
     let project = workspace(label);
@@ -9,15 +11,12 @@ fn setup(label: &str, failure: Option<&str>, finished_at: DateTime<Utc>) -> Utf8
     let complete = serde_json::json!({"type":"message","timestamp":finished_at,
         "message":{"role":"assistant","stopReason":if failure.is_some() { "error" } else { "stop" },
         "errorMessage":failure}});
-    fs::write(session_dir.join("session.jsonl"), format!("{complete}\n")).unwrap();
+    atomic_write(session_dir.join("session.jsonl"), format!("{complete}\n")).unwrap();
     let path = dir.join("meta.json");
     let mut meta: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    meta["agent"] = "pi:tencent/hy3".into();
-    meta["agent_family"] = "pi".into();
-    meta["model"] = "tencent/hy3".into();
-    meta["session_link"] = serde_json::json!({"family":"pi","session_dir":session_dir});
-    fs::write(path, meta.to_string()).unwrap();
+    meta.as_object_mut().unwrap().extend(serde_json::json!({"agent":"pi:tencent/hy3","agent_family":"pi","model":"tencent/hy3","session_link":{"family":"pi","session_dir":session_dir}}).as_object().unwrap().clone());
+    atomic_write(path, meta.to_string()).unwrap();
     armed_checkin(300, 0, at(1000)).write(&dir).unwrap();
     project
 }
@@ -61,7 +60,7 @@ fn terminal_normal_and_stale_completions_disarm_and_nudge_once() {
         tick(&project, at(1600), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(sink.sent.len(), 1, "{label}");
         assert!(sink.captures.is_empty(), "{label}");
-        crate::test_support::remove_workspace(&project).unwrap();
+        test_support::remove_workspace(&project).unwrap();
     }
 }
 
@@ -82,5 +81,5 @@ fn unreadable_activity_nudges_and_rearms_without_a_blocked_line() {
             .iter()
             .any(|note| note.contains("failed to read activity"))
     );
-    crate::test_support::remove_workspace(&project).unwrap();
+    test_support::remove_workspace(&project).unwrap();
 }

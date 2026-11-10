@@ -4,7 +4,7 @@ use std::{
     process::Command,
 };
 
-fn main() {
+fn main() -> Result<(), env::VarError> {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_else(|| ".".into()));
     track_package_inputs(&manifest_dir);
@@ -12,7 +12,7 @@ fn main() {
     let version = match env::var("NILES_RELEASE_VERSION") {
         Ok(version) => version,
         Err(env::VarError::NotPresent) => env!("CARGO_PKG_VERSION").to_owned(),
-        Err(error) => panic!("invalid NILES_RELEASE_VERSION: {error}"),
+        Err(error) => return Err(error),
     };
     println!("cargo:rustc-env=NILES_BUILD_VERSION={version}");
 
@@ -39,6 +39,7 @@ fn main() {
             .map(|value| value.trim().to_owned())
             .unwrap_or_else(|| "unknown".to_owned())
     );
+    Ok(())
 }
 
 fn track_package_inputs(manifest_dir: &Path) {

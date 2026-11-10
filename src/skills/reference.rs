@@ -1,7 +1,8 @@
 use super::SkillName;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::fmt;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GithubRef {
@@ -55,22 +56,27 @@ impl FromStr for GithubRef {
             None => (text, "HEAD"),
         };
         ensure!(!rev.is_empty(), "skill revision must be nonempty");
-        let mut segments: Vec<_> = location.split('/').collect();
-        if segments[0].contains('.') {
-            ensure!(
-                segments[0] == "github.com",
-                "only github.com skill refs are supported"
-            );
-            segments.remove(0);
-        }
-        ensure!(segments.len() >= 2, "skill ref requires owner/repo");
+        let location = match location.split_once('/') {
+            Some((host, rest)) if host.contains('.') => {
+                ensure!(
+                    host == "github.com",
+                    "only github.com skill refs are supported"
+                );
+                rest
+            }
+            _ => location,
+        };
+        let segments: Vec<_> = location.split('/').collect();
+        let [owner, repo, path @ ..] = segments.as_slice() else {
+            anyhow::bail!("skill ref requires owner/repo");
+        };
         ensure!(
             segments
                 .iter()
                 .all(|segment| !segment.is_empty() && !matches!(*segment, "." | "..")),
             "skill ref segments must be nonempty and cannot be . or .."
         );
-        for segment in &segments[..2] {
+        for segment in [owner, repo] {
             ensure!(
                 segment
                     .bytes()
@@ -80,9 +86,9 @@ impl FromStr for GithubRef {
         }
         let name = segments.last().context("skill ref has no name")?.parse()?;
         Ok(Self {
-            owner: segments[0].to_owned(),
-            repo: segments[1].to_owned(),
-            path: segments[2..].join("/"),
+            owner: (*owner).to_owned(),
+            repo: (*repo).to_owned(),
+            path: path.join("/"),
             rev: rev.to_owned(),
             name,
         })
@@ -94,7 +100,10 @@ impl fmt::Display for GithubRef {
         if !self.path.is_empty() {
             write!(f, "/{}", self.path)?;
         }
-        write!(f, "@{}", self.rev)
+        match f.precision() {
+            Some(precision) => write!(f, "@{:.precision$}", self.rev),
+            None => write!(f, "@{}", self.rev),
+        }
     }
 }
 impl GithubRef {
@@ -119,9 +128,7 @@ impl TryFrom<GithubRef> for PinnedRef {
 }
 impl PinnedRef {
     pub fn short(&self) -> String {
-        let mut text = self.to_string();
-        text.truncate(text.len() - (40 - 7));
-        text
+        format!("{self:.7}")
     }
     pub fn document(text: &str) -> Result<Self> {
         let line = match text

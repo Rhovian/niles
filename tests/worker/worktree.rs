@@ -1,7 +1,8 @@
 use super::support::*;
-use std::process::{Command, Stdio};
+use std::os::unix::fs::symlink;
+use std::process::{Command, Output, Stdio};
 
-fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
+fn git_output(cwd: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -29,7 +30,7 @@ impl Repo {
             &env.root,
             &["clone", bare.to_str().unwrap(), workspace.to_str().unwrap()],
         );
-        fs::write(workspace.join("file"), "base\n").unwrap();
+        atomic_write(workspace.join("file"), "base\n").unwrap();
         git(&workspace, &["add", "file"]);
         git(&workspace, &["commit", "-m", "base"]);
         git(&workspace, &["push", "origin", "main"]);
@@ -40,7 +41,7 @@ impl Repo {
             .join(workspace.strip_prefix("/").unwrap())
             .join("fix/x");
         let alias = env.root.join("home-alias");
-        std::os::unix::fs::symlink(&env.home, &alias).unwrap();
+        symlink(&env.home, &alias).unwrap();
         env.home = alias;
         Self {
             env,
@@ -61,7 +62,7 @@ impl Repo {
         command
     }
 
-    fn run(&self, args: &[&str]) -> std::process::Output {
+    fn run(&self, args: &[&str]) -> Output {
         self.command(args).output().unwrap()
     }
 
@@ -69,7 +70,7 @@ impl Repo {
         write_spawn_manifest(&self.workspace, "claude");
         let path = state_dir(&self.workspace).join("manifest.yaml");
         let body = fs::read_to_string(&path).unwrap();
-        fs::write(path, format!("{body}worktree:\n{worktree}\n")).unwrap();
+        atomic_write(path, format!("{body}worktree:\n{worktree}\n")).unwrap();
     }
 
     fn worktree_spawn(&self, id: &str, base: bool) -> Command {
@@ -163,12 +164,12 @@ TMUX_NEW_WINDOW_HOOK= "$NILES_TEST_BIN" spawn --skill worker second Fix >> "$RAC
 fn dirty_and_unpushed_trees_are_kept() {
     let repo = Repo::new("niles-managed-keep");
     repo.spawn("dirty", true);
-    fs::write(repo.tree.join("untracked"), "change").unwrap();
+    atomic_write(repo.tree.join("untracked"), "change").unwrap();
     let close = repo.run(&["close", "dirty"]);
     assert_command_success("close dirty", &close);
     assert!(stdout_of(&close).contains("tree: kept: 1 uncommitted files"));
     fs::remove_file(repo.tree.join("untracked")).unwrap();
-    fs::write(repo.tree.join("file"), "next\n").unwrap();
+    atomic_write(repo.tree.join("file"), "next\n").unwrap();
     git(&repo.tree, &["add", "file"]);
     git(&repo.tree, &["commit", "-m", "unpublished"]);
     repo.spawn("unpushed", false);
@@ -192,7 +193,7 @@ fn worktree_hook_runs_once_with_env_and_exports_literal_values_to_worker() {
     let repo = Repo::new("niles-worktree-hook");
     let cache = repo.workspace.join("target");
     fs::create_dir_all(&cache).unwrap();
-    fs::write(cache.join("warm"), "dependency").unwrap();
+    atomic_write(cache.join("warm"), "dependency").unwrap();
     repo.configure(&format!(
         "  env:\n    CARGO_TARGET_DIR: '{}'\n    LITERAL: '$(touch injected); spaces'\n    NILES_AGENT_DIR: /wrong-worker\n  setup: |\n    test -f \"$CARGO_TARGET_DIR/warm\"\n    printf '%s' \"$LITERAL\" >> setup-runs\n    pwd > setup-cwd",
         cache.display()
@@ -289,7 +290,7 @@ fn worktree_setup_uses_eof_stdin_and_keeps_spawn_stdout_clean() {
         "  setup: 'if read value; then exit 99; fi; echo setup-out; echo setup-err >&2'",
     );
     let input = repo.env.root.join("input");
-    fs::write(&input, "unexpected input\n").unwrap();
+    atomic_write(&input, "unexpected input\n").unwrap();
     let output = repo
         .worktree_spawn("worker", true)
         .stdin(fs::File::open(input).unwrap())
@@ -326,6 +327,10 @@ fn worktree_setup_cleanup_failure_retains_error_and_blocks_reuse() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "write through the existing FIFO to release the blocked setup process; renaming would unlink the pipe"
+)]
 fn worktree_setup_blocks_concurrent_join_and_reuse_after_interruption() {
     let repo = Repo::new("niles-hook-interrupted");
     let ready = repo.env.root.join("ready");

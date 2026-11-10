@@ -1,8 +1,10 @@
+use super::rows::State;
+use super::snapshot;
+use super::windows::WindowKind;
+use crate::skills::SkillName;
+use crate::{theme, worker};
 use anyhow::Result;
 use serde::Serialize;
-
-use super::{rows::State, snapshot, windows::WindowKind};
-use crate::skills::SkillName;
 
 #[derive(Clone, Serialize)]
 pub(crate) struct Project {
@@ -49,7 +51,7 @@ pub(crate) fn collect() -> Result<Vec<Project>> {
         .into_iter()
         .map(|snapshot| {
             let labels = if snapshot.agents.is_some() {
-                crate::worker::model_labels(&snapshot.row.entry.path)?
+                worker::model_labels(&snapshot.row.entry.path)?
             } else {
                 Vec::new()
             };
@@ -79,9 +81,9 @@ fn project(project: snapshot::Project) -> Project {
         for window in agents.windows {
             if matches!(window.kind, WindowKind::Lead) {
                 lead_state = Some(match window.segment.activity() {
-                    crate::theme::State::Running => AgentState::Working,
-                    crate::theme::State::Starting => AgentState::Starting,
-                    crate::theme::State::Idle | crate::theme::State::Waiting => AgentState::Waiting,
+                    theme::State::Running => AgentState::Working,
+                    theme::State::Starting => AgentState::Starting,
+                    theme::State::Idle | theme::State::Waiting => AgentState::Waiting,
                 });
             }
             if let WindowKind::Worker(id, skill) = window.kind {
@@ -91,11 +93,9 @@ fn project(project: snapshot::Project) -> Project {
                     skill,
                     lost: false,
                     state: Some(match window.segment.activity() {
-                        crate::theme::State::Running => AgentState::Working,
-                        crate::theme::State::Starting => AgentState::Starting,
-                        crate::theme::State::Idle | crate::theme::State::Waiting => {
-                            AgentState::Idle
-                        }
+                        theme::State::Running => AgentState::Working,
+                        theme::State::Starting => AgentState::Starting,
+                        theme::State::Idle | theme::State::Waiting => AgentState::Idle,
                     }),
                 });
             }
@@ -119,12 +119,10 @@ fn project(project: snapshot::Project) -> Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::{
-        registry::{Entry, ProjectName},
-        rows::Row,
-        status::Segment,
-        windows::{AgentWindow, SessionAgents},
-    };
+    use crate::projects::registry::{Entry, ProjectName};
+    use crate::projects::rows::Row;
+    use crate::projects::status::Segment;
+    use crate::projects::windows::{AgentWindow, SessionAgents};
     use crate::theme::State as Activity;
     use serde_json::json;
 

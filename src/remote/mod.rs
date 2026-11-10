@@ -1,25 +1,25 @@
-use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
-
+use crate::config::user;
+use crate::projects::navigation::{self, Project};
+use crate::projects::status::{self, ForegroundSession};
+use crate::projects::telemetry;
 use anyhow::Result;
-use axum::{
-    Json, Router,
-    extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
-    http::{StatusCode, header},
-    middleware::{self, Next},
-    response::{
-        IntoResponse, Response, Sse,
-        sse::{Event, KeepAlive},
-    },
-    routing::{delete, get, post, put},
-};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
+use axum::http::{StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive};
+use axum::response::{IntoResponse, Response, Sse};
+use axum::routing::{delete, get, post, put};
+use axum::{Json, Router};
 use serde::Serialize;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio::task;
+use tokio::time::{self, MissedTickBehavior};
 use tokio_stream::wrappers::ReceiverStream;
-
-use crate::{
-    config::user,
-    projects::status::{self, ForegroundSession},
-};
 
 mod auth;
 mod chat;
@@ -36,11 +36,9 @@ const SUBSCRIPTION_BODY_BYTES: usize = 4096;
 const WAKE_BODY_BYTES: usize = 16;
 const POLL: Duration = Duration::from_secs(1);
 type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
-type ProjectSource =
-    Arc<dyn Fn() -> Result<Vec<crate::projects::navigation::Project>> + Send + Sync>;
+type ProjectSource = Arc<dyn Fn() -> Result<Vec<Project>> + Send + Sync>;
 
-type TelemetrySource =
-    Arc<dyn Fn() -> Result<Vec<crate::projects::telemetry::Session>> + Send + Sync>;
+type TelemetrySource = Arc<dyn Fn() -> Result<Vec<telemetry::Session>> + Send + Sync>;
 
 #[derive(Clone)]
 struct AppState {
@@ -58,11 +56,11 @@ impl AppState {
         Self {
             relay,
             source,
-            projects: Arc::new(crate::projects::navigation::collect),
+            projects: Arc::new(navigation::collect),
             push: None,
             push_observer: Arc::default(),
             wake_hosts: Arc::new(wake::Hosts::new()),
-            telemetry: Arc::new(crate::projects::telemetry::collect),
+            telemetry: Arc::new(telemetry::collect),
         }
     }
 }
@@ -128,7 +126,7 @@ pub(crate) async fn run(port: u16) -> Result<()> {
     state.wake_hosts = Arc::new(wake::configured(config.wake_hosts)?);
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
     let ip = blocking(auth::tailnet_ip).await?;
-    let listener = tokio::net::TcpListener::bind((ip, port)).await?;
+    let listener = TcpListener::bind((ip, port)).await?;
     eprintln!("remote listening on {}", listener.local_addr()?);
     let notifier = state.push.clone();
     let source = state.source.clone();
@@ -242,7 +240,7 @@ async fn authorize(State(state): State<AppState>, mut request: Request, next: Ne
 async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
-    tokio::task::spawn_blocking(job).await?
+    task::spawn_blocking(job).await?
 }
 
 struct ApiError(anyhow::Error);
@@ -346,8 +344,8 @@ async fn pump(
     mut feed: feed::Feed,
     sender: mpsc::Sender<Result<Event, Infallible>>,
 ) -> Result<()> {
-    let mut interval = tokio::time::interval(POLL);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut interval = time::interval(POLL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tokio::select! { _ = sender.closed() => return Ok(()), _ = interval.tick() => {} }
         let source = source.clone();

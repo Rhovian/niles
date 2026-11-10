@@ -1,29 +1,26 @@
-use std::io::{self, IsTerminal, Write};
-
+use super::setup::SetupSelection;
+use super::tiers_table::print_manifest_tiers;
+use super::{WorkspaceManifest, check, load, manifest_path, save};
+use crate::agents::picker::{self, Choice};
+use crate::config::spec::{ProjectConfig, load_project_config_from};
+use crate::projects::onboard;
+use crate::tmux::LeadStart;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
-
-use super::{
-    WorkspaceManifest, check, load, manifest_path, save, setup::SetupSelection,
-    tiers_table::print_manifest_tiers,
-};
-use crate::{
-    agents::picker::{self, Choice},
-    config::spec::load_project_config_from,
-};
+use std::io::{self, IsTerminal, Write};
 
 /// The manifest to launch with, or `None` when the operator declines setup or quits the picker.
 pub(crate) fn ensure_interactive(
     root: &Utf8Path,
-    start: crate::tmux::LeadStart,
+    start: LeadStart,
     selection: Option<&SetupSelection>,
 ) -> Result<Option<WorkspaceManifest>> {
     ensure(
         root,
         selection,
-        start == crate::tmux::LeadStart::Attended && io::stdin().is_terminal(),
+        start == LeadStart::Attended && io::stdin().is_terminal(),
         &mut io::stdout(),
-        crate::projects::onboard::setup,
+        onboard::setup,
         picker::tiers,
     )
 }
@@ -34,11 +31,7 @@ fn ensure(
     interactive: bool,
     output: &mut impl Write,
     set_up: impl FnOnce(&Utf8Path) -> Result<Option<WorkspaceManifest>>,
-    pick: impl FnOnce(
-        &Utf8Path,
-        WorkspaceManifest,
-        &crate::config::spec::ProjectConfig,
-    ) -> Result<Choice>,
+    pick: impl FnOnce(&Utf8Path, WorkspaceManifest, &ProjectConfig) -> Result<Choice>,
 ) -> Result<Option<WorkspaceManifest>> {
     let config = load_project_config_from(root)?;
     let path = manifest_path(root, selection)?;

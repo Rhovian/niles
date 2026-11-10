@@ -1,31 +1,23 @@
+use super::archive::archive_worker_dir;
+use super::meta::{WorkerMeta, report_path, write_meta};
+use super::resolve::resolve_live_worker_if_exists;
+use super::snapshot::{WorkerSnapshot, status_log, status_log_len};
+use super::validation::{validate_id, validate_task_label};
+use super::worktree::{self, SpawnTree};
+use crate::config::spec::{ProjectConfig, load_project_config_from};
+use crate::skills::{self, SkillName};
+use crate::store::{self, Scope, atomic_write};
+use crate::tmux::{self, WindowTarget};
+use crate::util::{
+    append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
+};
 use crate::workspace_manifest::setup::SetupSelection;
-use std::{fs, os::unix::fs::OpenOptionsExt};
-
+use crate::{agent_window, agents, session, telemetry, wake, watch, workspace_manifest};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-
-use crate::{
-    agent_window, agents,
-    config::spec::load_project_config_from,
-    session,
-    skills::{self, SkillName},
-    store::{self, Scope},
-    tmux::{self, WindowTarget},
-    util::{
-        append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
-    },
-    wake, watch, workspace_manifest,
-};
-
-use super::{
-    archive::archive_worker_dir,
-    meta::{WorkerMeta, report_path, write_meta},
-    resolve::resolve_live_worker_if_exists,
-    snapshot::{WorkerSnapshot, status_log, status_log_len},
-    validation::{validate_id, validate_task_label},
-    worktree::{self, SpawnTree},
-};
+use std::fs;
+use std::os::unix::fs::OpenOptionsExt;
 
 const BOOTSTRAP: &str = r#"# Niles {skill} brief
 You are niles worker `{id}`. Report with `niles agent status --help`.
@@ -172,7 +164,8 @@ pub fn spawn(
         .env
         .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
     let agent_spec = &invocation.spec;
-    let agent_dir = tree.as_deref().map_or(project.as_path(), |path| path);
+    #[expect(clippy::disallowed_methods, reason = "launch cwd")]
+    let agent_dir = tree.as_deref().unwrap_or(project.as_path());
 
     let setup = manifest.source.as_ref();
     if let Some(setup) = setup {
@@ -247,10 +240,7 @@ pub fn spawn(
         effort: agent_spec.effort().map(str::to_owned),
         task_label,
         created_at,
-        starting_until: Some(crate::telemetry::initial_deadline(
-            created_at,
-            cadence.delay.map(|delay| delay.duration()),
-        )),
+        starting_until: Some(telemetry::initial_deadline(created_at, cadence.delay)?),
         project: project.clone(),
         tree,
         window: target.render(),
@@ -309,7 +299,7 @@ fn resolve_agent(
     skill: &SkillName,
     tier: agents::roster::Tier,
     agent: Option<String>,
-    config: &crate::config::spec::ProjectConfig,
+    config: &ProjectConfig,
 ) -> Result<String> {
     if *skill == manifest.entry {
         bail!("entry skill {skill} cannot be spawned");
@@ -381,7 +371,7 @@ fn write_brief(
             ),
         ],
     );
-    fs::write(&path, body).with_context(|| format!("failed to write {path}"))?;
+    atomic_write(&path, body)?;
     Ok(path)
 }
 

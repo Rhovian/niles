@@ -1,4 +1,6 @@
 use super::*;
+use crate::test_support;
+use ratatui::layout::Rect;
 
 pub(super) fn explorer() -> Explorer {
     Explorer {
@@ -6,7 +8,7 @@ pub(super) fn explorer() -> Explorer {
         cwd: "/tmp".into(),
         tree: Tree::default(),
         list_state: ListState::default(),
-        list_area: ratatui::layout::Rect::new(0, 0, 40, 4),
+        list_area: Rect::new(0, 0, 40, 4),
         collected: Instant::now(),
         theme: Theme::parse(None).unwrap(),
         mode: Mode::Browse,
@@ -63,7 +65,7 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
     explorer.key(KeyCode::Up).unwrap();
     let error = "refresh failed; retrying: collect project: transcript unavailable";
     assert_eq!(explorer.collection_error.as_deref(), Some(error));
-    let rendered = crate::test_support::render(100, 20, |frame| explorer.draw(frame));
+    let rendered = test_support::render(100, 20, |frame| explorer.draw(frame));
     assert!(rendered.contains(error));
     explorer.accept_collection(start, Ok(Vec::new()));
     assert_eq!(explorer.collection_error.as_deref(), Some(error));
@@ -91,7 +93,7 @@ fn deregister_requires_project_selection_and_confirmation() {
     explorer.key(KeyCode::Down).unwrap();
     explorer.key(KeyCode::Char('d')).unwrap();
     assert!(matches!(&explorer.mode, Mode::Deregister(entry) if entry.name.as_str() == "sample"));
-    let rendered = crate::test_support::render(120, 20, |frame| explorer.draw(frame));
+    let rendered = test_support::render(120, 20, |frame| explorer.draw(frame));
     assert!(rendered.contains("deletes all state and managed worktrees"));
     explorer.key(KeyCode::Char('n')).unwrap();
     assert!(matches!(explorer.mode, Mode::Browse));

@@ -1,9 +1,12 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use crate::common::atomic_write;
+use common::{assert_command_success, stdout_of};
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::Path;
+use std::process::{Command, Output};
 
 mod common;
-use common::{assert_command_success, stdout_of};
-
-use std::{fs, os::unix::fs::symlink, path::Path, process::Command};
 
 fn install_root() -> tempfile::TempDir {
     // Hard links require the fixture and built executable to share a filesystem.
@@ -20,7 +23,7 @@ fn installed_update(home: &Path, layout: &str) -> Command {
     command
 }
 
-fn assert_prints(output: &std::process::Output, expected: &str) {
+fn assert_prints(output: &Output, expected: &str) {
     assert_command_success("update", output);
     assert_eq!(stdout_of(output), expected);
     assert!(output.stderr.is_empty());
@@ -56,11 +59,11 @@ fn update_reports_package_manager_or_missing_updater() {
 
     let mut cargo = installed_update(root.path(), ".cargo/bin");
     let metadata = root.path().join(".cargo/.crates.toml");
-    fs::write(&metadata, "[v1]\n'niles 1.0.0 (x)' = ['niles']\n").unwrap();
+    atomic_write(&metadata, "[v1]\n'niles 1.0.0 (x)' = ['niles']\n").unwrap();
     let output = cargo.output().unwrap();
     assert_prints(&output, "Run: cargo install niles --locked\n");
 
-    fs::write(&metadata, "[v1]\n'other 1.0.0 (x)' = ['other']\n").unwrap();
+    atomic_write(&metadata, "[v1]\n'other 1.0.0 (x)' = ['other']\n").unwrap();
     let output = cargo.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
@@ -72,7 +75,7 @@ fn update_reports_package_manager_or_missing_updater() {
     assert_eq!(missing.stderr, output.stderr);
 
     let mut custom = installed_update(root.path(), "cargo root's/bin");
-    fs::write(
+    atomic_write(
         root.path().join("cargo root's/.crates.toml"),
         "[v1]\n'niles 1.0.0 (x)' = ['niles']\n",
     )

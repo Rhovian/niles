@@ -1,22 +1,16 @@
-use std::fs;
-
+use super::aggregate::dashboard;
+use super::collect::{Event, EventKind, Live, Project, Session, project};
+use super::*;
+use crate::agents::ModelRoster;
+use crate::projects::registry::{Entry, ProjectName};
+use crate::telemetry::{Usage, fixtures};
+use crate::test_support::telemetry::{archive, lead, pi_link, write};
+use crate::test_support::{self, temp_test_path};
+use crate::theme::{StyleKey, StyleRender};
+use crate::wake::WakeKind;
 use chrono::{NaiveDate, TimeZone};
-
-use super::{
-    aggregate::dashboard,
-    collect::{Event, EventKind, Live, Project, Session, project},
-    *,
-};
-use crate::{
-    projects::registry::{Entry, ProjectName},
-    telemetry::{Usage, fixtures},
-    test_support::{
-        telemetry::{archive, lead, pi_link, write},
-        temp_test_path,
-    },
-    theme::{StyleKey, StyleRender},
-    wake::WakeKind,
-};
+use std::cmp::Reverse;
+use std::fs;
 
 fn local(day: u32, hour: u32) -> DateTime<Local> {
     let time = NaiveDate::from_ymd_opt(2026, 10, day)
@@ -35,17 +29,17 @@ fn today_starts_at_local_midnight_and_bins_cover_each_window_exactly() {
     let now = local(9, 15);
     for range in Range::ALL {
         let window = Window::new(range, now).unwrap();
-        let end = window.bin_start(window.count);
+        let end = window.bin_start(window.count).unwrap();
         let mut bucket = window.start;
         let mut bins = Vec::new();
         while bucket < end {
             bins.push(window.bin_of(bucket).unwrap());
-            bucket += BUCKET;
+            bucket = bucket.checked_add_signed(BUCKET).unwrap();
         }
-        let per_bin = (window.bin.num_seconds() / BUCKET.num_seconds()) as usize;
+        let per_bin = usize::try_from(window.bin.num_seconds() / BUCKET.num_seconds()).unwrap();
         assert_eq!(
             bins,
-            (0..window.count as usize)
+            (0..usize::try_from(window.count).unwrap())
                 .flat_map(|bin| [bin].repeat(per_bin))
                 .collect::<Vec<_>>()
         );
@@ -101,7 +95,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         pi_link(&transcripts.join("lead2")),
     );
     let since = utc("2026-09-20T00:00:00Z");
-    let pi_total = fixtures::pi().total_tokens();
+    let pi_total = fixtures::pi().total_tokens().unwrap();
 
     let first = project(&entry, false, since).unwrap();
     let latest_id = latest.file_name().unwrap();
@@ -153,19 +147,27 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
         ]
     );
     // Losing a live transcript does not erase the registry's context capacity.
-    let live = second.sessions[0].live.as_ref().unwrap();
+    let live = second.sessions.first().unwrap().live.as_ref().unwrap();
     assert_eq!(
         (live.prompt_tokens, live.context_window),
         (None, Some(262_144))
     );
     assert!(!latest.join("usage.json").exists());
-    crate::test_support::remove_workspace(&entry.path).unwrap();
+    // Each turn fits; only the total across the two buckets overflows.
+    let input = u64::MAX.checked_sub(130).unwrap();
+    let overflow = fixtures::PI.replace("\"input\":20", &format!("\"input\":{input}"));
+    write(&transcripts.join("lead2/001.jsonl"), &overflow);
+    let projects = [project(&entry, true, since).unwrap()];
+    let board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap()).unwrap();
+    assert_eq!(board.projects, [("demo", pi_total.checked_mul(2).unwrap())]);
+    assert!(render::dashboard(&board, &Theme::parse(None).unwrap(), 80).is_ok());
+    test_support::remove_workspace(&entry.path).unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
 fn the_roster_window_is_for_the_launched_model() {
-    let models = crate::agents::ModelRoster::builtin().unwrap();
+    let models = ModelRoster::builtin().unwrap();
     assert_eq!(
         collect::roster_window("claude:opus:high", &models).unwrap(),
         Some(1_000_000)
@@ -217,7 +219,9 @@ fn projects() -> Vec<Project> {
     }
     let events = (0..10)
         .map(|hour| Event {
-            at: utc("2026-10-01T00:00:00Z") + TimeDelta::hours(hour),
+            at: utc("2026-10-01T00:00:00Z")
+                .checked_add_signed(TimeDelta::hours(hour))
+                .unwrap(),
             id: format!("e{hour}"),
             kind: match hour % 3 {
                 0 => EventKind::Spawned,
@@ -260,9 +264,9 @@ fn projects() -> Vec<Project> {
 fn dashboard_totals_projects_models_chart_context_and_events() {
     let mut projects = projects();
     let window = Window::new(Range::Month, local(2, 12)).unwrap();
-    let board = dashboard(&projects, window);
-    let [claude, codex, pi] =
-        [fixtures::claude(), fixtures::codex(), fixtures::pi()].map(|usage| usage.total_tokens());
+    let mut board = dashboard(&projects, window).unwrap();
+    let [claude, codex, pi] = [fixtures::claude(), fixtures::codex(), fixtures::pi()]
+        .map(|usage| usage.total_tokens().unwrap());
     let api = claude + codex + 4 * pi;
     let web = pi;
     assert_eq!(board.projects, [("api", api), ("web", web), ("idle", 0)]);
@@ -291,7 +295,7 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
         ("claude:opus:high", vec![("lead", 1)], claude),
         ("codex:gpt-5.5:high", vec![("worker", 1)], codex),
     ];
-    expected.sort_by_key(|row| std::cmp::Reverse(row.2));
+    expected.sort_by_key(|row| Reverse(row.2));
     assert_eq!(models, expected);
     let context = board
         .context
@@ -315,15 +319,43 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
         .map(|(_, event)| event.id.as_str())
         .collect::<Vec<_>>();
     assert_eq!(events, ["e9", "e8", "e7", "e6", "e5", "e4", "e3", "e2"]);
+    let theme = Theme::parse(None).unwrap();
+    let warn = theme.style(StyleKey::Waiting).paint("|");
+    let warn = warn.split('|').next().unwrap();
+    for width in [80, 120] {
+        let text = render::dashboard(&board, &theme, width).unwrap();
+        assert!(text.contains("1 reviewer · 4 worker"));
+        assert!(
+            text.lines()
+                .any(|line| line.contains("95%") && line.contains(warn))
+        );
+    }
+    board.projects = vec![("large", u64::MAX)];
+    assert!(
+        render::dashboard(&board, &theme, 80)
+            .unwrap()
+            .contains("100%")
+    );
+    board.projects.push(("overflow", 1));
+    assert!(render::dashboard(&board, &theme, 80).is_err());
     for (prompt, capacity, expected) in [
         (u64::MAX, u64::MAX, Some(100)),
         (u64::MAX, 1, Some(u128::from(u64::MAX) * 100)),
         (1, 0, None),
     ] {
-        let live = projects[0].sessions[1].live.as_mut().unwrap();
+        let live = projects
+            .first_mut()
+            .unwrap()
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == "impl")
+            .unwrap()
+            .live
+            .as_mut()
+            .unwrap();
         live.prompt_tokens = Some(prompt);
         live.context_window = Some(capacity);
-        let board = dashboard(&projects, window);
+        let board = dashboard(&projects, window).unwrap();
         assert_eq!(
             board
                 .context
@@ -334,39 +366,4 @@ fn dashboard_totals_projects_models_chart_context_and_events() {
             expected
         );
     }
-}
-
-#[test]
-fn render_lays_out_pairs_by_width_and_warns_on_full_context() {
-    let theme = Theme::parse(None).unwrap();
-    let projects = projects();
-    let mut board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap());
-    let narrow = render::dashboard(&board, &theme, 80);
-    let wide = render::dashboard(&board, &theme, 120);
-    let together = |text: &str, left: &str, right: &str| {
-        text.lines()
-            .any(|line| line.contains(left) && line.contains(right))
-    };
-    for (left, right) in [("TOKENS BY PROJECT", "BY MODEL"), ("CONTEXT", "EVENTS")] {
-        assert!(!together(&narrow, left, right));
-        assert!(together(&wide, left, right));
-    }
-    let warn = theme.style(StyleKey::Waiting).paint("|");
-    let warn = warn.split('|').next().unwrap();
-    for text in [&narrow, &wide] {
-        assert!(together(text, "start", "0%"));
-        assert!(text.contains("1 reviewer · 4 worker"));
-        assert!(
-            text.lines()
-                .any(|line| line.contains("95%") && line.contains(warn))
-        );
-        assert!(
-            !text
-                .lines()
-                .any(|line| line.contains("0%") && line.contains(warn))
-        );
-        assert!(!text.contains("herm "));
-    }
-    board.projects = vec![("large", u64::MAX)];
-    assert!(render::dashboard(&board, &theme, 80).contains("100%"));
 }

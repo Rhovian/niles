@@ -1,12 +1,13 @@
 //! The TELEMETRY panel: tokens spent in a window, by project, by model and over time, with the
 //! live sessions' context and the window's events.
 
+use super::{lead_running, registry};
+use crate::telemetry::BUCKET;
+use crate::theme::Theme;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Days, Local, NaiveTime, TimeDelta, Utc};
 use clap::ValueEnum;
-
-use super::{lead_running, registry};
-use crate::{telemetry::BUCKET, theme::Theme};
+use ratatui::crossterm::terminal;
 
 mod aggregate;
 mod collect;
@@ -37,9 +38,9 @@ impl Range {
     /// Days back to the window's first local midnight, its bins' width, and how many there are.
     fn shape(self) -> (u64, TimeDelta, i32) {
         match self {
-            Self::Today => (1, BUCKET, 96),
-            Self::Week => (7, TimeDelta::hours(2), 84),
-            Self::Month => (30, TimeDelta::hours(8), 90),
+            Self::Today => (0, BUCKET, 96),
+            Self::Week => (6, TimeDelta::hours(2), 84),
+            Self::Month => (29, TimeDelta::hours(8), 90),
         }
     }
 }
@@ -57,7 +58,10 @@ pub(super) struct Window {
 impl Window {
     fn new(range: Range, now: DateTime<Local>) -> Result<Self> {
         let (days, bin, count) = range.shape();
-        let date = now.date_naive() - Days::new(days - 1);
+        let date = now
+            .date_naive()
+            .checked_sub_days(Days::new(days))
+            .context("telemetry start overflow")?;
         let start = date
             .and_time(NaiveTime::MIN)
             .and_local_timezone(Local)
@@ -71,25 +75,29 @@ impl Window {
         })
     }
 
-    fn bin_start(&self, index: i32) -> DateTime<Utc> {
-        self.start + self.bin * index
+    fn bin_start(&self, index: i32) -> Result<DateTime<Utc>> {
+        self.bin
+            .checked_mul(index)
+            .and_then(|offset| self.start.checked_add_signed(offset))
+            .context("telemetry bin timestamp overflow")
     }
 
     fn contains(&self, at: DateTime<Utc>) -> bool {
-        self.start <= at && at < self.bin_start(self.count)
+        self.bin_of(at).is_some()
     }
 
-    /// The bin a bucket starting at `bucket` falls in, if the window holds it.
     fn bin_of(&self, bucket: DateTime<Utc>) -> Option<usize> {
-        if !self.contains(bucket) {
+        if bucket < self.start {
             return None;
         }
-        // Not negative: the window holds the bucket.
-        let offset = (bucket - self.start).num_seconds().cast_unsigned();
-        // Local midnight is on a bucket boundary and bins are whole buckets, so no bucket
-        // straddles two bins.
-        debug_assert_eq!(offset % BUCKET.num_seconds().cast_unsigned(), 0);
-        Some((offset / self.bin.num_seconds().cast_unsigned()) as usize)
+        let offset = bucket.signed_duration_since(self.start).num_seconds();
+        let index = offset.checked_div(self.bin.num_seconds())?;
+        if index >= i64::from(self.count) {
+            return None;
+        }
+        (0..self.count)
+            .enumerate()
+            .find_map(|(position, bin)| (i64::from(bin) == index).then_some(position))
     }
 }
 
@@ -102,8 +110,7 @@ pub(super) fn panel(entries: &[registry::Entry], range: Range, theme: &Theme) ->
         .iter()
         .map(|entry| collect::project(entry, lead_running(entry)?, since))
         .collect::<Result<Vec<_>>>()?;
-    let (width, _) =
-        ratatui::crossterm::terminal::size().context("failed to read the terminal size")?;
-    let dashboard = aggregate::dashboard(&projects, Window::new(range, now)?);
-    Ok(render::dashboard(&dashboard, theme, usize::from(width)))
+    let (width, _) = terminal::size().context("failed to read the terminal size")?;
+    let dashboard = aggregate::dashboard(&projects, Window::new(range, now)?)?;
+    render::dashboard(&dashboard, theme, usize::from(width))
 }

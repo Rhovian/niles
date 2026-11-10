@@ -1,15 +1,14 @@
-use anyhow::Result;
+use super::registry;
+use crate::agents::AgentSpec;
+use crate::config::spec::load_project_config_from;
+use crate::session;
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::telemetry::{BUCKET, Buckets};
+use crate::worker::usage;
+use anyhow::{Context, Result};
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use serde::Serialize;
-
-use super::registry;
-use crate::{
-    agents::AgentSpec,
-    config::spec::load_project_config_from,
-    session,
-    telemetry::{BUCKET, Buckets},
-    worker::usage,
-};
 
 #[derive(Serialize)]
 pub(crate) struct Session {
@@ -26,7 +25,10 @@ pub(crate) struct Session {
 const HISTORY: TimeDelta = TimeDelta::days(30);
 
 pub(crate) fn collect() -> Result<Vec<Session>> {
-    let since = (Utc::now() - HISTORY).duration_trunc(BUCKET)?;
+    let since = Utc::now()
+        .checked_sub_signed(HISTORY)
+        .context("telemetry history overflow")?
+        .duration_trunc(BUCKET)?;
     let mut sessions = Vec::new();
     for entry in registry::entries()? {
         sessions.extend(project(&entry, since)?);
@@ -89,26 +91,29 @@ fn project(entry: &registry::Entry, since: DateTime<Utc>) -> Result<Vec<Session>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::paths;
+    use crate::telemetry::fixtures::{self, PI};
+    use crate::test_support;
     use crate::test_support::telemetry::{archive, lead, pi_link, write};
     use serde_json::json;
     use std::fs;
 
     #[test]
     fn exports_latest_archived_and_superseded_usage_without_transcript_text() {
-        let root = crate::test_support::temp_test_path("telemetry-export");
+        let root = test_support::temp_test_path("telemetry-export");
         let entry = registry::Entry {
             name: registry::ProjectName::parse("demo").unwrap(),
             path: root.clone(),
         };
         fs::create_dir_all(&root).unwrap();
-        let state = crate::store::paths::project_dir(&root).unwrap();
+        let state = paths::project_dir(&root).unwrap();
         let transcript = root.join("transcript");
         let link = pi_link(&transcript);
         write(
             &transcript.join("session.jsonl"),
             &format!(
                 "{}{}\n",
-                crate::telemetry::fixtures::PI,
+                PI,
                 json!({"type":"message","timestamp":"2026-10-01T17:00:00Z","message":{"role":"user","content":"private prompt"}})
             ),
         );
@@ -150,7 +155,7 @@ mod tests {
                     .iter()
                     .map(|(_, tokens)| tokens)
                     .sum::<u64>(),
-                crate::telemetry::fixtures::pi().total_tokens()
+                fixtures::pi().total_tokens().unwrap()
             );
         }
         let clipped = project(&entry, "2026-10-01T12:00:00Z".parse().unwrap()).unwrap();
@@ -170,7 +175,11 @@ mod tests {
                 .all(|session| session.buckets.iter().next().is_none())
         );
         let wire = serde_json::to_value(&sessions).unwrap();
-        let keys = wire[0]
+        let keys = wire
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap()
             .as_object()
             .unwrap()
             .keys()
@@ -191,15 +200,15 @@ mod tests {
         );
         assert!(!wire.to_string().contains("private prompt"));
         assert!(!wire.to_string().contains(root.as_str()));
-        fs::write(
+        atomic_write(
             state
                 .join("sessions")
-                .join(&sessions[0].id)
+                .join(&sessions.first().unwrap().id)
                 .join("session.json"),
             "bad",
         )
         .unwrap();
         assert!(project(&entry, since).is_err());
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }
