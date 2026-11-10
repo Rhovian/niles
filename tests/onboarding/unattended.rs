@@ -75,7 +75,9 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
             .split_first_mut()
             .unwrap()
             .1
-            .chunks_exact_mut(2)
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
             .find(|pair| pair.first() == Some(&flag))
         {
             *target = value;
