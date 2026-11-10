@@ -1,10 +1,8 @@
-use crate::{store::Scope, tmux::TmuxTarget};
-use std::{
-    fmt, thread,
-    time::{Duration, Instant},
-};
-
-use anyhow::{Result, bail};
+use crate::store::Scope;
+use crate::tmux::TmuxTarget;
+use anyhow::{Context, Result, bail};
+use std::time::{Duration, Instant};
+use std::{fmt, thread};
 
 const PANE_IDENTITY: &str = "#{socket_path}:#{pane_id}";
 const SEND_LINE_SUBMIT_KEY: &str = "C-m";
@@ -103,7 +101,9 @@ fn send_line_to_pane<P: Pane>(pane: &P, line: &str, timings: &Timings) -> Result
 /// worth sending and [`confirm_submit_took`] judges whether it took. If the text never renders,
 /// the pane may not be accepting input and the submit must not be sent blindly.
 fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<String> {
-    let deadline = (timings.now)() + timings.settle_timeout;
+    let deadline = (timings.now)()
+        .checked_add(timings.settle_timeout)
+        .context("settle deadline overflow")?;
     let mut previous = before.to_owned();
     let mut rendered = false;
     let mut quiet_since = None;
@@ -141,7 +141,9 @@ fn settle_pane<P: Pane>(pane: &P, before: &str, timings: &Timings) -> Result<Str
 /// [`settle_pane`] gave up, the next redraw counts as a change and the check passes for the
 /// wrong reason.
 fn confirm_submit_took<P: Pane>(pane: &P, staged: &str, timings: &Timings) -> Result<()> {
-    let deadline = (timings.now)() + timings.submit_timeout;
+    let deadline = (timings.now)()
+        .checked_add(timings.submit_timeout)
+        .context("submit deadline overflow")?;
     loop {
         thread::sleep(timings.poll_interval);
         if pane.capture_watched_lines()? != staged {
@@ -160,12 +162,10 @@ fn confirm_submit_took<P: Pane>(pane: &P, staged: &str, timings: &Timings) -> Re
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::{Cell, RefCell},
-        collections::VecDeque,
-    };
-
     use super::*;
+    use crate::test_support;
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
 
     thread_local! {
         static CLOCK: Cell<Instant> = Cell::new(Instant::now());
@@ -227,7 +227,7 @@ mod tests {
 
         fn capture_watched_lines(&self) -> Result<String> {
             if self.phase.get() != Phase::Initial {
-                CLOCK.set(CLOCK.get() + self.poll_step);
+                CLOCK.set(CLOCK.get().checked_add(self.poll_step).unwrap());
             }
             match self.phase.get() {
                 Phase::Initial => Ok("before".to_owned()),
@@ -257,9 +257,12 @@ mod tests {
             let minimum = if self.cycle_frames || self.poll_step == TEST_TIMINGS.settle_timeout {
                 TEST_TIMINGS.settle_timeout
             } else {
-                TEST_TIMINGS.poll_interval + TEST_TIMINGS.quiet_window
+                TEST_TIMINGS
+                    .poll_interval
+                    .checked_add(TEST_TIMINGS.quiet_window)
+                    .unwrap()
             };
-            assert!(CLOCK.get() - self.started_at >= minimum);
+            assert!(CLOCK.get().duration_since(self.started_at) >= minimum);
             self.phase.set(Phase::Submitted);
             Ok(())
         }
@@ -295,7 +298,7 @@ mod tests {
             let brief = "brief\nwith multiple lines";
             let result = send_line_to_pane(&pane, brief, &TEST_TIMINGS);
             match error {
-                Some(needle) => crate::test_support::assert_err_contains(result, needle),
+                Some(needle) => test_support::assert_err_contains(result, needle),
                 None => result.unwrap(),
             }
             assert_eq!(pane.pasted_text.borrow().as_deref(), Some(brief));

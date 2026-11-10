@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::symlink;
 
 #[test]
 fn ambiguous_revisions_invalid_paths_symlinks_and_oversize_are_rejected() {
@@ -23,8 +24,8 @@ fn ambiguous_revisions_invalid_paths_symlinks_and_oversize_are_rejected() {
     }
     fs::remove_file(pack.repo.join("skills/pdf/SKILL.md")).unwrap();
     let secret = pack.env.root.join("secret");
-    fs::write(&secret, "PRIVATE_BYTES_MUST_NOT_BE_READ").unwrap();
-    std::os::unix::fs::symlink(&secret, pack.repo.join("skills/pdf/SKILL.md")).unwrap();
+    atomic_write(&secret, "PRIVATE_BYTES_MUST_NOT_BE_READ").unwrap();
+    symlink(&secret, pack.repo.join("skills/pdf/SKILL.md")).unwrap();
     git(
         &pack.repo,
         &[
@@ -69,7 +70,7 @@ fn cache_reads_are_strict_and_remote_frontmatter_is_checked() {
     let cached = pack.cache("pdf").join("SKILL.md");
     let outside = pack.env.root.join("outside");
     fs::rename(&cached, &outside).unwrap();
-    std::os::unix::fs::symlink(&outside, &cached).unwrap();
+    symlink(&outside, &cached).unwrap();
     assert_failure_contains(
         "cache symlink",
         &pack.import(&format!("acme/pack/skills/pdf@{}", pack.sha)),
@@ -115,7 +116,7 @@ fn transport_never_prompts_or_runs_configured_checkout_hooks() {
     );
     let config = pack.env.home.join(".gitconfig");
     let body = fs::read_to_string(&config).unwrap();
-    fs::write(
+    atomic_write(
         config,
         format!("{body}\n[core]\n hooksPath = {}\n", hooks.display()),
     )
@@ -169,7 +170,7 @@ fn invalid_existing_pointer_requires_explicit_removal() {
     let pack = Pack::new("imports-pointer-repair");
     let pointer = pack.pointer("pdf");
     fs::create_dir_all(pointer.parent().unwrap()).unwrap();
-    fs::write(&pointer, "invalid stored pointer\n").unwrap();
+    atomic_write(&pointer, "invalid stored pointer\n").unwrap();
     let output = pack.import("acme/pack/skills/pdf");
     assert_failure_contains("invalid previous pointer", &output, "before re-importing");
     assert!(stderr_of(&output).contains(pointer.to_str().unwrap()));

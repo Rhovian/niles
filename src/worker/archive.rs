@@ -1,10 +1,10 @@
-use std::fs;
-
+use crate::store::{self, atomic_write};
+use crate::tmux::{self, WindowTarget};
+use crate::util::timestamp_id;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-
-use crate::{store, tmux, tmux::WindowTarget, util::timestamp_id};
+use std::fs;
 
 const FINAL_PANE_CAPTURE_LINES: usize = 2000;
 const FINAL_PANE_FILE: &str = "final-pane.txt";
@@ -25,7 +25,7 @@ pub(super) fn capture_final_pane(
         return Ok(None);
     }
     let path = final_pane_path(worker_dir);
-    fs::write(&path, text).with_context(|| format!("failed to write {path}"))?;
+    atomic_write(&path, text)?;
     Ok(Some(path))
 }
 

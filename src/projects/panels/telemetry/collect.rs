@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 
 use super::super::registry;
+use crate::skills::SkillName;
 use crate::{
     agents::{AgentSpec, ModelRoster},
     config::spec::load_project_config_from,
@@ -20,7 +21,7 @@ pub(super) struct Project {
 
 pub(super) struct Session {
     pub(super) id: String,
-    pub(super) skill: crate::skills::SkillName,
+    pub(super) skill: SkillName,
     pub(super) entry: bool,
     pub(super) agent: String,
     pub(super) buckets: Buckets,

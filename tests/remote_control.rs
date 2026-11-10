@@ -1,14 +1,15 @@
 #![cfg(feature = "remote")]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-mod common;
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 use common::*;
 use serde_json::json;
-use std::{
-    fs,
-    io::{BufRead, BufReader, Read, Write},
-    net::TcpStream,
-    process::{Child, Stdio},
-};
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, ChildStderr, Stdio};
+use std::time::Duration;
+
+mod common;
 
 const TMUX: &str = r#"#!/bin/sh
 [ "$1" != -u ] || shift
@@ -33,14 +34,14 @@ esac
 struct Server {
     child: Child,
     address: String,
-    _diagnostics: BufReader<std::process::ChildStderr>,
+    _diagnostics: BufReader<ChildStderr>,
 }
 impl Server {
     fn new(env: &TestEnv) -> Self {
         common::stub_tailscale(env);
-        fs::write(&env.tmux_log, "").unwrap();
+        atomic_write(&env.tmux_log, "").unwrap();
         register_project(env, "api", &env.root);
-        fs::write(
+        atomic_write(
             env.home.join(".niles/config.yaml"),
             "remote: { relay_node: relay }",
         )
@@ -73,7 +74,7 @@ impl Server {
     fn socket_with(&self, method: &str, path: &str, headers: &str, body: &str) -> TcpStream {
         let mut socket = TcpStream::connect(&self.address).unwrap();
         socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         write!(socket, "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         socket
@@ -104,24 +105,23 @@ impl Drop for Server {
         self.child.wait().unwrap();
     }
 }
-fn marker(env: &TestEnv, name: &str) -> std::path::PathBuf {
+
+fn marker(env: &TestEnv, name: &str) -> PathBuf {
     env.tmux_log.with_extension(format!("log.{name}"))
 }
 
 #[test]
 fn worker_chat_uses_its_transcript_and_live_window_only() {
     let env = TestEnv::with_tmux("worker-chat", TMUX);
-    fs::write(marker(&env, "running"), "").unwrap();
+    atomic_write(marker(&env, "running"), "").unwrap();
     let worker = write_worker(&env.root, "worker", "api:w", None, b"");
     write_worker(&env.root, "lost", "api:gone", None, b"");
     let transcript = env.root.join("transcript");
     fs::create_dir(&transcript).unwrap();
-    fs::write(transcript.join("001.jsonl"), format!("{}\n", json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"worker says hi"}]}}))).unwrap();
-    let meta_path = worker.join("meta.json");
-    let mut meta: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
-    meta["session_link"] = json!({"family":"pi","session_dir":transcript});
-    fs::write(&meta_path, meta.to_string()).unwrap();
+    atomic_write(transcript.join("001.jsonl"), format!("{}\n", json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"worker says hi"}]}}))).unwrap();
+    edit_json(worker.join("meta.json"), |meta| {
+        meta["session_link"] = json!({"family":"pi","session_dir":transcript});
+    });
     let server = Server::new(&env);
     let mut stream =
         BufReader::new(server.socket("GET", "/api/projects/api/workers/worker/events", ""));
@@ -188,8 +188,8 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
     );
     assert!(!env.tmux_log().contains("new-session"));
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    fs::write(marker(&env, "running"), "").unwrap();
-    fs::write(marker(&env, "foreign"), "").unwrap();
+    atomic_write(marker(&env, "running"), "").unwrap();
+    atomic_write(marker(&env, "foreign"), "").unwrap();
     assert!(
         server
             .status("PUT", "/api/projects/api/session", "", 409)
@@ -207,7 +207,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
     server.status("PUT", "/api/projects/api/session", "", 200);
     assert_eq!(env.tmux_log().matches("new-session").count(), 1);
     fs::remove_file(marker(&env, "running")).unwrap();
-    fs::write(marker(&env, "race"), "").unwrap();
+    atomic_write(marker(&env, "race"), "").unwrap();
     server.status("PUT", "/api/projects/api/session", "", 200);
     for path in ["/api/projects/api/session", "/api/projects/api/workers/w"] {
         server.status("POST", path, "", 405);
@@ -216,7 +216,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
         ("lead-absent", "new-window"),
         ("lead-exited", "respawn-window"),
     ] {
-        fs::write(marker(&env, state), "").unwrap();
+        atomic_write(marker(&env, state), "").unwrap();
         server.status("PUT", "/api/projects/api/session", "", 200);
         assert!(
             env.tmux_log()
@@ -226,7 +226,7 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
         fs::remove_file(marker(&env, state)).unwrap();
     }
     // A malformed manifest must propagate instead of launching with defaults.
-    fs::write(
+    atomic_write(
         common::state_dir(&env.root).join("manifest.yaml"),
         "lead: [broken",
     )
@@ -238,14 +238,14 @@ fn start_checks_manifest_foreign_tag_idempotence_and_duplicate_race() {
 #[test]
 fn close_and_stop_archive_workers_before_killing_the_session() {
     let env = TestEnv::with_tmux("remote-stop", TMUX);
-    fs::write(marker(&env, "running"), "").unwrap();
+    atomic_write(marker(&env, "running"), "").unwrap();
     let live = write_worker(&env.root, "live", "api:w", None, b"");
     let lost = write_worker(&env.root, "lost", "api:gone", None, b"");
     let server = Server::new(&env);
     server.status("DELETE", "/api/projects/api/workers/lost", "", 200);
     assert!(!lost.join("meta.json").exists());
     server.status("DELETE", "/api/projects/api/workers/lost", "", 404);
-    fs::write(marker(&env, "stop-race"), "").unwrap();
+    atomic_write(marker(&env, "stop-race"), "").unwrap();
     server.status("DELETE", "/api/projects/api/session", "", 200);
     assert!(!live.join("meta.json").exists());
     let log = env.tmux_log();
@@ -272,7 +272,7 @@ fn phone_server_uses_each_project_default_despite_workspace_selection() {
     }
     let named = env.root.join(".niles/setups/tdd.yaml");
     fs::create_dir_all(named.parent().unwrap()).unwrap();
-    fs::write(named, "invalid selected setup").unwrap();
+    atomic_write(named, "invalid selected setup").unwrap();
     let server = Server::new(&env);
     register_project(&env, "other", &other);
     for project in ["api", "other"] {
@@ -300,14 +300,14 @@ fn invalid_remote_configuration_fails_before_binding() {
     ] {
         let env = TestEnv::new("remote-before-binding");
         if relay {
-            fs::write(
+            atomic_write(
                 env.home.join(".niles/config.yaml"),
                 "remote: { relay_node: relay }",
             )
             .unwrap();
         }
         write_executable(&env.bin.join("tailscale"), script);
-        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = socket.local_addr().unwrap().port().to_string();
         let output = env.run(&["remote", "--port", &port]);
         assert_failure_contains(error, &output, error);
@@ -342,7 +342,7 @@ esac
     );
     let dir = common::state_dir(&env.root).join("sessions/session");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(
+    atomic_write(
         dir.join("session.json"),
         json!({"id":"session", "entry_skill":"lead", "agent":"claude:opus:high",
         "created_at":"2026-01-02T03:04:05Z", "workspace":env.root,"brief":dir.join("agent.md")})
@@ -352,7 +352,7 @@ esac
     let live = common::write_worker(&env.root, "live", "api:w", None, b"");
     let transcript = env.root.join("working-worker");
     fs::create_dir(&transcript).unwrap();
-    fs::write(transcript.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-01-02T03:04:05Z\",\"message\":{\"role\":\"user\"}}\n").unwrap();
+    atomic_write(transcript.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-01-02T03:04:05Z\",\"message\":{\"role\":\"user\"}}\n").unwrap();
     let worker_meta = live.join("meta.json");
     edit_json(&worker_meta, |worker| {
         worker["model"] = json!("worker-model");
@@ -360,8 +360,8 @@ esac
     });
     common::write_worker(&env.root, "lost", "api:gone", None, b"");
     let server = Server::new(&env);
-    let addr: std::net::SocketAddr = server.address.parse().unwrap();
-    assert_eq!(addr.ip(), std::net::Ipv4Addr::LOCALHOST);
+    let addr: SocketAddr = server.address.parse().unwrap();
+    assert_eq!(addr.ip(), Ipv4Addr::LOCALHOST);
     let request = |method: &str, path: &str, login: &str, body: &str| {
         server.request_with(method, path, login, body)
     };
@@ -373,7 +373,7 @@ esac
         ("whois-bad", 500),
         ("whois-empty", 500),
     ] {
-        fs::write(env.home.join(marker), "").unwrap();
+        atomic_write(env.home.join(marker), "").unwrap();
         let response =
             get("Tailscale-User-Login: alice@example.com\r\nX-Forwarded-For: 100.64.0.1\r\n");
         assert!(
@@ -404,7 +404,7 @@ esac
     let projects: serde_json::Value =
         serde_json::from_str(projects.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(
-        projects["projects"][0]["workers"][0]["model"],
+        json_field(&projects, "/projects/0/workers/0/model"),
         "worker-model"
     );
     let login = "Tailscale-User-Login: alice@example.com\r\n";
@@ -469,7 +469,7 @@ esac
     );
     assert!(log.contains("send-keys -t %7 C-m"));
     assert!(!env.root.join("nope").exists());
-    fs::write(format!("{}.fail", env.tmux_log.display()), "").unwrap();
+    atomic_write(format!("{}.fail", env.tmux_log.display()), "").unwrap();
     let failed = post(endpoint, login, r#"{"text":"fail"}"#);
     assert!(failed.starts_with("HTTP/1.1 500"), "{failed}");
     assert!(failed.contains("cache-control: no-store"));

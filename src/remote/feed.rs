@@ -1,13 +1,11 @@
-use std::collections::VecDeque;
-
-use anyhow::Result;
-use axum::response::sse::Event;
-use serde::Serialize;
-
 use super::chat::{Chat, Lookup};
 use crate::telemetry::transcript::{
     TextBlock, TextRole, TextTurn, TranscriptReader, TranscriptSource,
 };
+use anyhow::Result;
+use axum::response::sse::Event;
+use serde::Serialize;
+use std::collections::VecDeque;
 
 const RECENT_TURNS: usize = 200;
 
@@ -57,7 +55,7 @@ impl Feed {
 
     fn read(&mut self) -> Result<Vec<Turn>> {
         let turns = self.follower.read(&self.chat.transcript)?;
-        Ok(turns
+        turns
             .into_iter()
             .filter_map(|turn| {
                 let role = match turn.role {
@@ -66,10 +64,13 @@ impl Feed {
                 };
                 let text = mobile_text(turn)?;
                 let id = format!("{}:{}", self.chat.id, self.next);
-                self.next += 1;
-                Some(Turn { id, role, text })
+                self.next = match self.next.checked_add(1) {
+                    Some(next) => next,
+                    None => return Some(Err(anyhow::anyhow!("transcript turn id overflow"))),
+                };
+                Some(Ok(Turn { id, role, text }))
             })
-            .collect())
+            .collect()
     }
 
     pub(super) fn poll(&mut self, lookup: &Lookup) -> Result<Option<Vec<Event>>> {

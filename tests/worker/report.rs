@@ -11,7 +11,7 @@ fn report_prints_worker_report_file() {
         None,
         b"working: report ready",
     );
-    fs::write(worker_dir.join("final-pane.txt"), "pane tail\n").unwrap();
+    atomic_write(worker_dir.join("final-pane.txt"), "pane tail\n").unwrap();
 
     let report = run_bare(&workspace, &["report", "auth-fix"]);
     assert_failure_contains(
@@ -24,7 +24,7 @@ fn report_prints_worker_report_file() {
     assert!(stderr.contains("worker/auth-fix/report.md"));
     assert!(stderr.contains("final pane snapshot is available"));
 
-    fs::write(
+    atomic_write(
         worker_dir.join("report.md"),
         "# Findings\n\n- durable content\n",
     )
@@ -53,7 +53,7 @@ fn report_falls_back_to_most_recent_local_archive() {
         assert_command_success("spawn archived report worker", &spawn);
 
         let worker_dir = state_dir(&workspace).join("worker/reviewer");
-        fs::write(worker_dir.join("report.md"), report_body).unwrap();
+        atomic_write(worker_dir.join("report.md"), report_body).unwrap();
 
         let close = env
             .niles(&workspace, &["close", "reviewer"])
@@ -82,8 +82,8 @@ fn report_skips_prefix_sibling_worker_archive() {
     let sibling_archive = archive_root.join("a-fs-20260705T130000000000Z");
     fs::create_dir_all(&worker_archive).unwrap();
     fs::create_dir_all(&sibling_archive).unwrap();
-    fs::write(worker_archive.join("report.md"), "short worker report\n").unwrap();
-    fs::write(sibling_archive.join("report.md"), "sibling worker report\n").unwrap();
+    atomic_write(worker_archive.join("report.md"), "short worker report\n").unwrap();
+    atomic_write(sibling_archive.join("report.md"), "sibling worker report\n").unwrap();
 
     let report = run_bare(&workspace, &["report", "a"]);
 

@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use crate::common::{atomic_write, json_field};
 mod common;
 #[path = "onboarding/retry.rs"]
 mod retry;
@@ -124,14 +125,19 @@ fn lead_saves_secondary_edits_and_independent_entry_agent() {
     assert!(output.status.success(), "{output:?} {text}");
     let value: serde_json::Value =
         serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
-    assert_eq!(value["entry"], "lead");
+    assert_eq!(json_field(&value, "/entry"), "lead");
     assert_eq!(
-        value["tiers"]["standard"]["primary"],
+        json_field(&value, "/tiers/standard/primary"),
         "codex:gpt-6.1-sol:medium"
     );
-    assert_eq!(value["entry_agent"], "codex:gpt-6.1-sol:medium");
     assert_eq!(
-        value["tiers"]["standard"]["secondaries"]
+        json_field(&value, "/entry_agent"),
+        "codex:gpt-6.1-sol:medium"
+    );
+    assert_eq!(
+        value
+            .pointer("/tiers/standard/secondaries")
+            .unwrap()
             .as_array()
             .unwrap()
             .last()
@@ -197,7 +203,7 @@ fn concurrent_manifest_is_kept() {
     let (output, text) = terminal(&env, &["start"], SOLO_DEFAULTS, |step| {
         if step == 3 {
             fs::create_dir_all(manifest(&env).parent().unwrap()).unwrap();
-            fs::write(manifest(&env), winner).unwrap();
+            atomic_write(manifest(&env), winner).unwrap();
         }
     });
     assert!(output.status.success(), "{output:?} {text}");
@@ -267,9 +273,11 @@ fn back_walk_preserves_edits_and_checks_and_skips_lead_for_solo() {
     assert!(output.status.success(), "{output:?} {text}");
     let value: serde_json::Value =
         serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
-    assert_eq!(value["entry"], "solo");
+    assert_eq!(json_field(&value, "/entry"), "solo");
     assert_eq!(
-        value["tiers"]["standard"]["secondaries"]
+        value
+            .pointer("/tiers/standard/secondaries")
+            .unwrap()
             .as_array()
             .unwrap()
             .last()

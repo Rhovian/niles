@@ -1,14 +1,12 @@
+use super::meta::read_meta;
+use super::worker_dir;
+use crate::tmux::{self, WindowTarget};
+use crate::wake::{self, FOLLOWUP_STARTED};
 use crate::workspace_manifest::setup::SetupSelection;
+use crate::{util, wait, watch, worker};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use chrono::Utc;
-
-use crate::{
-    tmux::{self, WindowTarget},
-    wait, watch,
-};
-
-use super::{meta::read_meta, worker_dir};
 
 /// How far back a bare `niles peek` reads.
 ///
@@ -60,13 +58,10 @@ pub fn send(
     let dir = worker_dir(&id)?;
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
-    let armed_len = crate::worker::status_log_len(&dir)?;
+    let armed_len = worker::status_log_len(&dir)?;
     let dispatched_at = Utc::now();
     // An unreported follow-up stays visible to wait even when check-ins are disabled.
-    crate::util::append_line(
-        &crate::wake::status_log_path(&dir),
-        crate::wake::FOLLOWUP_STARTED,
-    )?;
+    util::append_line(&wake::status_log_path(&dir), FOLLOWUP_STARTED)?;
     tmux::send_line(&tmux::TmuxTarget::window(&target.target), &message)?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.

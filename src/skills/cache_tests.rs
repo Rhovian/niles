@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::atomic_write;
 
 #[test]
 fn cleanup_failure_preserves_fetch_cause_and_reports_both() {
@@ -24,8 +25,8 @@ fn a_complete_competing_entry_wins_the_rename_race() {
     for dir in [&staged, &target] {
         fs::create_dir(dir).unwrap();
     }
-    fs::write(staged.join("SKILL.md"), "staged").unwrap();
-    fs::write(target.join("SKILL.md"), "winner").unwrap();
+    atomic_write(staged.join("SKILL.md"), "staged").unwrap();
+    atomic_write(target.join("SKILL.md"), "winner").unwrap();
     install(&staged, &target).unwrap();
     assert_eq!(
         fs::read_to_string(target.join("SKILL.md")).unwrap(),

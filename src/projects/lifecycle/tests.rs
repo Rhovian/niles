@@ -1,8 +1,6 @@
 use super::*;
-use crate::{
-    store,
-    test_support::{remove_workspace, temp_dir, write_worker_meta},
-};
+use crate::store;
+use crate::test_support::{remove_workspace, temp_dir, write_worker_meta};
 use std::fs;
 
 #[test]
@@ -25,7 +23,10 @@ fn concurrent_close_returns_not_found_only_after_metadata_disappears() {
         Closed::NotFound
     ));
     assert!(matches!(
-        close_worker(name.as_str(), "--all", &|_, _| panic!("must not execute")).unwrap(),
+        close_worker(name.as_str(), "--all", &|_, _| anyhow::bail!(
+            "must not execute"
+        ))
+        .unwrap(),
         Closed::NotFound
     ));
     fs::remove_file(registry::directory().unwrap().join(name.as_str())).unwrap();

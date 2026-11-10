@@ -1,10 +1,9 @@
+use crate::skills::SkillName;
+use crate::util::append_line;
+use crate::wake::{self, WakeKind};
 use anyhow::{Context, Result, ensure};
 use clap::{Subcommand, ValueEnum};
-
-use crate::{
-    util::append_line,
-    wake::{self, WakeKind},
-};
+use std::fs;
 
 const ORCHESTRATION_CONTRACT: &str = "Niles orchestration contract (binding for every spawned worker, independent of skills):
 Submit each dispatch's outcome with niles agent status <kind> <detail>; never write status.log directly.
@@ -23,7 +22,7 @@ pub enum AgentCommand {
     /// List this worker's menu skills and their sources.
     Skills,
     /// Print a skill from this worker's snapshotted skill lists.
-    Skill { name: crate::skills::SkillName },
+    Skill { name: SkillName },
     /// Report to the lead through the worker's status log.
     #[command(after_help = ORCHESTRATION_CONTRACT)]
     Status {
@@ -70,7 +69,7 @@ pub(crate) fn run(command: AgentCommand) -> Result<()> {
             ensure!(!detail.is_empty(), "detail must not be empty");
             let dir = super::meta::worker_dir_from_env()?;
             let log = wake::status_log_path(&dir);
-            std::fs::metadata(&log).with_context(|| format!("missing status log: {log}"))?;
+            fs::metadata(&log).with_context(|| format!("missing status log: {log}"))?;
             match kind {
                 WorkerWake::Stage => super::stage::stage(&dir, detail),
                 WorkerWake::Done => super::stage::done(&dir, detail),

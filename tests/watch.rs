@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 
 #[path = "watch/activity.rs"]
 mod activity;
@@ -218,7 +218,7 @@ fn a_report_during_the_send_still_answers_the_assignment_it_belongs_to() {
     let spawn = fixture.spawn("impl", None);
     assert_command_success("spawn", &spawn);
     let status = fixture.status_log("impl");
-    fs::write(&status, "working: launch\n").unwrap();
+    atomic_write(&status, "working: launch\n").unwrap();
     let baseline = fs::read_to_string(&status).unwrap().len();
 
     let send = fixture.niles(&["send", "impl", "continue"]);

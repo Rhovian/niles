@@ -1,10 +1,11 @@
-use super::{Buckets, Turn, TurnState, Usage, parse_lines};
+use super::{TokenCounts, Turn, TurnState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::iter;
 
 pub(super) fn read_claude(
     home: &Utf8Path,
@@ -74,17 +75,9 @@ struct ClaudeUserMessage {
 }
 #[derive(Deserialize)]
 struct ClaudeCounters {
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: u64,
-    cache_creation_input_tokens: u64,
+    #[serde(flatten)]
+    counts: TokenCounts,
     output_tokens_details: Option<ClaudeDetails>,
-}
-
-impl ClaudeCounters {
-    fn prompt(&self) -> u64 {
-        self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
-    }
 }
 #[derive(Deserialize)]
 struct ClaudeDetails {
@@ -113,14 +106,17 @@ impl ClaudeMessage {
 // Claude Code 2.1.296 qDn initializes assistant IDs and usage, including error frames.
 // Its SDK calls model_refusal_no_fallback a companion to the assistant refusal frame;
 // only that assistant frame supplies the failure text (installed CLI schema/converter).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "invalid usage rejects the transcript at its parse boundary"
+)]
 pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::SessionRecord> {
     let mut seen = HashSet::new();
-    let (mut input, mut output, mut cache_read, mut cache_write) = (0, 0, 0, 0);
-    let (mut reasoning, mut last_turn, mut turn, mut prompt) = (None, None, None, None);
-    let mut buckets = Buckets::default();
+    let mut usage = Usage::default();
+    let mut turn = None;
     let mut started_at = None;
     for (body, main_file) in
-        std::iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
+        iter::once((main, true)).chain(subagents.iter().map(|body| (body.as_str(), false)))
     {
         for line in parse_lines::<ClaudeLine>(body)? {
             let (timestamp, message) = match line {
@@ -130,8 +126,7 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                     api_error,
                 } => {
                     if main_file {
-                        let usage = &message.usage;
-                        prompt = Some(usage.prompt());
+                        usage.prompt_tokens = Some(message.usage.counts.prompt().ok()?);
                         turn = Some(message.turn(timestamp, api_error));
                     }
                     (timestamp, message)
@@ -188,31 +183,15 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
             if !seen.insert(message.id) {
                 continue;
             }
-            let usage = message.usage;
-            input += usage.input_tokens;
-            output += usage.output_tokens;
-            cache_read += usage.cache_read_input_tokens;
-            cache_write += usage.cache_creation_input_tokens;
-            buckets.add(timestamp, usage.prompt() + usage.output_tokens);
-            if let Some(details) = usage.output_tokens_details {
-                *reasoning.get_or_insert(0) += details.thinking_tokens;
+            usage.accumulate(timestamp, &message.usage.counts).ok()?;
+            if let Some(details) = message.usage.output_tokens_details {
+                let total = usage.reasoning_tokens.get_or_insert(0);
+                *total = super::sum([*total, details.thinking_tokens]).ok()?;
             }
-            last_turn =
-                Some(last_turn.map_or(timestamp, |prior: DateTime<Utc>| prior.max(timestamp)));
         }
     }
-    let usage = (!seen.is_empty()).then_some(Usage {
-        input_tokens: input,
-        output_tokens: output,
-        cache_read_tokens: cache_read,
-        cache_write_tokens: Some(cache_write),
-        reasoning_tokens: reasoning,
-        last_turn_at: last_turn,
-        estimated_cost_usd: None,
-        buckets,
-        prompt_tokens: prompt,
-        context_window: None,
-    });
+    usage.total_tokens().ok()?;
+    let usage = (!seen.is_empty()).then_some(usage);
     let turn = turn.map(|state| Turn { state, started_at });
     Some(super::SessionRecord { turn, usage })
 }
@@ -227,10 +206,8 @@ mod refusal_tests {
             "\n"
         );
         let record = claude_session(body, &[]).unwrap();
-        let Some(TurnState::Failed(failure)) = record.turn.map(|turn| turn.state) else {
-            panic!("refusal must end the turn");
-        };
-        assert_eq!(failure.message, "Provider declined");
+        assert!(matches!(record.turn.map(|turn| turn.state),
+            Some(TurnState::Failed(failure)) if failure.message == "Provider declined"));
     }
 }
 

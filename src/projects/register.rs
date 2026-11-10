@@ -53,13 +53,15 @@ pub(super) fn register(name: &str, path: &Utf8Path) -> Result<registry::Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util;
+    use std::io::Error;
     #[test]
     fn taken_name_is_retryable() {
         let name = uuid::Uuid::new_v4().simple().to_string();
-        let path = crate::util::home_dir().unwrap();
+        let path = util::home_dir().unwrap();
         register(&name, &path).unwrap();
         let error = register(&name, &path).err().unwrap();
-        assert!(error.downcast_ref::<std::io::Error>().is_none());
+        assert!(error.downcast_ref::<Error>().is_none());
         assert!(error.to_string().contains("already taken"));
         fs::remove_file(registry::directory().unwrap().join(name)).unwrap();
     }

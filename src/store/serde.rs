@@ -1,13 +1,9 @@
-use std::{
-    fs::File,
-    io::{self, Write},
-};
-
+use super::atomic_write;
+use crate::util::read_optional_string;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
-use serde::{Serialize, de::DeserializeOwned};
-
-use crate::util::read_optional_string;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 pub(crate) fn read_optional_json<T: DeserializeOwned>(path: &Utf8Path) -> Result<Option<T>> {
     let Some(body) = read_optional_string(path)? else {
@@ -46,46 +42,18 @@ pub(crate) fn parse_yaml<T: DeserializeOwned>(body: &str) -> Result<T> {
     serde_saphyr::from_str_with_options(body, options).map_err(anyhow::Error::new)
 }
 
-pub(crate) enum Publication {
-    Replace,
-    Create,
-}
-
-pub(crate) fn publish(
-    path: &Utf8Path,
-    publication: Publication,
-    write: impl FnOnce(&mut File) -> io::Result<()>,
-) -> io::Result<File> {
-    // tempfile 3.27 stages uniquely, cleans up on error and supports both publication modes:
-    // https://docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html#method.persist
-    let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    write(temporary.as_file_mut())?;
-    match publication {
-        Publication::Replace => temporary.persist(path),
-        Publication::Create => temporary.persist_noclobber(path),
-    }
-    .map_err(|error| error.error)
-}
-
-pub(crate) fn atomic_write(path: &Utf8Path, body: impl AsRef<[u8]>) -> Result<()> {
-    publish(path, Publication::Replace, |file| {
-        file.write_all(body.as_ref())
-    })
-    .map(drop)
-    .with_context(|| format!("failed to write {path}"))
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::test_support;
     use std::{fs, os::unix::fs::MetadataExt};
     #[test]
     fn writers_publish_whole_files() {
-        let dir = crate::test_support::temp_dir("publication");
+        let dir = test_support::temp_dir("publication");
         for write in [write_json::<&str>, write_yaml::<&str>] {
             let path = dir.join("published");
-            fs::write(&path, "old").unwrap();
+            atomic_write(&path, "old").unwrap();
             let before = fs::metadata(&path).unwrap().ino();
             write(&path, &"new").unwrap();
             assert_ne!(before, fs::metadata(&path).unwrap().ino());

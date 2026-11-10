@@ -1,28 +1,26 @@
-use std::{fs, sync::atomic::AtomicBool, time::Duration};
-
+use super::cadence::{Cadence, Delay, Recheck};
+use super::checkin::Checkin;
+use super::trust::claude_prompt;
+use super::{Sink, WatchMemory, apply, arm_checkin, quiet, read_checkins, tick};
+use crate::store::{self, atomic_write};
+use crate::telemetry::{ResolvedSession, SessionState};
+use crate::test_support::{
+    self, TempDir, assert_err_contains, at, temp_dir, temp_test_path, write_worker_meta,
+};
+use crate::tmux::TmuxTarget;
+use crate::wait::cursor;
+use crate::worker::{self, WorkerSnapshot, worker_snapshot};
 use anyhow::{Result, bail};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
-
-use crate::{
-    telemetry::SessionState,
-    test_support::{TempDir, assert_err_contains, at, temp_dir, temp_test_path, write_worker_meta},
-    tmux::TmuxTarget,
-    worker::worker_snapshot,
-};
+use std::fs;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 mod batch;
 mod hold;
 mod refusal;
 mod taken;
-
-use super::{
-    Sink, WatchMemory, apply, arm_checkin,
-    cadence::{Cadence, Delay, Recheck},
-    checkin::Checkin,
-    quiet, read_checkins, tick,
-    trust::claude_prompt,
-};
 
 fn running() -> AtomicBool {
     AtomicBool::new(false)
@@ -48,18 +46,14 @@ struct RecordingSink {
 }
 
 impl Sink for RecordingSink {
-    fn activity(
-        &mut self,
-        worker: &crate::worker::WorkerSnapshot,
-        now: DateTime<Utc>,
-    ) -> Result<crate::telemetry::ResolvedSession> {
+    fn activity(&mut self, worker: &WorkerSnapshot, now: DateTime<Utc>) -> Result<ResolvedSession> {
         match self.activity {
-            Some(state) => Ok(crate::telemetry::ResolvedSession {
+            Some(state) => Ok(ResolvedSession {
                 state,
                 blocker: None,
                 usage: None,
             }),
-            None => crate::worker::worker_session(worker, now),
+            None => worker::worker_session(worker, now),
         }
     }
     fn has_draft(&mut self) -> bool {
@@ -80,13 +74,13 @@ impl Sink for RecordingSink {
             bail!("stub worker pane vanished");
         }
         if let Some(dir) = &self.quiet_during_capture {
-            let lock = crate::wait::cursor::open_lock_file(&dir.join("checkin.lock"))?;
+            let lock = cursor::open_lock_file(&dir.join("checkin.lock"))?;
             lock.try_lock()?;
             Checkin::disarm(dir)?;
         }
         if let Some(path) = &self.replace_status {
             fs::remove_file(path)?;
-            fs::write(path, "")?;
+            atomic_write(path, "")?;
         }
         Ok(self.screen.clone())
     }
@@ -103,18 +97,13 @@ pub(super) fn workspace(label: &str) -> Utf8PathBuf {
 }
 
 pub(super) fn worker_dir(workspace: &camino::Utf8Path, id: &str) -> Utf8PathBuf {
-    crate::store::workers_dir(workspace).unwrap().join(id)
+    store::workers_dir(workspace).unwrap().join(id)
 }
 
 fn write_worker(workspace: &camino::Utf8Path, id: &str, log: &str) {
-    write_meta(
-        workspace,
-        id,
-        DateTime::from_timestamp(0, 0).unwrap(),
-        "niles-test",
-    );
+    write_meta(workspace, id, at(0), "niles-test");
     let dir = worker_dir(workspace, id);
-    fs::write(dir.join("status.log"), log).unwrap();
+    atomic_write(dir.join("status.log"), log).unwrap();
 }
 
 fn write_meta(workspace: &camino::Utf8Path, id: &str, created_at: DateTime<Utc>, session: &str) {
@@ -134,13 +123,13 @@ pub(super) fn write_starting_worker(
     now: DateTime<Utc>,
 ) {
     write_meta(workspace, id, now, "ambient");
-    fs::write(worker_dir(workspace, id).join("status.log"), log).unwrap();
+    atomic_write(worker_dir(workspace, id).join("status.log"), log).unwrap();
 }
 
 fn append_log(workspace: &camino::Utf8Path, id: &str, line: &str) {
     let path = worker_dir(workspace, id).join("status.log");
     let body = fs::read_to_string(&path).unwrap();
-    fs::write(&path, format!("{body}{line}")).unwrap();
+    atomic_write(&path, format!("{body}{line}")).unwrap();
 }
 
 fn status(workspace: &camino::Utf8Path, id: &str) -> String {
@@ -200,10 +189,9 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
 
     sink = RecordingSink::default();
     tick(&root, at(1_001), &mut memory, &mut sink, &running()).unwrap();
-    assert_eq!(sink.sent.len(), 1);
     assert_eq!(
-        sink.sent[0],
-        "niles: armed reported (blocked), plain reported (blocked) — check workers"
+        sink.sent,
+        ["niles: armed reported (blocked), plain reported (blocked) — check workers"]
     );
     assert!(sink.captures.is_empty());
 
@@ -240,7 +228,7 @@ fn workspace_trust_follows_the_worker_and_checkin_lifecycle() {
     assert!(sink.sent.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
     assert_eq!(Checkin::read(&dir).unwrap(), None);
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 fn due_checkin() -> Checkin {
@@ -286,7 +274,7 @@ fn failed_or_stopping_ticks_leave_reports_for_the_next_tick() {
         let attempts = sink.attempts.len();
         tick(&root, at(1_002), &mut memory, &mut sink, &running()).unwrap();
         assert_eq!(sink.attempts.len(), attempts, "{sink:?}");
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }
 
@@ -360,7 +348,7 @@ fn ticks_persist_checkins_only_after_successful_delivery() {
             tick(&root, at(1_301), &mut memory, &mut sink, &running()).unwrap();
             assert_eq!(sink.attempts.len(), 1, "{label}: {sink:?}");
         }
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }
 
@@ -402,7 +390,7 @@ fn arming_a_check_in_records_the_log_length_and_quiet_disarms_it() {
     );
     assert_eq!(Checkin::read(&dir).unwrap(), None);
 
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -434,7 +422,7 @@ fn watcher_start_follows_the_recorded_lead_pane() {
         for phrase in forbidden {
             assert!(!log.contains(phrase), "{log}");
         }
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }
 
@@ -473,6 +461,6 @@ fn a_checkin_rearmed_during_delivery_is_left_alone() {
                 "{sink:?}"
             );
         }
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }

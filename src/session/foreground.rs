@@ -1,14 +1,13 @@
-use std::process::{Command, ExitStatus, Stdio};
-
+use super::brief::{ManagerSession, prepare_manager_session};
+use crate::config::spec::load_project_config_from;
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::util::render_template;
+use crate::workspace_manifest::WorkspaceManifest;
+use crate::{agents, skills, watch};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
-
-use crate::{
-    agents, config::spec::load_project_config_from, skills, util::render_template, watch,
-    workspace_manifest::WorkspaceManifest,
-};
-
-use super::brief::{ManagerSession, prepare_manager_session};
+use std::process::{Command, ExitStatus, Stdio};
 
 const SIGNAL_EXIT_LABEL: &str = "signal";
 
@@ -126,18 +125,15 @@ fn exit_code_label(code: Option<i32>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        agent_window::shell_quote,
-        test_support::{temp_dir, write_executable_script},
-    };
-
+    use crate::agent_window::shell_quote;
+    use crate::test_support::{temp_dir, write_executable_script};
     use camino::Utf8PathBuf;
     use std::fs;
 
     #[test]
     fn foreground_invocation_accepts_a_project_model_override() {
         let root = temp_dir("foreground-model-override");
-        fs::write(
+        atomic_write(
             root.join("niles.yaml"),
             "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }",
         )

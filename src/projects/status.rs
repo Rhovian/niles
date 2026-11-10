@@ -1,13 +1,15 @@
-use anyhow::Result;
-
 use super::{panels, registry, rows, windows};
-use crate::{
-    cli::StatusLine,
-    telemetry::Usage,
-    theme::{self, StyleKey, StyleRender, Theme},
-    tmux,
-    worker::usage::SessionUsage,
-};
+use crate::cli::StatusLine;
+#[cfg(feature = "remote")]
+use crate::session::{self, SessionMeta};
+#[cfg(feature = "remote")]
+use crate::telemetry::SessionState;
+use crate::theme::{self, StyleKey, StyleRender, Theme};
+#[cfg(feature = "remote")]
+use crate::worker;
+use crate::worker::usage::SessionUsage;
+use crate::{telemetry, tmux};
+use anyhow::Result;
 use camino::Utf8PathBuf;
 
 pub(crate) struct Segment {
@@ -36,7 +38,7 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
             for entry in &entries {
                 sessions.extend(panels::open_sessions(entry)?);
             }
-            Ok(home(entries.len(), &sessions, &theme))
+            home(entries.len(), &sessions, &theme)
         }
         StatusLine::Projects => project_line(&theme),
         StatusLine::Sessions { session_name } => session_line(&session_name, &theme),
@@ -47,7 +49,7 @@ pub(crate) fn run(line: StatusLine) -> Result<String> {
 #[derive(Clone)]
 pub(crate) struct ForegroundSession {
     pub project: String,
-    pub meta: crate::session::SessionMeta,
+    pub meta: SessionMeta,
     pub waiting: bool,
     pub worker_count: usize,
 }
@@ -59,13 +61,13 @@ pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
         if matches!(row.state, rows::State::Missing | rows::State::NotRunning) {
             continue;
         }
-        let Some(meta) = crate::session::latest_lead(&row.entry.path)? else {
+        let Some(meta) = session::latest_lead(&row.entry.path)? else {
             continue;
         };
         let Some(windows) = tmux::windows(&row.entry.name.session()?)? else {
             continue;
         };
-        let labels = crate::worker::window_labels(&row.entry.path)?;
+        let labels = worker::window_labels(&row.entry.path)?;
         let worker_count = labels
             .iter()
             .filter(|(_, target)| {
@@ -74,11 +76,11 @@ pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
                     .any(|window| *target == format!("{}:{}", row.entry.name.as_str(), window.name))
             })
             .count();
-        let lead = crate::worker::lead_session(&meta, chrono::Utc::now())?;
+        let lead = worker::lead_session(&meta, chrono::Utc::now())?;
         sessions.push(ForegroundSession {
             project: row.entry.name.as_str().to_owned(),
             meta,
-            waiting: lead.state.displayed() == crate::telemetry::SessionState::Waiting,
+            waiting: lead.state.displayed() == SessionState::Waiting,
             worker_count,
         });
     }
@@ -86,32 +88,33 @@ pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
 }
 
 /// The home session's header: projects, agents, lost agents, and their total tokens.
-fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> String {
+fn home(projects: usize, sessions: &[SessionUsage], theme: &Theme) -> Result<String> {
     let lost = sessions
         .iter()
         .filter(|session| session.window_gone)
         .count();
+    let live = sessions
+        .iter()
+        .filter(|session| !session.window_gone)
+        .count();
     let tokens = sessions
         .iter()
         .filter_map(|session| session.usage.as_ref())
-        .map(Usage::total_tokens)
-        .sum();
+        .try_fold(0, |total, usage| {
+            telemetry::sum([total, usage.total_tokens()?])
+        })?;
     let count =
         |key, count: String, label| format!("{}{count}#[default] {label}", theme.style(key).tmux());
     let mut parts = vec![
         format!("{}NILES#[default]", theme.style(StyleKey::Accent).tmux()),
         count(StyleKey::Heading, projects.to_string(), "projects"),
-        count(
-            StyleKey::Running,
-            (sessions.len() - lost).to_string(),
-            "agents",
-        ),
+        count(StyleKey::Running, live.to_string(), "agents"),
     ];
     if lost > 0 {
         parts.push(count(StyleKey::Lost, lost.to_string(), "lost"));
     }
     parts.push(count(StyleKey::Heading, rows::abbreviate(tokens), "tok"));
-    parts.join("  ")
+    Ok(parts.join("  "))
 }
 
 pub(crate) fn project(name: &str) -> Result<Option<Utf8PathBuf>> {
@@ -161,6 +164,8 @@ fn selected_label(label: &str, condition: &str, theme: &Theme) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::SessionState;
+    use crate::telemetry::Usage;
 
     #[test]
     fn selection_is_a_format_and_labels_are_literal() {
@@ -189,18 +194,10 @@ mod tests {
             skill: "worker".parse().unwrap(),
             entry: false,
             agent: "codex".into(),
-            state: crate::telemetry::SessionState::Unknown,
+            state: SessionState::Unknown,
             usage: tokens.map(|input_tokens| Usage {
                 input_tokens,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: None,
-                reasoning_tokens: None,
-                last_turn_at: None,
-                estimated_cost_usd: None,
-                buckets: Default::default(),
-                prompt_tokens: None,
-                context_window: None,
+                ..Usage::default()
             }),
             window_gone,
             created_at: chrono::DateTime::UNIX_EPOCH,
@@ -211,13 +208,13 @@ mod tests {
             session(Some(400_000), true),
         ];
         assert_eq!(
-            home(4, &sessions, &theme),
+            home(4, &sessions, &theme).unwrap(),
             format!(
                 "{accent}NILES#[default]  {heading}4#[default] projects  {running}2#[default] agents  {lost}1#[default] lost  {heading}3.4M#[default] tok"
             )
         );
         assert_eq!(
-            home(4, &sessions[..2], &theme),
+            home(4, &sessions[..2], &theme).unwrap(),
             format!(
                 "{accent}NILES#[default]  {heading}4#[default] projects  {running}2#[default] agents  {heading}3.0M#[default] tok"
             )

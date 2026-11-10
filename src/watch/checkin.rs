@@ -4,19 +4,20 @@
 //! happens under [`Checkin::lock`]; a plain read takes no lock, because writes rename a whole file
 //! into place.
 
-use std::{
-    collections::BTreeMap,
-    fs::{self, File},
-    io::ErrorKind,
-};
-
+use super::cadence::{Delay, Recheck, parse_delay, parse_recheck};
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::telemetry::SessionState;
+use crate::wait::cursor::open_lock_file;
+use crate::worker::ActionableWake;
+use crate::{store, util};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
-
-use crate::{telemetry::SessionState, wait::cursor::open_lock_file, worker::ActionableWake};
-
-use super::cadence::{Delay, Recheck, parse_delay, parse_recheck};
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::ErrorKind;
+use std::result;
 
 const CHECKIN_FILE: &str = "checkin";
 const LOCK_FILE: &str = "checkin.lock";
@@ -88,7 +89,7 @@ impl Checkin {
 
     pub(crate) fn read(worker_dir: &Utf8Path) -> Result<Option<Self>> {
         let path = worker_dir.join(CHECKIN_FILE);
-        let Some(body) = crate::util::read_optional_string(&path)? else {
+        let Some(body) = util::read_optional_string(&path)? else {
             return Ok(None);
         };
 
@@ -122,7 +123,7 @@ impl Checkin {
             self.recheck.spelling(),
             self.armed_len
         );
-        crate::store::atomic_write(&path, body)
+        store::atomic_write(&path, body)
     }
 
     /// Deletes the arm state. `Ok(false)` when there was none — a worker that disarms twice (it
@@ -147,7 +148,7 @@ fn field<T, E>(
     key: &str,
     what: &str,
     path: &Utf8Path,
-    parse: impl FnOnce(&str) -> std::result::Result<T, E>,
+    parse: impl FnOnce(&str) -> result::Result<T, E>,
 ) -> Result<T>
 where
     E: Into<anyhow::Error>,
@@ -162,10 +163,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::MetadataExt;
-
     use super::*;
     use crate::test_support::{assert_err_contains, at, temp_dir};
+    use std::os::unix::fs::MetadataExt;
 
     #[test]
     fn working_holds_and_waiting_or_unknown_fires() {
@@ -267,7 +267,7 @@ mod tests {
             (valid, "deadline=1970-01-01T00:16:40Z\n", "incomplete"),
         ] {
             let dir = temp_dir("malformed-checkin");
-            fs::write(dir.join(CHECKIN_FILE), valid.replace(from, to)).unwrap();
+            atomic_write(dir.join(CHECKIN_FILE), valid.replace(from, to)).unwrap();
             assert_err_contains(Checkin::read(&dir), expected);
         }
     }

@@ -6,28 +6,24 @@ fn names_refs_hosts_paths_and_revisions_parse_once() {
         "pdf".parse::<MenuItem>().unwrap(),
         MenuItem::Name(_)
     ));
-    for (input, name, path, rev) in [
-        ("acme/pdf", "pdf", "", "HEAD"),
-        ("github.com/acme/pdf", "pdf", "", "HEAD"),
-        ("acme/pack/skills/pdf@main", "pdf", "skills/pdf", "main"),
-        ("acme/pack/pdf@v1.0", "pdf", "pdf", "v1.0"),
-        (
-            "acme/pack/pdf@feature/branch",
-            "pdf",
-            "pdf",
-            "feature/branch",
-        ),
+    for (input, path, rev) in [
+        ("acme/pdf", "", "HEAD"),
+        ("github.com/acme/pdf", "", "HEAD"),
+        ("acme/pack/skills/pdf@main", "skills/pdf", "main"),
+        ("acme/pack/pdf@v1.0", "pdf", "v1.0"),
+        ("acme/pack/pdf@feature/branch", "pdf", "feature/branch"),
         (
             "acme/pack/pdf@0123456789012345678901234567890123456789",
-            "pdf",
             "pdf",
             "0123456789012345678901234567890123456789",
         ),
     ] {
-        let MenuItem::Ref(reference) = input.parse().unwrap() else {
-            panic!("{input}")
-        };
-        assert_eq!(reference.name.as_str(), name);
+        let reference = match input.parse().unwrap() {
+            MenuItem::Ref(reference) => Some(reference),
+            MenuItem::Name(_) => None,
+        }
+        .expect(input);
+        assert_eq!(reference.name.as_str(), "pdf");
         assert_eq!(reference.path, path);
         assert_eq!(reference.rev, rev);
         assert!(reference.to_string().starts_with("github.com/acme/"));
@@ -49,10 +45,16 @@ fn names_refs_hosts_paths_and_revisions_parse_once() {
 }
 
 #[test]
-fn resting_refs_and_metadata_require_canonical_full_sha() {
+fn pinned_refs_require_a_canonical_sha_and_a_single_document_line() {
     let canonical = "github.com/acme/pack/pdf@0123456789012345678901234567890123456789";
     let pinned: PinnedRef = canonical.to_owned().try_into().unwrap();
     assert_eq!(pinned.to_string(), canonical);
+    for suffix in ["", "\n", "\r\n"] {
+        assert!(PinnedRef::document(&format!("{canonical}{suffix}")).is_ok());
+    }
+    for suffix in ["\n\n", "\nsecond line", " ", "\r"] {
+        assert!(PinnedRef::document(&format!("{canonical}{suffix}")).is_err());
+    }
     let non_hex = format!("github.com/acme/pdf@{}", "g".repeat(40));
     for text in [
         "github.com/acme/pack/pdf@main",
@@ -60,17 +62,6 @@ fn resting_refs_and_metadata_require_canonical_full_sha() {
         &non_hex,
     ] {
         assert!(serde_json::from_value::<PinnedRef>(serde_json::json!(text)).is_err());
-    }
-}
-
-#[test]
-fn pointer_documents_are_exactly_one_line() {
-    let line = "github.com/acme/pdf@0123456789012345678901234567890123456789";
-    for suffix in ["", "\n", "\r\n"] {
-        assert!(PinnedRef::document(&format!("{line}{suffix}")).is_ok());
-    }
-    for suffix in ["\n\n", "\nsecond line", " ", "\r"] {
-        assert!(PinnedRef::document(&format!("{line}{suffix}")).is_err());
     }
 }
 

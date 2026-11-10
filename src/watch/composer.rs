@@ -17,7 +17,11 @@ pub(crate) fn recognize(screen: &str, cursor: CursorPosition, markers: &[&str]) 
     if !line.starts_with("  ") {
         return false;
     }
-    for line in lines[..cursor.y].iter().rev() {
+    for line in lines
+        .iter()
+        .rev()
+        .skip(lines.len().saturating_sub(cursor.y))
+    {
         if markers.iter().any(|marker| line.starts_with(marker)) {
             return true;
         }
@@ -31,10 +35,11 @@ pub(crate) fn recognize(screen: &str, cursor: CursorPosition, markers: &[&str]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents;
 
     #[test]
     fn cursor_identifies_drafts_for_every_declared_marker() {
-        for (family, markers, marker) in crate::agents::profiles().flat_map(|profile| {
+        for (family, markers, marker) in agents::profiles().flat_map(|profile| {
             profile.composer.into_iter().flat_map(move |markers| {
                 markers
                     .iter()

@@ -1,4 +1,7 @@
 use super::*;
+use crate::store::{self, atomic_write};
+use crate::test_support;
+use crate::wake::WakeKind;
 
 #[test]
 fn mixed_batch_commits_all_items_only_after_one_successful_send() {
@@ -47,7 +50,7 @@ fn mixed_batch_commits_all_items_only_after_one_successful_send() {
     }
     tick(&root, at(1_302), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(sink.attempts.len(), 2);
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -72,7 +75,7 @@ fn reports_that_accumulate_behind_a_composer_draft_land_in_one_line() {
         sink.sent,
         ["niles: a reported (done), b reported (done) — check workers"]
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
@@ -87,12 +90,7 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     }
     let checkin = due_checkin();
     checkin.write(&worker_dir(&root, "c")).unwrap();
-    let wait = fs::File::create(
-        crate::store::workers_dir(&root)
-            .unwrap()
-            .join("wait.running"),
-    )
-    .unwrap();
+    let wait = fs::File::create(store::workers_dir(&root).unwrap().join("wait.running")).unwrap();
     wait.lock_shared().unwrap();
     append_log(&root, "d", "blocked: click OK\n");
     let mut sink = RecordingSink {
@@ -108,18 +106,20 @@ fn workspace_wait_suppresses_all_reports_but_due_checkins_still_land() {
     drop(wait);
     tick(&root, at(1_301), &mut memory, &mut sink, &running()).unwrap();
     assert_eq!(
-        sink.sent[1],
-        "niles: a reported (done), b reported (done), d reported (blocked) — check workers"
+        sink.sent,
+        [
+            "niles: no report from c — check workers",
+            "niles: a reported (done), b reported (done), d reported (blocked) — check workers"
+        ]
     );
-    assert_eq!(sink.sent.len(), 2);
     drop(inherited);
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn watch_log_batches_feed_one_telemetry_report_per_worker() {
     let root = workspace("log-batch");
-    fs::write(root.join("watch.log"), concat!(
+    atomic_write(root.join("watch.log"), concat!(
         "2026-01-02T03:04:05Z nudged single: niles: single reported (done) — check workers\n",
         "2026-01-02T03:04:06Z nudged a,b,c: niles: a reported (blocked), no report from b, c reported (failed) — check workers\n",
         "not a report\n",
@@ -131,10 +131,10 @@ fn watch_log_batches_feed_one_telemetry_report_per_worker() {
             .map(|(_, id, kind)| (id.as_str(), *kind))
             .collect::<Vec<_>>(),
         [
-            ("single", crate::wake::WakeKind::Done),
-            ("a", crate::wake::WakeKind::Blocked),
-            ("c", crate::wake::WakeKind::Failed)
+            ("single", WakeKind::Done),
+            ("a", WakeKind::Blocked),
+            ("c", WakeKind::Failed)
         ]
     );
-    crate::test_support::remove_workspace(&root).unwrap();
+    test_support::remove_workspace(&root).unwrap();
 }

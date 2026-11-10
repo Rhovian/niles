@@ -1,6 +1,13 @@
+use crate::projects::onboard::unattended::Options;
+use crate::projects::panels::Panel;
+use crate::skills::SkillsCommand;
+use crate::update::Channel;
+use crate::worker::Assignment;
+use crate::worker::agent_status::AgentCommand;
 use anyhow::{Context, Result, bail};
 use clap::{ArgAction, Args, Parser, Subcommand};
-use std::{io, time::Duration};
+use std::io;
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -80,7 +87,7 @@ pub enum CommandName {
     /// Worker-facing commands.
     Agent {
         #[command(subcommand)]
-        command: crate::worker::agent_status::AgentCommand,
+        command: AgentCommand,
     },
     #[command(hide = true)]
     Status {
@@ -104,17 +111,17 @@ pub enum CommandName {
     #[command(hide = true, disable_help_subcommand = true)]
     Panel {
         #[command(subcommand)]
-        panel: crate::projects::panels::Panel,
+        panel: Panel,
     },
     /// Report binary identity, tmux, and agent CLI versions
     Doctor,
     /// Configure this project without the interactive wizard (does not overwrite).
-    Setup(Box<crate::projects::onboard::unattended::Options>),
+    Setup(Box<Options>),
     /// Update a shell installation, or show the package-manager command
     Update {
         /// Release channel (nightly includes prereleases).
         #[arg(long, value_enum, default_value = "stable")]
-        channel: crate::update::Channel,
+        channel: Channel,
     },
     /// Run one headless turn per manifest family with Niles's launch arguments
     /// (maintainer check; makes real model calls with approval-bypass flags).
@@ -143,7 +150,7 @@ pub enum CommandName {
         /// Worker task id used for window and metadata names.
         id: String,
         #[command(flatten)]
-        assignment: Box<crate::worker::Assignment>,
+        assignment: Box<Assignment>,
         /// Task label for grouping warm workers.
         #[arg(long = "task", value_name = "LABEL")]
         task_label: Option<String>,
@@ -204,7 +211,7 @@ pub enum CommandName {
     /// List installed skills, sources and descriptions.
     Skills {
         #[command(subcommand)]
-        command: Option<crate::skills::SkillsCommand>,
+        command: Option<SkillsCommand>,
     },
     /// Print a worker's durable report file.
     Report {
@@ -296,9 +303,9 @@ pub enum RemoteCommand {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-
     use super::*;
+    use crate::wait::{DEFAULT_INTERVAL, DEFAULT_TIMEOUT};
+    use clap::{CommandFactory, error::ErrorKind};
 
     #[test]
     fn command_definition_is_consistent() {
@@ -312,60 +319,53 @@ mod tests {
             (vec!["niles", "start"], false),
             (vec!["niles", "start", "--keep-skills"], true),
         ] {
-            let Some(CommandName::Start { keep_skills, .. }) =
-                Cli::try_parse_from(args).unwrap().command
-            else {
-                panic!("not a start session");
-            };
-            assert_eq!(keep_skills, expected);
+            assert!(matches!(Cli::try_parse_from(args).unwrap().command,
+                Some(CommandName::Start { keep_skills, .. }) if keep_skills == expected));
         }
         assert_eq!(
             Cli::try_parse_from(["niles", "lead"]).unwrap_err().kind(),
-            clap::error::ErrorKind::InvalidSubcommand
+            ErrorKind::InvalidSubcommand
         );
     }
 
     #[test]
     fn panels_parse_with_their_range() {
-        use crate::projects::panels::{Panel, Range};
-        let panel = |args: &[&str]| {
-            let Some(CommandName::Panel { panel }) = Cli::try_parse_from(args).unwrap().command
-            else {
-                panic!("not a panel");
-            };
-            panel
+        use crate::projects::panels::{
+            Panel::{Config, Help, Telemetry},
+            Range::Week,
         };
-        assert_eq!(panel(&["niles", "panel", "help"]), Panel::Help);
-        assert_eq!(
-            panel(&["niles", "panel", "telemetry", "--range", "7d"]),
-            Panel::Telemetry { range: Range::Week }
-        );
-        assert!(Cli::try_parse_from(["niles", "panel", "telemetry"]).is_err());
-        assert_eq!(
-            panel(&["niles", "panel", "config"]),
-            Panel::Config { project: None }
-        );
-        let Panel::Config {
-            project: Some(name),
-        } = panel(&["niles", "panel", "config", "--project", "global"])
-        else {
-            panic!("not a project's config");
+        let parse = |args: &str| {
+            let argv = ["niles", "panel"]
+                .into_iter()
+                .chain(args.split_whitespace());
+            Cli::try_parse_from(argv)
         };
-        assert_eq!(name.as_str(), "global");
-        assert!(Cli::try_parse_from(["niles", "panel", "config", "--project", "a.b"]).is_err());
+        for (args, expected) in [
+            ("help", Help),
+            ("telemetry --range 7d", Telemetry { range: Week }),
+            ("config", Config { project: None }),
+        ] {
+            let actual = parse(args).unwrap().command;
+            assert!(matches!(actual, Some(CommandName::Panel { panel }) if panel == expected));
+        }
+        assert!(matches!(parse("config --project global").unwrap().command,
+            Some(CommandName::Panel { panel: Config { project: Some(name) } })
+            if name.as_str() == "global"));
+        for args in ["telemetry", "config --project a.b"] {
+            assert!(parse(args).is_err(), "{args}");
+        }
     }
 
     #[test]
     fn message_input_parses_options_and_rejects_invalid_sources() {
         fn message(args: &[&str]) -> MessageInput {
-            let command = Cli::try_parse_from(args).unwrap().command;
-            if let Some(CommandName::Spawn { message, .. }) = command {
-                return message;
+            match Cli::try_parse_from(args).unwrap().command {
+                Some(CommandName::Spawn { message, .. } | CommandName::Send { message, .. }) => {
+                    Some(message)
+                }
+                _ => None,
             }
-            if let Some(CommandName::Send { message, .. }) = command {
-                return message;
-            }
-            panic!("expected spawn or send command");
+            .expect("spawn or send command")
         }
 
         for command in [
@@ -374,7 +374,7 @@ mod tests {
         ] {
             let conflict = [command.as_slice(), &["-m", "one", "two"]].concat();
             let error = Cli::try_parse_from(conflict).unwrap_err();
-            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
 
             for (args, expected) in [
                 (
@@ -397,24 +397,24 @@ mod tests {
         let cli =
             Cli::try_parse_from(["niles", "send", "job", "-m", "- item", "-m", "b", "--wait"])
                 .unwrap();
-        let Some(CommandName::Send { wait, message, .. }) = cli.command else {
-            panic!("expected send command");
-        };
-        assert!(wait);
+        let message = match cli.command {
+            Some(CommandName::Send {
+                wait: true,
+                message,
+                ..
+            }) => Some(message),
+            _ => None,
+        }
+        .expect("send and wait");
         assert_eq!(message.resolve().unwrap(), "- item\nb");
     }
 
     #[test]
     fn wait_default_spellings_parse_to_the_runtime_defaults() {
         let cli = Cli::try_parse_from(["niles", "wait"]).unwrap();
-        let Some(CommandName::Wait {
-            interval, timeout, ..
-        }) = cli.command
-        else {
-            panic!("expected wait command");
-        };
-
-        assert_eq!(interval, crate::wait::DEFAULT_INTERVAL);
-        assert_eq!(timeout, crate::wait::DEFAULT_TIMEOUT);
+        assert!(
+            matches!(cli.command, Some(CommandName::Wait { interval, timeout, .. })
+            if interval == DEFAULT_INTERVAL && timeout == DEFAULT_TIMEOUT)
+        );
     }
 }

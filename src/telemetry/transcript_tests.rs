@@ -1,7 +1,12 @@
 use super::super::{claude, codex, pi};
 use super::*;
+use crate::store::atomic_write;
+use crate::test_support::{self, array, only};
 use serde_json::json;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::slice;
+use zstd::stream;
 
 fn lines(values: &[Value]) -> String {
     values.iter().map(|value| format!("{value}\n")).collect()
@@ -43,11 +48,11 @@ fn all_families_emit_one_visible_block_per_item() {
             "type":"function_call","name":"Bash","arguments":"{\"command\":\"cargo test\"}"}}),
         ],
     );
-    assert_eq!(claude.len(), 2);
+    let [_, tool] = array(&claude);
     assert_eq!(claude, pi);
     assert_eq!(claude, codex);
     assert_eq!(
-        serde_json::to_value(&claude[1]).unwrap(),
+        serde_json::to_value(tool).unwrap(),
         json!({"role":"assistant",
         "timestamp":"2026-10-20T00:00:01Z","content":{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}})
     );
@@ -68,8 +73,10 @@ fn codex_omits_developer_system_reasoning_and_event_mirrors() {
     ]);
     let turns = text(Family::Codex, &values);
     assert_eq!(turns.len(), 2);
-    assert_eq!(turns[0].role, TextRole::User);
-    assert_eq!(turns[1].role, TextRole::Assistant);
+    assert_eq!(
+        turns.iter().map(|turn| turn.role).collect::<Vec<_>>(),
+        [TextRole::User, TextRole::Assistant]
+    );
 }
 
 #[test]
@@ -86,9 +93,9 @@ fn unknown_shapes_preserve_status_and_known_text() {
         );
         let turns = file_turns(Family::Claude, user).unwrap();
         if content.is_array() {
-            assert_eq!(turns.len(), 2);
+            let [_, tool] = array(&turns);
             assert_eq!(
-                turns[1].content,
+                tool.content,
                 TextBlock::ToolUse {
                     name: "Bash".into(),
                     input: Value::Null
@@ -99,7 +106,7 @@ fn unknown_shapes_preserve_status_and_known_text() {
         }
         let message = json!({"type":"message","timestamp":"2026-10-20T00:00:00Z",
             "message":{"role":"user","content":content}});
-        assert!(pi::pi_session(&lines(std::slice::from_ref(&message))).is_some());
+        assert!(pi::pi_session(&lines(slice::from_ref(&message))).is_some());
         assert!(file_turns(Family::Pi, message).is_ok());
     }
 }
@@ -110,11 +117,11 @@ fn interrupted_user_text_is_preserved_and_repeated_blocks_are_not_deduplicated()
         assistant(json!([{"type":"text","text":"Again"},{"type":"text","text":"Again"}]));
     let user = json!({"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}});
     let turns = text(Family::Claude, &[repeated.clone(), repeated, user]);
-    assert_eq!(turns.len(), 5);
-    assert_eq!(turns[0], turns[3]);
-    assert_eq!(turns[4].role, TextRole::Injected);
+    let [first, _, _, fourth, interrupted] = array(&turns);
+    assert_eq!(first, fourth);
+    assert_eq!(interrupted.role, TextRole::Injected);
     assert_eq!(
-        turns[4].content,
+        interrupted.content,
         TextBlock::Text {
             text: "[Request interrupted by user]".into()
         }
@@ -143,32 +150,30 @@ fn interrupted_user_text_is_preserved_and_repeated_blocks_are_not_deduplicated()
             ),
         ] {
             assert_eq!(
-                file_turns(family, line).unwrap()[0].role,
+                only(&file_turns(family, line).unwrap()).role,
                 TextRole::Injected
             );
         }
     }
     let hook = json!({"type":"user","isMeta":true,"message":{"content":"hook output"}});
     assert_eq!(
-        file_turns(Family::Claude, hook).unwrap()[0].role,
+        only(&file_turns(Family::Claude, hook).unwrap()).role,
         TextRole::Injected
     );
 }
 
 #[test]
 fn jsonl_cursor_waits_for_complete_utf8_records_and_does_not_replay() {
-    let dir = crate::test_support::temp_dir("transcript-tail");
+    let dir = test_support::temp_dir("transcript-tail");
     let path = dir.join("001.jsonl");
     let bytes = lines(&[assistant(json!([{"type":"text","text":"é"}]))]).into_bytes();
     let split = bytes.iter().position(|byte| *byte == 0xc3).unwrap() + 1;
-    std::fs::write(&path, &bytes[..split]).unwrap();
+    let (head, tail) = bytes.split_at(split);
+    atomic_write(&path, head).unwrap();
     let mut file = BufReader::new(File::open(&path).unwrap());
     assert!(read_jsonl(&mut file, Family::Claude).unwrap().is_empty());
-    let mut append = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    append.write_all(&bytes[split..]).unwrap();
+    let mut append = OpenOptions::new().append(true).open(&path).unwrap();
+    append.write_all(tail).unwrap();
     assert_eq!(read_jsonl(&mut file, Family::Claude).unwrap().len(), 1);
     assert!(read_jsonl(&mut file, Family::Claude).unwrap().is_empty());
     append.write_all(b"bad\n").unwrap();
@@ -179,11 +184,11 @@ fn jsonl_cursor_waits_for_complete_utf8_records_and_does_not_replay() {
 
 #[test]
 fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
-    let home = crate::test_support::temp_dir("transcript-open");
+    let home = test_support::temp_dir("transcript-open");
     let session_dir = home.join("pi");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    std::fs::write(session_dir.join("001.jsonl"), "bad\n").unwrap();
-    std::fs::write(
+    fs::create_dir_all(&session_dir).unwrap();
+    atomic_write(session_dir.join("001.jsonl"), "bad\n").unwrap();
+    atomic_write(
         session_dir.join("002.jsonl"),
         lines(&[json!({"type":"message","timestamp":null,
         "message":{"role":"user","content":"Hi"}})]),
@@ -195,9 +200,9 @@ fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
     assert_eq!(pi.read().unwrap().len(), 1);
     let project = home.join(".claude/projects/test");
     let sub = project.join("session/subagents");
-    std::fs::create_dir_all(&sub).unwrap();
-    std::fs::write(sub.join("sub.jsonl"), "bad\n").unwrap();
-    std::fs::write(
+    fs::create_dir_all(&sub).unwrap();
+    atomic_write(sub.join("sub.jsonl"), "bad\n").unwrap();
+    atomic_write(
         project.join("session.jsonl"),
         lines(&[assistant(json!([{"type":"text","text":"Main"}]))]),
     )
@@ -218,11 +223,11 @@ fn opening_readers_uses_latest_pi_and_only_main_claude_file() {
 
 #[test]
 fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
-    let home = crate::test_support::temp_dir("codex-compressed");
+    let home = test_support::temp_dir("codex-compressed");
     let created_at = Utc::now();
     let local = created_at.with_timezone(&chrono::Local);
     let dir = home.join(format!(".codex/sessions/{}", local.format("%Y/%m/%d")));
-    std::fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).unwrap();
     let plain = dir.join(format!(
         "rollout-{}-x.jsonl",
         local.format("%Y-%m-%dT%H-%M-%S")
@@ -237,22 +242,23 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
         json!({"type":"event_msg","timestamp":"2026-10-20T00:00:00Z","payload":{"type":"token_count",
             "info":{"total_token_usage":{"input_tokens":1,"output_tokens":2,"cached_input_tokens":0,"reasoning_output_tokens":0}}}}),
     ]);
-    let mut frames = zstd::stream::encode_all(&body.as_bytes()[..20], 0).unwrap();
-    frames.extend(zstd::stream::encode_all(&body.as_bytes()[20..], 0).unwrap());
+    let (head, tail) = body.as_bytes().split_at(20);
+    let mut frames = stream::encode_all(head, 0).unwrap();
+    frames.extend(stream::encode_all(tail, 0).unwrap());
     let (workspace, needle) = (Utf8Path::new("/w"), Utf8Path::new("/w/report.md"));
-    std::fs::write(plain.with_extension("jsonl.tmp"), &body).unwrap();
-    std::fs::write(&plain, "bad\n").unwrap();
+    atomic_write(plain.with_extension("jsonl.tmp"), &body).unwrap();
+    atomic_write(&plain, "bad\n").unwrap();
     assert!(
         codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
             .is_none()
     );
-    std::fs::remove_file(&plain).unwrap();
-    std::fs::write(&compressed, &frames).unwrap();
+    fs::remove_file(&plain).unwrap();
+    atomic_write(&compressed, &frames).unwrap();
     for expected in [&compressed, &plain] {
         if expected == &plain {
-            std::fs::write(&plain, &body).unwrap();
-            std::fs::write(&compressed, "corrupt stale duplicate").unwrap();
+            atomic_write(&plain, &body).unwrap();
+            atomic_write(&compressed, "corrupt stale duplicate").unwrap();
         }
         let (path, parsed) = codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
@@ -269,9 +275,9 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
                 .unwrap()
                 .unwrap();
         let turns = reader.read().unwrap();
-        assert_eq!(turns.len(), 2);
+        let [_, tool] = array(&turns);
         assert_eq!(
-            turns[1].content,
+            tool.content,
             TextBlock::ToolUse {
                 name: "Bash".into(),
                 input: json!("{bad")
@@ -279,8 +285,21 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
         );
         assert!(reader.read().unwrap().is_empty());
     }
-    std::fs::write(&plain, body.replace("report.md", "other.md")).unwrap();
-    std::fs::write(&compressed, frames).unwrap();
+    atomic_write(
+        &plain,
+        body.replace(
+            "\"input_tokens\":1",
+            &format!("\"input_tokens\":{}", u64::MAX),
+        ),
+    )
+    .unwrap();
+    assert!(
+        codex::read_codex(&home, workspace, needle, created_at)
+            .unwrap()
+            .is_none()
+    );
+    atomic_write(&plain, body.replace("report.md", "other.md")).unwrap();
+    atomic_write(&compressed, frames).unwrap();
     assert!(
         codex::read_codex_source(&home, workspace, needle, created_at)
             .unwrap()
@@ -290,15 +309,16 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
 
 #[test]
 fn compressed_transcript_errors_include_the_path() {
-    let dir = crate::test_support::temp_dir("compressed-transcript-errors");
+    let dir = test_support::temp_dir("compressed-transcript-errors");
     let path = dir.join("rollout.jsonl.zst");
-    let valid = zstd::stream::encode_all(b"{}\n".as_slice(), 0).unwrap();
+    let mut valid = stream::encode_all(b"{}\n".as_slice(), 0).unwrap();
+    valid.pop();
     for bytes in [
         b"not zstd".to_vec(),
-        valid[..valid.len() - 1].to_vec(),
-        zstd::stream::encode_all(b"\xff\n".as_slice(), 0).unwrap(),
+        valid,
+        stream::encode_all(b"\xff\n".as_slice(), 0).unwrap(),
     ] {
-        std::fs::write(&path, bytes).unwrap();
+        atomic_write(&path, bytes).unwrap();
         let error = super::super::read_transcript(&path).unwrap_err();
         assert!(error.to_string().contains(path.as_str()));
     }

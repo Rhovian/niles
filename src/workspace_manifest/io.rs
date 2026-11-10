@@ -1,14 +1,14 @@
-use std::fs;
-
+use super::WorkspaceManifest;
+use super::setup::{ManifestFile, SetupSelection};
+use crate::agents::ModelRoster;
+use crate::config::spec;
+use crate::skills::{self, files};
+use crate::store;
+#[cfg(test)]
+use crate::store::atomic_write;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-
-use crate::{agents::ModelRoster, store};
-
-use super::{
-    WorkspaceManifest,
-    setup::{ManifestFile, SetupSelection},
-};
+use std::fs;
 
 pub fn manifest_path(root: &Utf8Path, selection: Option<&SetupSelection>) -> Result<Utf8PathBuf> {
     Ok(super::setup::active(root, selection)?.path().to_owned())
@@ -21,14 +21,14 @@ pub fn load(
     let manifest = load_for_skill_listing(root, selection)?;
     if let Some(manifest) = &manifest {
         let path = manifest_path(root, selection)?;
-        let global = crate::skills::global_dir()?;
-        crate::skills::locate(&manifest.entry, root, &global)
+        let global = skills::global_dir()?;
+        skills::locate(&manifest.entry, root, &global)
             .with_context(|| format!("invalid entry skill in {path}"))?;
         for (skill, binding) in &manifest.bindings {
-            crate::skills::locate(skill, root, &global)
+            skills::locate(skill, root, &global)
                 .with_context(|| format!("invalid skill in {path}"))?;
             for name in binding.attached_skills() {
-                crate::skills::locate(name, root, &global)
+                skills::locate(name, root, &global)
                     .with_context(|| format!("invalid {skill} skill reference in {path}"))?;
             }
         }
@@ -47,7 +47,7 @@ pub(crate) fn load_for_skill_listing(
         ManifestFile::Default(_) => store::read_optional_yaml(path)?,
         ManifestFile::Named(source) => Some(
             store::parse_yaml(
-                &crate::skills::files::read(path, source.setup.origin)
+                &files::read(path, source.setup.origin)
                     .with_context(|| format!("failed to read setup {source}"))?,
             )
             .with_context(|| format!("failed to parse setup {source}"))?,
@@ -57,7 +57,7 @@ pub(crate) fn load_for_skill_listing(
         if let ManifestFile::Named(source) = &file {
             manifest.source = Some(source.clone());
         }
-        let config = crate::config::spec::load_project_config_from(root)?;
+        let config = spec::load_project_config_from(root)?;
         manifest
             .tiers
             .dedup(&config.models)
@@ -92,17 +92,18 @@ pub fn save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::{self, paths};
     use crate::test_support::default_manifest::{load, manifest_path, save};
-    use crate::test_support::{manifest_body, skill, temp_dir};
+    use crate::test_support::{self, manifest_body, skill, temp_dir};
 
     const TIERS: &str = "tiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
 
     fn load_body(label: &str, body: &str) -> Result<Option<WorkspaceManifest>> {
         let root = temp_dir(label);
-        fs::create_dir_all(crate::store::paths::project_dir(&root)?)?;
-        fs::write(manifest_path(&root).unwrap(), body)?;
+        fs::create_dir_all(paths::project_dir(&root)?)?;
+        atomic_write(manifest_path(&root).unwrap(), body)?;
         let result = load(&root);
-        crate::test_support::remove_workspace(&root)?;
+        test_support::remove_workspace(&root)?;
         result
     }
 
@@ -169,15 +170,15 @@ mod tests {
     #[test]
     fn exact_agents_and_cadence_round_trip() {
         let root = temp_dir("manifest-invalid-tiers");
-        fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
-        let mut manifest = crate::test_support::manifest();
+        fs::create_dir_all(paths::project_dir(&root).unwrap()).unwrap();
+        let mut manifest = test_support::manifest();
         manifest.tiers.standard.secondaries =
             vec!["claude:haiku".into(), "claude:sonnet:high".into()];
         manifest.checkin = Some("15m".into());
         manifest.recheck = Some("backoff".into());
         save(&root, &manifest).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest));
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 
     #[test]
@@ -189,7 +190,10 @@ mod tests {
         .unwrap_err();
         let chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
 
-        assert!(chain[0].contains("manifest.yaml"), "{chain:?}");
+        assert!(
+            chain.first().unwrap().contains("manifest.yaml"),
+            "{chain:?}"
+        );
         assert!(
             chain
                 .iter()
@@ -204,10 +208,10 @@ mod tests {
     #[test]
     fn save_sorts_bindings_preserves_cadence_and_omits_absent_keys() {
         let root = temp_dir("manifest-save-cadence");
-        let manifest = crate::test_support::manifest();
+        let manifest = test_support::manifest();
         let path = manifest_path(&root).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, crate::test_support::manifest_body()).unwrap();
+        atomic_write(&path, test_support::manifest_body()).unwrap();
         save(&root, &manifest).unwrap();
         let body = fs::read_to_string(&path).unwrap();
         assert_eq!(load(&root).unwrap(), Some(manifest.clone()));
@@ -226,14 +230,14 @@ mod tests {
             checkin: Some("15m".into()),
             recheck: Some("backoff".into()),
             worktree: Some(
-                crate::store::parse_yaml("env: {CACHE: /tmp/cache}\nsetup: echo ready").unwrap(),
+                store::parse_yaml("env: {CACHE: /tmp/cache}\nsetup: echo ready").unwrap(),
             ),
             ..manifest
         };
         configured.bindings.get_mut(&skill("worker")).unwrap().gates =
-            Some(crate::store::parse_yaml("post: [{run: [true], timeout: 1500ms}]").unwrap());
+            Some(store::parse_yaml("post: [{run: [true], timeout: 1500ms}]").unwrap());
         save(&root, &configured).unwrap();
         assert_eq!(load(&root).unwrap(), Some(configured));
-        crate::test_support::remove_workspace(&root).unwrap();
+        test_support::remove_workspace(&root).unwrap();
     }
 }

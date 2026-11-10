@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
-
-use chrono::{DateTime, TimeDelta, Utc};
+use anyhow::Result;
+use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The width of a bucket. Every real UTC offset is a multiple of it, so a bucket never straddles
 /// local midnight.
@@ -12,10 +12,10 @@ pub(crate) const BUCKET: TimeDelta = TimeDelta::minutes(15);
 pub(crate) struct Buckets(BTreeMap<DateTime<Utc>, u64>);
 
 impl Buckets {
-    pub(crate) fn add(&mut self, at: DateTime<Utc>, tokens: u64) {
-        let into = TimeDelta::seconds(at.timestamp().rem_euclid(BUCKET.num_seconds()))
-            + TimeDelta::nanoseconds(at.timestamp_subsec_nanos().into());
-        *self.0.entry(at - into).or_default() += tokens;
+    pub(crate) fn add(&mut self, at: DateTime<Utc>, tokens: u64) -> Result<()> {
+        let total = self.0.entry(at.duration_trunc(BUCKET)?).or_default();
+        *total = super::sum([*total, tokens])?;
+        Ok(())
     }
 
     #[cfg(feature = "remote")]

@@ -1,26 +1,23 @@
 //! The CONFIG panel: one scope's settings as key / value / from. ↵ runs the tier picker on a
 //! project tier; ←/→ steps simple values in place. Other settings are read-only.
 
-use anyhow::{Context, Result};
-use camino::Utf8Path;
-use ratatui::{
-    DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Layout},
-    text::{Line, Span},
-    widgets::{Paragraph, Row, Table, TableState, Wrap},
-};
-use ratatui_themes::ThemeName;
-
 use self::items::{Edit, Item, Note, Step, Tier};
 use super::registry::{self, ProjectName};
-use crate::{
-    agents::picker,
-    config::{spec::load_project_config_from, user},
-    theme::{StyleKey, Theme},
-    tmux,
-    workspace_manifest::{self, WorkspaceManifest},
-};
+use crate::agents::picker;
+use crate::config::spec::{ProjectConfig, load_project_config_from};
+use crate::config::user;
+use crate::selection::{self, Selection};
+use crate::theme::{StyleKey, Theme};
+use crate::tmux;
+use crate::workspace_manifest::{self, WorkspaceManifest};
+use anyhow::{Context, Result};
+use camino::Utf8Path;
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Row, Table, TableState, Wrap};
+use ratatui::{DefaultTerminal, Frame};
+use ratatui_themes::ThemeName;
 
 mod items;
 #[cfg(test)]
@@ -42,12 +39,11 @@ fn items(project: Option<&ProjectName>) -> Result<Vec<Item>> {
 pub(super) fn run(project: Option<&ProjectName>, theme: &Theme) -> Result<()> {
     let mut panel = ConfigPanel {
         project,
-        items: items(project)?,
-        selected: None,
+        items: Selection::new(items(project)?).context("config has no rows")?,
         footer: None,
         theme: theme.clone(),
     };
-    panel.down();
+    panel.items.prefer(|item| item.edit().is_some());
     let mut terminal = ratatui::init();
     let result = panel.run(&mut terminal);
     ratatui::restore();
@@ -56,9 +52,7 @@ pub(super) fn run(project: Option<&ProjectName>, theme: &Theme) -> Result<()> {
 
 struct ConfigPanel<'a> {
     project: Option<&'a ProjectName>,
-    items: Vec<Item>,
-    /// Always a row with an edit; `None` only when no row has one.
-    selected: Option<usize>,
+    items: Selection<Item>,
     /// The outcome of the last ↵.
     footer: Option<String>,
     theme: Theme,
@@ -84,13 +78,13 @@ impl ConfigPanel<'_> {
                 (KeyEventKind::Press, KeyCode::Enter | KeyCode::Left | KeyCode::Right) => {
                     self.act(terminal, key.code)?
                 }
-                _ => {}
+                _ => continue,
             }
         }
     }
 
     fn act(&mut self, terminal: &mut DefaultTerminal, key: KeyCode) -> Result<()> {
-        let Some(Item::Setting(setting)) = self.selected.map(|index| &self.items[index]) else {
+        let Item::Setting(setting) = self.items.current() else {
             return Ok(());
         };
         let theme = &self.theme;
@@ -103,43 +97,31 @@ impl ConfigPanel<'_> {
                 pick_tier(terminal, root, tier, theme).err().map(shown)
             }
             (Some(Edit::Step(step)), KeyCode::Enter | KeyCode::Left | KeyCode::Right) => step
-                .save(cycle(&step.options(), &setting.value, key == KeyCode::Left))
+                .save(cycle(
+                    &step.options(),
+                    &setting.value,
+                    key == KeyCode::Left,
+                )?)
                 .and_then(|()| Theme::load())
                 .map(|theme| self.theme = theme)
                 .err()
                 .map(shown),
             _ => return Ok(()),
         };
-        self.items = items(self.project)?;
-        if self
-            .selected
-            .and_then(|index| self.items.get(index)?.edit())
-            .is_none()
-        {
-            self.selected = None;
-            self.down();
+        let position = self.items.position();
+        self.items = Selection::new(items(self.project)?).context("config has no rows")?;
+        if self.items.focus(position).is_err() || self.items.current().edit().is_none() {
+            self.items.prefer(|item| item.edit().is_some());
         }
         Ok(())
     }
 
     fn up(&mut self) {
-        if let Some(index) = self.selected
-            && let Some(above) = (0..index).rev().find(|&index| self.editable(index))
-        {
-            self.selected = Some(above);
-        }
+        self.items
+            .move_matching(false, |item| item.edit().is_some());
     }
-
-    /// Moves to the next row with an edit, or the first one when none is selected.
     fn down(&mut self) {
-        let from = self.selected.map_or(0, |index| index + 1);
-        if let Some(below) = (from..self.items.len()).find(|&index| self.editable(index)) {
-            self.selected = Some(below);
-        }
-    }
-
-    fn editable(&self, index: usize) -> bool {
-        self.items[index].edit().is_some()
+        self.items.move_matching(true, |item| item.edit().is_some());
     }
 
     fn draw(&self, frame: &mut Frame) {
@@ -151,23 +133,19 @@ impl ConfigPanel<'_> {
             .iter()
             .map(|item| cells(item, theme))
             .collect::<Vec<_>>();
-        let width = |column: usize| {
-            let width = rows
-                .iter()
-                .map(|row| row[column].width())
-                .fold(0, usize::max);
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "a column past u16::MAX is clipped to the frame either way"
-            )]
-            let width = u16::try_from(width).unwrap_or(u16::MAX);
-            Constraint::Length(width)
-        };
-        let widths = [width(0), width(1), Constraint::Fill(1)];
+        let (key_width, value_width) =
+            rows.iter()
+                .fold((0, 0), |(key_width, value_width), [key, value, _]| {
+                    (key_width.max(key.width()), value_width.max(value.width()))
+                });
+        #[expect(clippy::disallowed_methods, reason = "frame clipping")]
+        let width = |width: usize| Constraint::Length(u16::try_from(width).unwrap_or(u16::MAX));
+        let widths = [width(key_width), width(value_width), Constraint::Fill(1)];
         let table = Table::new(rows.into_iter().map(Row::new), widths)
             .column_spacing(2)
             .row_highlight_style(theme.style(StyleKey::Selection));
-        let mut state = TableState::default().with_selected(self.selected);
+        let mut state = TableState::default()
+            .with_selected(self.items.current().edit().map(|_| self.items.position()));
         frame.render_stateful_widget(table, body, &mut state);
         if let Some(message) = &self.footer {
             frame.render_widget(
@@ -252,15 +230,16 @@ impl Step {
 const CHECKIN_STEPS: &[&str] = &["off", "2m", "5m", "10m", "15m", "30m", "1h"];
 const RECHECK_STEPS: &[&str] = &["backoff", "5m", "10m", "15m", "30m", "1h"];
 
-fn cycle<'a>(options: &[&'a str], current: &str, previous: bool) -> &'a str {
-    debug_assert!(!options.is_empty());
-    let next = match (options.iter().position(|value| *value == current), previous) {
-        (Some(index), true) => (index + options.len() - 1) % options.len(),
-        (Some(index), false) => (index + 1) % options.len(),
-        (None, true) => options.len() - 1,
-        (None, false) => 0,
+fn cycle<'a>(options: &[&'a str], current: &str, previous: bool) -> Result<&'a str> {
+    let index = options.iter().position(|value| *value == current);
+    let index = if index.is_none() && previous {
+        Some(0)
+    } else {
+        index
     };
-    options[next]
+    selection::cycle(options, index, if previous { -1 } else { 1 })
+        .copied()
+        .context("config setting has no options")
 }
 
 fn pick_tier(
@@ -277,11 +256,7 @@ fn pick_tier(
 fn edit_tiers(
     root: &Utf8Path,
     tier: Tier,
-    pick: impl FnOnce(
-        WorkspaceManifest,
-        &crate::config::spec::ProjectConfig,
-        Tier,
-    ) -> Result<picker::Choice>,
+    pick: impl FnOnce(WorkspaceManifest, &ProjectConfig, Tier) -> Result<picker::Choice>,
 ) -> Result<()> {
     let config = load_project_config_from(root)?;
     let manifest = load_manifest(root)?;

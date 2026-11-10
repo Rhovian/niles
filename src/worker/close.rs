@@ -1,21 +1,17 @@
+use super::archive::{archive_worker_dir, capture_final_pane, final_pane_path};
+use super::meta::{meta_path, read_meta_if_exists};
+use super::resolve::{no_live_worker_message, resolve_worker_if_exists};
+use super::validation::validate_task_label;
+use super::worktree;
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::store::{self, Scope};
+use crate::tmux::{self, TargetState, WindowTarget};
+use crate::util::{self, append_line};
+use crate::wake::{self, WakeKind};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-
-use crate::{
-    store::{self, Scope},
-    tmux::{self, TargetState, WindowTarget},
-    util::append_line,
-    wake::{self, WakeKind},
-};
-
-use super::{
-    archive::{archive_worker_dir, capture_final_pane, final_pane_path},
-    meta::{meta_path, read_meta_if_exists},
-    resolve::{no_live_worker_message, resolve_worker_if_exists},
-    validation::validate_task_label,
-    worktree,
-};
 
 struct WorkerCloseOutcome {
     id: String,
@@ -89,6 +85,10 @@ struct WorkerCloseSelection {
     unreadable: Vec<(String, String)>,
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "both counts come from owned, nonzero-sized vectors"
+)]
 fn close_worker_group(
     selection: String,
     ids: Vec<String>,
@@ -130,7 +130,7 @@ fn close_worker_group(
 fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     let mut ids = Vec::new();
     let mut unreadable = Vec::new();
-    for entry in store::worker_locations(&crate::util::current_dir_utf8()?)? {
+    for entry in store::worker_locations(&util::current_dir_utf8()?)? {
         match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) if meta.task_label.as_deref() == Some(label) => ids.push(entry.id),
             Ok(_) => {}
@@ -174,7 +174,7 @@ fn print_group_close_success(outcome: &WorkerCloseOutcome) {
 }
 
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
-    let project = crate::util::current_dir_utf8()?;
+    let project = util::current_dir_utf8()?;
     let _project_lock = Scope::Project(&project).reserve()?;
     let _worker_lock = Scope::Worker(&project, id).reserve()?;
     let worker_dir = resolve_worker_if_exists(id)?.with_context(|| no_live_worker_message(id))?;
@@ -322,7 +322,7 @@ impl WindowCloseOutcome {
 }
 
 fn close_all_worker_ids() -> Result<Vec<String>> {
-    Ok(store::worker_locations(&crate::util::current_dir_utf8()?)?
+    Ok(store::worker_locations(&util::current_dir_utf8()?)?
         .into_iter()
         .filter(|entry| meta_path(&entry.worker_dir).exists())
         .map(|entry| entry.id)
@@ -344,7 +344,7 @@ mod tests {
         let dir = temp_test_path("worker-sentinel");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("status.log");
-        fs::write(&path, "working: close requested").unwrap();
+        atomic_write(&path, "working: close requested").unwrap();
 
         append_closed_sentinel(&path, "auth-fix").unwrap();
 

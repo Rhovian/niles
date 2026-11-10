@@ -22,7 +22,7 @@ fn missing_agent_binary_leaves_no_worker_state() {
 fn leftover_worker_json_file_is_inert() {
     let workspace = temp_workspace("niles-worker-json-inert");
     fs::create_dir_all(state_dir(&workspace).join("worker")).unwrap();
-    fs::write(
+    atomic_write(
         state_dir(&workspace).join("worker/auth-fix.json"),
         r#"{"id":"auth-fix"}"#,
     )

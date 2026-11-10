@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
-use image::{DynamicImage, ImageFormat, imageops::FilterType};
+use image::imageops::FilterType;
+use image::{DynamicImage, ImageFormat, Rgba};
 use ratatui::text::{Line, Text};
+use std::iter;
 
 const ALPHA_THRESHOLD: u8 = 128;
 
@@ -27,27 +29,33 @@ impl Splash {
             .0
             .resize(u32::from(width), u32::from(rows) * 2, FilterType::Triangle)
             .into_rgba8();
-        Text::from(
-            (0..image.height())
-                .step_by(2)
-                .map(|y| {
-                    let line = (0..image.width())
-                        .map(|x| {
-                            let top = image.get_pixel(x, y)[3] >= ALPHA_THRESHOLD;
-                            let bottom = y + 1 < image.height()
-                                && image.get_pixel(x, y + 1)[3] >= ALPHA_THRESHOLD;
-                            match (top, bottom) {
-                                (true, true) => '█',
-                                (true, false) => '▀',
-                                (false, true) => '▄',
-                                (false, false) => ' ',
-                            }
-                        })
-                        .collect::<String>();
-                    Line::raw(line)
-                })
-                .collect::<Vec<_>>(),
-        )
+        let opaque = |pixel: &Rgba<u8>| {
+            let [_, _, _, alpha] = pixel.0;
+            alpha >= ALPHA_THRESHOLD
+        };
+        let mut rows = image.rows();
+        let mut lines = Vec::new();
+        while let Some(top) = rows.next() {
+            let bottom = rows
+                .next()
+                .into_iter()
+                .flatten()
+                .map(Some)
+                .chain(iter::repeat(None));
+            let line = top
+                .zip(bottom)
+                .map(
+                    |(top, bottom)| match (opaque(top), bottom.is_some_and(opaque)) {
+                        (true, true) => '█',
+                        (true, false) => '▀',
+                        (false, true) => '▄',
+                        (false, false) => ' ',
+                    },
+                )
+                .collect::<String>();
+            lines.push(Line::raw(line));
+        }
+        Text::from(lines)
     }
 }
 
@@ -69,8 +77,13 @@ mod tests {
         });
         let splash = Splash(DynamicImage::ImageRgba8(image));
         let text = splash.text(4, 2);
-        assert_eq!(text.lines[0].to_string(), "█▀▄ ");
-        assert_eq!(text.lines[1].to_string(), "▀▀▀▀");
+        assert_eq!(
+            text.lines
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["█▀▄ ", "▀▀▀▀"]
+        );
     }
 
     #[test]

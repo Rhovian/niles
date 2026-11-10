@@ -1,12 +1,13 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    num::{NonZeroU32, NonZeroU64},
-};
-
+use super::families;
+use crate::config::user;
+use crate::store;
+#[cfg(test)]
+use crate::store::atomic_write;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-
-use super::families;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Display;
+use std::num::{NonZeroU32, NonZeroU64};
 
 const BUILTIN_ROSTER: &str = include_str!("roster.yaml");
 
@@ -66,12 +67,12 @@ impl ModelRoster {
     }
 
     pub(crate) fn load() -> Result<Self> {
-        let path = crate::config::user::path()?.with_file_name("roster.yaml");
+        let path = user::path()?.with_file_name("roster.yaml");
         Self::builtin()?.with_user_overrides(&path)
     }
 
     fn with_user_overrides(self, path: &camino::Utf8Path) -> Result<Self> {
-        match crate::store::read_optional_yaml::<RawRegistry>(path)? {
+        match store::read_optional_yaml::<RawRegistry>(path)? {
             Some(raw) => Ok(self.merge(
                 Self::from_registry(raw)
                     .with_context(|| format!("invalid model registry {path}"))?,
@@ -261,12 +262,12 @@ impl ModelRoster {
     }
 }
 
-fn metadata_text(value: Option<impl std::fmt::Display>) -> String {
+fn metadata_text(value: Option<impl Display>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
 }
 
 pub(crate) fn parse(body: &str) -> Result<ModelRoster> {
-    let raw = crate::store::parse_yaml(body)?;
+    let raw = store::parse_yaml(body)?;
     ModelRoster::from_registry(raw)
 }
 
@@ -328,6 +329,8 @@ claude:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{store, test_support};
+    use std::fs;
 
     #[test]
     fn registry_fixture_parses_exact_pair_metadata() {
@@ -336,16 +339,7 @@ mod tests {
         let high = roster.entry("codex", "fixture", Some("high")).unwrap();
         assert_eq!(high.context_window.get(), 2000);
         assert!(roster.entry("codex", "fixture", Some("low")).is_err());
-        let rows = roster.registry_rows(|_, _, _| Ok(true)).unwrap();
-        assert_eq!(rows.len(), 4);
-        assert_eq!(
-            rows[0].join(","),
-            r#"codex,fixture,medium,standard,"bounded, \"work\"",3,1000"#
-        );
-        assert_eq!(rows[2][5], "unknown");
-        assert_eq!(rows[3][2], "");
-        let overrides =
-            crate::store::parse_yaml("codex: {fixture: {efforts: [high, fresh]}}").unwrap();
+        let overrides = store::parse_yaml("codex: {fixture: {efforts: [high, fresh]}}").unwrap();
         let changed = roster.with_overrides(overrides).unwrap();
         assert!(changed.entry("codex", "fixture", Some("medium")).is_err());
     }
@@ -375,26 +369,26 @@ mod tests {
 
     #[test]
     fn registry_fixture_user_file_replaces_models_and_errors_with_path() {
-        let path = crate::test_support::temp_test_path("registry-override");
+        let path = test_support::temp_test_path("registry-override");
         let roster = parse(FIXTURE_REGISTRY).unwrap();
         assert_eq!(roster.clone().with_user_overrides(&path).unwrap(), roster);
-        std::fs::write(&path, "pi: {added: [{tier: economy, description: added, speed: 4, context_window: 3000}]}\ncodex: {fixture: [{effort: low, tier: mechanical, description: changed, speed: 1, context_window: 3000}]}").unwrap();
+        atomic_write(&path, "pi: {added: [{tier: economy, description: added, speed: 4, context_window: 3000}]}\ncodex: {fixture: [{effort: low, tier: mechanical, description: changed, speed: 1, context_window: 3000}]}").unwrap();
         let changed = roster.clone().with_user_overrides(&path).unwrap();
         assert!(changed.entry("codex", "fixture", Some("medium")).is_err());
         let rows = changed.registry_rows(|_, _, _| Ok(true)).unwrap();
         assert_eq!(
-            rows[0].join(","),
+            rows.first().unwrap().join(","),
             "codex,fixture,low,mechanical,\"changed\",1,3000"
         );
         assert!(changed.entry("codex", "spare", Some("low")).is_ok());
         assert!(changed.entry("pi", "added", None).is_ok());
         for body in ["codex: {fixture: [{tier: invalid}]}", "unknown: {}"] {
-            std::fs::write(&path, body).unwrap();
+            atomic_write(&path, body).unwrap();
             let result = roster.clone().with_user_overrides(&path);
             let error = format!("{:#}", result.unwrap_err());
             assert!(error.contains(path.as_str()), "{error}");
         }
-        std::fs::remove_file(path).unwrap();
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

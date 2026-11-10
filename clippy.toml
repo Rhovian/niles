@@ -1,4 +1,7 @@
+absolute-paths-max-segments = 2
+
 disallowed-methods = [
+    { path = "std::fs::write", reason = "publish complete files with crate::store::atomic_write instead of writing in place" },
     { path = "std::option::Option::unwrap_or", reason = "a default is a decision — hoist it to the parse boundary or a named const; #[expect] with a reason if this site truly owns it" },
     { path = "std::result::Result::unwrap_or", reason = "a default is a decision — hoist it to the parse boundary or a named const; #[expect] with a reason if this site truly owns it" },
     { path = "std::option::Option::unwrap_or_default", reason = "silent default — name the value and the decision, or restructure so the gap can't occur" },

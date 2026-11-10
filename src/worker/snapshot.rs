@@ -1,16 +1,12 @@
-use std::{fs, io::ErrorKind};
-
+use super::meta::{WorkerMeta, read_meta_if_exists};
+use crate::wait::cursor::{cursor_path, parse_cursor, wait_running};
+use crate::wake::{self, WakeKind};
+use crate::{store, util};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, TimeDelta, Utc};
-
-use crate::{
-    store,
-    wait::cursor::{cursor_path, parse_cursor, wait_running},
-    wake::{self, WakeKind},
-};
-
-use super::meta::{WorkerMeta, read_meta_if_exists};
+use std::fs;
+use std::io::ErrorKind;
 
 /// The last actionable line in a worker's status log, with the byte offset just past it.
 ///
@@ -106,9 +102,13 @@ impl WorkerSnapshot {
     }
 
     /// The bytes `niles wait` has not delivered yet.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::indexing_slicing,
+        reason = "delivered is bounded by log_len, derived from this owned log's usize length"
+    )]
     pub(super) fn undelivered(&self) -> Option<&[u8]> {
         let log = self.log.as_deref()?;
-        // `delivered` is at most `log_len`, which is `log.len()`.
         Some(&log[self.delivered() as usize..])
     }
 
@@ -155,7 +155,7 @@ pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot
 
 fn read_wake_cursor(worker_dir: &Utf8Path) -> Result<u64> {
     let path = cursor_path(worker_dir);
-    let Some(body) = crate::util::read_optional_string(&path)? else {
+    let Some(body) = util::read_optional_string(&path)? else {
         return Ok(0);
     };
     parse_cursor(&body, &path)

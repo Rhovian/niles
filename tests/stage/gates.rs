@@ -1,11 +1,18 @@
 use super::*;
 use serde_json::{Value, json};
+use std::process::ExitStatus;
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn gated(rounds: u8, post: Value) -> Worker {
     let worker = Worker::new(Some(rounds), &[]);
     let path = worker.dir.join("meta.json");
     edit_json(&path, |meta| {
-        meta["gates"]["post"] = post;
+        meta.get_mut("gates")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("post".into(), post);
     });
     worker.report();
     worker
@@ -29,7 +36,7 @@ fn passing_retry_preserves_order_literal_argv_and_worker_cwd() {
     });
     worker.succeeds("stage");
     worker.fails("done", "gates failing");
-    fs::write(tree.join("fixed"), "").unwrap();
+    atomic_write(tree.join("fixed"), "").unwrap();
     let text = worker.succeeds("stage");
     assert!(text.contains("first pass\nlog: "));
     assert!(text.contains("run-2 pass\nlog: "));
@@ -124,10 +131,10 @@ fn killed_stage_records_no_round() {
         json!([{"run":["sh", "-c", "echo started > started; sleep 0.2"]}]),
     );
     let mut child = worker.command("stage").spawn().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(5);
     while !worker.env.root.join("started").exists() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
     }
     child.kill().unwrap();
     child.wait().unwrap();
@@ -140,7 +147,7 @@ fn killed_stage_records_no_round() {
 fn signal_death_prints_the_native_exit_status() {
     use std::os::unix::process::ExitStatusExt;
     let worker = gated(1, json!([{"run":["sh", "-c", "kill -TERM $$"]}]));
-    let status = std::process::ExitStatus::from_raw(libc::SIGTERM);
+    let status = ExitStatus::from_raw(libc::SIGTERM);
     assert!(
         worker
             .succeeds("stage")

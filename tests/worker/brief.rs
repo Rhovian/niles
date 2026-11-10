@@ -9,7 +9,7 @@ fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
         "id": "lead", "entry_skill": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
         "workspace": env.root, "brief": session.join("lead.md")
     });
-    fs::write(
+    atomic_write(
         session.join("session.json"),
         serde_json::to_vec(&meta).unwrap(),
     )
@@ -32,7 +32,7 @@ fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
     );
     assert!(!state_dir(&env.root).join("worker/mechanical").exists());
     fs::remove_dir(&log).unwrap();
-    fs::write(&log, "earlier decision").unwrap();
+    atomic_write(&log, "earlier decision").unwrap();
     let spawned = env.run(&mechanical);
     assert_command_success("mechanical worker", &spawned);
     let logged = fs::read_to_string(&log).unwrap();
@@ -47,7 +47,7 @@ fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
 
     let designer = env.spawn("research", &["designer", "design"]);
     assert_command_success("designer", &designer);
-    fs::write(workers.join("designer/status.log"), "done: agreed record\n").unwrap();
+    atomic_write(workers.join("designer/status.log"), "done: agreed record\n").unwrap();
     let spawned = env.spawn("design", &["implementation", "--from", "designer", "task"]);
     assert_command_success("worker with design", &spawned);
     let body = fs::read_to_string(workers.join("implementation/brief.md")).unwrap();
@@ -82,7 +82,7 @@ fn replacement_skills_discover_the_binary_contract_for_every_family() {
     let env = TestEnv::new("niles-worker-contract");
     let skill_dir = env.root.join(".niles/skills/custom");
     fs::create_dir_all(&skill_dir).unwrap();
-    fs::write(
+    atomic_write(
         skill_dir.join("SKILL.md"),
         "---\nname: custom\ndescription: Use when answering questions.\n---\nAnswer questions.\n",
     )

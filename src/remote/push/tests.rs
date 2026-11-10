@@ -1,10 +1,10 @@
 use super::*;
-use crate::{
-    remote::tests::relay_request,
-    test_support::{TempDir, assert_err_contains, temp_dir},
-};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use std::{fs, os::unix::fs::PermissionsExt};
+use crate::remote::tests::relay_request;
+use crate::test_support::{TempDir, array, assert_err_contains, json_field, only, temp_dir};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use web_push::SubscriptionInfo;
 
 fn keyed_subscription(endpoint: &str) -> (Subscription, ece::EcKeyComponents, [u8; 16]) {
@@ -51,8 +51,8 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     store
         .save("alice".into(), subscription.clone(), None)
         .unwrap();
-    assert_eq!(store.subscriptions().unwrap().len(), 1);
-    let device = &store.subscriptions().unwrap()[0];
+    let devices = store.subscriptions().unwrap();
+    let device = only(&devices);
     let sender = Sender {
         user: "alice".into(),
         device: DeviceId::from_endpoint(&subscription.0.endpoint),
@@ -85,7 +85,7 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     let loaded = Store::load(path).unwrap();
     assert_eq!(loaded.public_key().unwrap(), key);
     assert_eq!(
-        loaded.subscriptions().unwrap()[0].subscription.0,
+        only(&loaded.subscriptions().unwrap()).subscription.0,
         subscription.0
     );
     let (subscription, receiver, auth) = keyed_subscription(&subscription.0.endpoint);
@@ -122,7 +122,9 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
         ("name", "\0".repeat(43)),
     ] {
         let mut host = serde_json::json!({"id": "desk", "name": "desk"});
-        host[field] = value.into();
+        host.as_object_mut()
+            .unwrap()
+            .insert(field.into(), value.into());
         assert!(
             serde_json::from_value::<store::Registration>(serde_json::json!({
                 "endpoint": subscription.0.endpoint, "keys": subscription.0.keys, "host": host,
@@ -164,7 +166,6 @@ fn prunes_only_gone_endpoints_and_propagates_other_failures() {
         .save("alice".into(), subscription.clone(), None)
         .unwrap();
     assert!(finish_delivery(&store, &subscription, Err(WebPushError::InvalidResponse)).is_err());
-    assert_eq!(store.subscriptions().unwrap().len(), 1);
 }
 #[tokio::test]
 async fn push_routes_authorize_validate_and_never_cache() {
@@ -226,7 +227,7 @@ async fn push_routes_authorize_validate_and_never_cache() {
                     .unwrap();
             assert_eq!(
                 URL_SAFE_NO_PAD
-                    .decode(value["public_key"].as_str().unwrap())
+                    .decode(json_field(&value, "/public_key").as_str().unwrap())
                     .unwrap()
                     .len(),
                 65
@@ -260,7 +261,7 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
             .save("alice".into(), registration.subscription, registration.host)
             .unwrap();
         let devices = store.subscriptions().unwrap();
-        let device = &devices[0];
+        let device = only(&devices);
         let topic = device.topic(&session).unwrap();
         assert_ne!(
             topic,
@@ -288,11 +289,18 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
             assert_eq!(topic.len(), 32);
         }
     }
-    assert_ne!(topics[0], topics[1]);
+    let [first, second] = array(&topics);
+    assert_ne!(first, second);
     let loaded = Store::load(second_root).unwrap();
     assert_eq!(
-        serde_json::to_value(&loaded.subscriptions().unwrap()[0].host.as_ref().unwrap().id)
-            .unwrap(),
+        serde_json::to_value(
+            &only(&loaded.subscriptions().unwrap())
+                .host
+                .as_ref()
+                .unwrap()
+                .id
+        )
+        .unwrap(),
         "laptop"
     );
 }

@@ -1,12 +1,11 @@
+use super::{SessionName, TmuxTarget, WindowTarget, open_panel, query, run, session};
+use crate::agent_window::shell_quote;
+use crate::theme::{StyleKey, StyleRender, Theme};
 use anyhow::{Context, Result, bail};
 use camino::Utf8Path;
-use std::{env, time::Duration};
-
-use super::{SessionName, TmuxTarget, WindowTarget, open_panel, query, run, session};
-use crate::{
-    agent_window::shell_quote,
-    theme::{StyleKey, StyleRender, Theme},
-};
+use ratatui::crossterm::terminal;
+use std::env;
+use std::time::Duration;
 
 /// The session that holds the explorer. `+` is outside a project name's charset, so no project
 /// session can take this name.
@@ -168,8 +167,7 @@ fn configure_view_prefix(home: &SessionName) -> Result<()> {
 /// tmux's default size and rescales its panes on attach, losing the explorer's share of the width.
 fn attaching_size() -> Result<[String; 2]> {
     if env::var_os("TMUX").is_none() {
-        let (width, height) =
-            ratatui::crossterm::terminal::size().context("failed to read the terminal size")?;
+        let (width, height) = terminal::size().context("failed to read the terminal size")?;
         return Ok([width.to_string(), height.to_string()]);
     }
     let size = query(&["display-message", "-p", "#{client_width} #{client_height}"])?;

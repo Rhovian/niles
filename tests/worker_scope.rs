@@ -1,9 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use std::fs;
+use std::path::Path;
 
 mod common;
 
 use common::*;
-use std::fs;
 
 #[test]
 fn by_id_commands_do_not_reach_worker_in_another_workspace() {
@@ -22,11 +23,10 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
         .unwrap();
     assert_command_success("spawn scoped worker", &spawn);
     let worker_dir = state_dir(&workspace_b).join("worker/shared");
-    fs::write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
+    atomic_write(worker_dir.join("report.md"), "workspace B report\n").unwrap();
     let status = worker_dir.join("status.log");
 
-    let run =
-        |workspace: &std::path::Path, args: &[&str]| env.niles(workspace, args).output().unwrap();
+    let run = |workspace: &Path, args: &[&str]| env.niles(workspace, args).output().unwrap();
 
     let foreign_workers = run(&workspace_a, &["workers"]);
     assert_command_success("foreign workers", &foreign_workers);
@@ -37,9 +37,12 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     assert_command_success("owner workers", &owner_workers);
     let owner_workers_json: serde_json::Value =
         serde_json::from_slice(&owner_workers.stdout).unwrap();
-    let owner_workers = owner_workers_json["workers"].as_array().unwrap();
-    assert_eq!(owner_workers.len(), 1);
-    assert_eq!(owner_workers[0]["id"], "shared");
+    let owner_workers = owner_workers_json
+        .pointer("/workers")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(only(owner_workers).get("id").unwrap(), "shared");
     let tmux_before = env.tmux_log();
 
     let peek = run(&workspace_a, &["peek", "shared"]);

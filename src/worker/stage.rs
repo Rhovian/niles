@@ -1,16 +1,13 @@
-use std::fs::{self, File};
-
+use crate::skills::SkillName;
+use crate::store;
+use crate::util::append_line;
+use crate::wait::cursor;
+use crate::wake::{self, WakeKind};
+use crate::workspace_manifest::Rounds;
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    skills::SkillName,
-    store,
-    util::append_line,
-    wake::{self, WakeKind},
-    workspace_manifest::Rounds,
-};
+use std::fs::{self, File};
 
 struct LockedState {
     _lock: File,
@@ -39,7 +36,7 @@ fn retry(count: usize, limit: usize) -> String {
 
 fn locked_state(dir: &Utf8Path) -> Result<LockedState> {
     let path = dir.join("stage.lock");
-    let lock = crate::wait::cursor::open_lock_file(&path)?;
+    let lock = cursor::open_lock_file(&path)?;
     lock.lock()
         .with_context(|| format!("failed to lock {path}"))?;
     let log = wake::status_log_path(dir);
@@ -95,8 +92,10 @@ pub(super) fn done(dir: &Utf8Path, detail: &str) -> Result<()> {
             state.count > 0,
             "stage first: run niles agent status stage <summary>"
         );
-        debug_assert!(!state.rounds.is_empty());
-        let latest = &state.rounds[state.rounds.len() - 1];
+        let latest = state
+            .rounds
+            .last()
+            .context("staged worker has no gate round")?;
         if let Some(gates) = meta.gates.as_ref().filter(|gates| !gates.post.is_empty()) {
             if latest.failed.is_empty() {
                 annotation = format!("; gates: passed ({})", gates.post.len());
@@ -120,6 +119,10 @@ pub(super) fn done(dir: &Utf8Path, detail: &str) -> Result<()> {
     )
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "rounds own storage; current count is below the round limit"
+)]
 pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
     let report = report_path(dir)?;
     let meta = super::meta::read_meta(dir)?;
@@ -166,10 +169,11 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
     for skill in skills {
         println!("on_stage_skill: {skill}\n{}", skill.body);
     }
+    let next = state.count + 1;
     if passed {
         println!("Apply the post-work skills, then report `done`.");
-    } else if state.count + 1 < limit {
-        println!("{}", retry(state.count + 1, limit));
+    } else if next < limit {
+        println!("{}", retry(next, limit));
     } else {
         println!("report `done`: the failed gates will be shown to the lead");
     }

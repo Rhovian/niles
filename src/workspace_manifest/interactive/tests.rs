@@ -1,19 +1,24 @@
+use super::*;
 use crate::agents::roster::Tier;
+use crate::skills;
+use crate::store::{atomic_write, paths};
+use crate::test_support::default_manifest::{load, manifest_path};
+use crate::test_support::{self, manifest_body, remove_workspace, temp_test_path};
+use crate::workspace_manifest::TierBinding;
 use std::fs;
 
-use super::*;
 fn never(_: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
-    panic!("setup with an existing manifest or no terminal")
+    anyhow::bail!("setup with an existing manifest or no terminal")
 }
-use crate::test_support::{
-    default_manifest::{load, manifest_path},
-    manifest_body, remove_workspace, temp_test_path,
-};
+
+fn unexpected_picker(_: &Utf8Path, _: WorkspaceManifest, _: &ProjectConfig) -> Result<Choice> {
+    anyhow::bail!("unexpected picker")
+}
 
 fn root(label: &str, body: &str) -> camino::Utf8PathBuf {
     let root = temp_test_path(label);
-    fs::create_dir_all(crate::store::paths::project_dir(&root).unwrap()).unwrap();
-    fs::write(manifest_path(&root).unwrap(), body).unwrap();
+    fs::create_dir_all(paths::project_dir(&root).unwrap()).unwrap();
+    atomic_write(manifest_path(&root).unwrap(), body).unwrap();
     root
 }
 
@@ -59,12 +64,12 @@ fn continue_quit_and_unchanged_save_write_nothing() {
 #[test]
 fn missing_manifest_uses_setup_only_when_interactive() {
     let root = temp_test_path("picker-missing");
-    for expected in [None, Some(crate::test_support::manifest())] {
+    for expected in [None, Some(test_support::manifest())] {
         let setup = |_: &Utf8Path| Ok(expected.clone());
-        let result = ensure(&root, None, true, &mut vec![], setup, |_, _, _| panic!()).unwrap();
+        let result = ensure(&root, None, true, &mut vec![], setup, unexpected_picker).unwrap();
         assert_eq!(result, expected);
     }
-    let error = ensure(&root, None, false, &mut vec![], never, |_, _, _| panic!()).unwrap_err();
+    let error = ensure(&root, None, false, &mut vec![], never, unexpected_picker).unwrap_err();
     let message = error.to_string();
     assert!(message.contains("select the project in `niles` in a terminal"));
     remove_workspace(&root).unwrap();
@@ -74,10 +79,7 @@ fn missing_manifest_uses_setup_only_when_interactive() {
 fn no_terminal_uses_existing_manifest_and_prints_skills() {
     let root = root("picker-noninteractive", manifest_body());
     let mut output = Vec::new();
-    let result = ensure(&root, None, false, &mut output, never, |_, _, _| {
-        panic!("opened picker without terminal")
-    })
-    .unwrap();
+    let result = ensure(&root, None, false, &mut output, never, unexpected_picker).unwrap();
     assert_eq!(result, load(&root).unwrap());
     assert!(String::from_utf8(output).unwrap().contains("standard"));
     remove_workspace(&root).unwrap();
@@ -88,15 +90,15 @@ fn changes_are_applied_to_latest_manifest() {
     let root = root("picker-reread", manifest_body());
     let name = uuid::Uuid::new_v4().simple().to_string();
     let selection = format!("global:{name}").parse().unwrap();
-    let named = crate::skills::global_dir()
+    let named = skills::global_dir()
         .unwrap()
         .join("setups")
         .join(format!("{name}.yaml"));
     fs::create_dir_all(named.parent().unwrap()).unwrap();
-    fs::write(&named, manifest_body()).unwrap();
+    atomic_write(&named, manifest_body()).unwrap();
     let before = super::load(&root, Some(&selection)).unwrap().unwrap();
     fs::create_dir_all(root.join(".niles/setups")).unwrap();
-    fs::write(
+    atomic_write(
         root.join(".niles/setups").join(format!("{name}.yaml")),
         manifest_body(),
     )
@@ -129,13 +131,18 @@ fn manifest_failures_do_not_open_replacement() {
         match body {
             Some(body) => {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(&path, body).unwrap();
+                atomic_write(&path, body).unwrap();
             }
             None => fs::create_dir_all(&path).unwrap(),
         }
-        let error = ensure(&root, None, interactive, &mut vec![], never, |_, _, _| {
-            panic!("opened picker for invalid manifest")
-        })
+        let error = ensure(
+            &root,
+            None,
+            interactive,
+            &mut vec![],
+            never,
+            unexpected_picker,
+        )
         .unwrap_err();
         assert_eq!(error.to_string(), load(&root).unwrap_err().to_string());
         match body {
@@ -173,7 +180,7 @@ fn secondaries_new_tiers_and_entry_agent_persist_together() {
         vec!["claude:fable:medium".into(), "claude:opus:medium".into()];
     draft.tiers.set(
         Tier::Frontier,
-        crate::workspace_manifest::TierBinding {
+        TierBinding {
             primary: "claude:fable:high".into(),
             secondaries: vec![],
         },
@@ -192,7 +199,7 @@ fn secondaries_new_tiers_and_entry_agent_persist_together() {
 
 #[test]
 fn loading_deduplicates_primary_and_secondary_aliases_in_order() {
-    let mut manifest = crate::test_support::manifest();
+    let mut manifest = test_support::manifest();
     manifest.tiers.standard.secondaries = vec![
         "codex:gpt-6.1-sol:med".into(),
         "claude:sonnet:high".into(),

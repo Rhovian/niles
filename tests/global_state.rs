@@ -1,8 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::PathBuf;
+use std::process::Output;
 
 mod common;
-
-use std::{fs, os::unix::fs::symlink, path::PathBuf};
 
 use common::*;
 
@@ -13,11 +15,11 @@ fn lead(env: &TestEnv, id: &str, pane: &str) -> PathBuf {
         "id": id, "entry_skill": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
         "workspace": env.root, "brief": dir.join("lead.md"), "lead_pane": pane,
     });
-    fs::write(dir.join("session.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    atomic_write(dir.join("session.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
     dir.join("decisions.log")
 }
 
-fn log(env: &TestEnv, pane: &str, args: &[&str]) -> std::process::Output {
+fn log(env: &TestEnv, pane: &str, args: &[&str]) -> Output {
     env.niles(&env.root, args)
         .env("TMUX_PANE", pane)
         .output()
@@ -68,7 +70,7 @@ fn log_appends_timestamped_decisions_to_the_current_lead() {
     let env = TestEnv::new("niles-global-log");
     let old = lead(&env, "a", "%8");
     let log_path = lead(&env, "z", "%9");
-    fs::write(&log_path, "earlier decision").unwrap();
+    atomic_write(&log_path, "earlier decision").unwrap();
     for (id, decision) in [
         ("impl", "security commissioned: operator asked"),
         ("-", "red: fixed"),
@@ -111,7 +113,7 @@ fn log_rejects_missing_or_foreign_sessions_and_invalid_lines() {
     }
     assert!(!log_path.exists());
     let target = env.root.join("target");
-    fs::write(&target, "untouched").unwrap();
+    atomic_write(&target, "untouched").unwrap();
     symlink(&target, &log_path).unwrap();
     let output = log(&env, "%9", &["log", "-", "decision"]);
     assert_failure_contains("log symlink", &output, "failed to append");
@@ -140,7 +142,7 @@ fn fixture_state_paths_ignore_unregistered_ancestors_and_share_registered_homes(
     let ancestor = temp_workspace("niles-fixture-ancestor");
     fs::create_dir_all(ancestor.join("home")).unwrap();
     fs::create_dir_all(ancestor.join("bin")).unwrap();
-    fs::write(ancestor.join("bin/tmux"), "unrelated tmux").unwrap();
+    atomic_write(ancestor.join("bin/tmux"), "unrelated tmux").unwrap();
     let workspace = ancestor.join("workspace");
     fs::create_dir_all(&workspace).unwrap();
     assert_eq!(

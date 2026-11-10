@@ -1,10 +1,10 @@
-use std::fs;
-
+use crate::agents::ModelRoster;
+use crate::agents::roster::RawRoster;
+use crate::store;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use serde::Deserialize;
-
-use crate::{agents::ModelRoster, store};
+use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
@@ -15,7 +15,7 @@ pub struct ProjectConfig {
 #[serde(deny_unknown_fields)]
 struct RawProjectConfig {
     #[serde(default)]
-    models: crate::agents::roster::RawRoster,
+    models: RawRoster,
 }
 
 pub(crate) const PROJECT_CONFIG_FILES: [&str; 2] = ["niles.yaml", ".niles.yaml"];

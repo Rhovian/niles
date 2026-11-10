@@ -1,17 +1,14 @@
-use std::{
-    fs::File,
-    io::{ErrorKind, Read, Write},
-    os::{
-        fd::OwnedFd,
-        unix::{net::UnixStream, process::CommandExt},
-    },
-    process::{Child, Command},
-    time::{Duration, Instant},
-};
-
 use crate::workspace_manifest::RunGate;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
+use std::fs::File;
+use std::io::{Error, ErrorKind, Read, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const LOG_CAP: usize = 1_048_576;
 const TAIL_CAP: usize = 4096;
@@ -23,8 +20,9 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
     let (reader, writer) = UnixStream::pair()?;
     reader.set_nonblocking(true)?;
     let stderr = writer.try_clone()?;
-    let mut child = match Command::new(&gate.run[0])
-        .args(&gate.run[1..])
+    let (command, args) = gate.run.split_first().context("gate has no command")?;
+    let mut child = match Command::new(command)
+        .args(args)
         .current_dir(cwd)
         .stdout(OwnedFd::from(writer))
         .stderr(OwnedFd::from(stderr))
@@ -46,7 +44,7 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
         let text = String::from_utf8_lossy(&tail);
         let mut start = text.len().saturating_sub(TAIL_CAP - 1);
         while !text.is_char_boundary(start) {
-            start += 1;
+            start = start.saturating_add(1);
         }
         let mut lines: Vec<_> = text[start..].lines().rev().take(40).collect();
         lines.reverse();
@@ -55,6 +53,11 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
     Ok(passed)
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "Read bounds n by buffer.len(); keep is capped by the unwritten portion of LOG_CAP"
+)]
 fn collect(
     child: &mut Child,
     mut reader: impl Read,
@@ -94,7 +97,7 @@ fn collect(
                 if expired {
                     return Ok(None);
                 }
-                std::thread::sleep(POLL);
+                thread::sleep(POLL);
             }
         }
     })();
@@ -121,13 +124,17 @@ fn collect(
     Ok((reason, tail))
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "child PID is positive and fits pid_t"
+)]
 fn terminate(child: &mut Child) -> Result<()> {
-    let group = child.id() as libc::pid_t;
+    let group = libc::pid_t::try_from(child.id())?;
     debug_assert!(group > 0);
     // SAFETY: kill takes an integer group id, no pointers. libc 0.2.189
     // src/unix/mod.rs provides only the unsafe extern, no safe group wrapper.
     if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
-        let error = std::io::Error::last_os_error();
+        let error = Error::last_os_error();
         if error.raw_os_error() != Some(libc::ESRCH) {
             return Err(error.into());
         }
@@ -139,21 +146,24 @@ fn terminate(child: &mut Child) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{os::unix::process::ExitStatusExt, process::Stdio};
+    use std::io::{self, Error};
+    use std::mem;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ChildStdin, Stdio};
 
     #[test]
     fn output_written_between_empty_read_and_exit_check_is_drained() {
         struct ReleaseOnEmpty {
             reader: UnixStream,
-            release: Option<(std::process::ChildStdin, u32)>,
+            release: Option<(ChildStdin, u32)>,
         }
         impl Read for ReleaseOnEmpty {
-            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
                 let result = self.reader.read(buffer);
                 if let Some((mut stdin, pid)) = self.release.take() {
                     assert_eq!(result.as_ref().unwrap_err().kind(), ErrorKind::WouldBlock);
                     stdin.write_all(b"go\n").unwrap();
-                    let mut status = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+                    let mut status = mem::MaybeUninit::<libc::siginfo_t>::uninit();
                     // SAFETY: status is writable; WNOWAIT observes exit without reaping,
                     // leaving collect's try_wait to observe the real child status.
                     assert_eq!(
@@ -195,8 +205,8 @@ mod tests {
     fn io_error_after_exit_does_not_kill_the_reaped_childs_group() {
         struct ErrorAfterEmpty(bool);
         impl Read for ErrorAfterEmpty {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-                if std::mem::replace(&mut self.0, true) {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                if mem::replace(&mut self.0, true) {
                     Err(ErrorKind::Other.into())
                 } else {
                     Ok(0)
@@ -212,7 +222,7 @@ mod tests {
         let mut holder = Command::new("cat")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .process_group(child.id() as libc::pid_t)
+            .process_group(libc::pid_t::try_from(child.id()).unwrap())
             .spawn()
             .unwrap();
         drop(child.stdin.take());
@@ -220,7 +230,7 @@ mod tests {
         let result = collect(
             &mut child,
             ErrorAfterEmpty(false),
-            std::io::sink(),
+            io::sink(),
             Duration::from_secs(5),
         );
         // A live member makes an erroneous kill observable without PID reuse.
@@ -233,7 +243,7 @@ mod tests {
             .and_then(|()| holder.stdout.as_mut().unwrap().read_exact(&mut echo));
         holder.kill().unwrap();
         holder.wait().unwrap();
-        let error = result.unwrap_err().downcast::<std::io::Error>().unwrap();
+        let error = result.unwrap_err().downcast::<Error>().unwrap();
         assert_eq!(error.kind(), ErrorKind::Other);
         survived.unwrap();
         assert_eq!(echo, *b"x");
@@ -274,12 +284,7 @@ mod tests {
             .process_group(0)
             .spawn()
             .unwrap();
-        let result = collect(
-            &mut child,
-            reader,
-            std::io::sink(),
-            Duration::from_millis(100),
-        );
+        let result = collect(&mut child, reader, io::sink(), Duration::from_millis(100));
         holder.kill().unwrap();
         holder.wait().unwrap();
         assert!(result.unwrap().0.is_none());

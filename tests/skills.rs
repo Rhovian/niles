@@ -1,7 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-mod common;
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
 use common::*;
-use std::{fs, process::Command};
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::process::{Command, Output};
+
+mod common;
 
 #[test]
 fn a_fresh_home_has_no_skill_fallback_or_materialization() {
@@ -67,8 +70,12 @@ fn listing_and_launch_show_the_winner_and_deliver_exact_primary_bytes() {
     let args = args.split('\0').collect::<Vec<_>>();
     let primary = args
         .windows(2)
-        .find(|pair| pair[0] == "--append-system-prompt")
-        .unwrap()[1];
+        .find(|pair| matches!(pair, [flag, _] if *flag == "--append-system-prompt"))
+        .and_then(|pair| match pair {
+            [_, value] => Some(*value),
+            _ => None,
+        })
+        .unwrap();
     assert!(primary.starts_with(&format!("## Skill: triage\n{body}\n")));
 }
 
@@ -77,7 +84,7 @@ fn discovery_lists_installed_skills_without_bindings() {
     let env = TestEnv::with_manifest("skills-discovery", "claude");
     let manifest = state_dir(&env.root).join("manifest.yaml");
     let tiers = "entry: lead\nentry_agent: claude:sonnet:high\ntiers: {standard: {primary: claude:sonnet:high, secondaries: []}}\n";
-    fs::write(&manifest, tiers).unwrap();
+    atomic_write(&manifest, tiers).unwrap();
     let local = env.root.join(".niles");
     let global = env.home.join(".niles");
     write_skill(&global, "extra", "Use when global", "global");
@@ -85,7 +92,7 @@ fn discovery_lists_installed_skills_without_bindings() {
     let external = env.root.join("external");
     let target = write_skill(&external, "linked", "Use when linked", "body");
     let link = env.home.join(".niles/skills/linked");
-    std::os::unix::fs::symlink(target.parent().unwrap(), &link).unwrap();
+    symlink(target.parent().unwrap(), &link).unwrap();
     let listing = env.run(&["skills"]);
     assert_command_success("discovery without bindings", &listing);
     let text = stdout_of(&listing);
@@ -93,7 +100,7 @@ fn discovery_lists_installed_skills_without_bindings() {
     assert!(text.contains(&format!("skill: extra (workspace {})", winner.display())));
     assert!(text.contains("skill: linked (global "));
     assert!(text.contains("skill: worker (global "));
-    std::os::unix::fs::symlink(target.parent().unwrap(), local.join("skills/linked")).unwrap();
+    symlink(target.parent().unwrap(), local.join("skills/linked")).unwrap();
     let listing = env.run(&["skills"]);
     assert_command_success("discovered workspace symlink warns", &listing);
     assert!(stderr_of(&listing).contains("warning:"));
@@ -109,7 +116,7 @@ fn bad_directories_warn_without_hiding_valid_skills_or_allowing_launch() {
     write_skill(&local, "foo.bak", "Use when invalid", "body");
     let pointer = local.join("skills/broken/SKILL.ref");
     fs::create_dir_all(pointer.parent().unwrap()).unwrap();
-    fs::write(&pointer, "broken ref").unwrap();
+    atomic_write(&pointer, "broken ref").unwrap();
     edit_manifest(&env.root, |body| {
         format!("{body}broken: {{}}\nghost: {{}}\n")
     });
@@ -131,7 +138,7 @@ fn bad_directories_warn_without_hiding_valid_skills_or_allowing_launch() {
 fn invalid_primaries_fail_before_worker_or_session_creation() {
     let env = TestEnv::with_manifest("skills-bounds", "codex");
     let path = write_skill(&env.root.join(".niles"), "worker", "valid", "body");
-    fs::write(&path, "malformed frontmatter").unwrap();
+    atomic_write(&path, "malformed frontmatter").unwrap();
     assert_command_success("load checks existence only", &env.run(&["models"]));
     assert_failure_contains(
         "malformed skill",
@@ -188,7 +195,7 @@ fn bind_extras(env: &TestEnv, extra: &str) {
     });
 }
 
-fn discovery(env: &TestEnv, args: &[&str]) -> std::process::Output {
+fn discovery(env: &TestEnv, args: &[&str]) -> Output {
     env.niles(&env.home, &[])
         .env("NILES_AGENT_DIR", state_dir(&env.root).join("worker/job"))
         .args(args)
@@ -238,7 +245,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
         ("on_stage", vec!["reviewer"]),
         ("with", vec!["research", "forced", "forced", "worker"]),
     ] {
-        assert_eq!(meta[key], serde_json::json!(names), "{key}");
+        assert_eq!(meta.get(key).unwrap(), &serde_json::json!(names), "{key}");
     }
     let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
     assert_eq!(brief.matches("- alpha:").count(), 1);
@@ -247,7 +254,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     assert!(launch.contains("## Skill: research"));
     assert!(launch.contains("## Skill: forced\nforced body"));
     assert!(!launch.contains("## Skill: design"));
-    fs::write(dir.join("status.log"), "done: ready\n").unwrap();
+    atomic_write(dir.join("status.log"), "done: ready\n").unwrap();
     let args = [
         "followup", "--from", "job", "--with", "research", "--with", "forced", "--with", "forced",
         "--with", "worker", "task",
@@ -257,7 +264,11 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
         fs::read_to_string(state_dir(&env.root).join("worker/followup/launch.sh")).unwrap();
     let positions = ["worker", "research", "design", "forced"]
         .map(|name| launch.find(&format!("## Skill: {name}\n")).unwrap());
-    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        positions
+            .windows(2)
+            .all(|pair| matches!(pair, [a, b] if a < b))
+    );
     for name in ["worker", "research", "design", "forced"] {
         assert_eq!(
             launch.matches(&format!("## Skill: {name}\n")).count(),
@@ -340,17 +351,17 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
         write_skill(root, name, "Use when needed", "body");
     }
     let mut args = vec!["job"];
-    for name in &names[..16] {
+    for name in names.iter().take(16) {
         args.extend(["--menu", name]);
     }
-    args.extend(["--menu", &names[0], "task"]);
+    args.extend(["--menu", names.first().unwrap(), "task"]);
     assert_command_success(
         "seventeen names, sixteen unique skills",
         &env.spawn("worker", &args),
     );
     fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
     args.pop();
-    args.extend(["--menu", &names[16], "task"]);
+    args.extend(["--menu", names.last().unwrap(), "task"]);
     reject(&args, "maximum is 16");
     write_skill(root, "guide", "Whenever useful", "body");
     assert_command_success(

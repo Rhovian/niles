@@ -6,17 +6,13 @@ fn models() -> ModelRoster {
 
 #[test]
 fn parses_agent_model_effort_specs() {
+    let max = Some("max");
     for (input, family, model, effort) in [
         ("codex:gpt-5.5:xhigh", "codex", "gpt-5.5", Some("xhigh")),
         ("claude:sonnet:med", "claude", "sonnet", Some("medium")),
-        ("Claude:Opus:MAX", "claude", "opus", Some("max")),
+        ("Claude:Opus:MAX", "claude", "opus", max),
         ("Claude:Haiku", "claude", "haiku", None),
-        (
-            "CODEX:GPT-5.6-LUNA:MAX",
-            "codex",
-            "gpt-5.6-luna",
-            Some("max"),
-        ),
+        ("CODEX:GPT-5.6-LUNA:MAX", "codex", "gpt-5.6-luna", max),
     ] {
         let spec = AgentSpec::parse(input, &models()).unwrap();
         assert_eq!(
@@ -72,7 +68,7 @@ fn effort_is_checked_against_the_model_not_the_family() {
 
     for spec in ["codex:gpt-5.6-luna:ultra", "codex:gpt-5.5:max"] {
         let error = AgentSpec::parse(spec, &models()).unwrap_err().to_string();
-        assert!(error.contains("unsupported codex effort"), "{error}");
+        assert!(error.contains("invalid codex effort"), "{error}");
         assert!(error.contains("for model"), "{error}");
     }
 
@@ -100,7 +96,7 @@ fn a_model_off_the_roster_is_rejected_whatever_it_looks_like() {
         let spec = AgentSpec::parse(&format!("{family}:{model}{effort}"), &models()).unwrap();
         let error = validate_model(&spec, &models()).unwrap_err().to_string();
         assert!(
-            error.contains(&format!("unsupported {family} model `{model}`")),
+            error.contains(&format!("invalid {family} model `{model}`")),
             "{error}"
         );
     }
@@ -122,80 +118,42 @@ fn rejects_invalid_agent_specs() {
 }
 
 #[test]
-fn invocations_map_models_efforts_and_manager_defaults() {
-    for (spec, defaults, binary, args) in [
-        (
-            "claude:opus:max",
-            InvocationDefaults::Foreground,
-            "claude",
-            vec!["--model", "opus", "--effort", "max"],
-        ),
+fn invocations_map_models_efforts_and_order_headless_defaults() {
+    use InvocationDefaults::{Foreground, Headless, Worker};
+    for (spec, defaults, args) in [
+        ("claude:opus:max", Foreground, "--model opus --effort max"),
         (
             "codex:gpt-5.5:xhigh",
-            InvocationDefaults::Worker,
-            "codex",
-            vec![
-                "--no-daemon",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--model",
-                "gpt-5.5",
-                "--config",
-                "model_reasoning_effort=\"xhigh\"",
-            ],
+            Worker,
+            r#"--no-daemon --dangerously-bypass-approvals-and-sandbox --model gpt-5.5 --config model_reasoning_effort="xhigh""#,
         ),
         (
             "claude:opus:max",
-            InvocationDefaults::Worker,
-            "claude",
-            vec![
-                "--dangerously-skip-permissions",
-                "--model",
-                "opus",
-                "--effort",
-                "max",
-            ],
+            Worker,
+            "--dangerously-skip-permissions --model opus --effort max",
+        ),
+        (
+            "codex:gpt-5.5:low",
+            Headless,
+            r#"--no-daemon --dangerously-bypass-approvals-and-sandbox exec --skip-git-repo-check --model gpt-5.5 --config model_reasoning_effort="low""#,
+        ),
+        (
+            "claude:opus:low",
+            Headless,
+            "--dangerously-skip-permissions -p --model opus --effort low",
+        ),
+        (
+            "pi:tencent/hy3:low",
+            Headless,
+            "-p --model tencent/hy3 --thinking low",
         ),
     ] {
         let invocation = invocation(spec, defaults, &models()).unwrap();
-        assert_eq!(invocation.binary, binary, "{spec}");
-        assert_eq!(invocation.args, args, "{spec}");
-    }
-}
-
-#[test]
-fn headless_invocation_orders_worker_headless_and_tier_args() {
-    for family in known_agent_ids() {
-        let profile = profile_for(family).unwrap();
-        let roster = models();
-        let model = roster.model_names(family).next().unwrap();
-        let invocation = invocation(
-            &format!("{family}:{model}:low"),
-            InvocationDefaults::Headless,
-            &roster,
-        )
-        .unwrap();
-        let expected: Vec<String> = profile
-            .worker_args
-            .iter()
-            .chain(profile.headless)
-            .map(|arg| (*arg).to_owned())
-            .chain(families::tier_args(profile, Some(model), Some("low")))
-            .collect();
-        assert_eq!(invocation.args, expected, "{family}");
-        if family == "codex" {
-            assert_eq!(
-                invocation.args,
-                [
-                    "--no-daemon",
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    "exec",
-                    "--skip-git-repo-check",
-                    "--model",
-                    "gpt-5.5",
-                    "--config",
-                    "model_reasoning_effort=\"low\"",
-                ]
-            );
-        }
+        assert_eq!(invocation.binary, spec.split_once(':').unwrap().0, "{spec}");
+        assert_eq!(
+            invocation.args,
+            args.split_whitespace().collect::<Vec<_>>(),
+            "{spec}"
+        );
     }
 }

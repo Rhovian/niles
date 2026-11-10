@@ -25,7 +25,7 @@ fn peek_quiet_disarms_only_after_a_successful_capture() {
             .any(|line| line == "capture-pane -p -t =niles:=niles-worker -S -")
     );
 
-    fs::write(&checkin, arm).unwrap();
+    atomic_write(&checkin, arm).unwrap();
 
     let peek = env.run(&["peek", "worker"]);
     assert_command_success("peek without quiet", &peek);
@@ -48,7 +48,7 @@ fn peek_quiet_disarms_only_after_a_successful_capture() {
     assert!(stderr_of(&failed_disarm).contains("failed to remove"));
     fs::remove_dir(&checkin).unwrap();
 
-    fs::write(&checkin, arm).unwrap();
+    atomic_write(&checkin, arm).unwrap();
     write_executable(
         &env.bin.join("tmux"),
         "#!/bin/sh\nprintf 'capture failed' >&2\nexit 1\n",

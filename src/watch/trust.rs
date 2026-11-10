@@ -3,19 +3,17 @@
 //! This only observes a worker's visible pane and appends an ordinary blocked report. The
 //! operator owns the decision; the watcher never sends input to the worker.
 
-use std::{fs, io::Write, os::unix::fs::OpenOptionsExt};
-
+use super::Sink;
+use super::checkin::Checkin;
+use crate::tmux::{TmuxTarget, WindowTarget};
+use crate::wake::{self, WakeKind};
+use crate::worker::WorkerSnapshot;
 use anyhow::Result;
 use camino::Utf8Path;
 use chrono::{DateTime, TimeDelta, Utc};
-
-use crate::{
-    tmux::{TmuxTarget, WindowTarget},
-    wake::{self, WakeKind},
-    worker::WorkerSnapshot,
-};
-
-use super::{Sink, checkin::Checkin};
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 
 const STARTUP_WINDOW: TimeDelta = TimeDelta::seconds(30);
 
@@ -57,17 +55,18 @@ fn inspect_worker(worker: &WorkerSnapshot, now: DateTime<Utc>, sink: &mut dyn Si
         return Ok(());
     }
 
-    let line = wake::line(
+    let mut line = wake::line(
         WakeKind::Blocked,
         &format!("workspace trust confirmation needs operator action in worker pane {window}"),
     );
-    writeln!(status, "{line}")?;
+    line.push('\n');
+    status.write_all(line.as_bytes())?;
 
     // This line came from the watcher, not the worker. Keep any existing check-in armed at the
     // same deadline and cadence, but move its baseline past the synthetic report so only a later
     // worker report answers it. A worker with no check-in remains unarmed.
     if let Some(mut checkin) = Checkin::read(&worker.worker_dir)? {
-        checkin.armed_len = line.len() as u64 + 1;
+        checkin.armed_len = line.len() as u64;
         checkin.write(&worker.worker_dir)?;
     }
     Ok(())

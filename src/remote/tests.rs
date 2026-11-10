@@ -1,11 +1,17 @@
 use super::*;
-use crate::test_support::{TempDir, temp_dir};
-use axum::{
-    body::{Body, BodyDataStream, to_bytes},
-    http::Request as HttpRequest,
-};
+use crate::session::SessionMeta;
+use crate::store::{self, atomic_write};
+use crate::telemetry::SessionLink;
+use crate::telemetry::transcript::TranscriptSource;
+use crate::test_support::{TempDir, json_field, only_mut, temp_dir};
+use axum::body::{Body, BodyDataStream, to_bytes};
+use axum::http::Request as HttpRequest;
+use axum::http::request::Builder;
 use serde_json::{Value, json};
-use std::{fs, io::Write, sync::Mutex};
+use std::io::Write;
+use std::sync::Mutex;
+use std::{fs, str};
+use tokio::time;
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
@@ -18,7 +24,7 @@ pub(super) struct Fixture {
 impl Fixture {
     pub(super) fn new(count: usize) -> Self {
         let root = temp_dir("remote-api");
-        fs::write(
+        atomic_write(
             root.join("001.jsonl"),
             (0..count)
                 .map(|n| message(&format!("turn {n}")))
@@ -29,7 +35,7 @@ impl Fixture {
             project: "project".into(),
             waiting: true,
             worker_count: 2,
-            meta: crate::session::SessionMeta {
+            meta: SessionMeta {
                 setup: None,
                 id: "session".into(),
                 agent: "pi:model:high".into(),
@@ -41,7 +47,7 @@ impl Fixture {
                 workspace: root.to_path_buf(),
                 brief: root.join("agent.md"),
                 lead_pane: None,
-                session_link: Some(crate::telemetry::SessionLink::Pi {
+                session_link: Some(SessionLink::Pi {
                     session_dir: root.to_path_buf(),
                 }),
             },
@@ -102,7 +108,7 @@ fn request(path: &str) -> HttpRequest<Body> {
         .body(Body::empty())
         .unwrap()
 }
-pub(super) fn relay_request(method: &str, path: &str) -> axum::http::request::Builder {
+pub(super) fn relay_request(method: &str, path: &str) -> Builder {
     HttpRequest::builder()
         .method(method)
         .uri(path)
@@ -111,12 +117,12 @@ pub(super) fn relay_request(method: &str, path: &str) -> axum::http::request::Bu
         ))
 }
 async fn event(body: &mut BodyDataStream) -> (String, Value) {
-    let bytes = tokio::time::timeout(Duration::from_secs(3), body.next())
+    let bytes = time::timeout(Duration::from_secs(3), body.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
-    let text = std::str::from_utf8(&bytes).unwrap();
+    let text = str::from_utf8(&bytes).unwrap();
     let field = |name: &str| {
         text.lines()
             .find_map(|line| line.strip_prefix(name))
@@ -139,7 +145,7 @@ fn configuration_requires_relay_node_and_survives_config_save() {
     ] {
         assert!(auth::Relay::new(node).is_err());
     }
-    let file: user::FileConfig = crate::store::parse_yaml("remote: { relay_node: relay }").unwrap();
+    let file: user::FileConfig = store::parse_yaml("remote: { relay_node: relay }").unwrap();
     assert_eq!(file.remote.relay_node.as_deref(), Some("relay"));
     let root = temp_dir("remote-config");
     let path = root.join("config.yaml");
@@ -270,48 +276,14 @@ async fn sse_snapshots_are_bounded_ordered_and_repeat_on_reconnect_without_repla
         );
         let (kind, snapshot) = event(&mut response.into_body().into_data_stream()).await;
         assert_eq!(kind, "snapshot");
-        assert_eq!(snapshot["truncated"], true);
-        let turns = snapshot["turns"].as_array().unwrap();
-        assert_eq!(turns.len(), 200);
-        assert_eq!(
-            turns[0],
-            json!({"id":"project:session:5","role":"agent","text":"turn 5"})
-        );
-        assert_eq!(turns[199]["text"], "turn 204");
+        assert_eq!(json_field(&snapshot, "/truncated"), true);
+        let turns = json_field(&snapshot, "/turns").as_array().unwrap();
+        assert_eq!(*turns, (5..205).map(|n| json!({"id":format!("project:session:{n}"),"role":"agent","text":format!("turn {n}")})).collect::<Vec<_>>());
     }
 }
 
 #[tokio::test]
 async fn sse_follows_partial_appends_status_changes_and_session_exit() {
-    let fixture = Fixture::new(205);
-    let mut body = fixture.events().await;
-    let (_, snapshot) = event(&mut body).await;
-    assert_eq!(snapshot["truncated"], true);
-    assert_eq!(event(&mut body).await.0, "status");
-    let line = message("new\ntext");
-    fixture.append(&line[..line.len() - 1]);
-    fixture.records.lock().unwrap()[0].waiting = false;
-    let (kind, status) = event(&mut body).await;
-    assert_eq!(kind, "status");
-    assert_eq!(status["waiting"], false);
-    fixture.append("\n");
-    let (kind, turn) = event(&mut body).await;
-    assert_eq!(kind, "turn");
-    assert_eq!(
-        turn,
-        json!({"id":"project:session:205","role":"agent","text":"new\ntext"})
-    );
-    fixture.records.lock().unwrap().clear();
-    assert!(
-        tokio::time::timeout(Duration::from_secs(3), body.next())
-            .await
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn unavailable_transcripts_can_appear_after_the_initial_snapshot() {
     let fixture = Fixture::new(0);
     fs::remove_file(fixture.root.join("001.jsonl")).unwrap();
     let mut body = fixture.events().await;
@@ -320,8 +292,28 @@ async fn unavailable_transcripts_can_appear_after_the_initial_snapshot() {
         json!({"turns":[],"truncated":false})
     );
     assert_eq!(event(&mut body).await.0, "status");
-    fs::write(fixture.root.join("001.jsonl"), message("ready")).unwrap();
-    assert_eq!(event(&mut body).await.1["text"], "ready");
+    atomic_write(fixture.root.join("001.jsonl"), message("ready")).unwrap();
+    assert_eq!(json_field(&event(&mut body).await.1, "/text"), "ready");
+    let line = message("new\ntext");
+    fixture.append(&line[..line.len() - 1]);
+    only_mut(&mut fixture.records.lock().unwrap()).waiting = false;
+    let (kind, status) = event(&mut body).await;
+    assert_eq!(kind, "status");
+    assert_eq!(json_field(&status, "/waiting"), false);
+    fixture.append("\n");
+    let (kind, turn) = event(&mut body).await;
+    assert_eq!(kind, "turn");
+    assert_eq!(
+        turn,
+        json!({"id":"project:session:1","role":"agent","text":"new\ntext"})
+    );
+    fixture.records.lock().unwrap().clear();
+    assert!(
+        time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -369,7 +361,7 @@ async fn mobile_sse_filters_snapshot_and_live_turns_before_delivery() {
         "content":[{"type":"toolCall","name":"Bash","arguments":{"command":"private command"}}]}})
     );
     let hidden = message("```diff\nprivate diff\n```");
-    fs::write(
+    atomic_write(
         &path,
         format!(
             "{tool}{hidden}{}",
@@ -379,13 +371,24 @@ async fn mobile_sse_filters_snapshot_and_live_turns_before_delivery() {
     .unwrap();
     let mut body = fixture.events().await;
     let (_, snapshot) = event(&mut body).await;
-    assert_eq!(snapshot["turns"].as_array().unwrap().len(), 1);
-    assert_eq!(snapshot["turns"][0]["text"], "Summary\n\n\n\nDone.");
+    assert_eq!(
+        snapshot
+            .pointer("/turns")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        json_field(&snapshot, "/turns/0/text"),
+        "Summary\n\n\n\nDone."
+    );
     assert_eq!(event(&mut body).await.0, "status");
     fixture.append(&format!("{tool}{hidden}{}", message("Live prose")));
     let (kind, turn) = event(&mut body).await;
     assert_eq!(kind, "turn");
-    assert_eq!(turn["text"], "Live prose");
+    assert_eq!(json_field(&turn, "/text"), "Live prose");
 }
 
 #[test]
@@ -395,7 +398,7 @@ fn worker_feed_streams_turns_without_lead_status_and_ends_when_gone() {
     let lookup: chat::Lookup = Arc::new(move || {
         Ok(records.lock().unwrap().first().map(|record| chat::Chat {
             id: "project/worker".into(),
-            transcript: crate::telemetry::transcript::TranscriptSource {
+            transcript: TranscriptSource {
                 link: record.meta.session_link.clone(),
                 workspace: record.meta.workspace.clone(),
                 needle: record.meta.brief.clone(),
@@ -410,7 +413,10 @@ fn worker_feed_streams_turns_without_lead_status_and_ends_when_gone() {
     observer.read_new(&source()).unwrap();
     let (mut feed, snapshot) = feed::Feed::open(lookup().unwrap().unwrap()).unwrap();
     assert_eq!(
-        serde_json::to_value(snapshot).unwrap()["turns"][0]["id"],
+        serde_json::to_value(snapshot)
+            .unwrap()
+            .pointer("/turns/0/id")
+            .unwrap(),
         "project/worker:0"
     );
     assert!(feed.poll(&lookup).unwrap().unwrap().is_empty());

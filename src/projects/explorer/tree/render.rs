@@ -1,8 +1,8 @@
 use super::{Item, Member, Project, Tree, spinner};
-use crate::{
-    projects::{panels::Range, rows::State, windows::WindowKind},
-    theme::{self, State as ThemeState, StyleKey, Theme},
-};
+use crate::projects::panels::Range;
+use crate::projects::rows::{self, State};
+use crate::projects::windows::WindowKind;
+use crate::theme::{self, State as ThemeState, StyleKey, Theme};
 use chrono::{DateTime, Utc};
 use ratatui::text::{Line, Span};
 
@@ -112,7 +112,8 @@ impl Tree {
                     .find(|window| matches!(window.kind, WindowKind::Lead))
                     .and_then(|lead| lead.segment.age.as_deref());
                 if let Some(runtime) = runtime {
-                    let padding = usize::from(width).saturating_sub(line.width() + runtime.len());
+                    let padding = usize::from(width)
+                        .saturating_sub(line.width().saturating_add(runtime.len()));
                     line.spans.push(Span::styled(
                         format!("{}{runtime}", " ".repeat(padding)),
                         theme.style(StyleKey::Muted),
@@ -175,9 +176,9 @@ impl Tree {
                             .tokens
                             .filter(|_| window.segment.state.is_some())
                         {
-                            let tokens = crate::projects::rows::abbreviate(tokens);
+                            let tokens = rows::abbreviate(tokens);
                             let padding = usize::from(width)
-                                .saturating_sub(line.width() + tokens.len())
+                                .saturating_sub(line.width().saturating_add(tokens.len()))
                                 .max(1);
                             line.spans.push(Span::styled(
                                 format!("{}{tokens}", " ".repeat(padding)),

@@ -1,4 +1,5 @@
 use super::{CUSTOM_URL, environment, manifest, support, terminal};
+use crate::common::{atomic_write, write_executable};
 use std::fs;
 
 #[test]
@@ -25,7 +26,11 @@ fn failed_custom_setup_can_retry_the_same_url() {
         };
         let steps = |optional| {
             let mut steps = CUSTOM_URL.to_vec();
-            steps[4].1 = optional;
+            steps
+                .iter_mut()
+                .find(|(prompt, _)| *prompt == "starter")
+                .unwrap()
+                .1 = optional;
             steps
         };
         let (output, text) = terminal(&env, &["start"], &steps(optional), |_| {});
@@ -37,19 +42,18 @@ fn failed_custom_setup_can_retry_the_same_url() {
         );
         // The repository fixes its empty body at a new commit; the operator enters the same URL.
         if failure == "empty body" {
-            fs::write(
+            atomic_write(
                 env.home.join("skill.md"),
                 "---\nname: custom\ndescription: Custom\n---\nCoordinate work.\n",
             )
             .unwrap();
             let git = env.bin.join("git");
-            fs::write(
+            write_executable(
                 &git,
-                fs::read_to_string(&git)
+                &fs::read_to_string(&git)
                     .unwrap()
                     .replace(&"a".repeat(40), &"b".repeat(40)),
-            )
-            .unwrap();
+            );
         }
         if failure == "custom fetch" {
             support::import_fixture(

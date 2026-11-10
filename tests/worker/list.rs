@@ -10,7 +10,7 @@ fn workers_prints_complete_json_for_readable_and_unreadable_workers() {
         Some("json"),
         b"working: first\ndone: complete\n",
     );
-    fs::write(
+    atomic_write(
         readable.join("checkin"),
         "deadline=2026-02-03T04:05:06Z\ndelay=300\nrecheck=backoff\narmed_len=0\n",
     )

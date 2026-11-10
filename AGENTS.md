@@ -31,15 +31,12 @@ code you changed, and say what printed.
 ## Fail loudly
 
 - No silent defaults on failure: propagate with `?` or fail fast.
-- A default is a decision. Make it at the parse boundary or as a named const, never inline at a
-  use site. A site that truly owns the decision takes
-  `#[expect(clippy::disallowed_methods, reason = "…")]`.
 - No catch-and-continue; invalid state stops.
 - No branches for impossible states; encode impossibility in types.
 
 ## Modularity
 
-- Source files stay under ~500 lines; split by responsibility, one module per job.
+- Split modules by responsibility, one job per module.
 - DRY by the rule of three; don't abstract at two occurrences.
 - Never copy-paste-tweak; extract a function or generic.
 - No pass-through functions unless they change visibility, satisfy a trait, or cross a module
@@ -59,11 +56,10 @@ code you changed, and say what printed.
 
 ## Lints
 
-Mechanically checkable rules live in `[lints.clippy]` in `Cargo.toml` and in `clippy.toml`, not in
-prose. The gate lints all targets. Suppress a lint with `#[expect(…, reason = "…")]`, not
-`#[allow]`. The one exception is test code, which allows `unwrap_used` and `expect_used` at the
-crate root; `tests/common` may use `#[allow(dead_code)]`, because each test binary uses a different
-subset of it.
+Mechanically checkable rules live in `[lints.clippy]` in `Cargo.toml`, `clippy.toml`, and
+`scripts/check-source-patterns.sh` / `scripts/check-source-size.py`. The gate lints all targets.
+Test code allows `unwrap_used` and `expect_used` at the crate root; `tests/common` may use
+`#[allow(dead_code)]`, because each test binary uses a different subset of it.
 
 ## Invariants
 

@@ -1,7 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::PathBuf;
+
 mod common;
 use common::*;
-use std::{fs, path::PathBuf};
 
 fn manifest(agent: &str) -> String {
     format!(
@@ -20,10 +23,10 @@ impl Setups {
         let directory = env.root.join("linked-setups");
         fs::create_dir_all(&directory).unwrap();
         fs::create_dir_all(env.home.join(".niles")).unwrap();
-        std::os::unix::fs::symlink(&directory, global.parent().unwrap()).unwrap();
+        symlink(&directory, global.parent().unwrap()).unwrap();
         let target = env.root.join("global.yaml");
-        fs::write(&target, manifest("codex:gpt-6.1-sol:medium")).unwrap();
-        std::os::unix::fs::symlink(target, &global).unwrap();
+        atomic_write(&target, manifest("codex:gpt-6.1-sol:medium")).unwrap();
+        symlink(target, &global).unwrap();
         Self { env, global }
     }
 }
@@ -60,7 +63,7 @@ fn flag_selection_overrides_a_malformed_unused_environment_value() {
     let setups = Setups::new("setup-flag");
     let path = setups.env.root.join(".niles/setups/tdd.yaml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, manifest("claude:haiku")).unwrap();
+    atomic_write(path, manifest("claude:haiku")).unwrap();
     let output = setups
         .env
         .niles(&setups.env.root, &["models", "--setup", "workspace:tdd"])
@@ -80,7 +83,7 @@ fn entry_to_spawn_keeps_qualified_selection_provenance_and_metadata_after_shadow
 fn assert_entry_setup(entry: &str) {
     let setups = Setups::new("setup-entry");
     let env = &setups.env;
-    fs::write(
+    atomic_write(
         &setups.global,
         format!(
             "entry: {entry}\nentry_agent: claude:sonnet:high\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{skills: [guide], always: [guide]}}\n"
@@ -100,7 +103,7 @@ fn assert_entry_setup(entry: &str) {
         "{manifest}",
     );
     let override_file = env.root.join("override.yaml");
-    fs::write(&override_file, manifest("claude:haiku")).unwrap();
+    atomic_write(&override_file, manifest("claude:haiku")).unwrap();
     write_executable(
         &env.bin.join("claude"),
         "#!/bin/sh\nprintf '%s' \"${NILES_SETUP-unset}\" > \"$NILES_TEST_CAPTURE\"\nmkdir -p \"$NILES_TEST_WORKSPACE/.niles/setups\"\ncp \"$NILES_TEST_OVERRIDE\" \"$NILES_TEST_WORKSPACE/.niles/setups/tdd.yaml\"\n\"$NILES_TEST_BINARY\" spawn selected --skill worker task\n",
@@ -121,13 +124,13 @@ fn assert_entry_setup(entry: &str) {
     assert!(stderr_of(&output).contains(&provenance));
     assert!(stdout_of(&output).contains(&provenance));
     let worker = read_json(state_dir(&env.root).join("worker/selected/meta.json"));
-    assert_eq!(
-        worker["setup"],
-        serde_json::json!({"name":"tdd","origin":"global"})
+    assert_fields(
+        &worker,
+        serde_json::json!({
+            "/setup":{"name":"tdd","origin":"global"}, "/agent":"claude:sonnet:high",
+            "/menu":["guide"], "/always":["guide"],
+        }),
     );
-    assert_eq!(worker["agent"], "claude:sonnet:high");
-    assert_eq!(worker["menu"], serde_json::json!(["guide"]));
-    assert_eq!(worker["always"], serde_json::json!(["guide"]));
     let worker_dir = state_dir(&env.root).join("worker/selected");
     assert!(
         fs::read_to_string(worker_dir.join("brief.md"))
@@ -144,8 +147,11 @@ fn assert_entry_setup(entry: &str) {
         .unwrap()
         .path()
         .join("session.json");
-    assert_eq!(read_json(&session)["setup"], worker["setup"]);
-    assert_eq!(read_json(&session)["entry_skill"], entry);
+    assert_eq!(
+        json_field(&read_json(&session), "/setup"),
+        json_field(&worker, "/setup")
+    );
+    assert_eq!(json_field(&read_json(&session), "/entry_skill"), entry);
     assert_eq!(
         fs::read_to_string(session.parent().unwrap().join("lead.md")).unwrap(),
         setups.global.to_str().unwrap()

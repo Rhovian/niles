@@ -41,7 +41,7 @@ fn worker_close_tears_down_worker() {
         None,
         b"status",
     );
-    fs::write(worker_dir.join("report.md"), "durable report\n").unwrap();
+    atomic_write(worker_dir.join("report.md"), "durable report\n").unwrap();
 
     let close = env
         .niles(&env.root, &["close", "auth-fix"])

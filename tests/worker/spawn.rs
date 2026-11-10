@@ -5,7 +5,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
     let env = TestEnv::with_manifest("niles-worker-groups", "claude");
     let path = state_dir(&env.root).join("manifest.yaml");
     let body = "entry: lead\nentry_agent: codex:gpt-6-sol:medium\ntiers:\n  standard: {primary: codex:gpt-6-sol:medium, secondaries: [claude:haiku]}\n  economy: {primary: claude:haiku, secondaries: []}\n";
-    fs::write(&path, body).unwrap();
+    atomic_write(&path, body).unwrap();
     for (id, flags, agent) in [
         ("default", &[][..], "codex:gpt-6-sol:medium"),
         ("economy", &["--tier", "economy"], "claude:haiku"),
@@ -65,7 +65,7 @@ fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
     let workers = env.run(&["workers"]);
     assert_command_success("workers with tree", &workers);
     let listing: serde_json::Value = serde_json::from_slice(&workers.stdout).unwrap();
-    assert_eq!(listing["workers"][0]["tree"], tree_arg);
+    assert_eq!(json_field(&listing, "/workers/0/tree"), tree_arg);
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
 #[test]
 fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     let env = TestEnv::with_manifest("niles-worker-tier-test", "codex:gpt-5.7:xhigh");
-    fs::write(
+    atomic_write(
         env.root.join("niles.yaml"),
         "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }\n",
     )
@@ -114,7 +114,14 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
     assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
     assert!(codex_meta.contains(r#""skill": "research""#));
-    chrono::DateTime::parse_from_rfc3339(codex_meta_json["created_at"].as_str().unwrap()).unwrap();
+    chrono::DateTime::parse_from_rfc3339(
+        codex_meta_json
+            .pointer("/created_at")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     assert!(codex_meta.contains(r#""agent_family": "codex""#));
     assert!(codex_meta.contains(r#""model": "gpt-5.7""#));
     assert!(codex_meta.contains(r#""effort": "xhigh""#));
@@ -149,14 +156,14 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
             "bad-worker",
             "research",
             &["--agent", "claude:opus:turbo"],
-            "unsupported claude effort `turbo`",
+            "invalid claude effort `turbo`",
             true,
         ),
         (
             "future-worker",
             "research",
             &["--agent", "codex:gpt-5.7:xhigh"],
-            "unsupported codex model `gpt-5.7`",
+            "invalid codex model `gpt-5.7`",
             true,
         ),
         (

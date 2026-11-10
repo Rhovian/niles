@@ -1,16 +1,16 @@
-use std::collections::{BTreeSet, HashSet};
-use std::time::Duration;
-
-use crate::theme::Theme;
-use chrono::{DateTime, Utc};
-
+pub(super) use crate::projects::snapshot::Project;
 use crate::projects::{
     panels::{Panel, Range},
     windows::{AgentWindow, WindowKind},
 };
-use crate::skills::SkillName;
 
-pub(super) use crate::projects::snapshot::Project;
+use crate::selection::cycle;
+use crate::skills::SkillName;
+use crate::theme::Theme;
+use chrono::{DateTime, Utc};
+use std::collections::{BTreeSet, HashSet};
+use std::mem;
+use std::time::Duration;
 
 impl Project {
     fn members<'a>(&'a self, skill: &'a SkillName) -> impl Iterator<Item = Item<'a>> {
@@ -45,7 +45,10 @@ impl Project {
 pub(super) const SPINNER_FRAME: Duration = Duration::from_millis(120);
 
 fn spinner(now: DateTime<Utc>, theme: &Theme) -> &str {
-    theme.spinner(now.timestamp_millis() / SPINNER_FRAME.as_millis() as i64)
+    theme.spinner(
+        now.timestamp_millis()
+            .div_euclid(i64::from(SPINNER_FRAME.subsec_millis())),
+    )
 }
 
 /// A panel's row; CONFIG and TELEMETRY open their first child.
@@ -150,7 +153,7 @@ pub(super) struct Tree {
 
 impl Tree {
     pub fn replace(&mut self, projects: Vec<Project>) {
-        let old = std::mem::replace(&mut self.projects, projects);
+        let old = mem::replace(&mut self.projects, projects);
         let selected = self.items_of(&old).get(self.cursor).map(|item| item.key());
         let items = self.items();
         self.cursor = match selected.and_then(|key| items.iter().position(|item| item.key() == key))
@@ -217,8 +220,13 @@ impl Tree {
     }
 
     pub fn down(&mut self) {
-        if self.cursor + 1 < self.items().len() {
-            self.cursor += 1;
+        if let Some(next) = self
+            .items()
+            .iter()
+            .enumerate()
+            .find_map(|(index, _)| (index > self.cursor).then_some(index))
+        {
+            self.cursor = next;
         }
     }
 
@@ -287,7 +295,7 @@ impl Tree {
             .map(|p| p.row.entry.name.as_str())
             .collect();
         let index = projects.iter().position(|&p| Some(p) == current);
-        let Some(project) = wrapped(&projects, index, steps).map(|p| (*p).to_owned()) else {
+        let Some(project) = cycle(&projects, index, steps).map(|p| (*p).to_owned()) else {
             return false;
         };
         self.select(Key::Project(&project));
@@ -317,7 +325,7 @@ impl Tree {
         let index = windows.iter().position(|&window| {
             current == Some(window.map_or(Key::Project(name), |(w, _)| Key::Window(name, w)))
         });
-        let Some(window) = wrapped(&windows, index, steps) else {
+        let Some(window) = cycle(&windows, index, steps) else {
             return false;
         };
         let project = name.to_owned();
@@ -374,16 +382,6 @@ impl Tree {
             | Item::Range(_) => {}
         }
     }
-}
-
-/// The item `steps` along from `index`, wrapping at the ends; the first when there is no `index`.
-fn wrapped<T>(items: &[T], index: Option<usize>, steps: isize) -> Option<&T> {
-    let index = index.map_or(0, |index| {
-        (index.cast_signed() + steps)
-            .rem_euclid(items.len().cast_signed())
-            .cast_unsigned()
-    });
-    items.get(index)
 }
 
 mod render;

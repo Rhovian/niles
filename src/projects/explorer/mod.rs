@@ -1,46 +1,33 @@
-mod collection;
-mod scroll;
-mod tree;
-
-use std::{
-    env, fs,
-    os::unix::process::CommandExt,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::mpsc::TryRecvError,
-    time::{Duration, Instant, SystemTime},
-};
-
+use self::collection::collector;
+use self::tree::{Item, Member, Tree};
+use super::panels::{self, Panel};
+use super::register;
+use super::registry::{self, ProjectName};
+use super::rows::State;
+use super::windows::{LEAD_WINDOW, WindowKind};
+use crate::config::user::UserConfig;
+use crate::theme::{StyleKey, Theme};
+use crate::tmux::{self, TmuxTarget, WindowTarget};
+use crate::util::current_dir_utf8;
 use anyhow::{Context, Result, bail};
 use camino::Utf8PathBuf;
 use chrono::Utc;
-use ratatui::{
-    DefaultTerminal, Frame,
-    crossterm::{
-        event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode},
-        execute,
-    },
-    layout::{Constraint, Layout},
-    text::{Line, Text},
-    widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
-};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode};
+use ratatui::crossterm::execute;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::{Line, Text};
+use ratatui::widgets::{Block, Borders, List, ListState, Paragraph, Wrap};
+use ratatui::{DefaultTerminal, Frame};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, Instant, SystemTime};
+use std::{env, fs, io};
 
-use self::{
-    collection::collector,
-    tree::{Item, Member, Tree},
-};
-use super::{
-    panels::{self, Panel},
-    register,
-    registry::{self, ProjectName},
-    rows::State,
-    windows::{LEAD_WINDOW, WindowKind},
-};
-use crate::{
-    theme::{StyleKey, Theme},
-    tmux::{self, TmuxTarget, WindowTarget},
-    util::current_dir_utf8,
-};
+mod collection;
+mod scroll;
+mod tree;
 
 const REFRESH: Duration = Duration::from_secs(2);
 const KEYS: [(&str, &str); 4] = [
@@ -57,7 +44,7 @@ fn key_hints(theme: &Theme) -> Line<'_> {
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
-    let config = crate::config::user::UserConfig::load()?;
+    let config = UserConfig::load()?;
     let cwd = current_dir_utf8()?;
     let theme = Theme::load()?;
     let target = super::onboard::first_run(&cwd)?
@@ -90,7 +77,7 @@ pub fn run() -> Result<()> {
         cwd: current_dir_utf8()?,
         tree: Tree::default(),
         list_state: ListState::default(),
-        list_area: ratatui::layout::Rect::default(),
+        list_area: Rect::default(),
         collected: Instant::now(),
         theme: Theme::load()?,
         mode: Mode::Browse,
@@ -101,10 +88,10 @@ pub fn run() -> Result<()> {
     };
     explorer.refresh();
     let mut terminal = ratatui::init();
-    let result = execute!(std::io::stdout(), EnableMouseCapture)
+    let result = execute!(io::stdout(), EnableMouseCapture)
         .map_err(anyhow::Error::from)
         .and_then(|()| explorer.run(&mut terminal));
-    let mouse_restored = execute!(std::io::stdout(), DisableMouseCapture);
+    let mouse_restored = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result?;
     mouse_restored?;
@@ -144,7 +131,7 @@ struct Explorer {
     cwd: Utf8PathBuf,
     tree: Tree,
     list_state: ListState,
-    list_area: ratatui::layout::Rect,
+    list_area: Rect,
     /// When the latest refresh began; older results must not undo its data or error.
     collected: Instant,
     theme: Theme,

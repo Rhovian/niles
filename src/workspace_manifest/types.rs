@@ -1,13 +1,14 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    time::Duration,
-};
-
+use crate::agents::roster::Tier;
+use crate::agents::{self, AgentSpec, ModelRoster};
+use crate::duration;
 use crate::skills::SkillName;
+#[cfg(test)]
+use crate::store::parse_yaml;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-
-use crate::agents::{AgentSpec, ModelRoster, roster::Tier};
+use std::collections::{BTreeMap, HashSet};
+use std::time::Duration;
+use std::{iter, mem};
 
 /// Skill bindings and workspace-wide dispatch settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +116,7 @@ impl TryFrom<RawGates<Duration>> for Gates {
 impl TryFrom<RawGates<String>> for GateConfig {
     type Error = anyhow::Error;
     fn try_from(raw: RawGates<String>) -> Result<Self> {
-        raw.parse(|value| crate::duration::parse_duration(&value))
+        raw.parse(|value| duration::parse_duration(&value))
             .map(Self)
     }
 }
@@ -145,10 +146,10 @@ impl<T> RawGates<T> {
         let mut names = HashSet::new();
         let mut total = Duration::ZERO;
         let mut post = Vec::new();
-        for (index, gate) in self.post.into_iter().enumerate() {
+        for (index, gate) in (1usize..).zip(self.post) {
             let name = match gate.name {
                 Some(name) => name,
-                None => format!("run-{}", index + 1).parse()?,
+                None => format!("run-{index}").parse()?,
             };
             ensure!(names.insert(name.clone()), "duplicate gate name: {name}");
             ensure!(
@@ -241,7 +242,7 @@ impl Tiers {
         {
             let mut seen = vec![exact_spec(&binding.primary, models)?];
             let mut secondaries = Vec::new();
-            for agent in std::mem::take(&mut binding.secondaries) {
+            for agent in mem::take(&mut binding.secondaries) {
                 let spec = exact_spec(&agent, models)?;
                 if !seen.contains(&spec) {
                     seen.push(spec);
@@ -280,7 +281,7 @@ impl Tiers {
     /// passes through.
     pub fn admit(&self, agent: &str, models: &ModelRoster) -> Result<()> {
         let requested = AgentSpec::parse(agent, models)?;
-        crate::agents::validate_model(&requested, models)?;
+        agents::validate_model(&requested, models)?;
         ensure!(
             self.allows(&requested, models)?,
             "agent {agent} is not listed in the manifest tiers; allowed agents: {}",
@@ -311,8 +312,7 @@ impl Tiers {
 
     pub fn agents(&self) -> impl Iterator<Item = &str> {
         self.iter().flat_map(|(_, tier)| {
-            std::iter::once(tier.primary.as_str())
-                .chain(tier.secondaries.iter().map(String::as_str))
+            iter::once(tier.primary.as_str()).chain(tier.secondaries.iter().map(String::as_str))
         })
     }
 }
@@ -329,39 +329,39 @@ pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec>
     {
         bail!("manifest agent `{agent}` must name an exact effort");
     }
-    crate::agents::validate_model(&spec, models)?;
+    agents::validate_model(&spec, models)?;
     Ok(spec)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store;
     use crate::test_support::assert_err_contains;
 
     #[test]
     fn rounds_are_bounded_at_yaml_and_json_parse_boundaries() {
         for value in [0, 11, 256, -1] {
             let body = format!("rounds: {value}");
-            assert!(
-                crate::store::parse_yaml::<GateConfig>(&body).is_err(),
-                "{body}"
-            );
+            assert!(parse_yaml::<GateConfig>(&body).is_err(), "{body}");
             assert!(serde_json::from_value::<Gates>(serde_json::json!({"rounds": value})).is_err());
         }
         for value in [1, 10] {
-            let gates: GateConfig = crate::store::parse_yaml(&format!("rounds: {value}")).unwrap();
+            let gates: GateConfig = store::parse_yaml(&format!("rounds: {value}")).unwrap();
             assert_eq!(u8::from(gates.0.rounds), value);
         }
-        let gates: GateConfig = crate::store::parse_yaml("{}").unwrap();
+        let gates: GateConfig = store::parse_yaml("{}").unwrap();
         assert_eq!(u8::from(gates.0.rounds), 1);
-        assert!(crate::store::parse_yaml::<GateConfig>("typo: 1").is_err());
+        assert!(parse_yaml::<GateConfig>("typo: 1").is_err());
     }
 
     #[test]
     fn gates_normalize_and_reject_invalid_lists() {
-        let gates: GateConfig =
-            crate::store::parse_yaml("post: [{run: [true]}, {run: [false]}]").unwrap();
-        assert_eq!(gates.0.post[0].timeout, Duration::from_secs(300));
+        let gates: GateConfig = store::parse_yaml("post: [{run: [true]}, {run: [false]}]").unwrap();
+        assert_eq!(
+            gates.0.post.first().unwrap().timeout,
+            Duration::from_secs(300)
+        );
         let overflow = serde_json::json!({"post": [{"run": ["true"]}, {"run": ["false"], "timeout": {"secs": u64::MAX, "nanos": 0}}]});
         assert_err_contains(
             serde_json::from_value::<Gates>(overflow).map_err(Into::into),
@@ -377,14 +377,9 @@ mod tests {
             "post: [{agent: reviewer}]",
             "post: [{run: [true], typo: value}]",
         ] {
-            assert!(
-                crate::store::parse_yaml::<GateConfig>(body).is_err(),
-                "{body}"
-            );
+            assert!(parse_yaml::<GateConfig>(body).is_err(), "{body}");
         }
-        assert!(
-            crate::store::parse_yaml::<GateConfig>("post: [{run: [true], timeout: 10m}]").is_ok()
-        );
+        assert!(parse_yaml::<GateConfig>("post: [{run: [true], timeout: 10m}]").is_ok());
     }
 
     #[test]
@@ -392,7 +387,7 @@ mod tests {
         let message = "gate timeout must be greater than zero";
         for timeout in ["0", "0ms"] {
             let body = format!("post: [{{run: [true], timeout: {timeout}}}]");
-            assert_err_contains(crate::store::parse_yaml::<GateConfig>(&body), message);
+            assert_err_contains(parse_yaml::<GateConfig>(&body), message);
             let value = serde_json::json!({"post": [{"run": ["true"], "timeout": timeout}]});
             let error = serde_json::from_value::<GateConfig>(value).unwrap_err();
             assert!(error.to_string().contains(message));

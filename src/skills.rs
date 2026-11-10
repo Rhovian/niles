@@ -1,7 +1,7 @@
-use std::{fmt, str::FromStr};
-
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +112,7 @@ pub(crate) fn display_description(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::Path};
 
     #[test]
     fn origin_spelling_round_trips_through_serde_and_selection_parsing() {
@@ -141,8 +142,8 @@ mod tests {
 
     #[test]
     fn orchestration_does_not_name_workspace_skills() {
-        fn scan(dir: &std::path::Path) {
-            for entry in std::fs::read_dir(dir).unwrap() {
+        fn scan(dir: &Path) {
+            for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 let name = path.file_name().unwrap().to_string_lossy();
                 if name == "tests"
@@ -160,7 +161,7 @@ mod tests {
                 if path.extension().is_none_or(|ext| ext != "rs") {
                     continue;
                 }
-                let source = std::fs::read_to_string(&path).unwrap();
+                let source = fs::read_to_string(&path).unwrap();
                 for line in source.split("\nmod tests {").next().unwrap().lines() {
                     // A worker directory is an identity, not skill selection.
                     if path.ends_with("store/paths.rs") && line.contains("const WORKERS_DIR") {
@@ -173,6 +174,6 @@ mod tests {
                 }
             }
         }
-        scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
     }
 }

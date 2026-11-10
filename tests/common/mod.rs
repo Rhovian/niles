@@ -2,17 +2,20 @@
     dead_code,
     reason = "each integration-test binary uses a different subset of these helpers"
 )]
-
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Output},
-};
+use std::collections::HashSet;
+use std::io::Write;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::{env, fs, thread};
 
 #[path = "../../src/test_support/process.rs"]
 mod process;
 pub use process::*;
+
+#[path = "../../src/store/publication.rs"]
+mod publication;
+pub(crate) use publication::atomic_write;
 
 const TEST_ENV_MARKER: &str = ".niles-test-env";
 
@@ -106,13 +109,13 @@ impl TestEnv {
     }
 
     pub fn with_tmux(prefix: &str, tmux: &str) -> Self {
-        let root = fs::canonicalize(temp_workspace(prefix)).unwrap();
+        let root = temp_workspace(prefix);
         let home = root.join("home");
         let bin = root.join("bin");
         let tmux_log = root.join("tmux.log");
         fs::create_dir_all(&home).unwrap();
         copy_skills(&home.join(".niles"));
-        fs::write(root.join(TEST_ENV_MARKER), "").unwrap();
+        atomic_write(root.join(TEST_ENV_MARKER), "").unwrap();
         fs::create_dir_all(&bin).unwrap();
         write_executable(&bin.join("tmux"), tmux);
         for agent in ["claude", "codex"] {
@@ -160,8 +163,8 @@ impl TestEnv {
 
 impl Drop for TestEnv {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            let _ = fs::remove_dir_all(&self.root);
+        if !thread::panicking() {
+            fs::remove_dir_all(&self.root).unwrap();
         }
     }
 }
@@ -211,7 +214,7 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
 pub fn edit_manifest(ws: &Path, edit: impl FnOnce(String) -> String) -> String {
     let path = state_dir(ws).join("manifest.yaml");
     let original = fs::read_to_string(&path).unwrap();
-    fs::write(path, edit(original.clone())).unwrap();
+    atomic_write(path, edit(original.clone())).unwrap();
     original
 }
 
@@ -219,13 +222,13 @@ pub fn edit_json(path: impl AsRef<Path>, edit: impl FnOnce(&mut serde_json::Valu
     let path = path.as_ref();
     let mut value = read_json(path);
     edit(&mut value);
-    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    atomic_write(path, serde_json::to_vec(&value).unwrap()).unwrap();
 }
 
 pub fn register_project(env: &TestEnv, name: &str, target: &Path) {
     let projects = env.home.join(".niles/projects");
     fs::create_dir_all(&projects).unwrap();
-    std::os::unix::fs::symlink(target, projects.join(name)).unwrap();
+    symlink(target, projects.join(name)).unwrap();
 }
 
 pub fn write_skill(root: &Path, name: &str, description: &str, body: &str) -> PathBuf {
@@ -236,7 +239,7 @@ pub fn write_skill(root: &Path, name: &str, description: &str, body: &str) -> Pa
 
 pub fn write_skill_document(path: &Path, name: &str, description: &str, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
+    atomic_write(
         path,
         format!(
             "---\nname: {name}\ndescription: {}\n---\n{body}",
@@ -250,7 +253,7 @@ pub fn path_with_bin(bin: &Path) -> String {
     format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").expect("PATH must be set in the test environment")
+        env::var("PATH").expect("PATH must be set in the test environment")
     )
 }
 
@@ -350,15 +353,15 @@ pub fn write_manifest<'a>(
             _ => *agent,
         })
         .collect::<Vec<_>>();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     agents.retain(|agent| seen.insert(*agent));
-    let primary = agents[0];
+    let (primary, secondaries) = agents.split_first().unwrap();
     let composition = bindings
         .iter()
         .map(|(skill, _)| format!("{skill}: {{}}\n"))
         .collect::<String>();
-    fs::write(state.join("manifest.yaml"), format!(
-        "entry: lead\nentry_agent: {primary}\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", agents[1..].join(", ")
+    atomic_write(state.join("manifest.yaml"), format!(
+        "entry: lead\nentry_agent: {primary}\ntiers:\n  standard: {{primary: {primary}, secondaries: [{}]}}\n{composition}", secondaries.join(", ")
     )).unwrap();
 }
 
@@ -373,31 +376,22 @@ pub fn write_worker(
     fs::create_dir_all(&worker_dir).unwrap();
     let brief = worker_dir.join("brief.md");
     let launch = worker_dir.join("launch.sh");
-    fs::write(&brief, "brief").unwrap();
-    fs::write(&launch, "launch").unwrap();
-    fs::write(worker_dir.join("status.log"), status).unwrap();
-    let task_label = match task_label {
-        Some(label) => format!(",\n  \"task_label\": \"{label}\""),
-        None => String::new(),
-    };
-    fs::write(
+    atomic_write(&brief, "brief").unwrap();
+    atomic_write(&launch, "launch").unwrap();
+    atomic_write(worker_dir.join("status.log"), status).unwrap();
+    let mut meta = serde_json::json!({
+        "id": id, "skill": "worker", "agent": "codex",
+        "created_at": "2026-01-02T03:04:05Z", "project": workspace,
+        "window": window, "brief": brief, "launch": launch,
+    });
+    if let Some(label) = task_label {
+        meta.as_object_mut()
+            .unwrap()
+            .insert("task_label".into(), label.into());
+    }
+    atomic_write(
         worker_dir.join("meta.json"),
-        format!(
-            r#"{{
-  "id": "{id}",
-  "skill": "worker",
-  "agent": "codex",
-  "created_at": "2026-01-02T03:04:05Z",
-  "project": "{}",
-  "window": "{window}",
-  "brief": "{}",
-  "launch": "{}"{task_label}
-}}
-"#,
-            workspace.display(),
-            brief.display(),
-            launch.display(),
-        ),
+        serde_json::to_vec_pretty(&meta).unwrap(),
     )
     .unwrap();
     worker_dir
@@ -482,4 +476,13 @@ pub fn reserve_project(home: &Path, workspace: &Path) -> fs::File {
     let file = fs::File::create(root.join(format!("{:x}", Sha256::digest(key)))).unwrap();
     file.lock().unwrap();
     file
+}
+
+include!("../../src/test_support/assertions.rs");
+include!("../../src/test_support/json.rs");
+
+pub fn assert_fields(actual: &serde_json::Value, expected: serde_json::Value) {
+    for (path, value) in expected.as_object().unwrap() {
+        assert_eq!(actual.pointer(path), Some(value), "{path}");
+    }
 }

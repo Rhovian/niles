@@ -1,12 +1,14 @@
-use std::{fs, os::unix::fs::symlink};
-
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::store::{Scope, paths};
+use crate::tmux::{self, SessionName};
+use crate::util::{self, read_dir_utf8_paths, utf8_path};
+use crate::worker;
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
-
-use crate::{
-    tmux::SessionName,
-    util::{read_dir_utf8_paths, utf8_path},
-};
+use std::fs;
+use std::io::{self, Error};
+use std::os::unix::fs::symlink;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProjectName(String);
@@ -40,14 +42,14 @@ impl Entry {
     pub(super) fn has_live_session(&self) -> Result<bool> {
         let session = self.name.session()?;
         Ok(
-            crate::tmux::project_session(&session)?.as_deref() == Some(self.path.as_str())
-                && crate::tmux::lead_running(&session)?,
+            tmux::project_session(&session)?.as_deref() == Some(self.path.as_str())
+                && tmux::lead_running(&session)?,
         )
     }
 }
 
 pub(super) fn directory() -> Result<Utf8PathBuf> {
-    Ok(crate::util::home_dir()?.join(".niles/projects"))
+    Ok(util::home_dir()?.join(".niles/projects"))
 }
 
 pub(super) fn entries() -> Result<Vec<Entry>> {
@@ -68,8 +70,8 @@ pub(super) fn entries() -> Result<Vec<Entry>> {
         .collect()
 }
 
-pub(super) fn register(name: &ProjectName, path: &Utf8Path) -> std::io::Result<()> {
-    let dir = directory().map_err(std::io::Error::other)?;
+pub(super) fn register(name: &ProjectName, path: &Utf8Path) -> io::Result<()> {
+    let dir = directory().map_err(Error::other)?;
     fs::create_dir_all(&dir)?;
     symlink(path, dir.join(name.as_str()))
 }
@@ -97,19 +99,19 @@ pub(super) fn deregister(entry: &Entry) -> Result<()> {
     {
         bail!("unsafe project path: {}", entry.path);
     }
-    let _lock = crate::store::Scope::Deregister(&entry.path).reserve()?;
-    if !crate::worker::live_worker_locations(&entry.path)?.is_empty() {
+    let _lock = Scope::Deregister(&entry.path).reserve()?;
+    if !worker::live_worker_locations(&entry.path)?.is_empty() {
         bail!(
             "cannot deregister {}: close its live workers first",
             entry.name.as_str()
         );
     }
     let session = entry.name.session()?;
-    if crate::tmux::project_session(&session)?.as_deref() == Some(entry.path.as_str()) {
-        crate::tmux::kill_session(&session)?;
+    if tmux::project_session(&session)?.as_deref() == Some(entry.path.as_str()) {
+        tmux::kill_session(&session)?;
     }
-    crate::worker::remove_project_worktrees(&entry.path)?;
-    crate::util::remove_dir_all_if_exists(&crate::store::paths::project_dir(&entry.path)?)?;
+    worker::remove_project_worktrees(&entry.path)?;
+    util::remove_dir_all_if_exists(&paths::project_dir(&entry.path)?)?;
     fs::remove_file(&link).with_context(|| format!("remove registration {link}"))?;
     Ok(())
 }
@@ -117,6 +119,8 @@ pub(super) fn deregister(entry: &Entry) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{test_support, util};
+
     #[test]
     fn names_fit_tmux_sessions() {
         assert!(ProjectName::parse("api_2-prod").is_ok());
@@ -132,7 +136,7 @@ mod tests {
         };
         let project = temp_dir("deregister");
         let git = |args: &[&str]| {
-            let output = crate::util::git_command()
+            let output = util::git_command()
                 .current_dir(&project)
                 .args(args)
                 .output()
@@ -155,7 +159,7 @@ mod tests {
             "-m",
             "initial",
         ]);
-        let trees = crate::util::home_dir()
+        let trees = util::home_dir()
             .unwrap()
             .join(".niles/trees")
             .join(project.strip_prefix("/").unwrap());
@@ -163,7 +167,7 @@ mod tests {
         let external = temp_test_path("external-tree");
         git(&["worktree", "add", "-b", "managed", tree.as_str()]);
         git(&["worktree", "add", "-b", "external", external.as_str()]);
-        fs::write(tree.join("dirty"), "uncommitted").unwrap();
+        atomic_write(tree.join("dirty"), "uncommitted").unwrap();
         let name = ProjectName::parse(project.file_name().unwrap()).unwrap();
         register(&name, &project).unwrap();
         let entry = Entry {
@@ -196,7 +200,7 @@ mod tests {
 
     #[test]
     fn deregister_missing_project_and_refuse_changed_registration() {
-        let path = crate::test_support::temp_test_path("missing-project");
+        let path = test_support::temp_test_path("missing-project");
         let name = ProjectName::parse(path.file_name().unwrap()).unwrap();
         register(&name, &path).unwrap();
         let mut entry = Entry { name, path };

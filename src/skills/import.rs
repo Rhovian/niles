@@ -1,11 +1,10 @@
-use super::{
-    Origin, files, global_dir,
-    reference::{GithubRef, PinnedRef},
-    resolve,
-};
+use super::reference::{GithubRef, PinnedRef};
+use super::{Origin, files, global_dir, resolve};
+use crate::util;
 use anyhow::{Context, Result, ensure};
 use camino::Utf8PathBuf;
-use std::{fs, io::Write};
+use std::fs;
+use std::io::Write;
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum SkillsCommand {
@@ -42,7 +41,7 @@ pub(crate) fn import(
     let home = global_dir()?;
     let root = match origin {
         Origin::Global => home.clone(),
-        Origin::Workspace => crate::util::current_dir_utf8()?.join(".niles"),
+        Origin::Workspace => util::current_dir_utf8()?.join(".niles"),
     };
     let dir = root.join("skills").join(reference.name.as_str());
     let markdown = dir.join("SKILL.md");

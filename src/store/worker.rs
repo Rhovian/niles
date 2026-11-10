@@ -1,9 +1,9 @@
+use super::paths::{ARCHIVE_DIR, workers_dir};
+#[cfg(test)]
+use crate::store::atomic_write;
+use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-
-use crate::util::read_dir_utf8_paths;
-
-use super::paths::{ARCHIVE_DIR, workers_dir};
 
 pub(crate) fn worker_location(workspace: &Utf8Path, worker: &str) -> Result<Option<Utf8PathBuf>> {
     let worker_dir = workers_dir(workspace)?.join(worker);
@@ -30,9 +30,8 @@ pub(crate) struct WorkerListEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{self, temp_test_path};
     use std::fs;
-
-    use crate::test_support::temp_test_path;
 
     #[test]
     fn named_worker_resolution_uses_local_directory_only() {
@@ -42,7 +41,7 @@ mod tests {
         fs::create_dir_all(&local_workers_dir).unwrap();
 
         let worker = "auth-fix";
-        fs::write(local_workers_dir.join("auth-fix.json"), "{}").unwrap();
+        atomic_write(local_workers_dir.join("auth-fix.json"), "{}").unwrap();
         assert!(worker_location(&workspace, worker).unwrap().is_none());
 
         let worker_dir = local_workers_dir.join(worker);
@@ -54,7 +53,7 @@ mod tests {
 
         fs::remove_dir_all(&worker_dir).unwrap();
         assert!(worker_location(&workspace, worker).unwrap().is_none());
-        crate::test_support::remove_workspace(&workspace).unwrap();
+        test_support::remove_workspace(&workspace).unwrap();
     }
 
     #[test]
@@ -63,7 +62,7 @@ mod tests {
         let workspace = root.join("workspace");
         let local_workers_dir = workers_dir(&workspace).unwrap();
         fs::create_dir_all(&local_workers_dir).unwrap();
-        fs::write(local_workers_dir.join("leftover.json"), "{}").unwrap();
+        atomic_write(local_workers_dir.join("leftover.json"), "{}").unwrap();
         fs::create_dir_all(local_workers_dir.join("dir-worker")).unwrap();
         fs::create_dir_all(local_workers_dir.join(ARCHIVE_DIR)).unwrap();
 
@@ -74,6 +73,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, vec!["dir-worker"]);
-        crate::test_support::remove_workspace(&workspace).unwrap();
+        test_support::remove_workspace(&workspace).unwrap();
     }
 }

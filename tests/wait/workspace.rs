@@ -1,4 +1,5 @@
 use super::support::*;
+use std::os::unix::fs::symlink;
 
 #[test]
 fn pending_reports_are_one_immediate_batch_with_one_line_per_worker() {
@@ -8,7 +9,7 @@ fn pending_reports_are_one_immediate_batch_with_one_line_per_worker() {
     let quiet = worker_with_status(&workspace, "quiet", b"working: busy\n");
     let closed = worker_with_status(&workspace, "closed", b"closed: operator closed\n");
     fs::create_dir_all(state_dir(&workspace).join("worker/leftover")).unwrap();
-    fs::write(
+    atomic_write(
         state_dir(&workspace).join("worker/leftover/status.log"),
         b"done: ignored\n",
     )
@@ -84,7 +85,10 @@ fn stopped_stale_wait_cannot_swallow_the_new_waits_report() {
         .unwrap();
     gate.lock().unwrap();
     unsafe {
-        assert_eq!(libc::kill(old.id() as i32, libc::SIGSTOP), 0);
+        assert_eq!(
+            libc::kill(i32::try_from(old.id()).unwrap(), libc::SIGSTOP),
+            0
+        );
     }
     drop(gate);
     append_status(&dir.join("status.log"), b"done: newest\n");
@@ -92,7 +96,10 @@ fn stopped_stale_wait_cannot_swallow_the_new_waits_report() {
     let presence = fs::File::open(state_dir(&workspace).join("worker/wait.running")).unwrap();
     let presence_released = presence.try_lock().is_ok();
     unsafe {
-        assert_eq!(libc::kill(old.id() as i32, libc::SIGCONT), 0);
+        assert_eq!(
+            libc::kill(i32::try_from(old.id()).unwrap(), libc::SIGCONT),
+            0
+        );
     }
     assert!(
         presence_released,
@@ -146,13 +153,13 @@ fn workspace_lock_symlinks_are_refused_and_old_cli_forms_are_rejected() {
         let workspace = temp_workspace("niles-workspace-symlink");
         fs::create_dir_all(state_dir(&workspace).join("worker")).unwrap();
         let outside = workspace.join("outside");
-        fs::write(&outside, "untouched").unwrap();
+        atomic_write(&outside, "untouched").unwrap();
         let dir = if name == "status.cursor" {
             worker_with_status(&workspace, "auth-fix", b"done: ready\n")
         } else {
             state_dir(&workspace).join("worker")
         };
-        std::os::unix::fs::symlink(&outside, dir.join(name)).unwrap();
+        symlink(&outside, dir.join(name)).unwrap();
         let output = run_wait(&workspace, &["--timeout", "0"]);
         assert!(!output.status.success());
         assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");

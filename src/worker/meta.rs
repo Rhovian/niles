@@ -1,26 +1,30 @@
+use crate::skills::SkillName;
+use crate::skills::reference::PinnedRef;
+use crate::store;
+use crate::telemetry::SessionLink;
+use crate::workspace_manifest::Gates;
+use crate::workspace_manifest::setup::Setup;
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-use crate::{store, telemetry::SessionLink};
-
-use crate::skills::SkillName;
+use std::collections::BTreeMap;
+use std::env;
 
 const REPORT_FILE: &str = "report.md";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct WorkerMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) setup: Option<crate::workspace_manifest::setup::Setup>,
+    pub(super) setup: Option<Setup>,
     pub(super) id: String,
     pub(super) skill: SkillName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) gates: Option<crate::workspace_manifest::Gates>,
+    pub(super) gates: Option<Gates>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) menu: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub(super) imports: std::collections::BTreeMap<SkillName, crate::skills::reference::PinnedRef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) imports: BTreeMap<SkillName, PinnedRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) always: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,7 +100,7 @@ pub(super) fn report_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
 
 pub(super) fn worker_dir_from_env() -> Result<Utf8PathBuf> {
     let dir = Utf8PathBuf::from(
-        std::env::var("NILES_AGENT_DIR").context("NILES_AGENT_DIR is missing or invalid")?,
+        env::var("NILES_AGENT_DIR").context("NILES_AGENT_DIR is missing or invalid")?,
     );
     ensure!(
         dir.is_absolute() && dir.is_dir(),

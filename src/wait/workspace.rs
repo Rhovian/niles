@@ -1,17 +1,16 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::{self, File, TryLockError},
-    io::{self, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
-    thread,
-    time::{Duration, Instant},
-};
-
+use super::cursor::*;
+use super::exit::Outcome;
+use super::{Target, WaitExit, render};
+use crate::wake::{self, WakeKind};
+use crate::{store, util, worker};
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-
-use super::{Target, WaitExit, cursor::*, exit::Outcome, render};
-use crate::{store, util, worker};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, TryLockError};
+use std::io::{self, Write};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const TAKEOVER_POLL: Duration = Duration::from_millis(100);
 
@@ -59,7 +58,9 @@ impl Registration {
 pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
     let registration = Registration::start()?;
     let workspace = util::current_dir_utf8()?;
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .context("wait deadline overflow")?;
     let mut next_poll = Instant::now();
     // Rust 1.89 File::open/seek (std/fs.rs) do not retain offsets across reopened files.
     // Remember progress here without persisting past unprinted reports.
@@ -75,7 +76,9 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
             if poll_workers(&workspace, &mut targets, &mut io::stdout().lock())? {
                 return Ok(WaitExit::from_outcome(Outcome::Wake));
             }
-            next_poll = Instant::now() + interval;
+            next_poll = Instant::now()
+                .checked_add(interval)
+                .context("poll deadline overflow")?;
         }
         if Instant::now() >= deadline {
             return Ok(WaitExit::from_outcome(Outcome::Timeout { timeout }));
@@ -127,10 +130,7 @@ fn poll_workers(
                 // Activity probing may have taken time; an actual worker report wins.
                 report = target.next_report(persisted)?;
                 if report.is_none() {
-                    util::append_line(
-                        &target.status,
-                        &crate::wake::line(crate::wake::WakeKind::Gone, detail),
-                    )?;
+                    util::append_line(&target.status, &wake::line(WakeKind::Gone, detail))?;
                     report = target.next_report(persisted)?;
                 }
             }

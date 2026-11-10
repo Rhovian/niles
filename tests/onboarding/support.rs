@@ -1,11 +1,11 @@
-use crate::common::{TestEnv, state_dir_at, write_executable};
-use std::{
-    fs::{self, File},
-    io::Write,
-    os::fd::FromRawFd,
-    process::Output,
-    ptr::null_mut,
-};
+use crate::common::{TestEnv, atomic_write, state_dir_at, write_executable};
+use std::fs::{self, File};
+use std::io::{Error, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::path::PathBuf;
+use std::process::Output;
+use std::ptr::null_mut;
+
 pub(super) fn environment() -> TestEnv {
     let mut env = TestEnv::with_tmux(
         "onboard",
@@ -31,7 +31,7 @@ esac
 
     env
 }
-pub(super) fn manifest(env: &TestEnv) -> std::path::PathBuf {
+pub(super) fn manifest(env: &TestEnv) -> PathBuf {
     state_dir_at(&env.home, &env.root).join("manifest.yaml")
 }
 pub(super) fn terminal(
@@ -70,7 +70,7 @@ pub(super) fn terminal(
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
+                return Err(Error::last_os_error());
             }
             Ok(())
         });
@@ -79,14 +79,14 @@ pub(super) fn terminal(
     drop(command);
     drop(tty);
     let mut transcript = String::new();
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now().checked_add(Duration::from_secs(90)).unwrap();
     // ratatui 0.30.2's CrosstermBackend emits cursor moves between words and
     // only changed cells on redraw; steps use complete, unique prompt tokens.
-    let mut step = 0;
+    let mut pending = steps.iter().enumerate().peekable();
     let mut seen = String::new();
     loop {
         let mut poll = libc::pollfd {
-            fd: std::os::fd::AsRawFd::as_raw_fd(&pty),
+            fd: AsRawFd::as_raw_fd(&pty),
             events: libc::POLLIN,
             revents: 0,
         };
@@ -95,18 +95,24 @@ pub(super) fn terminal(
             match pty.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "Read returns at most buffer.len() bytes"
+                    )]
                     let text = String::from_utf8_lossy(&buffer[..count]);
                     transcript.push_str(&text);
                     seen.push_str(&text);
-                    if step < steps.len() && seen.contains(steps[step].0) {
-                        on_prompt(step);
-                        pty.write_all(steps[step].1).unwrap();
-                        step += 1;
+                    if let Some(&(index, &(prompt, keys))) = pending.peek()
+                        && seen.contains(prompt)
+                    {
+                        on_prompt(index);
+                        pty.write_all(keys).unwrap();
+                        pending.next();
                         seen.clear();
                     }
                 }
                 Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
-                Err(error) => panic!("{error}"),
+                Err(error) => assert_eq!(error.raw_os_error(), Some(libc::EIO), "{error}"),
             }
         }
         if child.try_wait().unwrap().is_some() {
@@ -114,16 +120,20 @@ pub(super) fn terminal(
         }
         if Instant::now() > deadline {
             child.kill().unwrap();
-            panic!("wizard timed out at step {step}: {transcript}");
+            assert!(
+                Instant::now() <= deadline,
+                "wizard timed out with {} prompts remaining: {transcript}",
+                pending.len()
+            );
         }
     }
     let output = child.wait_with_output().unwrap();
-    assert_eq!(step, steps.len(), "{transcript}");
+    assert_eq!(pending.len(), 0, "{transcript}");
     (output, transcript)
 }
 
 pub(super) fn import_fixture(env: &TestEnv, name: &str, body: &str) {
-    fs::write(env.home.join("skill.md"), body).unwrap();
+    atomic_write(env.home.join("skill.md"), body).unwrap();
     write_executable(
         &env.bin.join("git"),
         r#"#!/bin/sh

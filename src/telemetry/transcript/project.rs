@@ -1,10 +1,11 @@
 use super::{Family, TextBlock, TextRole, TextTurn};
+use crate::watch;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-// serde_json 1.0.151 decodes JSON values, not provider-specific display projections:
-// https://docs.rs/serde_json/1.0.151/serde_json/value/index.html
+// serde_json 1.0.154 decodes JSON values, not provider-specific display projections:
+// https://docs.rs/serde_json/1.0.154/serde_json/value/index.html
 // Claude Code 2.1.296 and pi-ai 1.2.0 dist/types.d.ts define these content blocks.
 // Unknown/malformed block shapes are deliberately omitted; they never gate telemetry.
 fn message_turns(
@@ -41,7 +42,7 @@ fn message_turns(
 // Codex protocol is pinned below; Claude Code 2.1.312 uses isMeta for hook messages.
 fn injected(text: &str) -> bool {
     let text = text.trim();
-    crate::watch::is_nudge(text)
+    watch::is_nudge(text)
         || [
             "[Request interrupted by user",
             "<command-name>",
@@ -54,20 +55,23 @@ fn injected(text: &str) -> bool {
         .any(|prefix| text.starts_with(prefix))
 }
 
+const MISSING_FIELD: Value = Value::Null;
+
+fn take_optional(value: &mut Value, key: &str) -> Value {
+    value.get_mut(key).map_or(MISSING_FIELD, Value::take)
+}
+
 fn block(mut value: Value) -> Option<TextBlock> {
-    match value["type"].as_str() {
+    match value.get("type").and_then(Value::as_str) {
         None | Some("text" | "input_text" | "output_text") => Some(TextBlock::Text {
-            text: value["text"].as_str()?.to_owned(),
+            text: value.get("text")?.as_str()?.to_owned(),
         }),
         Some("tool_use" | "toolCall") => Some(TextBlock::ToolUse {
-            name: value["name"].as_str()?.to_owned(),
-            input: if value.get("input").is_some() {
-                value["input"].take()
+            name: value.get("name")?.as_str()?.to_owned(),
+            input: if let Some(input) = value.get_mut("input") {
+                input.take()
             } else {
-                match value.get_mut("arguments") {
-                    Some(input) => input.take(),
-                    None => Value::Null,
-                }
+                take_optional(&mut value, "arguments")
             },
         }),
         Some(_) => None,
@@ -90,13 +94,13 @@ fn arguments(value: Value) -> Value {
 }
 
 fn function_turn(mut value: Value, timestamp: Option<DateTime<Utc>>) -> Option<TextTurn> {
-    let name = value["name"].as_str()?.to_owned();
+    let name = value.get("name")?.as_str()?.to_owned();
     Some(TextTurn {
         role: TextRole::Assistant,
         timestamp,
         content: TextBlock::ToolUse {
             name,
-            input: arguments(value["arguments"].take()),
+            input: arguments(take_optional(&mut value, "arguments")),
         },
     })
 }
@@ -109,41 +113,42 @@ pub(super) fn file_turns(family: Family, mut line: Value) -> Result<Vec<TextTurn
         .map(|value| serde_json::from_value::<Option<DateTime<Utc>>>(value.clone()))
         .transpose()?
         .flatten();
-    let message = match (family, line["type"].as_str()) {
-        (Family::Claude, Some("user" | "assistant")) => {
-            if line["isCompactSummary"] == true {
+    let message = match (family, line.get("type").and_then(Value::as_str)) {
+        (Family::Claude, Some(kind @ ("user" | "assistant"))) => {
+            if line.get("isCompactSummary") == Some(&Value::Bool(true)) {
                 return Ok(Vec::new());
             }
-            let mut role = TextRole::parse(line["type"].as_str().context("Claude message type")?)
-                .context("Claude message role")?;
-            if role == TextRole::User && line["isMeta"] == true {
+            let mut role = TextRole::parse(kind).context("Claude message role")?;
+            if role == TextRole::User && line.get("isMeta") == Some(&Value::Bool(true)) {
                 role = TextRole::Injected;
             }
-            let content = match line["message"].get_mut("content") {
-                Some(content) => content.take(),
-                None => Value::Null,
-            };
+            let content = line
+                .get_mut("message")
+                .map_or(MISSING_FIELD, |message| take_optional(message, "content"));
             return Ok(message_turns(role, timestamp, content));
         }
-        (Family::Pi, Some("message")) => &mut line["message"],
+        (Family::Pi, Some("message")) => line.get_mut("message"),
         (Family::Codex, Some("response_item")) => {
-            let payload = &mut line["payload"];
-            match payload["type"].as_str() {
-                Some("message") => payload,
+            let Some(payload) = line.get_mut("payload") else {
+                return Ok(Vec::new());
+            };
+            match payload.get("type").and_then(Value::as_str) {
+                Some("message") => Some(payload),
                 Some("function_call") => {
                     return Ok(function_turn(payload.take(), timestamp)
                         .into_iter()
                         .collect());
                 }
                 Some("custom_tool_call") => {
-                    return Ok(payload["name"]
-                        .as_str()
+                    return Ok(payload
+                        .get("name")
+                        .and_then(Value::as_str)
                         .map(|name| TextTurn {
                             role: TextRole::Assistant,
                             timestamp,
                             content: TextBlock::ToolUse {
                                 name: name.to_owned(),
-                                input: payload["input"].clone(),
+                                input: payload.get("input").map_or(MISSING_FIELD, Clone::clone),
                             },
                         })
                         .into_iter()
@@ -154,8 +159,19 @@ pub(super) fn file_turns(family: Family, mut line: Value) -> Result<Vec<TextTurn
         }
         _ => return Ok(Vec::new()),
     };
-    let Some(role) = message["role"].as_str().and_then(TextRole::parse) else {
+    let Some(message) = message else {
         return Ok(Vec::new());
     };
-    Ok(message_turns(role, timestamp, message["content"].take()))
+    let Some(role) = message
+        .get("role")
+        .and_then(Value::as_str)
+        .and_then(TextRole::parse)
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(message_turns(
+        role,
+        timestamp,
+        take_optional(message, "content"),
+    ))
 }

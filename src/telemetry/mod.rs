@@ -1,7 +1,10 @@
+use crate::util;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fs::{self, File};
+use zstd::stream;
 
 mod activity;
 mod buckets;
@@ -23,9 +26,9 @@ pub(crate) use activity::{
     Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, TurnState, initial_deadline,
     resolve_session,
 };
-
 pub(crate) use buckets::{BUCKET, Buckets};
 pub(crate) use cache::closed_buckets;
+
 use claude::read_claude;
 use codex::read_codex;
 use pi::read_pi;
@@ -39,7 +42,7 @@ pub(crate) enum SessionLink {
     Pi { session_dir: Utf8PathBuf },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub(crate) struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -59,12 +62,59 @@ pub(crate) struct Usage {
     pub context_window: Option<u64>,
 }
 
+/// Checked aggregation shared by provider counters and dashboard totals.
+/// Iterator::sum for u64 does not return overflow errors (Rust 1.89 core/iter/traits/accum.rs).
+pub(crate) fn sum(values: impl IntoIterator<Item = u64>) -> Result<u64> {
+    values.into_iter().try_fold(0u64, |total, value| {
+        total.checked_add(value).context("token count overflow")
+    })
+}
+
+#[derive(Deserialize)]
+pub(super) struct TokenCounts {
+    #[serde(alias = "input")]
+    input_tokens: u64,
+    #[serde(alias = "output")]
+    output_tokens: u64,
+    #[serde(alias = "cache_read_input_tokens", alias = "cacheRead")]
+    cache_read_tokens: u64,
+    #[serde(alias = "cache_creation_input_tokens", alias = "cacheWrite")]
+    cache_write_tokens: u64,
+}
+
+impl TokenCounts {
+    fn prompt(&self) -> Result<u64> {
+        sum([
+            self.input_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+        ])
+    }
+}
+
 impl Usage {
-    pub(crate) fn total_tokens(&self) -> u64 {
-        self.input_tokens
-            + self.cache_read_tokens
-            + self.cache_write_tokens.into_iter().sum::<u64>()
-            + self.output_tokens
+    fn accumulate(&mut self, at: DateTime<Utc>, counts: &TokenCounts) -> Result<()> {
+        self.input_tokens = sum([self.input_tokens, counts.input_tokens])?;
+        self.output_tokens = sum([self.output_tokens, counts.output_tokens])?;
+        self.cache_read_tokens = sum([self.cache_read_tokens, counts.cache_read_tokens])?;
+        self.cache_write_tokens = Some(sum(self
+            .cache_write_tokens
+            .into_iter()
+            .chain([counts.cache_write_tokens]))?);
+        self.buckets
+            .add(at, sum([counts.prompt()?, counts.output_tokens])?)?;
+        self.last_turn_at = Some(self.last_turn_at.map_or(at, |prior| prior.max(at)));
+        Ok(())
+    }
+
+    pub(crate) fn total_tokens(&self) -> Result<u64> {
+        sum([
+            self.input_tokens,
+            self.cache_read_tokens,
+            self.output_tokens,
+        ]
+        .into_iter()
+        .chain(self.cache_write_tokens))
     }
 }
 
@@ -111,7 +161,7 @@ pub(crate) fn read_session(
     needle: &Utf8Path,
     created_at: DateTime<Utc>,
 ) -> Result<Option<SessionRecord>> {
-    let home = crate::util::home_dir()?;
+    let home = util::home_dir()?;
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
         SessionLink::Codex => read_codex(&home, workspace, needle, created_at),
@@ -122,12 +172,12 @@ pub(crate) fn read_session(
 fn read_transcript(path: &Utf8Path) -> Result<String> {
     (|| -> Result<String> {
         if path.as_str().ends_with(".jsonl.zst") {
-            let file = std::fs::File::open(path)?;
+            let file = File::open(path)?;
             // decode_all handles concatenated frames as well as single-frame rollouts:
             // https://docs.rs/zstd/0.13.3/zstd/stream/fn.decode_all.html
-            Ok(String::from_utf8(zstd::stream::decode_all(file)?)?)
+            Ok(String::from_utf8(stream::decode_all(file)?)?)
         } else {
-            Ok(std::fs::read_to_string(path)?)
+            Ok(fs::read_to_string(path)?)
         }
     })()
     .with_context(|| format!("read {path}"))
@@ -192,24 +242,35 @@ pub(crate) mod fixtures {
     }
 
     pub(crate) fn pi() -> Usage {
-        pi::pi_usage(PI).unwrap()
+        pi::pi_session(PI).unwrap().usage.unwrap()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::claude::claude_session;
+    use super::codex::{CodexLine, codex_matches, codex_usage};
     use super::*;
-    use super::{
-        claude::claude_session,
-        codex::{CodexLine, codex_matches, codex_usage},
-    };
 
     #[test]
     fn buckets_sum_to_the_total_for_every_family() {
+        let max = u64::MAX.to_string();
+        assert!(
+            claude_session(
+                &fixtures::CLAUDE_MAIN
+                    .replace("\"input_tokens\":5", &format!("\"input_tokens\":{max}")),
+                &[]
+            )
+            .is_none()
+        );
+        assert!(
+            pi::pi_session(&fixtures::PI.replace("\"input\":20", &format!("\"input\":{max}")))
+                .is_none()
+        );
         for usage in [fixtures::claude(), fixtures::codex(), fixtures::pi()] {
             assert_eq!(
                 usage.buckets.iter().map(|(_, tokens)| tokens).sum::<u64>(),
-                usage.total_tokens()
+                usage.total_tokens().unwrap()
             );
             assert!(
                 usage
@@ -350,8 +411,9 @@ mod tests {
         let assistant = r#"{"type":"message","timestamp":"2026-10-01T00:00:00Z","message":{"role":"assistant","stopReason":"stop","usage":{"input":2,"output":3,"cacheRead":4,"cacheWrite":5}}}"#;
         let next = assistant.replace("00:00:00", "00:01:00");
         let body = format!("{assistant}\n{next}\n");
-        let waiting = pi::pi_usage(&body).unwrap();
-        assert_eq!(state(pi::pi_session(&body)), Some(SessionState::Waiting));
+        let waiting = pi::pi_session(&body).unwrap();
+        assert!(matches!(waiting.turn.unwrap().state, TurnState::Ended));
+        let waiting = waiting.usage.unwrap();
         assert_eq!(
             (
                 waiting.input_tokens,
@@ -371,13 +433,15 @@ mod tests {
             let message = format!(
                 r#"{{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{{"role":"{role}"}}}}"#
             );
-            let working = pi::pi_usage(&format!("{body}{message}\n")).unwrap();
-            assert_eq!(
-                state(pi::pi_session(&format!("{body}{message}\n"))),
-                Some(SessionState::Working)
+            let working = pi::pi_session(&format!("{body}{message}\n")).unwrap();
+            assert!(matches!(working.turn.unwrap().state, TurnState::InProgress));
+            assert_eq!(working.usage.unwrap().last_turn_at, waiting.last_turn_at);
+            assert!(
+                pi::pi_session(&format!("{message}\n"))
+                    .unwrap()
+                    .usage
+                    .is_none()
             );
-            assert_eq!(working.last_turn_at, waiting.last_turn_at);
-            assert!(pi::pi_usage(&format!("{message}\n")).is_none());
         }
         let custom =
             r#"{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{"role":"custom"}}"#;
@@ -395,7 +459,7 @@ mod tests {
             ))),
             Some(SessionState::Waiting)
         );
-        assert!(pi::pi_usage("bad\n").is_none());
+        assert!(pi::pi_session("bad\n").is_none());
     }
 
     #[test]

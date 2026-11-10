@@ -1,4 +1,7 @@
-#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")
+)]
 
 mod agent_window;
 mod agents;
@@ -12,6 +15,7 @@ mod models;
 mod projects;
 #[cfg(feature = "remote")]
 mod remote;
+mod selection;
 mod session;
 mod skills;
 mod store;
@@ -29,12 +33,10 @@ mod workspace_manifest;
 #[cfg(test)]
 mod test_support;
 
-use std::process::ExitCode;
-
+use crate::cli::{Cli, CommandName};
 use anyhow::Result;
 use clap::Parser;
-
-use crate::cli::{Cli, CommandName};
+use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match run() {

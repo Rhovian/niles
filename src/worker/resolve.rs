@@ -1,15 +1,9 @@
+use super::meta::{WorkerMeta, read_meta_if_exists};
+use super::validation::validate_id;
+use crate::tmux::{self, TargetState, WindowTarget};
+use crate::{store, util};
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-
-use crate::{
-    store,
-    tmux::{self, TargetState, WindowTarget},
-};
-
-use super::{
-    meta::{WorkerMeta, read_meta_if_exists},
-    validation::validate_id,
-};
 
 pub(super) fn window_state(meta: &WorkerMeta) -> TargetState {
     match WindowTarget::parse(&meta.window) {
@@ -26,7 +20,7 @@ pub(crate) fn resolve_worker(id: &str) -> Result<Utf8PathBuf> {
 
 pub(super) fn resolve_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
     validate_id(id)?;
-    store::worker_location(&crate::util::current_dir_utf8()?, id)
+    store::worker_location(&util::current_dir_utf8()?, id)
 }
 
 pub(super) fn resolve_live_worker_if_exists(id: &str) -> Result<Option<Utf8PathBuf>> {
@@ -47,5 +41,5 @@ pub(super) fn no_live_worker_message(id: &str) -> String {
 }
 
 pub(super) fn latest_archive(id: &str) -> Result<Option<Utf8PathBuf>> {
-    store::latest_worker_archive(&crate::util::current_dir_utf8()?, id)
+    store::latest_worker_archive(&util::current_dir_utf8()?, id)
 }

@@ -1,32 +1,21 @@
-use clap::Parser;
-
 use super::*;
-use crate::{cli::Cli, test_support::temp_test_path};
+use crate::cli::Cli;
+use crate::store::atomic_write;
+use crate::test_support::{assert_err_contains as assert_error, temp_test_path};
+use clap::Parser;
 
 #[test]
 fn skill_is_required_and_task_basis_flags_conflict() {
     for args in [
-        vec!["task"],
-        vec![
-            "--skill", "worker", "--tier", "frontier", "--agent", "claude", "task",
-        ],
-        vec![
-            "--skill",
-            "worker",
-            "--from",
-            "a",
-            "--mechanical",
-            "rename",
-            "task",
-        ],
+        "task",
+        "--skill worker --tier frontier --agent claude task",
+        "--skill worker --from a --mechanical rename task",
     ] {
-        assert!(Cli::try_parse_from(["niles", "spawn", "job"].into_iter().chain(args)).is_err());
+        let argv = ["niles", "spawn", "job"]
+            .into_iter()
+            .chain(args.split_whitespace());
+        assert!(Cli::try_parse_from(argv).is_err());
     }
-}
-
-fn assert_error<T: std::fmt::Debug>(result: Result<T>, message: &str) {
-    let error = result.unwrap_err().to_string();
-    assert!(error.contains(message), "{error}");
 }
 
 fn assignment(from: Option<&str>, mechanical: Option<&str>) -> Assignment {
@@ -50,13 +39,13 @@ fn from_accepts_any_skill_but_requires_live_latest_done() {
     );
     fs::create_dir_all(&root).unwrap();
     for status in ["", "done: ready\nworking: amending\n"] {
-        fs::write(wake::status_log_path(&root), status).unwrap();
+        atomic_write(wake::status_log_path(&root), status).unwrap();
         assert_error(
             request().resolve(&root, |_| Ok(Some(root.clone()))),
             "latest status is not done:",
         );
     }
-    fs::write(wake::status_log_path(&root), "done: ready\n").unwrap();
+    atomic_write(wake::status_log_path(&root), "done: ready\n").unwrap();
     assert!(
         matches!(request().resolve(&root, |_| Ok(Some(root.clone()))).unwrap(), TaskBasis::FromReport(path) if path == report_path(&root))
     );

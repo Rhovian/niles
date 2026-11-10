@@ -1,11 +1,12 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
-mod common;
-
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test assertions")]
+use crate::common::atomic_write;
 use common::{
     TestEnv, assert_command_success, register_project, state_dir, stdout_of, write_worker,
 };
-use std::{fs, process::Command};
+use std::fs;
+use std::process::{self, Command};
+
+mod common;
 
 #[test]
 fn window_labels_need_metadata_but_never_logs_or_telemetry() {
@@ -57,7 +58,7 @@ fn cached_bar_output_selects_at_tmux_expansion_time() {
         .unwrap();
     assert_command_success("project format", &projects);
     let projects = stdout_of(&projects);
-    let socket = format!("niles-bar-{}", std::process::id());
+    let socket = format!("niles-bar-{}", process::id());
     let tmux = |args: &[&str]| {
         let output = Command::new("tmux")
             .arg("-L")
@@ -132,7 +133,7 @@ esac
     register_project(&env, "missing", &env.root.join("missing"));
     let worker = state_dir(&env.root).join("worker/broken");
     fs::create_dir_all(&worker).unwrap();
-    fs::write(worker.join("meta.json"), "invalid metadata").unwrap();
+    atomic_write(worker.join("meta.json"), "invalid metadata").unwrap();
     let output = env
         .niles(&env.root, &["status", "projects"])
         .env("PROJECT_PATH", &env.root)

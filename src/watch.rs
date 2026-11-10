@@ -16,30 +16,25 @@
 //! `watch.log` in the session directory, and the only thing that leaves the process is the nudge
 //! itself, through the same `send_line` that `niles send` uses.
 
+use crate::tmux::TmuxTarget;
+use crate::wake::WakeKind;
+use crate::worker::{self, worker_snapshot};
 use crate::workspace_manifest::setup::SetupSelection;
-use std::{
-    fs,
-    io::Write,
-    panic,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
-};
-
+use crate::{util, workspace_manifest};
 use anyhow::{Context, Result};
+use cadence::Cadence;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, SecondsFormat, Utc};
-
-use crate::{
-    tmux::TmuxTarget,
-    wake::WakeKind,
-    worker::{self, worker_snapshot},
-    workspace_manifest,
-};
+use decide::{Plan, WatchMemory};
+use digest::Item;
+use due::read_checkins;
+use sink::{Sink, WatchSink};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+use std::{fs, panic};
 
 mod cadence;
 pub(crate) use cadence::resolve_cadence;
@@ -55,14 +50,10 @@ mod sink;
 mod tests;
 mod trust;
 
-use cadence::Cadence;
+pub(crate) use cadence::{
+    DEFAULT_DELAY, Delay, Recheck, describe_delay, parse_delay, parse_recheck,
+};
 pub(crate) use checkin::Checkin;
-use decide::{Plan, WatchMemory};
-use digest::Item;
-use due::read_checkins;
-use sink::{Sink, WatchSink};
-
-pub(crate) use cadence::{DEFAULT_DELAY, Recheck, describe_delay, parse_delay, parse_recheck};
 
 /// How often the workspace is re-read. Report detection is a log-length comparison, so this only
 /// has to be prompt enough that a lead who is idle does not stay idle for long.
@@ -105,6 +96,10 @@ impl Drop for Watcher {
     }
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the hook records thread panics; shutdown is bounded even if the watcher stalls or disconnects"
+)]
 fn join_watcher(handle: JoinHandle<()>) {
     let (joined, waiter) = mpsc::channel();
     thread::spawn(move || {
@@ -131,6 +126,10 @@ mod panic_tests {
     use crate::test_support::temp_test_path;
 
     #[test]
+    #[expect(
+        clippy::panic,
+        reason = "inject a thread panic to exercise the panic hook"
+    )]
     fn a_panicking_watcher_is_recorded_by_its_hook() {
         let session = temp_test_path("panic-session");
         fs::create_dir_all(&session).unwrap();
@@ -290,8 +289,8 @@ fn watch(workspace: Utf8PathBuf, mut sink: WatchSink, stop: Arc<AtomicBool>) {
 }
 
 fn sleep_until_next_tick(stop: &AtomicBool) {
-    let deadline = Instant::now() + TICK_INTERVAL;
-    while Instant::now() < deadline {
+    let started = Instant::now();
+    while started.elapsed() < TICK_INTERVAL {
         if stop.load(Ordering::Relaxed) {
             return;
         }
@@ -426,7 +425,7 @@ pub(crate) fn delivered_reports(
     session_dir: &Utf8Path,
 ) -> Result<Vec<(DateTime<Utc>, String, WakeKind)>> {
     let path = session_dir.join(WATCH_LOG);
-    let Some(body) = crate::util::read_optional_string(&path)? else {
+    let Some(body) = util::read_optional_string(&path)? else {
         return Ok(Vec::new());
     };
     #[expect(clippy::disallowed_methods, reason = "other notes are not reports")]
@@ -450,6 +449,10 @@ struct WatchLog {
 }
 
 impl WatchLog {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "watch diagnostics are best effort; log failure must not prevent the nudge"
+    )]
     fn note(&self, line: &str) {
         let stamp = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
         // A log that cannot be appended is not worth stopping the watcher over: the nudge is the

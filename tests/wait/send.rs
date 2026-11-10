@@ -161,7 +161,7 @@ fn multiline_stdin_is_one_complete_bracketed_paste_for_every_family() {
         let meta = fs::read_to_string(&meta_path)
             .unwrap()
             .replace("\"agent\": \"codex\"", &format!("\"agent\": \"{family}\""));
-        fs::write(meta_path, meta).unwrap();
+        atomic_write(meta_path, meta).unwrap();
         let sent = output_with_stdin(lab.niles(&["send", "auth-fix", "-"]), body.as_bytes());
         assert_command_success(family, &sent);
         assert_eq!(

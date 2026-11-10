@@ -1,8 +1,12 @@
 use crate::skills::{self, Origin, SkillName};
+use crate::store::paths;
+#[cfg(test)]
+use crate::store::{atomic_write, parse_yaml};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::fmt;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -84,7 +88,7 @@ pub(crate) fn active(root: &Utf8Path, selection: Option<&SetupSelection>) -> Res
             selection.file(root, &skills::global_dir()?)?,
         )),
         None => Ok(ManifestFile::Default(
-            crate::store::paths::project_dir(root)?.join("manifest.yaml"),
+            paths::project_dir(root)?.join("manifest.yaml"),
         )),
     }
 }
@@ -130,6 +134,7 @@ impl SetupSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
     use std::{fs, os::unix::fs::symlink};
 
     struct Fixture {
@@ -160,7 +165,7 @@ mod tests {
         fn install(&self, origin: Origin) -> SetupFile {
             let path = self.path(origin);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, "{}").unwrap();
+            atomic_write(path, "{}").unwrap();
             self.select(&format!("{origin}:tdd")).unwrap()
         }
     }
@@ -209,7 +214,7 @@ mod tests {
                     .join(format!("{name}.yaml")),
             };
             fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, "{}").unwrap();
+            atomic_write(&path, "{}").unwrap();
             let selection: SetupSelection = format!("{origin}:{name}").parse().unwrap();
             let mut manifest = super::super::WorkspaceManifest {
                 source: Some(
@@ -217,17 +222,16 @@ mod tests {
                         .file(&fixture.root, &skills::global_dir().unwrap())
                         .unwrap(),
                 ),
-                ..crate::test_support::manifest()
+                ..test_support::manifest()
             };
             manifest.bindings.insert(
                 "source".parse().unwrap(),
-                manifest.bindings[&manifest.entry].clone(),
+                manifest.bindings.get(&manifest.entry).unwrap().clone(),
             );
             super::super::save(&fixture.root, &manifest, Some(&selection)).unwrap();
-            let saved = crate::store::parse_yaml::<super::super::WorkspaceManifest>(
-                &fs::read_to_string(&path).unwrap(),
-            )
-            .unwrap();
+            let saved =
+                parse_yaml::<super::super::WorkspaceManifest>(&fs::read_to_string(&path).unwrap())
+                    .unwrap();
             assert_eq!(saved.bindings, manifest.bindings, "{origin}");
             fs::remove_file(path).unwrap();
         }

@@ -1,15 +1,10 @@
-use std::collections::{BTreeMap, HashSet};
-
+use crate::skills::reference::{MenuItem, PinnedRef};
+use crate::skills::{self, Skill, SkillName};
+use crate::workspace_manifest::Binding;
 use anyhow::{Result, ensure};
 use camino::Utf8Path;
-
-use crate::{
-    skills::{
-        self, Skill, SkillName,
-        reference::{MenuItem, PinnedRef},
-    },
-    workspace_manifest::Binding,
-};
+use std::collections::{BTreeMap, HashSet};
+use std::iter;
 
 const MAX_MENU: usize = 16;
 const MAX_STAGE_BYTES: usize = 32_768;
@@ -36,7 +31,7 @@ pub(super) fn prepare(
     for item in menu {
         let name = item.name();
         if let MenuItem::Ref(reference) = item {
-            let occupied = std::iter::once(&primary.name)
+            let occupied = iter::once(&primary.name)
                 .chain(binding.attached_skills())
                 .chain(with)
                 .any(|other| other == name);
@@ -104,7 +99,7 @@ pub(super) fn prepare(
     }
     let mut prompt = String::new();
     seen.clear();
-    for skill in std::iter::once(primary)
+    for skill in iter::once(primary)
         .chain(&always)
         .chain(on_from.iter().filter(|_| from))
         .chain(&with)
@@ -140,7 +135,11 @@ fn resolve_available(
 
 fn check_stage_size(skills: &[Skill]) -> Result<()> {
     ensure!(
-        skills.iter().map(|skill| skill.body.len()).sum::<usize>() <= MAX_STAGE_BYTES,
+        skills
+            .iter()
+            .try_fold(MAX_STAGE_BYTES, |remaining, skill| remaining
+                .checked_sub(skill.body.len()))
+            .is_some(),
         "on_stage bodies exceed {MAX_STAGE_BYTES} bytes"
     );
     Ok(())

@@ -1,9 +1,12 @@
-use std::{
-    collections::BTreeMap, fs, io::ErrorKind, os::unix::process::CommandExt, process::Command,
-};
-
+use crate::{agent_window, util};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use serde::de::IgnoredAny;
+use std::collections::BTreeMap;
+use std::io::ErrorKind;
+use std::os::unix::process::CommandExt;
+use std::process::Command;
+use std::{env, fs};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Channel {
@@ -12,7 +15,7 @@ pub enum Channel {
 }
 
 pub fn run(channel: Channel) -> Result<()> {
-    let exe = std::env::current_exe()?.canonicalize()?;
+    let exe = env::current_exe()?.canonicalize()?;
     let bin = exe.parent().context("niles executable has no parent")?;
     let homebrew = bin.ancestors().any(|path| path.ends_with("Cellar/niles"));
     // dist 0.33.0 ships this alongside the app, not as a PATH dependency:
@@ -42,7 +45,7 @@ pub fn run(channel: Channel) -> Result<()> {
     // https://github.com/rust-lang/cargo/blob/0.90.0/src/cargo/ops/common_for_install_and_uninstall.rs
     #[derive(Deserialize)]
     struct CargoInstalls {
-        v1: BTreeMap<String, serde::de::IgnoredAny>,
+        v1: BTreeMap<String, IgnoredAny>,
     }
     let root = bin
         .parent()
@@ -54,13 +57,10 @@ pub fn run(channel: Channel) -> Result<()> {
                 .with_context(|| format!("invalid Cargo metadata: {}", metadata.display()))?;
             if crates.v1.keys().any(|id| id.starts_with("niles ")) {
                 let mut command = String::from("cargo install niles --locked");
-                let home = crate::util::home_dir()?.as_std_path().canonicalize()?;
+                let home = util::home_dir()?.as_std_path().canonicalize()?;
                 if root != home.join(".cargo") {
                     let root = root.to_str().context("Cargo install root is not UTF-8")?;
-                    command.push_str(&format!(
-                        " --root {}",
-                        crate::agent_window::shell_quote(root)
-                    ));
+                    command.push_str(&format!(" --root {}", agent_window::shell_quote(root)));
                 }
                 println!("Run: {command}");
                 return Ok(());

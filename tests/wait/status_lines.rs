@@ -1,6 +1,10 @@
 use super::support::*;
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "exercise in-place truncation below the persisted cursor"
+)]
 fn does_not_redeliver_consumed_wake_and_delivers_next() {
     let (workspace, worker_dir, first) = wait_once(b"done: first\n");
     let args = ["--interval", "50ms", "--timeout", "0"];
