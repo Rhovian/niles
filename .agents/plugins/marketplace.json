@@ -1,0 +1,12 @@
+{
+  "name": "niles",
+  "plugins": [
+    {
+      "name": "niles",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      }
+    }
+  ]
+}

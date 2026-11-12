@@ -103,6 +103,26 @@ Existing skills are kept; copy or pin others with
 - `design` writes a design record before implementation.
 - `research` answers one question with sources and edits nothing.
 
+### Install in Codex
+
+Install all skills directly in Codex, independently of a Niles-launched session:
+
+```sh
+codex plugin marketplace add Rhovian/niles
+codex plugin add niles@niles
+```
+
+Start a new Codex session and select a skill with `/skills`. The plugin exposes the whole
+[`skills/`](skills/) directory, including skills added in future marketplace updates.
+To refresh the marketplace, run `codex plugin marketplace upgrade niles`, then
+`codex plugin add niles@niles` to refresh the installed plugin.
+
+These commands use Codex's [repo marketplace support](https://developers.openai.com/plugins/build/plugins).
+Installing the plugin doesn't install the Niles binary or configure a workspace. Skills that
+operate Niles, such as `lead` and `cost-analysis`, still need its CLI and configured state;
+use the [quickstart](#quickstart) to set those up. Niles continues to import the same skill
+files through `niles skills import`.
+
 ## What Niles changes on your machine
 
 Niles writes under `~/.niles/` (state, project list, skill cache, config, worktrees, remote keys),
