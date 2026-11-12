@@ -103,6 +103,11 @@ Existing skills are kept; copy or pin others with
 - `design` writes a design record before implementation.
 - `research` answers one question with sources and edits nothing.
 
+Installing a skill plugin doesn't install the Niles binary or configure a workspace. Skills that
+operate Niles, such as `lead` and `cost-analysis`, still need its CLI and configured state;
+use the [quickstart](#quickstart) to set those up. Niles continues to import the same skill
+files through `niles skills import`.
+
 ### Install in Codex
 
 Install all skills directly in Codex, independently of a Niles-launched session:
@@ -118,10 +123,19 @@ To refresh the marketplace, run `codex plugin marketplace upgrade niles`, then
 `codex plugin add niles@niles` to refresh the installed plugin.
 
 These commands use Codex's [repo marketplace support](https://developers.openai.com/plugins/build/plugins).
-Installing the plugin doesn't install the Niles binary or configure a workspace. Skills that
-operate Niles, such as `lead` and `cost-analysis`, still need its CLI and configured state;
-use the [quickstart](#quickstart) to set those up. Niles continues to import the same skill
-files through `niles skills import`.
+
+### Install in Claude Code
+
+In Claude Code, add the marketplace and install the bundle:
+
+```text
+/plugin marketplace add Rhovian/niles
+/plugin install niles@niles
+```
+
+Invoke a skill by its plugin-qualified name, such as `/niles:reviewer` or `/niles:claude-trim`.
+The plugin packages only [`skills/`](skills/) and includes every skill in that directory.
+See Claude Code's [marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
 ## What Niles changes on your machine
 
