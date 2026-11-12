@@ -65,7 +65,8 @@ impl Explorer {
 #[cfg(test)]
 mod tests {
     use super::{super::*, *};
-    use ratatui::{backend::TestBackend, crossterm::event::MouseEvent, layout::Rect};
+    use ratatui::crossterm::event::MouseEvent;
+    use ratatui::{backend::TestBackend, layout::Rect};
 
     fn left_click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
