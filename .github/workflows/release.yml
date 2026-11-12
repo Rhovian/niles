@@ -53,26 +53,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Runs on every event: if it were skipped, jobs downstream of plan without a status function
+  # in their `if` (builds, Homebrew, crates.io) would be skipped too.
   changes:
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    env:
+      NIGHTLY: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     outputs:
       changed: ${{ steps.check.outputs.changed }}
     steps:
       - uses: actions/checkout@v6
+        if: ${{ env.NIGHTLY == 'true' }}
         with:
           persist-credentials: false
       - id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          changed=$(bash scripts/nightly-changes.sh)
+          if [ "$NIGHTLY" = true ]; then
+            changed=$(bash scripts/nightly-changes.sh)
+          else
+            changed=true
+          fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result == 'skipped' || needs.changes.outputs.changed == 'true') && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    if: ${{ needs.changes.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
