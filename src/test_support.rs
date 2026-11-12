@@ -15,6 +15,7 @@ use std::sync::OnceLock;
 use std::{env, fs};
 
 mod process;
+mod skills;
 pub(crate) use process::write_executable as write_executable_script;
 
 pub(crate) fn skill(name: &str) -> SkillName {
@@ -115,17 +116,7 @@ pub(crate) fn home_dir() -> &'static camino::Utf8Path {
     static HOME_DIR: OnceLock<Utf8PathBuf> = OnceLock::new();
     HOME_DIR.get_or_init(|| {
         let home = temp_test_path("unit-home");
-        let skills = home.join(".niles/skills");
-        for entry in fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/skills")).unwrap() {
-            let entry = entry.unwrap();
-            if !entry.file_type().unwrap().is_dir() {
-                continue;
-            }
-            let source = entry.path();
-            let dest = skills.join(source.file_name().unwrap().to_str().unwrap());
-            fs::create_dir_all(&dest).unwrap();
-            fs::copy(source.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
-        }
+        skills::copy_skills(home.join(".niles").as_std_path());
         home
     })
 }
