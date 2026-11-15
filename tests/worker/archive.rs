@@ -4,7 +4,7 @@ use super::support::*;
 fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
     let env = TestEnv::with_manifest("niles-worker-respawn-same-cwd", "claude");
 
-    let first = env.spawn("research", &["reviewer", "FIRST"]);
+    let first = env.spawn("solo", &["reviewer", "FIRST"]);
     assert_command_success("first spawn", &first);
 
     let worker_dir = state_dir(&env.root).join("worker/reviewer");
@@ -25,7 +25,7 @@ fn respawn_after_successful_close_from_same_cwd_gets_fresh_worker_dir() {
         "first report\n"
     );
 
-    let second = env.spawn("research", &["reviewer", "SECOND"]);
+    let second = env.spawn("solo", &["reviewer", "SECOND"]);
     assert_command_success("respawn after close", &second);
     assert_eq!(
         fs::read_to_string(worker_dir.join("status.log")).unwrap(),

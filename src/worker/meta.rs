@@ -28,8 +28,6 @@ pub(super) struct WorkerMeta {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) always: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) on_from: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) on_stage: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) with: Vec<SkillName>,

@@ -61,16 +61,16 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
 #[test]
 fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
     let env = environment();
-    fetch_fixture(&env, "design");
+    fetch_fixture(&env, "reviewer");
     for (flag, value, message) in [
         ("--entry-skill", "sloo", "unknown skill sloo"),
-        ("--starter-skills", "design,workre", "fetchable:"),
+        ("--starter-skills", "reviewer,workre", "fetchable:"),
         ("--entry-agent", "claude:opus:medium", "not listed"),
         ("--tiers", "{}", "missing field `standard`"),
         ("--start", "../bad", "project name must use"),
     ] {
         let mut args = args();
-        args.extend(["--starter-skills", "design"]);
+        args.extend(["--starter-skills", "reviewer"]);
         if let Some([_, target]) = args
             .split_first_mut()
             .unwrap()

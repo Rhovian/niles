@@ -6,7 +6,7 @@ use std::fs;
 fn failed_custom_setup_can_retry_the_same_url() {
     for failure in ["empty body", "starter fetch", "custom fetch"] {
         let env = environment();
-        fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+        fs::remove_dir_all(env.home.join(".niles/skills/reviewer")).unwrap();
         let body = if failure == "empty body" {
             ""
         } else {

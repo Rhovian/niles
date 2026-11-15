@@ -7,7 +7,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
     let pane_file = env.root.join("pane.txt");
 
     let spawn = env
-        .spawn_command("research", &["auth-fix", "--task", "auth", "Fix", "auth"])
+        .spawn_command("solo", &["auth-fix", "--task", "auth", "Fix", "auth"])
         .env("TMUX_PANE_FILE", &pane_file)
         .output()
         .unwrap();
@@ -148,7 +148,7 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
 fn send_accepts_stdin_and_literal_flag_text() {
     let env = TestEnv::with_manifest("niles-worker-send message'input", "claude");
     let pane_file = env.root.join("pane.txt");
-    let spawn = env.spawn("research", &["worker", "--", "--wait"]);
+    let spawn = env.spawn("solo", &["worker", "--", "--wait"]);
     assert_command_success("fixture spawn", &spawn);
 
     let literal_brief =

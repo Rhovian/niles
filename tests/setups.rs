@@ -54,7 +54,7 @@ fn env_selection_reads_global_links_and_never_merges_the_default_manifest() {
             command.env("NILES_SETUP", selection);
         }
         let output = command.output().unwrap();
-        assert_success_contains("selected skills", &output, "skill: research ");
+        assert_success_contains("selected skills", &output, "skill: solo ");
     }
 }
 

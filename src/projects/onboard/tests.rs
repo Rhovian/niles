@@ -43,7 +43,7 @@ fn starter_picker_starts_empty_and_toggles_independently() {
     picker.key(KeyCode::Char(' '));
     picker.key(KeyCode::Down);
     picker.key(KeyCode::Char(' '));
-    assert_eq!(picker.selected().collect::<Vec<_>>(), ["lead", "design"]);
+    assert_eq!(picker.selected().collect::<Vec<_>>(), ["lead", "reviewer"]);
     picker.key(KeyCode::Char(' '));
     assert_eq!(picker.selected().collect::<Vec<_>>(), ["lead"]);
     assert_eq!(picker.key(KeyCode::Esc), Some(ui::Action::Back));

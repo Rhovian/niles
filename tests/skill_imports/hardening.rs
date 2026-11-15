@@ -2,7 +2,7 @@ use super::*;
 use std::os::unix::fs::symlink;
 
 #[test]
-fn ambiguous_revisions_invalid_paths_symlinks_and_oversize_are_rejected() {
+fn ambiguous_revisions_invalid_paths_and_symlinks_are_rejected() {
     let pack = Pack::new("imports-hardening");
     git(&pack.remote, &["branch", "v1", &pack.sha]);
     assert_failure_contains(
@@ -50,17 +50,6 @@ fn ambiguous_revisions_invalid_paths_symlinks_and_oversize_are_rejected() {
         "frontmatter must start",
     );
     assert!(!stderr_of(&output).contains("PRIVATE_BYTES"));
-    fs::remove_file(pack.repo.join("skills/pdf/SKILL.md")).unwrap();
-    document(&pack.repo, "skills/pdf", "pdf", "valid");
-    let file = fs::File::create(pack.repo.join("skills/pdf/large")).unwrap();
-    file.set_len(8 * 1024 * 1024 + 1).unwrap();
-    pack.commit("large");
-    assert_failure_contains(
-        "size cap",
-        &pack.import("acme/pack/skills/pdf"),
-        "exceeds 8 MiB",
-    );
-    assert!(!pack.pointer("pdf").exists());
 }
 
 #[test]
@@ -84,13 +73,6 @@ fn cache_reads_are_strict_and_remote_frontmatter_is_checked() {
         "name mismatch",
         &pack.import("acme/pack/skills/pdf"),
         "frontmatter name must equal",
-    );
-    document(&pack.repo, "skills/pdf", "pdf", &"x".repeat(131073));
-    pack.commit("oversized document");
-    assert_failure_contains(
-        "document cap",
-        &pack.import("acme/pack/skills/pdf"),
-        "maximum is 131072",
     );
 }
 

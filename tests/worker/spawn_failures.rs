@@ -5,7 +5,7 @@ fn missing_agent_binary_leaves_no_worker_state() {
     let env = TestEnv::with_manifest("niles-worker-missing-binary", "claude");
     fs::remove_file(env.bin.join("claude")).unwrap();
     let output = env
-        .spawn_command("research", &["missing-cli", "Check", "setup"])
+        .spawn_command("solo", &["missing-cli", "Check", "setup"])
         .env("PATH", &env.bin)
         .output()
         .unwrap();
@@ -42,7 +42,7 @@ fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     let env = TestEnv::with_manifest("niles-worker-failed-spawn", "claude");
 
     let reservation = reserve_project(&env.home, &env.root);
-    let output = env.spawn("research", &["auth-fix", "Fix"]);
+    let output = env.spawn("solo", &["auth-fix", "Fix"]);
     assert_failure_contains("reserved spawn", &output, "busy");
     assert!(!state_dir(&env.root).join("worker/auth-fix").exists());
     drop(reservation);
@@ -53,7 +53,7 @@ fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
         ("META_PATH", meta, "cleaned up launched worker"),
     ] {
         let failed = env
-            .spawn_command("research", &["auth-fix", "Fix", "auth"])
+            .spawn_command("solo", &["auth-fix", "Fix", "auth"])
             .env(key, value)
             .output()
             .unwrap();
@@ -68,7 +68,7 @@ fn spawn_window_failure_cleans_partial_worker_and_allows_respawn() {
     assert!(log.contains(" @niles-worker-id auth-fix"));
     assert!(log.contains("kill-window -t =niles-test-session:=niles-auth-fix"));
 
-    let respawn = env.spawn("research", &["auth-fix", "Fix", "auth"]);
+    let respawn = env.spawn("solo", &["auth-fix", "Fix", "auth"]);
     assert_command_success("respawn", &respawn);
     assert!(Path::new(meta).is_file());
 }

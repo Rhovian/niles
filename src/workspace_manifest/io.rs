@@ -208,7 +208,8 @@ mod tests {
     #[test]
     fn save_sorts_bindings_preserves_cadence_and_omits_absent_keys() {
         let root = temp_dir("manifest-save-cadence");
-        let manifest = test_support::manifest();
+        let mut manifest = test_support::manifest();
+        manifest.bindings = store::parse_yaml("worker: {}\nlead: {}").unwrap();
         let path = manifest_path(&root).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         atomic_write(&path, test_support::manifest_body()).unwrap();

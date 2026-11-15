@@ -224,10 +224,7 @@ mod tests {
                 ),
                 ..test_support::manifest()
             };
-            manifest.bindings.insert(
-                "source".parse().unwrap(),
-                manifest.bindings.get(&manifest.entry).unwrap().clone(),
-            );
+            manifest.bindings = [("source".parse().unwrap(), Default::default())].into();
             super::super::save(&fixture.root, &manifest, Some(&selection)).unwrap();
             let saved =
                 parse_yaml::<super::super::WorkspaceManifest>(&fs::read_to_string(&path).unwrap())

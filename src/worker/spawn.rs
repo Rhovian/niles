@@ -1,18 +1,16 @@
 use super::archive::archive_worker_dir;
 use super::meta::{WorkerMeta, report_path, write_meta};
 use super::resolve::resolve_live_worker_if_exists;
-use super::snapshot::{WorkerSnapshot, status_log, status_log_len};
+use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
 use crate::config::spec::{ProjectConfig, load_project_config_from};
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
-use crate::util::{
-    append_line, current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template,
-};
+use crate::util::{current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template};
 use crate::workspace_manifest::setup::SetupSelection;
-use crate::{agent_window, agents, session, telemetry, wake, watch, workspace_manifest};
+use crate::{agent_window, agents, telemetry, wake, watch, workspace_manifest};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
@@ -25,7 +23,7 @@ You are niles worker `{id}`. Report with `niles agent status --help`.
 id: {id}
 task_label: {task_label}
 project: {project}
-report_file: {report_path}{from_report}
+report_file: {report_path}
 
 ## Task
 
@@ -48,12 +46,6 @@ pub struct Assignment {
     /// Manifest tier whose primary to launch (standard by default).
     #[arg(long, value_enum, default_value_t = agents::roster::Tier::Standard, conflicts_with = "agent")]
     pub tier: agents::roster::Tier,
-    /// Build on the report of this completed worker.
-    #[arg(long, value_name = "ID", conflicts_with = "mechanical")]
-    from: Option<String>,
-    /// Optionally record mechanical work in the lead session log.
-    #[arg(long, value_name = "REASON")]
-    mechanical: Option<String>,
 }
 
 pub struct SpawnTask {
@@ -83,7 +75,6 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let _project_lock = Scope::Project(&project).reserve()?;
     let _worker_lock = Scope::Worker(&project, &id).reserve()?;
-    let basis = assignment.resolve(&project, resolve_live_worker_if_exists)?;
     let config = load_project_config_from(&project)?;
     let manifest_path = workspace_manifest::manifest_path(&project, selection)?;
     let manifest = workspace_manifest::load(&project, selection).with_context(|| {
@@ -112,7 +103,6 @@ pub fn spawn(
         binding,
         &assignment.menu,
         &assignment.with,
-        assignment.from.is_some(),
         &project,
     )?;
     invocation.pass_primary(&resolved.prompt)?;
@@ -173,7 +163,6 @@ pub fn spawn(
     }
     println!("skill: {primary_skill}");
     print!("{}", resolved.provenance);
-    basis.record_mechanical(&id)?;
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
@@ -184,7 +173,6 @@ pub fn spawn(
         task_label.as_deref(),
         agent_dir,
         &format!("{task}{}", resolved.menu),
-        &basis,
     )?;
 
     let launch_path = dir.join("launch.sh");
@@ -229,7 +217,6 @@ pub fn spawn(
         menu: resolved.names,
         imports: resolved.imports,
         always: binding.always.clone(),
-        on_from: binding.on_from.clone(),
         on_stage: binding.on_stage.clone(),
         gates: binding.gates.as_ref().map(|config| config.0.clone()),
         with: assignment.with,
@@ -345,7 +332,6 @@ fn write_brief(
     task_label: Option<&str>,
     project: &Utf8Path,
     task: &str,
-    basis: &TaskBasis,
 ) -> Result<Utf8PathBuf> {
     let path = dir.join("brief.md");
     let report_file = report_path(dir);
@@ -362,13 +348,6 @@ fn write_brief(
             ("{project}", project.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
-            (
-                "{from_report}",
-                &match basis {
-                    TaskBasis::FromReport(path) => format!("\nfrom_report: {path}"),
-                    TaskBasis::Mechanical { .. } | TaskBasis::None => String::new(),
-                },
-            ),
         ],
     );
     atomic_write(&path, body)?;
@@ -412,63 +391,5 @@ fn cleanup_failed_spawn(dir: &Utf8Path, target: Option<&WindowTarget>) -> Result
         Ok(())
     } else {
         bail!("{}", failures.join("; "))
-    }
-}
-
-#[derive(Debug)]
-enum TaskBasis {
-    FromReport(Utf8PathBuf),
-    Mechanical { log: Utf8PathBuf, reason: String },
-    None,
-}
-
-impl Assignment {
-    fn resolve(
-        &self,
-        project: &Utf8Path,
-        live_worker: impl FnOnce(&str) -> Result<Option<Utf8PathBuf>>,
-    ) -> Result<TaskBasis> {
-        match (self.from.as_deref(), self.mechanical.as_deref()) {
-            (Some(id), _) => {
-                let dir =
-                    live_worker(id)?.with_context(|| format!("no such live worker '{id}'"))?;
-                let snapshot = WorkerSnapshot::new(id.to_owned(), dir.clone(), status_log(&dir)?);
-                if !snapshot
-                    .last_status_line()
-                    .is_some_and(|line| line.starts_with("done:"))
-                {
-                    bail!("worker '{id}' latest status is not done:");
-                }
-                Ok(TaskBasis::FromReport(report_path(&dir)))
-            }
-            (None, Some(reason)) => {
-                if reason.trim().is_empty() || reason.chars().any(char::is_control) {
-                    bail!(
-                        "--mechanical reason must be non-empty and contain no control characters"
-                    );
-                }
-                let lead = session::latest_lead(project)?
-                    .context("--mechanical requires a lead session")?;
-                Ok(TaskBasis::Mechanical {
-                    log: session::sessions_dir(project)?
-                        .join(lead.id)
-                        .join("decisions.log"),
-                    reason: reason.to_owned(),
-                })
-            }
-            (None, None) => Ok(TaskBasis::None),
-        }
-    }
-}
-
-impl TaskBasis {
-    fn record_mechanical(&self, id: &str) -> Result<()> {
-        if let Self::Mechanical { log, reason } = self {
-            append_line(
-                log,
-                &format!("{} {id} mechanical: {reason}", Utc::now().format("%FT%TZ")),
-            )?;
-        }
-        Ok(())
     }
 }

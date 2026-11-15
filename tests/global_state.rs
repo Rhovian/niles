@@ -33,10 +33,10 @@ fn new_state_and_manifest_stay_outside_the_repository() {
     assert_eq!(dir, state_dir(&env.root));
     assert!(!env.root.join(".niles").exists());
     write_workspace_manifest(&env.root, "claude", "codex", "claude", "claude");
-    let output = env.spawn("research", &["research", "investigate"]);
+    let output = env.spawn("solo", &["solo", "investigate"]);
     assert_command_success("spawn", &output);
     assert!(dir.join("manifest.yaml").is_file());
-    assert!(dir.join("worker/research/brief.md").is_file());
+    assert!(dir.join("worker/solo/brief.md").is_file());
     assert!(stdout_of(&output).contains(dir.to_str().unwrap()));
     assert!(!env.root.join(".niles").exists());
 }
@@ -72,7 +72,7 @@ fn log_appends_timestamped_decisions_to_the_current_lead() {
     let log_path = lead(&env, "z", "%9");
     atomic_write(&log_path, "earlier decision").unwrap();
     for (id, decision) in [
-        ("impl", "security commissioned: operator asked"),
+        ("impl", "codex-trim commissioned: operator asked"),
         ("-", "red: fixed"),
     ] {
         let output = log(&env, "%9", &["log", id, decision]);
@@ -82,7 +82,10 @@ fn log_appends_timestamped_decisions_to_the_current_lead() {
     let body = fs::read_to_string(log_path).unwrap();
     let mut lines = body.lines();
     assert_eq!(lines.next().unwrap(), "earlier decision");
-    for expected in ["impl security commissioned: operator asked", "- red: fixed"] {
+    for expected in [
+        "impl codex-trim commissioned: operator asked",
+        "- red: fixed",
+    ] {
         let (timestamp, decision) = lines.next().unwrap().split_once(' ').unwrap();
         chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
         assert_eq!(decision, expected);

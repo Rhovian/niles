@@ -44,10 +44,7 @@ fn report_falls_back_to_most_recent_local_archive() {
 
     for (task, report_body) in [("FIRST", "first report\n"), ("SECOND", "second report\n")] {
         let spawn = env
-            .niles(
-                &workspace,
-                &["spawn", "--skill", "research", "reviewer", task],
-            )
+            .niles(&workspace, &["spawn", "--skill", "solo", "reviewer", task])
             .output()
             .unwrap();
         assert_command_success("spawn archived report worker", &spawn);

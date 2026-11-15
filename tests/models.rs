@@ -31,9 +31,9 @@ fn models_prints_the_effective_workspace_roster() {
             ("lead", "claude:haiku"),
             ("worker", "codex:gpt-5.5:high"),
             ("reviewer", "codex:added"),
-            ("security", "claude:haiku"),
-            ("design", "claude:haiku"),
-            ("research", "codex:gpt-5.5:fresh"),
+            ("codex-trim", "claude:haiku"),
+            ("niles", "claude:haiku"),
+            ("solo", "codex:gpt-5.5:fresh"),
         ],
     );
     let output = env.run(&["models"]);

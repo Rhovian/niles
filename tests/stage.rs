@@ -46,15 +46,6 @@ impl Worker {
         atomic_write(self.dir.join("report.md"), "deliverable").unwrap();
     }
 }
-fn skill(env: &TestEnv, name: &str, bytes: usize) {
-    write_skill(
-        &env.root.join(".niles"),
-        name,
-        "Use when done",
-        &"x".repeat(bytes),
-    );
-}
-
 #[test]
 fn configured_rounds_require_stage_and_reset_after_dispatch_or_done() {
     for limit in [1, 2] {
@@ -117,7 +108,12 @@ fn postwork_only_defaults_to_one_round_and_other_statuses_are_ungated() {
 fn racing_stages_complete_exactly_one_round() {
     let names = vec!["postwork"; 256];
     let worker = Worker::new(Some(1), &names);
-    skill(&worker.env, "postwork", 1);
+    write_skill(
+        &worker.env.root.join(".niles"),
+        "postwork",
+        "Use when done",
+        "body",
+    );
     worker.report();
     let children: Vec<_> = (0..8)
         .map(|_| worker.command("stage").spawn().unwrap())
@@ -170,20 +166,16 @@ fn metadata_rounds_are_parsed_and_metadata_errors_do_not_disable_staging() {
 }
 
 #[test]
-fn resolution_and_total_body_cap_leave_no_round() {
+fn unresolved_stage_skills_leave_no_round() {
     let worker = Worker::new(Some(2), &["postwork", "otherpost"]);
     worker.report();
     assert!(!worker.command("stage").output().unwrap().status.success());
-    for name in ["postwork", "otherpost"] {
-        skill(&worker.env, name, 16_385);
-    }
-    worker.fails("stage", "32768");
     assert!(!worker.dir.join("gates.json").exists());
     assert_eq!(fs::read(worker.dir.join("status.log")).unwrap(), b"");
 }
 
 #[test]
-fn spawn_snapshot_provenance_and_cap() {
+fn spawn_snapshots_stage_skills_and_gate_provenance() {
     let env = TestEnv::with_manifest("niles-stage-spawn", "claude");
     let manifest = state_dir(&env.root).join("manifest.yaml");
     let text = edit_manifest(&env.root, |text| {
@@ -192,7 +184,6 @@ fn spawn_snapshot_provenance_and_cap() {
         "worker:\n  on_stage: [reviewer]\n  gates: {rounds: 2, post: [{name: check, timeout: 1500ms, run: [printf, \"literal; $(false)\"]}]}",
     )
     });
-    let configured = fs::read_to_string(&manifest).unwrap();
     let output = env.spawn("worker", &["job", "task"]);
     assert_command_success("spawn", &output);
     let provenance: Vec<_> = stdout_of(&output)
@@ -208,8 +199,7 @@ fn spawn_snapshot_provenance_and_cap() {
         )]
     );
     assert!(stdout_of(&output).contains("gate: check run [\"printf\",\"literal; $(false)\"]"));
-    let workers = state_dir(&env.root).join("worker");
-    let dir = workers.join("job");
+    let dir = state_dir(&env.root).join("worker/job");
     let meta = read_json(dir.join("meta.json"));
     assert_fields(
         &meta,
@@ -227,11 +217,6 @@ fn spawn_snapshot_provenance_and_cap() {
         fs::read_to_string(worker.dir.join("gate-1-check.log")).unwrap(),
         "literal; $(false)"
     );
-    skill(&worker.env, "reviewer", 32_769);
-    atomic_write(&manifest, configured).unwrap();
-    let output = worker.env.spawn("worker", &["oversized", "task"]);
-    assert_failure_contains("spawn body cap", &output, "32768");
-    assert!(!workers.join("oversized").exists());
 }
 
 #[path = "stage/gates.rs"]

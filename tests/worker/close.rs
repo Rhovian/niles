@@ -150,7 +150,7 @@ fn worker_close_all_is_scoped_to_invoking_workspace() {
         let spawn = env
             .niles(
                 workspace,
-                &["spawn", "--skill", "research", id, "--task", label, "Fix"],
+                &["spawn", "--skill", "solo", id, "--task", label, "Fix"],
             )
             .output()
             .unwrap();

@@ -215,7 +215,7 @@ mod tests {
                     .collect(),
             )
             .unwrap();
-        assert_eq!(options.selected().collect::<Vec<_>>(), ["design"]);
+        assert_eq!(options.selected().collect::<Vec<_>>(), ["reviewer"]);
         assert_eq!(options.rows.position(), 0);
         options.key(KeyCode::Char(' '));
         assert_eq!(options.selected().count(), 0);

@@ -13,9 +13,3 @@ tiers:
   mechanical:
     primary: codex:gpt-6-luna:low
     secondaries: [claude:haiku]
-lead: {}
-worker: {}
-design: {}
-reviewer: {}
-security: {}
-research: {}

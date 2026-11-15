@@ -318,22 +318,20 @@ pub fn read_json(path: impl AsRef<Path>) -> serde_json::Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
-const SKILLS: [&str; 6] = [
-    "lead", "worker", "reviewer", "security", "design", "research",
-];
+const SKILLS: [&str; 6] = ["lead", "worker", "reviewer", "codex-trim", "niles", "solo"];
 
 pub fn write_workspace_manifest(
     workspace: &Path,
     lead: &str,
     worker: &str,
     reviewer: &str,
-    security: &str,
+    codex_trim: &str,
 ) {
     write_manifest(
         workspace,
         SKILLS
             .into_iter()
-            .zip([lead, worker, reviewer, security, "claude", "claude"]),
+            .zip([lead, worker, reviewer, codex_trim, "claude", "claude"]),
     );
 }
 

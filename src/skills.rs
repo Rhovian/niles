@@ -167,7 +167,7 @@ mod tests {
                     if path.ends_with("store/paths.rs") && line.contains("const WORKERS_DIR") {
                         continue;
                     }
-                    for name in "worker reviewer security design research solo".split_whitespace() {
+                    for name in "worker reviewer solo".split_whitespace() {
                         let literal = format!("\"{name}\"");
                         assert!(!line.contains(&literal), "{path:?}: {line}");
                     }
