@@ -129,7 +129,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                 )?;
                 let question = format!(
                     "Optional starter skills — instructions that give agents a role. None selected by default.\n\
-                     Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Existing skills are kept.",
+                     Missing selections and the entry skill are fetched from {} at latest (Git HEAD). Imports also install or update required skills.",
                     defaults::REPOSITORY,
                 );
                 match starters.pick(&header, &question)? {

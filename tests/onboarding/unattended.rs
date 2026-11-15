@@ -21,6 +21,22 @@ pub(super) fn args() -> Vec<&'static str> {
     ]
 }
 
+fn set_arg(args: &mut Vec<&'static str>, flag: &'static str, value: &'static str) {
+    if let Some([_, target]) = args
+        .split_first_mut()
+        .unwrap()
+        .1
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .find(|pair| pair.first() == Some(&flag))
+    {
+        *target = value;
+    } else {
+        args.extend([flag, value]);
+    }
+}
+
 fn fetch_fixture(env: &TestEnv, name: &str) {
     let dir = env.home.join(".niles/skills").join(name);
     let body = fs::read_to_string(dir.join("SKILL.md")).unwrap();
@@ -31,20 +47,26 @@ fn fetch_fixture(env: &TestEnv, name: &str) {
 #[test]
 fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached() {
     let env = environment();
-    fetch_fixture(&env, "solo");
+    fetch_fixture(&env, "lead");
+    fs::rename(
+        env.home.join(".niles/skills/hub-spoke"),
+        env.home.join("import-skills/hub-spoke"),
+    )
+    .unwrap();
     let mut args = args();
+    set_arg(&mut args, "--entry-skill", "lead");
     args.extend(["--starter-skills", "solo,cost-analysis"]);
     let output = env.run(&args);
     assert_success_contains("explicit setup", &output, "entry session: installed");
     let body = fs::read_to_string(manifest(&env)).unwrap();
     let value: serde_json::Value = serde_saphyr::from_str(&body).unwrap();
-    assert_eq!(json_field(&value, "/entry"), "solo");
+    assert_eq!(json_field(&value, "/entry"), "lead");
     assert_eq!(
         json_field(&value, "/entry_agent"),
         json_field(&FIXTURE, "/entry_agent")
     );
     assert_eq!(json_field(&value, "/tiers"), json_field(&FIXTURE, "/tiers"));
-    assert!(env.home.join(".niles/skills/solo/SKILL.ref").exists());
+    assert!(env.home.join(".niles/skills/hub-spoke/SKILL.ref").exists());
     assert_eq!(
         fs::read_link(env.home.join(".niles/projects/installed")).unwrap(),
         env.root
@@ -52,7 +74,7 @@ fn explicit_setup_fetches_missing_skills_preserves_choices_and_starts_detached()
     assert!(env.tmux_log().contains("new-session -d -s installed"));
     assert!(env.tmux_log().contains("start --keep-skills"));
     fs::remove_file(env.home.join("git.log")).unwrap();
-    fs::remove_dir_all(env.home.join(".niles/skills/solo")).unwrap();
+    fs::remove_dir_all(env.home.join(".niles/skills/hub-spoke")).unwrap();
     let output = env.run(&args);
     assert_failure_contains("overwrite", &output, "manifest already exists");
     assert!(!env.home.join("git.log").exists());
@@ -71,19 +93,7 @@ fn explicit_setup_rejects_invalid_input_before_writes_or_fetching() {
     ] {
         let mut args = args();
         args.extend(["--starter-skills", "reviewer"]);
-        if let Some([_, target]) = args
-            .split_first_mut()
-            .unwrap()
-            .1
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .find(|pair| pair.first() == Some(&flag))
-        {
-            *target = value;
-        } else {
-            args.extend([flag, value]);
-        }
+        set_arg(&mut args, flag, value);
         assert_failure_contains(flag, &env.run(&args), message);
         assert!(!manifest(&env).exists());
     }

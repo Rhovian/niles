@@ -1,3 +1,4 @@
 - [lead, Coordinates workers and reviews their reports]
 - [reviewer, Reviews changes for correctness and maintainability]
 - [worker, Implements changes and verifies the result]
+- [hub-spoke, Coordinates agents independently of workflow]

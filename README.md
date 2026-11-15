@@ -92,7 +92,7 @@ itself. The manifest defines project-wide model tiers (`family:model:effort`) us
 
 The binary embeds no skill text. Setup fetches the entry skill and selected starter skills from
 this repository’s latest Git HEAD into `~/.niles/skills`, recording the resolved commit SHA.
-Existing skills are kept; copy or pin others with
+Imports also install or update required skills at the same commit. Copy or pin others with
 `niles skills import Rhovian/niles/skills/<name>@<rev>`.
 
 - `lead` coordinates: talks to you, spawns agents, forwards their work.

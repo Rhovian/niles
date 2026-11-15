@@ -265,3 +265,6 @@ fn conflicts_and_origin_rules_fail_before_worker_creation() {
 
 #[path = "skill_imports/hardening.rs"]
 mod hardening;
+
+#[path = "skill_imports/composition.rs"]
+mod composition;
