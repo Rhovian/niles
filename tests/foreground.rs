@@ -61,9 +61,6 @@ fn assert_entry(entry: &str, model: &str) {
         for key in ["entry_agent", "primary"] {
             body = body.replace(&format!("{key}: claude:haiku"), &format!("{key}: {agent}"));
         }
-        if entry == "solo" {
-            body.push_str("\nsolo: {}\n");
-        }
         body
     });
     let manifest = state_dir(&env.root).join("manifest.yaml");
