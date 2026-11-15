@@ -1,6 +1,7 @@
 use crate::skills::SkillName;
 use crate::store;
 use crate::telemetry::SessionLink;
+use crate::util::utf8_path;
 use crate::workspace_manifest::Gates;
 use crate::workspace_manifest::setup::Setup;
 use anyhow::{Context, Result, ensure};
@@ -84,7 +85,7 @@ pub(super) fn worker_dir_from_env() -> Result<Utf8PathBuf> {
 pub(super) fn worker_dir_from_env_if_set() -> Result<Option<Utf8PathBuf>> {
     env::var_os("NILES_AGENT_DIR")
         .map(|dir| {
-            let dir = crate::util::utf8_path(dir.into(), "NILES_AGENT_DIR")?;
+            let dir = utf8_path(dir.into(), "NILES_AGENT_DIR")?;
             ensure!(
                 dir.is_absolute() && dir.is_dir(),
                 "NILES_AGENT_DIR must be an absolute worker directory: {dir}"

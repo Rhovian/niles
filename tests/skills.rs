@@ -218,7 +218,7 @@ fn explicit_injection_and_named_loading_in_any_session() {
     }
     let dir = state_dir(&env.root).join("worker/job");
     let meta = read_json(dir.join("meta.json"));
-    assert_eq!(meta["on_stage"], serde_json::json!(["reviewer"]));
+    assert_eq!(json_field(&meta, "/on_stage"), &serde_json::json!(["reviewer"]));
     let launch = fs::read_to_string(dir.join("launch.sh")).unwrap();
     assert!(launch.contains("## Skill: solo"));
     assert!(launch.contains("## Skill: forced\nforced body"));

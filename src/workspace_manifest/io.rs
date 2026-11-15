@@ -146,7 +146,7 @@ mod tests {
             "skills: []",
         ] {
             cases.push((
-                "unsupported-binding-field",
+                "unknown-binding-field",
                 format!("{body}custom: {{{fields}}}\n"),
                 "unknown field",
             ));

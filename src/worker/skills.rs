@@ -1,4 +1,5 @@
 use crate::skills::{self, Skill, SkillName};
+use crate::util::current_dir_utf8;
 use crate::workspace_manifest::Binding;
 use anyhow::{Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -82,7 +83,7 @@ pub(super) fn stage_skills(names: &[SkillName], workspace: &Utf8Path) -> Result<
 pub(crate) fn skill_workspace() -> Result<Utf8PathBuf> {
     match super::meta::worker_dir_from_env_if_set()? {
         Some(dir) => Ok(super::meta::read_meta(&dir)?.project),
-        None => crate::util::current_dir_utf8(),
+        None => current_dir_utf8(),
     }
 }
 
