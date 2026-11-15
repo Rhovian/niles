@@ -1,6 +1,6 @@
 use super::{SkillName, display_description, global_dir, resolve};
 use crate::workspace_manifest::setup::SetupSelection;
-use crate::{util, workspace_manifest};
+use crate::{worker, workspace_manifest};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use std::collections::BTreeSet;
@@ -8,7 +8,7 @@ use std::io::{self, ErrorKind};
 use std::{fs, iter};
 
 pub(crate) fn list(selection: Option<&SetupSelection>) -> Result<()> {
-    let workspace = util::current_dir_utf8()?;
+    let workspace = worker::skill_workspace()?;
     let global = global_dir()?;
     let manifest = workspace_manifest::load_for_skill_listing(&workspace, selection)?
         .context("skills requires a workspace manifest")?;

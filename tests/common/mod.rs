@@ -141,6 +141,7 @@ impl TestEnv {
             .env("PATH", path_with_bin(&self.bin))
             .env("HOME", &self.home)
             .env_remove("NILES_SETUP")
+            .env_remove("NILES_AGENT_DIR")
             .env("TMUX_LOG", &self.tmux_log)
             .env("TMUX", "/tmp/niles-test-tmux,0,0");
         command
@@ -178,6 +179,7 @@ pub fn niles_bare(cwd: &Path, home: &Path) -> Command {
     command
         .current_dir(cwd)
         .env("HOME", home)
+        .env_remove("NILES_AGENT_DIR")
         .env_remove("TMUX");
     command
 }

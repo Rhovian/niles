@@ -17,31 +17,6 @@ pub(crate) struct GithubRef {
 #[serde(try_from = "String", into = "String")]
 pub(crate) struct PinnedRef(GithubRef);
 
-#[derive(Clone, Debug)]
-pub(crate) enum MenuItem {
-    Name(SkillName),
-    Ref(GithubRef),
-}
-
-impl MenuItem {
-    pub fn name(&self) -> &SkillName {
-        match self {
-            Self::Name(name) => name,
-            Self::Ref(reference) => &reference.name,
-        }
-    }
-}
-impl FromStr for MenuItem {
-    type Err = anyhow::Error;
-    fn from_str(text: &str) -> Result<Self> {
-        if text.contains('/') {
-            Ok(Self::Ref(text.parse()?))
-        } else {
-            Ok(Self::Name(text.parse()?))
-        }
-    }
-}
-
 impl FromStr for GithubRef {
     type Err = anyhow::Error;
     // Git 2.50.1 Documentation/git-check-ref-format.adoc defines Git ref syntax,

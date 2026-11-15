@@ -30,6 +30,7 @@ pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub use pane::{peek, send};
 pub use report::report;
 pub(crate) use resolve::resolve_worker as worker_dir;
+pub(crate) use skills::skill_workspace;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
 pub use spawn::{Assignment, SpawnTask, spawn};
 pub(crate) use usage::lead_session;

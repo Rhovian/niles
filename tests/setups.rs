@@ -86,7 +86,7 @@ fn assert_entry_setup(entry: &str) {
     atomic_write(
         &setups.global,
         format!(
-            "entry: {entry}\nentry_agent: claude:sonnet:high\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{skills: [guide], always: [guide]}}\n"
+            "entry: {entry}\nentry_agent: claude:sonnet:high\ntiers: {{standard: {{primary: claude:sonnet:high, secondaries: [codex:gpt-6.1-sol:medium]}}}}\nworker: {{always: [guide]}}\n"
         ),
     )
     .unwrap();
@@ -128,15 +128,9 @@ fn assert_entry_setup(entry: &str) {
         &worker,
         serde_json::json!({
             "/setup":{"name":"tdd","origin":"global"}, "/agent":"claude:sonnet:high",
-            "/menu":["guide"], "/always":["guide"],
         }),
     );
     let worker_dir = state_dir(&env.root).join("worker/selected");
-    assert!(
-        fs::read_to_string(worker_dir.join("brief.md"))
-            .unwrap()
-            .contains("guide: Use when testing setups.")
-    );
     let launch = fs::read_to_string(worker_dir.join("launch.sh")).unwrap();
     assert!(launch.contains("SETUP GUIDE BODY"));
     assert!(!launch.contains("NILES_SETUP="));

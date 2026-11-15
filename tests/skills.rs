@@ -192,31 +192,24 @@ fn discovery(env: &TestEnv, args: &[&str]) -> Output {
 }
 
 #[test]
-fn menu_union_snapshot_discovery_and_explicit_injection() {
-    let env = TestEnv::with_manifest("menu-discovery", "claude");
+fn explicit_injection_and_named_loading_in_any_session() {
+    let env = TestEnv::with_manifest("skill-loading", "claude");
     let root = &env.root.join(".niles");
-    let description = format!(
-        "Use WHEN this\n task applies\u{1b}\u{202e}\u{2066}\u{200b} {}",
-        "é".repeat(250)
-    );
-    for name in ["alpha", "beta", "forced"] {
-        write_skill(root, name, &description, &format!("{name} body"));
-    }
+    write_skill(root, "forced", "Use when forced", "forced body");
     bind_worker(
         &env,
-        "  skills: [alpha, alpha]\n  always: [worker, solo, solo]\n  on_stage: [reviewer]\n",
+        "  always: [worker, solo, solo]\n  on_stage: [reviewer]\n",
     );
     let output = env.spawn(
         "worker",
         &[
-            "job", "--menu", "beta", "--menu", "alpha", "--with", "solo", "--with", "forced",
-            "--with", "forced", "--with", "worker", "task",
+            "job", "--with", "solo", "--with", "forced", "--with", "forced", "--with", "worker",
+            "task",
         ],
     );
     assert_command_success("spawn", &output);
     assert!(!stderr_of(&output).contains("warning:"));
     for prefix in [
-        "menu_skill: alpha",
         "always_skill: solo",
         "on_stage_skill: reviewer",
         "with_skill: forced",
@@ -225,17 +218,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     }
     let dir = state_dir(&env.root).join("worker/job");
     let meta = read_json(dir.join("meta.json"));
-    for (key, names) in [
-        ("menu", vec!["alpha", "beta"]),
-        ("always", vec!["worker", "solo", "solo"]),
-        ("on_stage", vec!["reviewer"]),
-        ("with", vec!["solo", "forced", "forced", "worker"]),
-    ] {
-        assert_eq!(meta.get(key).unwrap(), &serde_json::json!(names), "{key}");
-    }
-    let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
-    assert_eq!(brief.matches("- alpha:").count(), 1);
-    assert!(brief.contains("- beta: Use WHEN this task applies "));
+    assert_eq!(meta["on_stage"], serde_json::json!(["reviewer"]));
     let launch = fs::read_to_string(dir.join("launch.sh")).unwrap();
     assert!(launch.contains("## Skill: solo"));
     assert!(launch.contains("## Skill: forced\nforced body"));
@@ -253,103 +236,41 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
             "{name}"
         );
     }
-    // Editing the binding cannot add permission to the running worker's discovery lists.
-    edit_manifest(&env.root, |body| {
-        body.replace("skills: [alpha, alpha]", "skills: [forced]")
-    });
-    let output = discovery(&env, &["agent", "skills"]);
-    assert_command_success("menu discovery", &output);
-    assert!(stdout_of(&output).starts_with("alpha:"));
-    assert!(!stdout_of(&output).contains("forced:"));
-    for text in [&brief, &stdout_of(&output)] {
-        assert!(!text.contains(['\u{1b}', '\u{202e}', '\u{2066}', '\u{200b}']));
-        let row = text.lines().find(|line| line.contains("alpha: ")).unwrap();
-        let description = row
-            .split_once(": ")
-            .unwrap()
-            .1
-            .rsplit_once(" (workspace ")
-            .unwrap()
-            .0;
-        assert_eq!(description.chars().count(), 200);
-    }
-    for name in ["alpha", "solo", "reviewer", "forced"] {
-        let output = discovery(&env, &["agent", "skill", name]);
-        assert_command_success("skill discovery", &output);
-        assert!(stdout_of(&output).starts_with(&format!("skill: {name} (")));
-        assert!(!stdout_of(&output).contains("---\nname:"));
-    }
-    assert_failure_contains(
-        "unlisted skill",
-        &discovery(&env, &["agent", "skill", "codex-trim"]),
-        "valid skills: alpha, beta, worker, solo, solo, reviewer, solo, forced, forced, worker",
+    write_skill(
+        root,
+        "codex-trim",
+        "Use when loading workspace skills",
+        "workspace body\n",
     );
-}
-
-#[test]
-fn menu_validation_and_warnings_precede_state_creation() {
-    let env = TestEnv::with_manifest("menu-errors", "claude");
-    let root = &env.root.join(".niles");
-    let dir = state_dir(&env.root).join("worker/job");
-    let reject = |args: &[&str], message| {
-        let output = env.spawn("worker", args);
-        assert_failure_contains("rejected spawn", &output, message);
-        assert!(!stderr_of(&output).contains("warning:"));
-        assert!(!dir.exists());
-    };
-    for (description, warning) in [
-        ("Whenever useful", true),
-        ("Use when useful", false),
-        ("Use WHEN useful", false),
-        ("some_when text", true),
-        ("somewhen text", true),
-    ] {
-        write_skill(root, "guide", description, "body");
-        let output = env.spawn("worker", &["job", "--menu", "guide", "task"]);
-        assert_command_success("description warning", &output);
-        assert_eq!(
-            stderr_of(&output).contains("warning: menu skill guide"),
-            warning
-        );
-        fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
-    }
-    for (name, message) in [("absent", "has no SKILL.md"), ("../x", "only github.com")] {
-        reject(&["job", "--menu", name, "task"], message);
-    }
-    for description in ["".to_owned(), "x".repeat(1025)] {
-        write_skill(root, "guide", &description, "body");
-        reject(
-            &["job", "--menu", "guide", "task"],
-            "description must be nonempty",
-        );
-    }
-    let names = (0..17).map(|n| format!("s{n}")).collect::<Vec<_>>();
-    for name in &names {
-        write_skill(root, name, "Use when needed", "body");
-    }
-    let mut args = vec!["job"];
-    for name in names.iter().take(16) {
-        args.extend(["--menu", name]);
-    }
-    args.extend(["--menu", names.first().unwrap(), "task"]);
+    write_skill(
+        &env.home.join(".niles"),
+        "niles",
+        "Use when loading global skills",
+        "global body\n",
+    );
+    let listing = discovery(&env, &["skills"]);
     assert_command_success(
-        "seventeen names, sixteen unique skills",
-        &env.spawn("worker", &args),
+        "worker installed skill listing outside project cwd",
+        &listing,
     );
-    fs::remove_dir_all(state_dir(&env.root).join("worker/job")).unwrap();
-    args.pop();
-    args.extend(["--menu", names.last().unwrap(), "task"]);
-    reject(&args, "maximum is 16");
-    write_skill(root, "guide", "Whenever useful", "body");
-    assert_command_success(
-        "ordinary solo menu at spawn",
-        &env.spawn("worker", &["job", "--menu", "solo", "task"]),
-    );
-    fs::remove_dir_all(&dir).unwrap();
-    bind_worker(&env, "  skills: [solo]\n");
-    assert_command_success("ordinary solo menu at load", &env.run(&["models"]));
-    reject(
-        &["job", "--on-send", "large", "task"],
-        "unexpected argument",
-    );
+    assert!(stdout_of(&listing).contains("skill: codex-trim (workspace "));
+    assert!(stdout_of(&listing).contains("skill: niles (global "));
+    for worker in [true, false] {
+        for (name, body) in [
+            ("codex-trim", "workspace body\n"),
+            ("niles", "global body\n"),
+        ] {
+            let output = if worker {
+                discovery(&env, &["agent", "skill", name])
+            } else {
+                env.niles(&env.root, &["agent", "skill", name])
+                    .output()
+                    .unwrap()
+            };
+            assert_command_success("named skill load", &output);
+            assert!(stdout_of(&output).starts_with(&format!("skill: {name} (")));
+            assert!(stdout_of(&output).ends_with(body));
+            assert!(!stdout_of(&output).contains("---\nname:"));
+        }
+    }
 }

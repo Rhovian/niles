@@ -29,8 +29,6 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
             "any-skill",
             "--tier",
             "economy",
-            "--menu",
-            "reviewer",
             "--with",
             "codex-trim",
             "Task",

@@ -2,10 +2,6 @@ use super::*;
 
 #[test]
 fn names_refs_hosts_paths_and_revisions_parse_once() {
-    assert!(matches!(
-        "pdf".parse::<MenuItem>().unwrap(),
-        MenuItem::Name(_)
-    ));
     for (input, path, rev) in [
         ("acme/pdf", "", "HEAD"),
         ("github.com/acme/pdf", "", "HEAD"),
@@ -18,17 +14,14 @@ fn names_refs_hosts_paths_and_revisions_parse_once() {
             "0123456789012345678901234567890123456789",
         ),
     ] {
-        let reference = match input.parse().unwrap() {
-            MenuItem::Ref(reference) => Some(reference),
-            MenuItem::Name(_) => None,
-        }
-        .expect(input);
+        let reference: GithubRef = input.parse().unwrap();
         assert_eq!(reference.name.as_str(), "pdf");
         assert_eq!(reference.path, path);
         assert_eq!(reference.rev, rev);
         assert!(reference.to_string().starts_with("github.com/acme/"));
     }
     for input in [
+        "pdf",
         "gitlab.com/acme/pdf",
         "github.com/pdf",
         "acme//pdf",
@@ -40,7 +33,7 @@ fn names_refs_hosts_paths_and_revisions_parse_once() {
         "acme/pack/pdf\0",
         "https://github.com/acme/pdf",
     ] {
-        assert!(input.parse::<MenuItem>().is_err(), "{input}");
+        assert!(input.parse::<GithubRef>().is_err(), "{input}");
     }
 }
 

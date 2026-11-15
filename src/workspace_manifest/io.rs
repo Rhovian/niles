@@ -143,9 +143,10 @@ mod tests {
             "standard: {primary: claude:sonnet:high, secondaries: []}",
             "default_tier: economy",
             "tiers: {}",
+            "skills: []",
         ] {
             cases.push((
-                "skill-model",
+                "unsupported-binding-field",
                 format!("{body}custom: {{{fields}}}\n"),
                 "unknown field",
             ));

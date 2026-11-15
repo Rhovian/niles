@@ -71,23 +71,28 @@ The operator and coordinating skill decide those workflows.
 
 ## Composing skills
 
+Every entry and worker startup advertises: “`niles skills` lists skills;
+`niles agent skill <name>` loads one.”
+Resolution checks the workspace before global skills. Entry commands use the current directory
+as the workspace, so run them from the workspace root; workers use their recorded project.
+Skills compose by naming another skill in their body and asking the agent to load it; no
+dependency declaration or binding is needed.
+
 A binding can add skills around its primary one:
 
 ```yaml
 worker:
-  skills: [style-guide]
   always: [coding-rules]
   on_stage: [self-review]
 ```
 
-- `skills` is a menu. The worker sees each name and description and fetches a body with
-  `niles agent skill <name>`; `niles agent skills` lists the menu again. `--menu <name>` adds
-  more. A description without the word "when" gets a warning.
 - `always` bodies follow the primary in the system instructions, then `--with <name>` bodies.
   A name appears once, at its first place.
 - `on_stage` bodies are delivered at [staging](#staging).
 
-Spawn prints where every skill came from. A running worker keeps the lists it started with.
+Spawn prints where injected skills came from. A running worker keeps its stage configuration.
+The former binding `skills` field and spawn `--menu` option are removed; delete `skills` from
+existing bindings and install remote skills with `niles skills import` before loading them.
 
 ## Staging
 
@@ -116,12 +121,6 @@ skill's name and must match its frontmatter. Import writes the resolved SHA to
 works like a local one. Reimport to update; it prints the old and new SHAs. Delete the directory
 to uninstall.
 
-For one worker only, pass a ref to `--menu`:
-
-```sh
-niles spawn --skill worker task-id --menu anthropics/skills/skills/pdf@main "task"
-```
-
 Private repositories use your Git credentials. Niles never runs an imported skill's scripts,
 though agents may. Fetched skills are cached under `~/.niles/cache/skills/`; deleting a cache
 entry fetches it again.
@@ -142,6 +141,5 @@ theirs. Selected workspace setups run their commands with your permissions; see
 | Description | 1,024 characters (shown clamped to 200) |
 | `SKILL.md` file | 131,072 bytes, including frontmatter |
 | Assembled system instructions | 65,536 bytes; Codex's encoded argument 131,071 bytes |
-| Menu | 16 skills |
 | `on_stage` bodies | 32,768 bytes in total |
 | Imported directory | 8 MiB of checked-out content |

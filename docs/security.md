@@ -101,14 +101,21 @@ setup's name, origin and gate commands, but printing them is not approval.
 ### Skills as an instruction source
 
 A repository can ship `.niles/skills/<name>/SKILL.md`, which overrides a global skill of the
-same name. A named skill's body reaches the agent at system or developer-prompt privilege,
-above `AGENTS.md`. `niles skills` scans workspace and global skill directories and reads all
-installed skills, including unbound ones, using the same workspace precedence, symlink and
+same name. Skill bodies injected at launch reach the agent at system or developer-prompt
+privilege, above `AGENTS.md`. `niles skills` scans workspace and global skill directories and
+reads all installed skills, including unbound ones, using the same workspace precedence, symlink and
 size checks as explicit resolution. Invalid discovered skills are skipped with warnings on
 stderr, so valid skills remain available in the listing. Explicit launches still reject invalid
 skills. Listing an imported skill may fetch its pinned cache. Listing displays source and
 description without injecting skill bodies into an agent. Launches resolve only named skills.
 Every launch prints `skill: <name> (<source> <path>)`, so you can see where the text came from.
+Any agent, in an entry or worker session, can load any installed skill's text with
+`niles agent skill <name>`, resolving workspace before global. Composition bindings configure
+injection and staging; they do not restrict skill loading. A skill can ask the
+agent to load another by name; Niles does not parse body references or declare dependencies.
+Explicit loads return skill bodies as command output, not system or developer instructions.
+They print the resolved source and retain the same symlink and size checks. In any session,
+a named load of a `SKILL.ref` may fetch its pinned cache.
 Size limits are in [skill workflows](skills.md).
 
 ### Remote API

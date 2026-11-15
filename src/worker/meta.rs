@@ -1,5 +1,4 @@
 use crate::skills::SkillName;
-use crate::skills::reference::PinnedRef;
 use crate::store;
 use crate::telemetry::SessionLink;
 use crate::workspace_manifest::Gates;
@@ -8,7 +7,6 @@ use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::env;
 
 const REPORT_FILE: &str = "report.md";
@@ -22,15 +20,7 @@ pub(super) struct WorkerMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) gates: Option<Gates>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) menu: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(super) imports: BTreeMap<SkillName, PinnedRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) always: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) on_stage: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) with: Vec<SkillName>,
     pub(super) agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) agent_family: Option<String>,
@@ -76,16 +66,7 @@ pub(super) fn read_meta(worker_dir: &Utf8Path) -> Result<WorkerMeta> {
 
 pub(super) fn read_meta_if_exists(worker_dir: &Utf8Path) -> Result<Option<WorkerMeta>> {
     let path = meta_path(worker_dir);
-    let meta: Option<WorkerMeta> = store::read_optional_json(&path)?;
-    if let Some(meta) = &meta {
-        for (name, reference) in &meta.imports {
-            ensure!(
-                name == &reference.reference().name && meta.menu.contains(name),
-                "invalid ephemeral import {name} in {path}"
-            );
-        }
-    }
-    Ok(meta)
+    store::read_optional_json(&path)
 }
 
 pub(super) fn meta_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
@@ -97,12 +78,18 @@ pub(super) fn report_path(worker_dir: &Utf8Path) -> Utf8PathBuf {
 }
 
 pub(super) fn worker_dir_from_env() -> Result<Utf8PathBuf> {
-    let dir = Utf8PathBuf::from(
-        env::var("NILES_AGENT_DIR").context("NILES_AGENT_DIR is missing or invalid")?,
-    );
-    ensure!(
-        dir.is_absolute() && dir.is_dir(),
-        "NILES_AGENT_DIR must be an absolute worker directory: {dir}"
-    );
-    Ok(dir)
+    worker_dir_from_env_if_set()?.context("NILES_AGENT_DIR is missing or invalid")
+}
+
+pub(super) fn worker_dir_from_env_if_set() -> Result<Option<Utf8PathBuf>> {
+    env::var_os("NILES_AGENT_DIR")
+        .map(|dir| {
+            let dir = crate::util::utf8_path(dir.into(), "NILES_AGENT_DIR")?;
+            ensure!(
+                dir.is_absolute() && dir.is_dir(),
+                "NILES_AGENT_DIR must be an absolute worker directory: {dir}"
+            );
+            Ok(dir)
+        })
+        .transpose()
 }

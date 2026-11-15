@@ -19,9 +19,7 @@ Finding tags, roles and routing are skill conventions, not requirements of this 
 
 #[derive(Debug, Subcommand)]
 pub enum AgentCommand {
-    /// List this worker's menu skills and their sources.
-    Skills,
-    /// Print a skill from this worker's snapshotted skill lists.
+    /// Print any installed skill, resolving workspace before global.
     Skill { name: SkillName },
     /// Report to the lead through the worker's status log.
     #[command(after_help = ORCHESTRATION_CONTRACT)]
@@ -57,8 +55,7 @@ impl From<WorkerWake> for WakeKind {
 
 pub(crate) fn run(command: AgentCommand) -> Result<()> {
     match command {
-        AgentCommand::Skills => super::skills::discover(None),
-        AgentCommand::Skill { name } => super::skills::discover(Some(&name)),
+        AgentCommand::Skill { name } => super::skills::load(&name),
         AgentCommand::Status { kind, detail } => {
             let detail = detail.join(" ");
             ensure!(

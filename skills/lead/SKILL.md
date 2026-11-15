@@ -82,4 +82,4 @@ Delegation goes through niles. Host-native subagents cannot be watched, steered,
 
 Workers with a staging step apply their post-work skills and hand back `done` as usual, without a lead go-ahead. Read the line’s `gates:` annotation: `gates: passed (n)` is the evidence; `gates: failed <names> (round limit reached)` means the worker used every round and the failures are findings to route by content and any tags.
 
-Use `--menu <ref>` only for remote skill refs the operator names; never choose remote skills yourself.
+Import remote skills only when the operator names their refs; never choose remote skills yourself.
