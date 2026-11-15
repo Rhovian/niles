@@ -44,6 +44,9 @@ fn replacement_skills_discover_the_binary_contract_for_every_family() {
         assert!(!script.contains("Niles orchestration contract"));
         let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
         assert!(brief.contains("Report with `niles agent status --help`"));
+        assert!(
+            brief.contains("`niles skills` lists skills; `niles agent skill <name>` loads one.")
+        );
     }
 }
 

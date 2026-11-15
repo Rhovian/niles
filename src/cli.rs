@@ -84,7 +84,7 @@ pub enum CommandName {
         #[command(subcommand)]
         command: Option<RemoteCommand>,
     },
-    /// Worker-facing commands.
+    /// Agent-facing commands.
     Agent {
         #[command(subcommand)]
         command: AgentCommand,

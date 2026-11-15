@@ -2,7 +2,6 @@ use super::brief::{ManagerSession, prepare_manager_session};
 use crate::config::spec::load_project_config_from;
 #[cfg(test)]
 use crate::store::atomic_write;
-use crate::util::render_template;
 use crate::workspace_manifest::WorkspaceManifest;
 use crate::{agents, skills, watch};
 use anyhow::{Context, Result, bail};
@@ -112,9 +111,10 @@ fn foreground_invocation_for_project(
 }
 
 fn entry_prompt(dir: &Utf8Path) -> String {
-    const ENTRY_TURN_TEMPLATE: &str =
-        "# Niles start session\nsession_dir: {dir}\n\nStart the Niles manager session.";
-    render_template(ENTRY_TURN_TEMPLATE, &[("{dir}", dir.as_str())])
+    format!(
+        "# Niles start session\nsession_dir: {dir}\n\n{}",
+        skills::COMMANDS
+    )
 }
 
 fn exit_code_label(code: Option<i32>) -> String {
@@ -213,7 +213,7 @@ mod tests {
         let prompt = entry_prompt(Utf8Path::new("/tmp/{dir}"));
         assert_eq!(
             prompt,
-            "# Niles start session\nsession_dir: /tmp/{dir}\n\nStart the Niles manager session."
+            "# Niles start session\nsession_dir: /tmp/{dir}\n\n`niles skills` lists skills; `niles agent skill <name>` loads one."
         );
     }
 }

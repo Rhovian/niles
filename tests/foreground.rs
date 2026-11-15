@@ -112,7 +112,7 @@ fn assert_entry(entry: &str, model: &str) {
         .expect(entry)
         .strip_prefix("# Niles start session\nsession_dir: ")
         .expect(entry)
-        .strip_suffix("\n\nStart the Niles manager session.")
+        .strip_suffix("\n\n`niles skills` lists skills; `niles agent skill <name>` loads one.")
         .expect(entry);
     let dir = Path::new(dir);
     let meta = read_json(dir.join("session.json"));

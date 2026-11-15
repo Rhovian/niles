@@ -195,7 +195,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     edit_manifest(&pack.env.root, |body| {
         body.replace(
             "worker: {}\n",
-            "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_stage: [pdf]\n",
+            "worker:\n  always: [pdf]\n  on_stage: [pdf]\n",
         )
     });
     fs::remove_dir_all(pack.env.home.join(".niles/cache")).unwrap();
@@ -205,7 +205,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     fs::rename(hidden, &pack.remote).unwrap();
     let output = pack.spawn(&["job", "--with", "pdf", "task"]);
     assert_command_success("refetch on cache miss and inject", &output);
-    for provenance in ["menu_skill", "always_skill", "on_stage_skill", "with_skill"] {
+    for provenance in ["always_skill", "on_stage_skill", "with_skill"] {
         assert!(stdout_of(&output).contains(&format!("{provenance}: pdf (import ")));
     }
     let launch =
@@ -232,67 +232,13 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
 }
 
 #[test]
-fn ephemeral_menu_remains_pinned_and_does_not_install_or_inject() {
-    let pack = Pack::new("imports-ephemeral");
-    let output = pack.spawn(&["job", "--menu", "acme/pack/skills/pdf@main", "task"]);
-    assert_command_success("ephemeral", &output);
-    assert!(!pack.pointer("pdf").exists());
-    assert!(!pack.env.home.join(".niles/skills/pdf").exists());
-    let dir = state_dir(&pack.env.root).join("worker/job");
-    let meta = read_json(dir.join("meta.json"));
-    assert_eq!(*json_field(&meta, "/menu"), serde_json::json!(["pdf"]));
-    assert_eq!(
-        *json_field(&meta, "/imports/pdf"),
-        format!("github.com/acme/pack/skills/pdf@{}", pack.sha)
-    );
-    assert!(
-        !fs::read_to_string(dir.join("launch.sh"))
-            .unwrap()
-            .contains("pdf version one")
-    );
-    let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
-    assert!(brief.contains(pack.cache("pdf").to_str().unwrap()));
-    pack.update();
-    // A chain shadow cannot replace the worker's snapshot pin.
-    document(&pack.env.root.join(".niles"), "skills/pdf", "pdf", "shadow");
-    fs::remove_dir_all(pack.cache("pdf")).unwrap();
-    let output = pack.discover("job", &["agent", "skill", "pdf"]);
-    assert_success_contains("pinned discovery refetch", &output, "pdf version one");
-    assert!(!stdout_of(&output).contains("version two"));
-    let output = pack.discover("job", &["agent", "skills"]);
-    assert_command_success("pinned menu rows", &output);
-    assert!(stdout_of(&output).contains(&pack.sha[..7]));
+fn conflicts_and_origin_rules_fail_before_worker_creation() {
+    let pack = Pack::new("imports-collisions");
     assert_failure_contains(
         "with is name-only",
         &pack.spawn(&["invalid", "--with", "acme/pack/skills/pdf", "task"]),
         "invalid skill name",
     );
-}
-
-#[test]
-fn collisions_conflicts_and_origin_rules_fail_before_worker_creation() {
-    let pack = Pack::new("imports-collisions");
-    let ref_worker = "acme/pack/skills/worker";
-    for flags in [
-        vec!["--menu", ref_worker],
-        vec!["--menu", "pdf", "--menu", "acme/pack/skills/pdf"],
-        vec!["--menu", "acme/pack/skills/pdf", "--with", "pdf"],
-    ] {
-        let mut args = vec!["invalid"];
-        args.extend(flags);
-        args.push("task");
-        assert_failure_contains("collision", &pack.spawn(&args), "collides");
-        assert!(!state_dir(&pack.env.root).join("worker/invalid").exists());
-    }
-    let references: Vec<_> = (0..17)
-        .map(|n| format!("acme/pack/skills/m{n}@{}", pack.sha))
-        .collect();
-    let mut args = vec!["invalid"];
-    for reference in &references {
-        args.extend(["--menu", reference]);
-    }
-    args.push("task");
-    assert_failure_contains("inline ref menu cap", &pack.spawn(&args), "maximum is 16");
     assert_command_success("import", &pack.import("acme/pack/skills/pdf"));
     document(&pack.env.root.join(".niles"), "skills/pdf", "pdf", "local");
     let output = pack.import("acme/pack/skills/pdf");

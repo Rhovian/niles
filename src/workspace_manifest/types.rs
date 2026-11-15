@@ -45,8 +45,6 @@ pub struct WorkspaceManifest {
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skills: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub always: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_stage: Vec<SkillName>,
@@ -219,7 +217,7 @@ pub struct TierBinding {
 
 impl Binding {
     pub(crate) fn attached_skills(&self) -> impl Iterator<Item = &SkillName> {
-        self.skills.iter().chain(&self.always).chain(&self.on_stage)
+        self.always.iter().chain(&self.on_stage)
     }
 }
 

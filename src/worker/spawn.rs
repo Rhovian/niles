@@ -19,6 +19,7 @@ use std::os::unix::fs::OpenOptionsExt;
 
 const BOOTSTRAP: &str = r#"# Niles {skill} brief
 You are niles worker `{id}`. Report with `niles agent status --help`.
+{skill_commands}
 
 id: {id}
 task_label: {task_label}
@@ -37,9 +38,6 @@ pub struct Assignment {
     /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
-    /// Add a skill to the discovery menu (repeatable).
-    #[arg(long)]
-    menu: Vec<skills::reference::MenuItem>,
     /// Inject an additional skill into the system prompt (repeatable).
     #[arg(long = "with")]
     with: Vec<SkillName>,
@@ -98,13 +96,7 @@ pub fn spawn(
         Some(binding) => binding,
         None => &empty_composition,
     };
-    let resolved = super::skills::prepare(
-        &primary_skill,
-        binding,
-        &assignment.menu,
-        &assignment.with,
-        &project,
-    )?;
+    let resolved = super::skills::prepare(&primary_skill, binding, &assignment.with, &project)?;
     invocation.pass_primary(&resolved.prompt)?;
     if find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
@@ -166,14 +158,7 @@ pub fn spawn(
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
-    let brief_path = write_brief(
-        &dir,
-        &id,
-        &skill,
-        task_label.as_deref(),
-        agent_dir,
-        &format!("{task}{}", resolved.menu),
-    )?;
+    let brief_path = write_brief(&dir, &id, &skill, task_label.as_deref(), agent_dir, &task)?;
 
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
@@ -214,12 +199,8 @@ pub fn spawn(
     let meta = WorkerMeta {
         setup: setup.map(|file| file.setup.clone()),
         id: id.clone(),
-        menu: resolved.names,
-        imports: resolved.imports,
-        always: binding.always.clone(),
         on_stage: binding.on_stage.clone(),
         gates: binding.gates.as_ref().map(|config| config.0.clone()),
-        with: assignment.with,
         skill,
         agent,
         agent_family: agent_spec.tiered_family(),
@@ -251,7 +232,6 @@ pub fn spawn(
     // this only writes it.
     let armed = watch::arm_checkin(&dir, cadence, armed_len, created_at)?;
 
-    eprint!("{}", resolved.warnings);
     println!("spawned: {id}");
     println!("window: {window_name}");
     println!("agent: {}", meta.agent);
@@ -348,6 +328,7 @@ fn write_brief(
             ("{project}", project.as_str()),
             ("{report_path}", report_file.as_str()),
             ("{task}", task),
+            ("{skill_commands}", skills::COMMANDS),
         ],
     );
     atomic_write(&path, body)?;
