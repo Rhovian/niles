@@ -82,7 +82,7 @@ pub(super) fn find(name: &str) -> Result<Option<Entry>> {
         .find(|entry| entry.name.as_str() == name))
 }
 
-/// Remove orchestration data only after checking the current registration and live workers.
+/// Close the registered project's session and remove its orchestration data.
 pub(super) fn deregister(entry: &Entry) -> Result<()> {
     let link = directory()?.join(entry.name.as_str());
     if fs::read_link(&link)? != entry.path.as_std_path() {
@@ -100,12 +100,6 @@ pub(super) fn deregister(entry: &Entry) -> Result<()> {
         bail!("unsafe project path: {}", entry.path);
     }
     let _lock = Scope::Deregister(&entry.path).reserve()?;
-    if !worker::live_worker_locations(&entry.path)?.is_empty() {
-        bail!(
-            "cannot deregister {}: close its live workers first",
-            entry.name.as_str()
-        );
-    }
     let session = entry.name.session()?;
     if tmux::project_session(&session)?.as_deref() == Some(entry.path.as_str()) {
         tmux::kill_session(&session)?;
@@ -129,7 +123,7 @@ mod tests {
         }
     }
     #[test]
-    fn deregister_refuses_live_workers_then_deletes_state_and_dirty_managed_trees() {
+    fn deregister_deletes_live_worker_state_and_dirty_managed_trees() {
         use crate::{
             store,
             test_support::{remove_workspace, temp_dir, temp_test_path, write_worker_meta},
@@ -175,18 +169,9 @@ mod tests {
             path: project.to_path_buf(),
         };
         let state = store::paths::project_dir(&project).unwrap();
-        let dir = store::workers_dir(&project).unwrap().join("w");
         let created_at = "2026-01-01T00:00:00Z".parse().unwrap();
         write_worker_meta(&project, "w", "api:w", created_at, None);
         let link = directory().unwrap().join(entry.name.as_str());
-        let error = deregister(&entry).unwrap_err().to_string();
-        assert!(error.contains("live workers"), "{error}");
-        assert!(link.exists() && tree.exists() && dir.exists());
-        fs::remove_file(dir.join("meta.json")).unwrap();
-        let reservation = store::Scope::Project(&project).reserve().unwrap();
-        assert!(deregister(&entry).unwrap_err().to_string().contains("busy"));
-        assert!(link.exists() && tree.exists());
-        drop(reservation);
         deregister(&entry).unwrap();
         assert!(link.symlink_metadata().is_err());
         assert!(!state.exists());
