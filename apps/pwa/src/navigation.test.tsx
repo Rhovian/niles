@@ -8,7 +8,7 @@ import { projects, type Project, type Session } from './api';
 const registered: Project[] = [
   { name: 'demo', state: 'waiting', lead_state: 'waiting', workers: [
     { id: 'nav', skill: 'worker', lost: false, state: 'working', model: 'gpt-6.1' }, { id: 'review', skill: 'reviewer', lost: true },
-    { id: 'audit', skill: 'security', lost: false, state: 'idle' }, { id: 'lookup', skill: 'research', lost: false, state: 'starting' },
+    { id: 'audit', skill: 'codex-trim', lost: false, state: 'idle' }, { id: 'lookup', skill: 'solo', lost: false, state: 'starting' },
     { id: 'plan', skill: 'custom-style', lost: false },
   ] },
   { name: 'offline', state: 'not running', workers: [] },
@@ -38,7 +38,7 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(menu.querySelectorAll('details')).toHaveLength(0);
   expandProject('demo');
   for (const text of ['demo', 'offline', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
-  expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['custom-style', 'research', 'reviewer', 'security', 'worker']);
+  expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['codex-trim', 'custom-style', 'reviewer', 'solo', 'worker']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
   for (const [name, state, glyph] of [['demo', 'waiting', '⚠'], ['nav', 'working', '●'], ['audit', 'idle', '○'], ['lookup', 'starting', '◌']]) {
     const icon = screen.getByRole('button', { name }).querySelector('[role="img"]')!;

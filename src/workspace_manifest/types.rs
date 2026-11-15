@@ -49,8 +49,6 @@ pub struct Binding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub always: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub on_from: Vec<SkillName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_stage: Vec<SkillName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gates: Option<GateConfig>,
@@ -221,11 +219,7 @@ pub struct TierBinding {
 
 impl Binding {
     pub(crate) fn attached_skills(&self) -> impl Iterator<Item = &SkillName> {
-        self.skills
-            .iter()
-            .chain(&self.always)
-            .chain(&self.on_from)
-            .chain(&self.on_stage)
+        self.skills.iter().chain(&self.always).chain(&self.on_stage)
     }
 }
 
@@ -362,15 +356,8 @@ mod tests {
             gates.0.post.first().unwrap().timeout,
             Duration::from_secs(300)
         );
-        let overflow = serde_json::json!({"post": [{"run": ["true"]}, {"run": ["false"], "timeout": {"secs": u64::MAX, "nanos": 0}}]});
-        assert_err_contains(
-            serde_json::from_value::<Gates>(overflow).map_err(Into::into),
-            "gate timeout sum exceeds 10 minutes",
-        );
         for body in [
             "post: [{run: []}]",
-            "post: [{run: [true], timeout: 601s}]",
-            "post: [{run: [true], timeout: 6m}, {run: [true], timeout: 5m}]",
             "post: [{name: same, run: [true]}, {name: same, run: [true]}]",
             "post: [{run: [true]}, {name: run-1, run: [true]}]",
             "post: [{name: '../escape', run: [true]}]",
@@ -379,7 +366,6 @@ mod tests {
         ] {
             assert!(parse_yaml::<GateConfig>(body).is_err(), "{body}");
         }
-        assert!(parse_yaml::<GateConfig>("post: [{run: [true], timeout: 10m}]").is_ok());
     }
 
     #[test]

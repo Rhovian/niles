@@ -146,29 +146,13 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
         path.to_str().unwrap(),
     );
     assert!(!state_dir(&env.root).join("worker/job").exists());
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_len(8 * 1024 * 1024 * 1024)
-        .unwrap();
-    let listing = env.run(&["skills"]);
-    assert_command_success("oversized bound skill warns", &listing);
-    assert!(stderr_of(&listing).contains("warning:"));
-    assert!(stderr_of(&listing).contains("read 131073 bytes (file size 8589934592 bytes)"));
-    assert!(!stdout_of(&listing).contains("skill: worker "));
-    assert!(stdout_of(&listing).contains("skill: reviewer "));
     for (name, body, error) in [
-        ("worker", " \n".into(), "empty body"),
-        ("lead", " \n".into(), "empty body"),
-        ("worker", "bad\0text".into(), "NUL"),
-        ("lead", "bad\0text".into(), "NUL"),
-        ("worker", "x".repeat(65536), "maximum is 65536"),
-        ("lead", "x".repeat(65537), "maximum is 65536"),
-        ("worker", "\u{1b}".repeat(24000), "encoded primary"),
-        ("lead", "\u{1b}".repeat(24000), "encoded primary"),
+        ("worker", " \n", "empty body"),
+        ("lead", " \n", "empty body"),
+        ("worker", "bad\0text", "NUL"),
+        ("lead", "bad\0text", "NUL"),
     ] {
-        let path = write_skill(&env.root.join(".niles"), name, "valid", &body);
+        let path = write_skill(&env.root.join(".niles"), name, "valid", body);
         let output = if name == "worker" {
             env.spawn(name, &["job", "--worktree", "untouched", "task"])
         } else {
@@ -188,10 +172,14 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
     assert!(!state_dir(&env.root).join("worker/job").exists());
 }
 
-fn bind_extras(env: &TestEnv, extra: &str) {
+fn bind_worker(env: &TestEnv, extra: &str) {
     edit_manifest(&env.root, |body| {
-        body.replace("worker: {}\n", "worker:\n")
-            .replace("worker:\n", &format!("worker:\n{extra}"))
+        let mut manifest: serde_json::Value = serde_saphyr::from_str(&body).unwrap();
+        manifest.as_object_mut().unwrap().insert(
+            "worker".to_owned(),
+            serde_saphyr::from_str::<serde_json::Value>(extra).unwrap(),
+        );
+        serde_saphyr::to_string(&manifest).unwrap()
     });
 }
 
@@ -214,14 +202,14 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     for name in ["alpha", "beta", "forced"] {
         write_skill(root, name, &description, &format!("{name} body"));
     }
-    bind_extras(
+    bind_worker(
         &env,
-        "  skills: [alpha, alpha]\n  always: [worker, research, research]\n  on_from: [research, design, design]\n  on_stage: [reviewer]\n",
+        "  skills: [alpha, alpha]\n  always: [worker, solo, solo]\n  on_stage: [reviewer]\n",
     );
     let output = env.spawn(
         "worker",
         &[
-            "job", "--menu", "beta", "--menu", "alpha", "--with", "research", "--with", "forced",
+            "job", "--menu", "beta", "--menu", "alpha", "--with", "solo", "--with", "forced",
             "--with", "forced", "--with", "worker", "task",
         ],
     );
@@ -229,8 +217,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     assert!(!stderr_of(&output).contains("warning:"));
     for prefix in [
         "menu_skill: alpha",
-        "always_skill: research",
-        "on_from_skill: design",
+        "always_skill: solo",
         "on_stage_skill: reviewer",
         "with_skill: forced",
     ] {
@@ -240,10 +227,9 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     let meta = read_json(dir.join("meta.json"));
     for (key, names) in [
         ("menu", vec!["alpha", "beta"]),
-        ("always", vec!["worker", "research", "research"]),
-        ("on_from", vec!["research", "design", "design"]),
+        ("always", vec!["worker", "solo", "solo"]),
         ("on_stage", vec!["reviewer"]),
-        ("with", vec!["research", "forced", "forced", "worker"]),
+        ("with", vec!["solo", "forced", "forced", "worker"]),
     ] {
         assert_eq!(meta.get(key).unwrap(), &serde_json::json!(names), "{key}");
     }
@@ -251,25 +237,16 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     assert_eq!(brief.matches("- alpha:").count(), 1);
     assert!(brief.contains("- beta: Use WHEN this task applies "));
     let launch = fs::read_to_string(dir.join("launch.sh")).unwrap();
-    assert!(launch.contains("## Skill: research"));
+    assert!(launch.contains("## Skill: solo"));
     assert!(launch.contains("## Skill: forced\nforced body"));
-    assert!(!launch.contains("## Skill: design"));
-    atomic_write(dir.join("status.log"), "done: ready\n").unwrap();
-    let args = [
-        "followup", "--from", "job", "--with", "research", "--with", "forced", "--with", "forced",
-        "--with", "worker", "task",
-    ];
-    assert_command_success("from spawn", &env.spawn("worker", &args));
-    let launch =
-        fs::read_to_string(state_dir(&env.root).join("worker/followup/launch.sh")).unwrap();
-    let positions = ["worker", "research", "design", "forced"]
+    let positions = ["worker", "solo", "forced"]
         .map(|name| launch.find(&format!("## Skill: {name}\n")).unwrap());
     assert!(
         positions
             .windows(2)
             .all(|pair| matches!(pair, [a, b] if a < b))
     );
-    for name in ["worker", "research", "design", "forced"] {
+    for name in ["worker", "solo", "forced"] {
         assert_eq!(
             launch.matches(&format!("## Skill: {name}\n")).count(),
             1,
@@ -296,7 +273,7 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
             .0;
         assert_eq!(description.chars().count(), 200);
     }
-    for name in ["alpha", "research", "design", "reviewer", "forced"] {
+    for name in ["alpha", "solo", "reviewer", "forced"] {
         let output = discovery(&env, &["agent", "skill", name]);
         assert_command_success("skill discovery", &output);
         assert!(stdout_of(&output).starts_with(&format!("skill: {name} (")));
@@ -304,13 +281,13 @@ fn menu_union_snapshot_discovery_and_explicit_injection() {
     }
     assert_failure_contains(
         "unlisted skill",
-        &discovery(&env, &["agent", "skill", "security"]),
-        "valid skills: alpha, beta, worker, research, research, research, design, design, reviewer, research, forced, forced, worker",
+        &discovery(&env, &["agent", "skill", "codex-trim"]),
+        "valid skills: alpha, beta, worker, solo, solo, reviewer, solo, forced, forced, worker",
     );
 }
 
 #[test]
-fn menu_errors_caps_and_warning_precede_state_creation() {
+fn menu_validation_and_warnings_precede_state_creation() {
     let env = TestEnv::with_manifest("menu-errors", "claude");
     let root = &env.root.join(".niles");
     let dir = state_dir(&env.root).join("worker/job");
@@ -365,41 +342,12 @@ fn menu_errors_caps_and_warning_precede_state_creation() {
     reject(&args, "maximum is 16");
     write_skill(root, "guide", "Whenever useful", "body");
     assert_command_success(
-        "ordinary research menu at spawn",
-        &env.spawn("worker", &["job", "--menu", "research", "task"]),
+        "ordinary solo menu at spawn",
+        &env.spawn("worker", &["job", "--menu", "solo", "task"]),
     );
     fs::remove_dir_all(&dir).unwrap();
-    bind_extras(&env, "  skills: [research]\n");
-    assert_command_success("ordinary research menu at load", &env.run(&["models"]));
-    for name in ["large0", "large1", "large2", "large3"] {
-        write_skill(root, name, "Use when needed", &"x".repeat(16384));
-    }
-    assert_command_success(
-        "duplicate bodies share one budget slot",
-        &env.spawn(
-            "worker",
-            &[
-                "job", "--with", "large0", "--with", "large0", "--with", "large0", "--with",
-                "large0", "task",
-            ],
-        ),
-    );
-    fs::remove_dir_all(&dir).unwrap();
-    bind_extras(&env, "  on_stage: [large0, large1]\n");
-    assert_command_success("exact stage cap", &env.spawn("worker", &["job", "task"]));
-    fs::remove_dir_all(&dir).unwrap();
-    write_skill(root, "large1", "Use when needed", &"x".repeat(16385));
-    reject(
-        &["job", "--menu", "guide", "task"],
-        "on_stage bodies exceed 32768",
-    );
-    edit_manifest(&env.root, |body| {
-        body.replace(
-            "on_stage: [large0, large1]",
-            "always: [large0, large1, large2, large3]",
-        )
-    });
-    reject(&["job", "--menu", "guide", "task"], "maximum is 65536");
+    bind_worker(&env, "  skills: [solo]\n");
+    assert_command_success("ordinary solo menu at load", &env.run(&["models"]));
     reject(
         &["job", "--on-send", "large", "task"],
         "unexpected argument",

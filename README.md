@@ -99,9 +99,6 @@ Existing skills are kept; copy or pin others with
 - `solo` does your request directly in one session.
 - `worker` implements a change and runs focused checks.
 - `reviewer` reviews correctness, idiom, economy, and tests.
-- `security` asks what an attacker can do with a change.
-- `design` writes a design record before implementation.
-- `research` answers one question with sources and edits nothing.
 
 Installing a skill plugin doesn't install the Niles binary or configure a workspace. Skills that
 operate Niles, such as `lead` and `cost-analysis`, still need its CLI and configured state;

@@ -12,7 +12,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
         ("listed", &["--agent", "claude:haiku"], "claude:haiku"),
     ] {
         let result = env
-            .spawn_command("research", &[id])
+            .spawn_command("solo", &[id])
             .args(flags)
             .arg("Task")
             .output()
@@ -24,7 +24,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
         assert!(!meta.contains("\"setup\""));
     }
     let launch = env.spawn(
-        "design",
+        "niles",
         &[
             "any-skill",
             "--tier",
@@ -32,14 +32,14 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
             "--menu",
             "reviewer",
             "--with",
-            "security",
+            "codex-trim",
             "Task",
         ],
     );
     assert_command_success("unbound skill with shared tier", &launch);
     assert_failure_contains(
         "unconfigured tier",
-        &env.spawn("design", &["tier", "--tier", "frontier", "Task"]),
+        &env.spawn("niles", &["tier", "--tier", "frontier", "Task"]),
         "does not list tier frontier",
     );
     for (id, agent) in [
@@ -47,7 +47,7 @@ fn manifest_tiers_bound_spawn_before_worker_state() {
         ("effort", "codex:gpt-6-sol:low"),
         ("missing", "codex:gpt-6-sol"),
     ] {
-        let result = env.spawn("research", &[id, "--agent", agent, "Task"]);
+        let result = env.spawn("solo", &[id, "--agent", agent, "Task"]);
         assert_failure_contains(id, &result, "allowed agents");
         assert!(!state_dir(&env.root).join("worker").join(id).exists());
     }
@@ -59,7 +59,7 @@ fn spawn_in_another_tree_keeps_worker_state_in_workspace() {
     let tree = env.root.join("other-tree");
     fs::create_dir(&tree).unwrap();
     let tree_arg = tree.to_str().unwrap();
-    let spawn = env.spawn("research", &["other", "--tree", tree_arg, "Fix"]);
+    let spawn = env.spawn("solo", &["other", "--tree", tree_arg, "Fix"]);
     assert_command_success("spawn in another tree", &spawn);
     assert!(env.tmux_log().contains(&format!("-c {tree_arg} ")));
     let workers = env.run(&["workers"]);
@@ -73,7 +73,7 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
     let env = TestEnv::with_manifest("niles-worker-no-tmux", "claude");
 
     let spawn = env
-        .spawn_command("research", &["auth-fix", "Fix"])
+        .spawn_command("solo", &["auth-fix", "Fix"])
         .env_remove("TMUX")
         .output()
         .unwrap();
@@ -97,7 +97,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
 
     let codex_spawn = env
         .spawn_command(
-            "research",
+            "solo",
             &["codex-hi", "--agent", "codex:gpt-5.7:xhigh", "Fix", "auth"],
         )
         .output()
@@ -113,7 +113,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
         fs::read_to_string(state_dir(&env.root).join("worker/codex-hi/meta.json")).unwrap();
     let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
     assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
-    assert!(codex_meta.contains(r#""skill": "research""#));
+    assert!(codex_meta.contains(r#""skill": "solo""#));
     chrono::DateTime::parse_from_rfc3339(
         codex_meta_json
             .pointer("/created_at")
@@ -140,28 +140,28 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
     for (id, skill, flags, error, bare) in [
         (
             "archive",
-            "research",
+            "solo",
             &[][..],
             "worker id 'archive' is reserved",
             true,
         ),
         (
             "auth-fix",
-            "research",
+            "solo",
             &["--task", "archive"],
             "task label 'archive' is reserved",
             true,
         ),
         (
             "bad-worker",
-            "research",
+            "solo",
             &["--agent", "claude:opus:turbo"],
             "invalid claude effort `turbo`",
             true,
         ),
         (
             "future-worker",
-            "research",
+            "solo",
             &["--agent", "codex:gpt-5.7:xhigh"],
             "invalid codex model `gpt-5.7`",
             true,
@@ -182,7 +182,7 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
         ),
         (
             "other",
-            "research",
+            "solo",
             &["--tree", missing.to_str().unwrap()],
             "failed to resolve tree",
             false,

@@ -1,68 +1,10 @@
 use super::support::*;
 
 #[test]
-fn spawn_any_skill_records_mechanical_decisions_and_from_headers() {
-    let env = TestEnv::with_manifest("niles-worker-design-record", "claude");
-    let session = state_dir(&env.root).join("sessions/lead");
-    fs::create_dir_all(&session).unwrap();
-    let meta = serde_json::json!({
-        "id": "lead", "entry_skill": "lead", "agent": "claude", "created_at": "2026-01-02T03:04:05Z",
-        "workspace": env.root, "brief": session.join("lead.md")
-    });
-    atomic_write(
-        session.join("session.json"),
-        serde_json::to_vec(&meta).unwrap(),
-    )
-    .unwrap();
-    let log = session.join("decisions.log");
-    let mechanical = [
-        "spawn",
-        "mechanical",
-        "--skill",
-        "reviewer",
-        "--mechanical",
-        "rename",
-        "task",
-    ];
-    fs::create_dir(&log).unwrap();
-    assert_failure_contains(
-        "unwritable decisions log",
-        &env.run(&mechanical),
-        "failed to append",
-    );
-    assert!(!state_dir(&env.root).join("worker/mechanical").exists());
-    fs::remove_dir(&log).unwrap();
-    atomic_write(&log, "earlier decision").unwrap();
-    let spawned = env.run(&mechanical);
-    assert_command_success("mechanical worker", &spawned);
-    let logged = fs::read_to_string(&log).unwrap();
-    let line = logged.strip_prefix("earlier decision\n").unwrap();
-    let (timestamp, decision) = line.split_once(' ').unwrap();
-    chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
-    assert_eq!(decision, "mechanical mechanical: rename\n");
-    let workers = state_dir(&env.root).join("worker");
-    let body = fs::read_to_string(workers.join("mechanical/brief.md")).unwrap();
-    let (header, _) = body.split_once("\n\n## Task").unwrap();
-    assert!(!header.contains("from_report:"));
-
-    let designer = env.spawn("research", &["designer", "design"]);
-    assert_command_success("designer", &designer);
-    atomic_write(workers.join("designer/status.log"), "done: agreed record\n").unwrap();
-    let spawned = env.spawn("design", &["implementation", "--from", "designer", "task"]);
-    assert_command_success("worker with design", &spawned);
-    let body = fs::read_to_string(workers.join("implementation/brief.md")).unwrap();
-    assert!(body.contains(&format!(
-        "report_file: {}\nfrom_report: {}\n",
-        workers.join("implementation/report.md").display(),
-        workers.join("designer/report.md").display()
-    )));
-}
-
-#[test]
 fn skill_selects_primary_instructions_outside_the_opening_turn() {
     let env = TestEnv::with_manifest("niles-worker-skills", "claude");
 
-    for skill in ["design", "reviewer", "security", "research", "worker"] {
+    for skill in ["niles", "reviewer", "codex-trim", "solo", "worker"] {
         let spawn = env.spawn(skill, &[skill, "Do", "it"]);
         assert_command_success(&format!("spawn --skill {skill}"), &spawn);
 

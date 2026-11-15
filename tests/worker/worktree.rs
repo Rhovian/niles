@@ -267,7 +267,7 @@ fn worktree_configuration_does_not_apply_to_plain_or_explicit_tree_spawns() {
     let repo = Repo::new("niles-worktree-hook-scope");
     repo.configure("  env: {HOOK_ONLY: configured}\n  setup: 'exit 99'");
     for (id, tree) in [("plain", false), ("explicit", true)] {
-        let mut args = vec!["spawn", "--skill", "research", id, "Fix"];
+        let mut args = vec!["spawn", "--skill", "solo", id, "Fix"];
         if tree {
             args.extend(["--tree", repo.workspace.to_str().unwrap()]);
         }

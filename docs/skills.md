@@ -44,11 +44,9 @@ unknown placeholders stay literal. Startup context is fixed for the session.
 
 ## Spawning
 
-`niles spawn <id> --skill <name>` launches an installed skill on the project tier list. `--from <id>` passes a finished
-worker's report path as `from_report:`; that worker's latest status must be `done:`.
-`--mechanical <reason>` logs the spawn as mechanical work in the entry session's log and
-conflicts with `--from`. How the shipped `lead` skill decides what to spawn is in its
-[`SKILL.md`](../skills/lead/SKILL.md).
+`niles spawn <id> --skill <name>` launches an installed skill on the project tier list.
+Pass any supporting report paths in the task text. How the shipped `lead` skill decides what to
+spawn is in its [`SKILL.md`](../skills/lead/SKILL.md).
 
 ## Orchestration contract
 
@@ -67,7 +65,7 @@ Niles owns `closed` and `gone`; `gone` signals exit or idle without a report.
 `niles wait` reserves stdout for wake lines and stderr for diagnostics, and exits 0 for a wake
 (including `gone`), 11 when superseded, or 22 on timeout.
 
-Finding tags such as `code`, `design` and `policy`, role names, and routing between skills are
+Finding tags such as `code` and `policy`, role names, and routing between skills are
 optional skill conventions. The binary doesn't interpret findings or choose their recipient.
 The operator and coordinating skill decide those workflows.
 
@@ -79,15 +77,14 @@ A binding can add skills around its primary one:
 worker:
   skills: [style-guide]
   always: [coding-rules]
-  on_from: [follow-design]
   on_stage: [self-review]
 ```
 
 - `skills` is a menu. The worker sees each name and description and fetches a body with
   `niles agent skill <name>`; `niles agent skills` lists the menu again. `--menu <name>` adds
   more. A description without the word "when" gets a warning.
-- `always` bodies follow the primary in the system instructions, then `on_from` bodies when
-  spawned with `--from`, then `--with <name>` bodies. A name appears once, at its first place.
+- `always` bodies follow the primary in the system instructions, then `--with <name>` bodies.
+  A name appears once, at its first place.
 - `on_stage` bodies are delivered at [staging](#staging).
 
 Spawn prints where every skill came from. A running worker keeps the lists it started with.

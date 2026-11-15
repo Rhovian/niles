@@ -107,10 +107,9 @@ directory keeps evidence, not a sandbox.
 
 ## Model tier research
 
-Run this agent procedure when asked to refresh tier placements or registry metadata. The lead
-commissions `niles spawn <id> --skill research`, giving this section, the requested models (all
-if unspecified), and the output target: shipped PR or local refresh. Placements remain judgments
-that later evidence can change; the same research serves both targets.
+The lead runs this procedure inline when asked to refresh tier placements or registry metadata,
+for the requested models (all if unspecified) and output target: shipped PR or local refresh.
+Placements remain judgments that later evidence can change; the same research serves both targets.
 
 1. Read the target registry and `src/agents/roster.rs` in a Niles checkout: the shipped file is
    `src/agents/roster.yaml`; user overrides are `~/.niles/roster.yaml`. Inventory exact

@@ -45,7 +45,7 @@ fn first_run_registration_confirms_and_can_cancel() {
 #[test]
 fn wizard_solo_accepts_defaults_without_optional_imports_or_editor() {
     let env = environment();
-    for name in ["design", "reviewer", "worker", "security", "research"] {
+    for name in ["reviewer", "worker"] {
         fs::remove_dir_all(env.home.join(".niles/skills").join(name)).unwrap();
     }
     let (output, text) = terminal(&env, &["start"], SOLO_DEFAULTS, |_| {});
@@ -149,11 +149,11 @@ fn lead_saves_secondary_edits_and_independent_entry_agent() {
 #[test]
 fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
     let env = environment();
-    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+    fs::remove_dir_all(env.home.join(".niles/skills/reviewer")).unwrap();
     support::import_fixture(
         &env,
-        "design",
-        "---\nname: design\ndescription: Plans changes\n---\nPlan the work.\n",
+        "reviewer",
+        "---\nname: reviewer\ndescription: Reviews changes\n---\nReview the work.\n",
     );
     let (output, text) = terminal(
         &env,
@@ -173,8 +173,8 @@ fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
     assert!(output.status.success(), "{output:?} {text}");
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert_eq!(
-        fs::read_to_string(env.home.join(".niles/skills/design/SKILL.ref")).unwrap(),
-        format!("github.com/Rhovian/niles/skills/design@{sha}\n")
+        fs::read_to_string(env.home.join(".niles/skills/reviewer/SKILL.ref")).unwrap(),
+        format!("github.com/Rhovian/niles/skills/reviewer@{sha}\n")
     );
     let log = fs::read_to_string(env.home.join("git.log")).unwrap();
     assert!(
@@ -190,7 +190,7 @@ fn selected_starter_is_fetched_at_head_and_recorded_by_sha() {
     assert!(
         env.home
             .join(format!(
-                ".niles/cache/skills/github.com/Rhovian/niles/{sha}/skills/design/@skill/SKILL.md"
+                ".niles/cache/skills/github.com/Rhovian/niles/{sha}/skills/reviewer/@skill/SKILL.md"
             ))
             .exists()
     );
@@ -212,7 +212,7 @@ fn concurrent_manifest_is_kept() {
 
 #[test]
 fn lead_picker_always_offers_custom_and_reviews_default_entry() {
-    for (removed, optional) in [("skills/design", b" \r".as_slice()), ("skills", b"\r")] {
+    for (removed, optional) in [("skills/reviewer", b" \r".as_slice()), ("skills", b"\r")] {
         let env = environment();
         fs::remove_dir_all(env.home.join(".niles").join(removed)).unwrap();
         let (output, text) = terminal(
@@ -239,11 +239,11 @@ fn lead_picker_always_offers_custom_and_reviews_default_entry() {
 #[test]
 fn back_walk_preserves_edits_and_checks_and_skips_lead_for_solo() {
     let env = environment();
-    fs::remove_dir_all(env.home.join(".niles/skills/design")).unwrap();
+    fs::remove_dir_all(env.home.join(".niles/skills/reviewer")).unwrap();
     support::import_fixture(
         &env,
-        "design",
-        "---\nname: design\ndescription: Design\n---\nPlan work.\n",
+        "reviewer",
+        "---\nname: reviewer\ndescription: Review\n---\nReview work.\n",
     );
     let (output, text) = terminal(
         &env,
@@ -284,7 +284,7 @@ fn back_walk_preserves_edits_and_checks_and_skips_lead_for_solo() {
             .unwrap(),
         "codex:gpt-6.1-sol:high"
     );
-    assert!(env.home.join(".niles/skills/design/SKILL.ref").exists());
+    assert!(env.home.join(".niles/skills/reviewer/SKILL.ref").exists());
 }
 
 #[test]

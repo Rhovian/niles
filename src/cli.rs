@@ -137,8 +137,7 @@ pub enum CommandName {
     },
     /// Spawn a worker agent in a tmux window
     ///
-    /// Launch a bound primary skill. Use --from to build on a completed worker's report,
-    /// or --mechanical to log the reason for mechanical work in the start session.
+    /// Launch an installed primary skill.
     ///
     /// `--wait` starts the workspace wait after spawning, so the turn does not need a
     /// separate `niles wait`.

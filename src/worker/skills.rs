@@ -23,7 +23,6 @@ pub(super) fn prepare(
     binding: &Binding,
     menu: &[MenuItem],
     with: &[SkillName],
-    from: bool,
     workspace: &Utf8Path,
 ) -> Result<LaunchSkills> {
     let mut imports = BTreeMap::new();
@@ -68,7 +67,6 @@ pub(super) fn prepare(
     };
     let menu_skills = resolve("menu_skill", &names)?;
     let always = resolve("always_skill", &binding.always)?;
-    let on_from = resolve("on_from_skill", &binding.on_from)?;
     let on_stage = resolve("on_stage_skill", &binding.on_stage)?;
     let with = resolve("with_skill", with)?;
     check_stage_size(&on_stage)?;
@@ -101,7 +99,6 @@ pub(super) fn prepare(
     seen.clear();
     for skill in iter::once(primary)
         .chain(&always)
-        .chain(on_from.iter().filter(|_| from))
         .chain(&with)
         .filter(|skill| seen.insert(skill.name.clone()))
     {
@@ -176,7 +173,6 @@ pub(super) fn discover(name: Option<&SkillName>) -> Result<()> {
                 .menu
                 .iter()
                 .chain(&meta.always)
-                .chain(&meta.on_from)
                 .chain(&meta.on_stage)
                 .chain(&meta.with)
                 .collect::<Vec<_>>();

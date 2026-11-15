@@ -35,21 +35,6 @@ red before writing the code that makes it pass. Call a failure pre-existing or f
 evidence, either the same failure on the base commit or a passing rerun, and give the command and
 what it printed.
 
-When reviewer and security findings overlap, write one test per gap: the smallest test that kills
-the mutant or reproduces the defect.
-
-## Design record
-
-When the brief header names a `from_report:`, that file is the spec. Read it before you start,
-and again whenever the lead forwards an amendment. Where the task and the record disagree, the
-record wins and you report the conflict as `needs-decision:`. A design choice the record leaves
-open goes back the same way instead of being settled in code. Without a record, implement the
-task directly and own the implementation choices; policy and product questions still go to the
-operator.
-
-For each departure from a repo rule that the record allows, explain why in a comment at the site,
-where the repo permits comments, and in the PR body.
-
 ## Code
 
 If your change pushes a file past the project's size or modularity limits, split it by
@@ -58,4 +43,4 @@ parsing, caching), cite in the code the pinned dependency's source or docs showi
 already do the job.
 
 Before `done:`, delete code and tests the change makes redundant; measure net lines (added minus deleted), split production/tests.
-Report both net counts against the record's target, or the brief's without a record; with neither, state the counts alone. For positive test net, justify each added test by the behaviour-changing mutation only it kills.
+Report both net counts against the brief's target; without one, state the counts alone. For positive test net, justify each added test by the behaviour-changing mutation only it kills.

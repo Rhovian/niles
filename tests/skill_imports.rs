@@ -195,7 +195,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     edit_manifest(&pack.env.root, |body| {
         body.replace(
             "worker: {}\n",
-            "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_from: [pdf]\n  on_stage: [pdf]\n",
+            "worker:\n  skills: [pdf]\n  always: [pdf]\n  on_stage: [pdf]\n",
         )
     });
     fs::remove_dir_all(pack.env.home.join(".niles/cache")).unwrap();
@@ -205,13 +205,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     fs::rename(hidden, &pack.remote).unwrap();
     let output = pack.spawn(&["job", "--with", "pdf", "task"]);
     assert_command_success("refetch on cache miss and inject", &output);
-    for provenance in [
-        "menu_skill",
-        "always_skill",
-        "on_from_skill",
-        "on_stage_skill",
-        "with_skill",
-    ] {
+    for provenance in ["menu_skill", "always_skill", "on_stage_skill", "with_skill"] {
         assert!(stdout_of(&output).contains(&format!("{provenance}: pdf (import ")));
     }
     let launch =

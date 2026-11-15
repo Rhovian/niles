@@ -12,7 +12,7 @@ Reference for the workspace manifest, model registry and Niles state. The
 | `<skill>` | top level | Optional skill composition; no models or default tier. |
 | `tiers` | top level, required | Project-wide model choices for every skill. |
 | `standard`, `frontier`, `economy`, `mechanical` | `tiers` | Tiers. `standard` is required; each tier has one `primary` and an ordered `secondaries` list. |
-| `skills`, `always`, `on_from`, `on_stage` | binding | Menu and injected skills; see [skill workflows](skills.md#composing-skills). |
+| `skills`, `always`, `on_stage` | binding | Menu and injected skills; see [skill workflows](skills.md#composing-skills). |
 | `gates` | binding | Stage rounds and `post` command gates; see [staging](skills.md#staging). |
 | `worktree` | top level | `env` and `setup` for `spawn --worktree`; see [worktrees](#worktrees). |
 | `checkin`, `recheck` | top level | Watcher cadence; see [check-ins](#check-ins). |

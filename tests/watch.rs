@@ -96,7 +96,7 @@ impl Fixture {
         let mut args = vec![
             "spawn",
             "--skill",
-            "research",
+            "solo",
             id,
             "--agent",
             "claude:sonnet:high",

@@ -143,12 +143,12 @@ while [ "$#" -gt 0 ]; do
     ls-remote) case "$*" in *' HEAD '*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tHEAD\n'; exit 0 ;; *) exit 91 ;; esac ;;
     init) mkdir .git; exit 0 ;;
     fetch|sparse-checkout) exit 0 ;;
-    ls-tree) printf '040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tskills/design\n'; exit 0 ;;
-    checkout) mkdir -p skills/design; cp "$HOME/skill.md" skills/design/SKILL.md; exit 0 ;;
+    ls-tree) printf '040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tskills/reviewer\n'; exit 0 ;;
+    checkout) mkdir -p skills/reviewer; cp "$HOME/skill.md" skills/reviewer/SKILL.md; exit 0 ;;
     *) shift ;;
   esac
 done
 exit 91
-"#.replace("design", name).as_str(),
+"#.replace("reviewer", name).as_str(),
     );
 }

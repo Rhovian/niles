@@ -15,10 +15,7 @@ fn by_id_commands_do_not_reach_worker_in_another_workspace() {
     fs::create_dir_all(&workspace_b).unwrap();
     write_spawn_manifest(&workspace_b, "claude");
     let spawn = env
-        .niles(
-            &workspace_b,
-            &["spawn", "--skill", "research", "shared", "Fix"],
-        )
+        .niles(&workspace_b, &["spawn", "--skill", "solo", "shared", "Fix"])
         .output()
         .unwrap();
     assert_command_success("spawn scoped worker", &spawn);
