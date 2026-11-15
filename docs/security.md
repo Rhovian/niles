@@ -112,7 +112,13 @@ Every launch prints `skill: <name> (<source> <path>)`, so you can see where the 
 Any agent, in an entry or worker session, can load any installed skill's text with
 `niles agent skill <name>`, resolving workspace before global. Composition bindings configure
 injection and staging; they do not restrict skill loading. A skill can ask the
-agent to load another by name; Niles does not parse body references or declare dependencies.
+agent to load another by name. Import treats literal `niles agent skill <name>` commands with
+actual names filling a Markdown code span or text line as required skills (see
+[composition syntax](skills.md#composing-skills)). It recursively imports `skills/<name>` from the
+same repository and commit into the same destination. This authorizes that repository to update
+existing dependency imports in that destination, including ones previously pinned elsewhere.
+Local `SKILL.md` files are never overwritten. Missing or invalid dependencies stop import before
+publishing pointers; each pointer publication is atomic, not a transaction across all pointers.
 Explicit loads return skill bodies as command output, not system or developer instructions.
 They print the resolved source and retain the same symlink and size checks. In any session,
 a named load of a `SKILL.ref` may fetch its pinned cache.
@@ -252,7 +258,8 @@ rather than the binary’s release tag. Custom leads are fetched from their own 
 final confirmation and must have a usable, nonempty body before the manifest is written.
 A failed custom setup removes its new skill reference so that the same URL can be retried.
 The resolved full commit SHA is recorded in each global
-`SKILL.ref`; subsequent runs use that immutable revision. Existing local and imported skills are
-kept. Missing revisions, invalid skill references and fetch failures stop setup before writing
+`SKILL.ref`; subsequent runs use that immutable revision. Setup skips installed selections, but
+importing a missing skill also installs or updates its required imports. Missing revisions,
+invalid skill references and fetch failures stop setup before writing
 the manifest. The validated manifest is written with atomic exclusive publication, preserving a manifest
 that appeared concurrently. No editor or external setup command is launched by the wizard.

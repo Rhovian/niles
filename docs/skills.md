@@ -75,8 +75,14 @@ Every entry and worker startup advertises: “`niles skills` lists skills;
 `niles agent skill <name>` loads one.”
 Resolution checks the workspace before global skills. Entry commands use the current directory
 as the workspace, so run them from the workspace root; workers use their recorded project.
-Skills compose by naming another skill in their body and asking the agent to load it; no
-dependency declaration or binding is needed.
+Skills compose by asking the agent to load another skill. A literal
+`niles agent skill <name>` command with an actual skill name declares a required skill for import;
+no composition binding is needed. The command must fill a Markdown code span or a text line
+(including fenced code). Prose mentions, help flags, symbolic placeholders such as `<name>`,
+`{name}` or `$name`, and all-uppercase template arguments such as `NAME` are ignored.
+
+`lead` loads `hub-spoke` for coordination and adds implementation and review rules.
+Importing `lead`, including through setup, installs both. Other workflows can load `hub-spoke` alone.
 
 A binding can add skills around its primary one:
 
@@ -118,8 +124,15 @@ A ref is `[github.com/]<owner>/<repo>[/<path>][@<rev>]`, where the revision is a
 full SHA, and remote HEAD when omitted. The last path segment, or the repository name, is the
 skill's name and must match its frontmatter. Import writes the resolved SHA to
 `.niles/skills/<name>/SKILL.ref`, or under `~/.niles/skills/` with `--global`, and the skill then
-works like a local one. Reimport to update; it prints the old and new SHAs. Delete the directory
-to uninstall.
+works like a local one. Import recursively installs every required skill named by a literal
+`niles agent skill <name>` command in its body, from `skills/<name>` in the same repository
+at the same resolved commit. Dependencies use the same destination (workspace or `--global`)
+and each name is imported once. Cycles back to the root reuse its explicitly imported path.
+All required skills are fetched and checked before any pointers are published. Missing or invalid
+dependencies and local `SKILL.md` conflicts fail the import; local files are never overwritten.
+Reimport to update the skill and all its required skills together; each changed pointer prints
+its old and new SHAs. Existing dependency imports in that destination are updated too.
+Delete a skill's directory to uninstall it; its dependencies remain installed.
 
 Private repositories use your Git credentials. Niles never runs an imported skill's scripts,
 though agents may. Fetched skills are cached under `~/.niles/cache/skills/`; deleting a cache

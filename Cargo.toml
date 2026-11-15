@@ -14,7 +14,7 @@ exclude = [".github/**", "apps/**", "package.json", "pnpm-lock.yaml", "pnpm-work
 
 [features]
 default = []
-remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:isahc", "dep:ece", "dep:pulldown-cmark"]
+remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:isahc", "dep:ece"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -63,7 +63,7 @@ url = { version = "2", optional = true }
 tempfile = "3"
 isahc = { version = "1", optional = true }
 ece = { version = "2", optional = true }
-pulldown-cmark = { version = "0.13.5", default-features = false, optional = true }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 unicode-general-category = "1"
 zstd = { version = "0.14", default-features = false }
 

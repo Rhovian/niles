@@ -134,6 +134,7 @@ pub(super) fn terminal(
 
 pub(super) fn import_fixture(env: &TestEnv, name: &str, body: &str) {
     atomic_write(env.home.join("skill.md"), body).unwrap();
+    fs::create_dir_all(env.home.join("import-skills")).unwrap();
     write_executable(
         &env.bin.join("git"),
         r#"#!/bin/sh
@@ -144,7 +145,7 @@ while [ "$#" -gt 0 ]; do
     init) mkdir .git; exit 0 ;;
     fetch|sparse-checkout) exit 0 ;;
     ls-tree) printf '040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tskills/reviewer\n'; exit 0 ;;
-    checkout) mkdir -p skills/reviewer; cp "$HOME/skill.md" skills/reviewer/SKILL.md; exit 0 ;;
+    checkout) mkdir -p skills/reviewer; cp "$HOME/skill.md" skills/reviewer/SKILL.md; cp -R "$HOME/import-skills/." skills/; exit 0 ;;
     *) shift ;;
   esac
 done
