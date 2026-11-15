@@ -175,7 +175,10 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
 fn bind_worker(env: &TestEnv, extra: &str) {
     edit_manifest(&env.root, |body| {
         let mut manifest: serde_json::Value = serde_saphyr::from_str(&body).unwrap();
-        manifest["worker"] = serde_saphyr::from_str::<serde_json::Value>(extra).unwrap();
+        manifest.as_object_mut().unwrap().insert(
+            "worker".to_owned(),
+            serde_saphyr::from_str::<serde_json::Value>(extra).unwrap(),
+        );
         serde_saphyr::to_string(&manifest).unwrap()
     });
 }
