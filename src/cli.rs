@@ -97,6 +97,9 @@ pub enum CommandName {
     /// Launch the start session in a project.
     #[command(hide = true)]
     Start {
+        /// Harness launch mode.
+        #[arg(long, value_enum, default_value_t)]
+        mode: crate::harness::Mode,
         #[arg(long)]
         keep_skills: bool,
         /// Launch the entry session on this listed tier agent instead of the manifest's

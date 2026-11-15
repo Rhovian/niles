@@ -1,4 +1,4 @@
-use super::{Buckets, Turn, TurnState, Usage, parse_lines, read_transcript};
+use super::{Buckets, StopReason, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -262,18 +262,18 @@ pub(super) fn codex_activity(lines: &[CodexLine]) -> Option<Turn> {
         match payload.kind.as_str() {
             "task_started" => {
                 started_at = Some(*timestamp);
-                turn = Some(TurnState::InProgress);
+                turn = Some(TurnState::Running);
             }
             "task_complete" => {
                 turn = Some(match &payload.error {
-                    Some(error) => TurnState::Failed(super::SessionFailure {
+                    Some(error) => TurnState::Idle(StopReason::Error(super::SessionFailure {
                         at: *timestamp,
                         message: error.message.clone(),
-                    }),
-                    None => TurnState::Ended,
+                    })),
+                    None => TurnState::Idle(StopReason::EndTurn),
                 })
             }
-            "turn_aborted" => turn = Some(TurnState::Ended),
+            "turn_aborted" => turn = Some(TurnState::Idle(StopReason::Cancelled)),
             _ => continue,
         }
     }
@@ -291,7 +291,7 @@ mod refusal_tests {
         );
         let lines = parse_lines::<CodexLine>(body).unwrap();
         assert!(matches!(codex_activity(&lines).map(|turn| turn.state),
-            Some(TurnState::Failed(failure)) if failure.message == "Provider stopped"));
+            Some(TurnState::Idle(StopReason::Error(failure))) if failure.message == "Provider stopped"));
         assert!(codex_usage(&lines).unwrap().is_none());
     }
 

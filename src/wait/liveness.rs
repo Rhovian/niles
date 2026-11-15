@@ -35,7 +35,7 @@ impl Liveness {
                 (now.duration_since(since) >= IDLE_GRACE)
                     .then_some("worker idle for 30s without reporting")
             }
-            Some(WaitHealth::Running | WaitHealth::Unknown) | None => {
+            Some(WaitHealth::Running | WaitHealth::Unknown | WaitHealth::NeedsAttention) | None => {
                 self.idle_since = None;
                 None
             }
@@ -78,16 +78,16 @@ mod tests {
                 .observe(Some(WaitHealth::Idle), now + IDLE_GRACE)
                 .is_none()
         );
-        assert!(
-            state
-                .observe(Some(WaitHealth::Unknown), now + IDLE_GRACE)
-                .is_none()
-        );
-        assert!(
-            state
-                .observe(Some(WaitHealth::Idle), now + IDLE_GRACE)
-                .is_none()
-        );
+        for health in [WaitHealth::Unknown, WaitHealth::NeedsAttention] {
+            state.reset();
+            assert!(state.observe(Some(WaitHealth::Idle), now).is_none());
+            assert!(state.observe(Some(health), now + IDLE_GRACE).is_none());
+            assert!(
+                state
+                    .observe(Some(WaitHealth::Idle), now + IDLE_GRACE)
+                    .is_none()
+            );
+        }
         state.reset();
         assert!(state.due(now + IDLE_GRACE));
         assert!(

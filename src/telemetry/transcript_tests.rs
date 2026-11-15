@@ -268,7 +268,7 @@ fn codex_compressed_rollouts_share_telemetry_and_transcript_selection() {
         assert_eq!(usage.output_tokens, 2);
         assert!(matches!(
             codex::codex_activity(&parsed).unwrap().state,
-            super::super::TurnState::Ended
+            super::super::TurnState::Idle(super::super::StopReason::EndTurn)
         ));
         let mut reader =
             TranscriptReader::open_in(&home, &SessionLink::Codex, workspace, needle, created_at)

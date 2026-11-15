@@ -1,4 +1,4 @@
-use super::{TokenCounts, Turn, TurnState, Usage, parse_lines};
+use super::{StopReason, TokenCounts, Turn, TurnState, Usage, parse_lines};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -88,17 +88,18 @@ impl ClaudeMessage {
     fn turn(&self, at: DateTime<Utc>, api_error: bool) -> TurnState {
         if api_error || self.stop_reason.as_deref() == Some("refusal") {
             let text = self.content.iter().find_map(|block| block.text.as_ref());
-            return TurnState::Failed(super::SessionFailure {
+            return TurnState::Idle(StopReason::Error(super::SessionFailure {
                 at,
                 message: match text {
                     Some(text) => text.clone(),
                     None => "provider refusal or error (no message recorded)".into(),
                 },
-            });
+            }));
         }
         match self.stop_reason.as_deref() {
-            None | Some("tool_use") => TurnState::InProgress,
-            Some(_) => TurnState::Ended,
+            None | Some("tool_use") => TurnState::Running,
+            Some("max_tokens") => TurnState::Idle(StopReason::MaxTokens),
+            Some(_) => TurnState::Idle(StopReason::EndTurn),
         }
     }
 }
@@ -160,9 +161,9 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                             started_at = timestamp;
                         }
                         turn = Some(if interrupted {
-                            TurnState::Ended
+                            TurnState::Idle(StopReason::Cancelled)
                         } else {
-                            TurnState::InProgress
+                            TurnState::Running
                         });
                     }
                     continue;
@@ -174,7 +175,7 @@ pub(super) fn claude_session(main: &str, subagents: &[String]) -> Option<super::
                             Some("model_refusal_fallback" | "api_retry")
                         )
                     {
-                        turn = Some(TurnState::InProgress);
+                        turn = Some(TurnState::Running);
                     }
                     continue;
                 }
@@ -207,7 +208,7 @@ mod refusal_tests {
         );
         let record = claude_session(body, &[]).unwrap();
         assert!(matches!(record.turn.map(|turn| turn.state),
-            Some(TurnState::Failed(failure)) if failure.message == "Provider declined"));
+            Some(TurnState::Idle(StopReason::Error(failure))) if failure.message == "Provider declined"));
     }
 }
 
@@ -227,14 +228,26 @@ mod background_tests {
         let removed = r#"{"type":"queue-operation","operation":"remove","timestamp":"2026-10-13T19:00:34.208Z","reason":"absorbed_mid_turn"}"#;
         let result = r#"{"type":"user","timestamp":"2026-10-13T19:00:32.647Z","message":{"content":[{"type":"tool_result"}]},"toolUseResult":{"backgroundTaskId":"binqo6ddq"}}"#;
         let interrupted = r#"{"type":"user","timestamp":"2026-10-13T19:00:40Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
-        for body in [
-            format!("{start}\n{ended}\n{boundary}\n{summary}\n"),
-            format!("{structured_start}\n{completed}\n{removed}\n{result}\n{ended}\n"),
-            format!("{structured_start}\n{result}\n{ended}\n"),
-            format!("{structured_start}\n{interrupted}\n"),
+        for (body, expected) in [
+            (
+                format!("{start}\n{ended}\n{boundary}\n{summary}\n"),
+                StopReason::EndTurn,
+            ),
+            (
+                format!("{structured_start}\n{completed}\n{removed}\n{result}\n{ended}\n"),
+                StopReason::EndTurn,
+            ),
+            (
+                format!("{structured_start}\n{result}\n{ended}\n"),
+                StopReason::EndTurn,
+            ),
+            (
+                format!("{structured_start}\n{interrupted}\n"),
+                StopReason::Cancelled,
+            ),
         ] {
             let turn = claude_session(&body, &[]).unwrap().turn.unwrap();
-            assert!(matches!(turn.state, TurnState::Ended), "{body}");
+            assert_eq!(turn.state, TurnState::Idle(expected), "{body}");
             assert_eq!(
                 turn.started_at.unwrap().to_rfc3339(),
                 "2026-10-13T19:00:00+00:00",

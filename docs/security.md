@@ -14,6 +14,10 @@ invoking it authorizes fetching missing skills and writing the default project m
 `--start <project>` also registers the directory and launches the entry agent in detached tmux.
 The caller owns consent and CLI authentication; setup does not accept harness trust prompts.
 
+Native prompt delivery uses the harness contract. `--mode headless` is reserved for the ACP
+runner and currently fails before launch. Worker permission bypass and entry-agent permission
+prompts apply at the launch boundary.
+
 What Niles launches:
 
 - `niles update` executes `niles-update` beside the resolved Niles executable, never from

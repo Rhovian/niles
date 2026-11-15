@@ -144,6 +144,7 @@ fn usage_fields(
     let state = match state {
         SessionState::Working => theme::State::Running,
         SessionState::Starting => theme::State::Starting,
+        SessionState::NeedsAttention => theme::State::Waiting,
         SessionState::Waiting | SessionState::Unknown => theme::State::Idle,
     };
     Ok((Some(state), usage.map(Usage::total_tokens).transpose()?))

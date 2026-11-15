@@ -35,6 +35,9 @@ const UNLABELED_TASK_LABEL: &str = "-";
 
 #[derive(Debug, clap::Args)]
 pub struct Assignment {
+    /// Harness launch mode.
+    #[arg(long, value_enum, default_value_t)]
+    pub mode: crate::harness::Mode,
     /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
@@ -60,6 +63,7 @@ pub fn spawn(
     tree: Option<SpawnTree>,
     selection: Option<&SetupSelection>,
 ) -> Result<()> {
+    assignment.mode.require_available()?;
     let SpawnTask {
         label: task_label,
         text: task,

@@ -1,4 +1,4 @@
-use super::{SessionLink, SessionState, Usage};
+use super::{SessionFailure, SessionLink, SessionState, StopReason, Turn, TurnState, Usage};
 #[cfg(test)]
 use crate::store::atomic_write;
 use crate::watch::{self, Delay};
@@ -6,25 +6,6 @@ use SessionState::{Starting, Unknown, Waiting, Working};
 use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, TimeDelta, Utc};
-
-#[derive(Debug)]
-pub(crate) struct SessionFailure {
-    pub(crate) at: DateTime<Utc>,
-    pub(crate) message: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct Turn {
-    pub(crate) state: TurnState,
-    pub(crate) started_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug)]
-pub(crate) enum TurnState {
-    InProgress,
-    Ended,
-    Failed(SessionFailure),
-}
 
 pub(crate) struct SessionRecord {
     pub(crate) turn: Option<Turn>,
@@ -76,9 +57,13 @@ pub(crate) fn resolve_session(
     };
     let started_at = turn.as_ref().and_then(|turn| turn.started_at);
     let (state, blocker) = match turn.map(|turn| turn.state) {
-        Some(TurnState::Ended) if started_at.is_none() => (Waiting, None),
-        Some(state @ (TurnState::InProgress | TurnState::Ended)) => (
-            match process_activity(if matches!(state, TurnState::Ended) {
+        Some(TurnState::Idle(StopReason::Error(failure))) => {
+            (Waiting, Some(Blocker::Refused(failure)))
+        }
+        Some(TurnState::RequiresAction) => (SessionState::NeedsAttention, None),
+        Some(TurnState::Idle(_)) if started_at.is_none() => (Waiting, None),
+        Some(state @ (TurnState::Running | TurnState::Idle(_))) => (
+            match process_activity(if matches!(state, TurnState::Idle(_)) {
                 started_at
             } else {
                 None
@@ -89,7 +74,6 @@ pub(crate) fn resolve_session(
             },
             None,
         ),
-        Some(TurnState::Failed(failure)) => (Waiting, Some(Blocker::Refused(failure))),
         None if now < starting_until => (Starting, None),
         None => (Unknown, Some(Blocker::NoRecord)),
     };

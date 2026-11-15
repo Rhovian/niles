@@ -11,6 +11,7 @@ mod compat;
 mod config;
 mod doctor;
 mod duration;
+mod harness;
 mod models;
 mod projects;
 #[cfg(feature = "remote")]
@@ -62,13 +63,18 @@ fn run() -> Result<ExitCode> {
         None => projects::explorer::home()?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
-        Some(CommandName::Start { keep_skills, agent }) => session::run(
+        Some(CommandName::Start {
+            keep_skills,
+            agent,
+            mode,
+        }) => session::run(
             if keep_skills {
                 tmux::LeadStart::Unattended
             } else {
                 tmux::LeadStart::Attended
             },
             agent.as_deref(),
+            mode,
             selection()?,
         )?,
         Some(CommandName::Status { line }) => {
