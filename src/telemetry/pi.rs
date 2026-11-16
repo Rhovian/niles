@@ -1,4 +1,4 @@
-use super::{TokenCounts, Turn, TurnState, Usage, parse_lines, read_transcript};
+use super::{StopReason, TokenCounts, Turn, TurnState, Usage, parse_lines, read_transcript};
 use crate::util::read_dir_utf8_paths;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -73,21 +73,23 @@ pub(super) fn pi_session(body: &str) -> Option<super::SessionRecord> {
         }
         turn = match &message {
             PiMessage::Other => continue,
-            PiMessage::User | PiMessage::ToolResult => Some(TurnState::InProgress),
+            PiMessage::User | PiMessage::ToolResult => Some(TurnState::Running),
             PiMessage::Assistant {
                 stop_reason,
                 error_message,
                 ..
             } => match stop_reason.as_str() {
-                "stop" | "length" | "aborted" => Some(TurnState::Ended),
-                "pending" | "toolUse" | "deferred" => Some(TurnState::InProgress),
-                "error" => Some(TurnState::Failed(super::SessionFailure {
+                "stop" => Some(TurnState::Idle(StopReason::EndTurn)),
+                "length" => Some(TurnState::Idle(StopReason::MaxTokens)),
+                "aborted" => Some(TurnState::Idle(StopReason::Cancelled)),
+                "pending" | "toolUse" | "deferred" => Some(TurnState::Running),
+                "error" => Some(TurnState::Idle(StopReason::Error(super::SessionFailure {
                     at: timestamp,
                     message: match error_message {
                         Some(message) => message.clone(),
                         None => "provider error (no message recorded)".into(),
                     },
-                })),
+                }))),
                 _ => None,
             },
         };

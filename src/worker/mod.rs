@@ -115,6 +115,7 @@ pub(crate) fn live_worker_locations(
 pub(crate) enum WaitHealth {
     Gone,
     Idle,
+    NeedsAttention,
     Running,
     Unknown,
 }
@@ -133,6 +134,7 @@ pub(crate) fn wait_health(
     snapshot.meta = Some(meta);
     Ok(Some(match worker_session(&snapshot, now)?.state {
         SessionState::Waiting => WaitHealth::Idle,
+        SessionState::NeedsAttention => WaitHealth::NeedsAttention,
         SessionState::Starting | SessionState::Working => WaitHealth::Running,
         SessionState::Unknown => WaitHealth::Unknown,
     }))

@@ -22,9 +22,9 @@ mod processes;
 )]
 pub(crate) mod transcript;
 
+pub(crate) use crate::harness::{SessionFailure, StopReason, Turn, TurnState};
 pub(crate) use activity::{
-    Blocker, ResolvedSession, SessionFailure, SessionRecord, Turn, TurnState, initial_deadline,
-    resolve_session,
+    Blocker, ResolvedSession, SessionRecord, initial_deadline, resolve_session,
 };
 pub(crate) use buckets::{BUCKET, Buckets};
 pub(crate) use cache::closed_buckets;
@@ -125,13 +125,15 @@ pub(crate) enum SessionState {
     Unknown,
     Working,
     Waiting,
+    #[serde(rename = "needs_attention")]
+    NeedsAttention,
 }
 
 impl SessionState {
     pub(crate) fn displayed(self) -> Self {
         match self {
             Self::Unknown => Self::Waiting,
-            Self::Starting | Self::Working | Self::Waiting => self,
+            Self::Starting | Self::Working | Self::Waiting | Self::NeedsAttention => self,
         }
     }
 }
@@ -310,8 +312,9 @@ mod tests {
         record
             .and_then(|record| record.turn)
             .map(|turn| match turn.state {
-                TurnState::InProgress => SessionState::Working,
-                TurnState::Ended | TurnState::Failed(_) => SessionState::Waiting,
+                TurnState::Running => SessionState::Working,
+                TurnState::Idle(_) => SessionState::Waiting,
+                TurnState::RequiresAction => SessionState::NeedsAttention,
             })
     }
     #[test]
@@ -412,7 +415,10 @@ mod tests {
         let next = assistant.replace("00:00:00", "00:01:00");
         let body = format!("{assistant}\n{next}\n");
         let waiting = pi::pi_session(&body).unwrap();
-        assert!(matches!(waiting.turn.unwrap().state, TurnState::Ended));
+        assert!(matches!(
+            waiting.turn.unwrap().state,
+            TurnState::Idle(StopReason::EndTurn)
+        ));
         let waiting = waiting.usage.unwrap();
         assert_eq!(
             (
@@ -434,7 +440,7 @@ mod tests {
                 r#"{{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{{"role":"{role}"}}}}"#
             );
             let working = pi::pi_session(&format!("{body}{message}\n")).unwrap();
-            assert!(matches!(working.turn.unwrap().state, TurnState::InProgress));
+            assert!(matches!(working.turn.unwrap().state, TurnState::Running));
             assert_eq!(working.usage.unwrap().last_turn_at, waiting.last_turn_at);
             assert!(
                 pi::pi_session(&format!("{message}\n"))

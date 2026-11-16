@@ -1,5 +1,6 @@
 use super::meta::read_meta;
 use super::worker_dir;
+use crate::harness::{Harness, Prompt, native::NativeTui};
 use crate::tmux::{self, WindowTarget};
 use crate::wake::{self, FOLLOWUP_STARTED};
 use crate::workspace_manifest::setup::SetupSelection;
@@ -49,6 +50,9 @@ pub fn send(
     // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
     // fails a dispatch that has not happened yet rather than one already typed into the pane.
     let cadence = watch::checkin_cadence(&target.project, checkin.as_deref(), selection)?;
+    let mut harness = Harness::negotiate(NativeTui {
+        target: tmux::TmuxTarget::window(&target.target),
+    })?;
     let id = target.id;
 
     for line in wait::advance_cursor(&id)? {
@@ -62,7 +66,7 @@ pub fn send(
     let dispatched_at = Utc::now();
     // An unreported follow-up stays visible to wait even when check-ins are disabled.
     util::append_line(&wake::status_log_path(&dir), FOLLOWUP_STARTED)?;
-    tmux::send_line(&tmux::TmuxTarget::window(&target.target), &message)?;
+    harness.prompt(Prompt(message))?;
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
     let armed = watch::arm_checkin(&dir, cadence, armed_len, dispatched_at)?;
