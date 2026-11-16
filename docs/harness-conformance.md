@@ -9,8 +9,10 @@ do not duplicate the assertions in an adapter-specific suite.
 CI runs `native_families` through the ordinary Rust test gate. It enumerates the family
 registry, starts a private tmux server and runs fake CLIs through the shipped worker launch
 script and `NativeTui`. A subprocess isolates PATH and TMUX from concurrent unit tests.
-No installed agent CLI or credentials are used. Each family prints its adapter, protocol,
-CLI and auth path (`fixture/no-auth`). Transcript stimuli use each family's real reader.
+Receipts publish atomically after the CLI reads each input; consuming one waits for that
+publication, independently of terminal echo. Startup/receipt waits and the child process have
+deadlines, so a crashed fake fails the test. No installed agent CLI or credentials are used.
+Each family prints its adapter, protocol, CLI and auth path (`fixture/no-auth`). Transcript stimuli use each family's real reader.
 
 The shared sequence covers:
 
