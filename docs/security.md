@@ -15,7 +15,8 @@ invoking it authorizes fetching missing skills and writing the default project m
 The caller owns consent and CLI authentication; setup does not accept harness trust prompts.
 
 Native and headless prompt delivery use the harness contract. Worker permission bypass
-and entry-agent permission prompts apply at the launch boundary.
+and entry-agent permission prompts apply at the launch boundary. Permission answers, cancel
+and resume are gated by the adapter’s negotiated capabilities before dispatch.
 
 What Niles launches:
 

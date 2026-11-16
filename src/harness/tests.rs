@@ -1,4 +1,4 @@
-use super::{operations::InputDisposition, *};
+use super::{operations::{InputDisposition, PermissionAnswer}, *};
 use agent_client_protocol::v1::schema::StopReason as V1StopReason;
 use std::cell::Cell;
 
@@ -32,6 +32,14 @@ impl Adapter for Permissive<'_> {
         self.called.set(self.called.get() | 1);
         Ok(())
     }
+    fn answer_permission(
+        &mut self,
+        _: &str,
+        _: PermissionAnswer,
+    ) -> anyhow::Result<()> {
+        self.called.set(self.called.get() | 4);
+        Ok(())
+    }
     fn resume(&mut self, _: &SessionId) -> anyhow::Result<()> {
         self.called.set(self.called.get() | 2);
         Ok(())
@@ -61,8 +69,16 @@ fn declared_capabilities_gate_operations_before_adapter_dispatch() {
         assert_eq!(harness.resume(&session).is_ok(), capabilities.resume);
         assert_eq!(harness.require_attention().is_ok(), capabilities.attention);
         assert_eq!(
+            harness
+                .answer_permission("request", PermissionAnswer::Cancelled)
+                .is_ok(),
+            capabilities.attention
+        );
+        assert_eq!(
             called.get(),
-            u8::from(capabilities.cancel) | (u8::from(capabilities.resume) << 1)
+            u8::from(capabilities.cancel)
+                | (u8::from(capabilities.resume) << 1)
+                | (u8::from(capabilities.attention) << 2)
         );
     }
 }

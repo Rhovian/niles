@@ -59,6 +59,10 @@ impl<'a> Harness<'a> {
             capabilities,
         })
     }
+    #[cfg(test)]
+    pub(super) fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
     pub(crate) fn prompt(&mut self, prompt: Prompt) -> Result<InputDisposition> {
         self.adapter.prompt(prompt)
     }
