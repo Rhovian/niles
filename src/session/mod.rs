@@ -1,3 +1,4 @@
+use crate::harness::Mode;
 use crate::tmux::{self, LeadStart};
 use crate::util::{current_dir_utf8, dated_directories, parse_timestamp_id};
 use crate::workspace_manifest::setup::SetupSelection;
@@ -21,7 +22,7 @@ pub(crate) use brief::{SessionMeta, latest_lead, live_lead, read_session_meta};
 pub(crate) fn run(
     start: LeadStart,
     agent: Option<&str>,
-    mode: crate::harness::Mode,
+    mode: Mode,
     selection: Option<SetupSelection>,
 ) -> Result<()> {
     mode.require_available()?;

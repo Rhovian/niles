@@ -5,6 +5,7 @@ use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
 use crate::config::spec::{ProjectConfig, load_project_config_from};
+use crate::harness::Mode;
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
@@ -37,7 +38,7 @@ const UNLABELED_TASK_LABEL: &str = "-";
 pub struct Assignment {
     /// Harness launch mode.
     #[arg(long, value_enum, default_value_t)]
-    pub mode: crate::harness::Mode,
+    pub mode: Mode,
     /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
