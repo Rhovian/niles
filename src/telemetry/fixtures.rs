@@ -27,16 +27,6 @@ pub(crate) const PI: &str = concat!(
     "\n",
 );
 
-pub(crate) fn turn(family: &str, body: &str) -> Result<Turn> {
-    let turn = match family {
-        "claude" => claude::claude_session(body, &[]).and_then(|record| record.turn),
-        "codex" => codex::codex_activity(&parse_lines(body).context("invalid codex fixture")?),
-        "pi" => pi::pi_session(body).and_then(|record| record.turn),
-        _ => anyhow::bail!("missing conformance fixture for {family}"),
-    };
-    turn.context("fixture has no turn")
-}
-
 pub(crate) fn claude() -> Usage {
     claude::claude_session(CLAUDE_MAIN, &[CLAUDE_SUBAGENT.to_owned()])
         .unwrap()

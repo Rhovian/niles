@@ -39,7 +39,7 @@ pub(crate) fn launch_worker_window(
 }
 
 /// Run, not `exec`ed, so the script outlives the agent and reports its exit.
-pub(crate) fn launch_script(
+fn launch_script(
     invocation: &agents::AgentInvocation,
     brief_path: &Utf8Path,
     status_path: &Utf8Path,

@@ -197,6 +197,14 @@ fn pi_message_lines_classify_both_states() {
                 .is_none()
         );
     }
+    let failure = assistant.replace("\"stop\"", "\"error\"").replace(
+        "\"role\":\"assistant\"",
+        "\"role\":\"assistant\",\"errorMessage\":\"Provider failed\"",
+    );
+    assert!(
+        matches!(pi::pi_session(&format!("{failure}\n")).unwrap().turn.unwrap().state,
+        TurnState::Idle(StopReason::Error(failure)) if failure.message == "Provider failed")
+    );
     let custom =
         r#"{"type":"message","timestamp":"2026-10-01T00:02:00Z","message":{"role":"custom"}}"#;
     assert_eq!(

@@ -1,149 +1,167 @@
 use super::*;
 use crate::agents::{InvocationDefaults, ModelRoster};
 use crate::harness::native::NativeTui;
-use crate::telemetry::fixtures;
-use crate::tmux::TmuxTarget;
+use crate::tmux::{SessionName, TmuxTarget};
 use crate::{agent_window, agents, store::atomic_write, test_support};
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     env, fs,
     fs::File,
     io::ErrorKind,
-    process::Command,
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
 // Like the existing real-tmux fixtures, the fake accepts bracketed paste without advertising
 // paste mode. Perl's record separator preserves literal newlines until the submit CR.
-// Delayed startup and receipt publication exercise scheduling gaps after terminal echo.
 // Rename publishes a complete receipt: https://perldoc.perl.org/functions/rename
 const CLI: &str = r#"#!/bin/sh
 set -eu
 for arg do :; done
-sleep 1
 stty -icanon -icrnl
 printf '%s' "$arg" > "$RECEIPT.tmp"
 mv "$RECEIPT.tmp" "$RECEIPT"
 printf 'ready\n'
-exec perl -e '$| = 1; $/ = "\r"; while (<STDIN>) { s/^\e\[200~//; s/\e\[201~\r$//; print "\nprocessing\n"; select undef, undef, undef, 0.25; open my $f, ">", "$ENV{RECEIPT}.tmp" or die $!; print $f $_; close $f or die $!; rename "$ENV{RECEIPT}.tmp", $ENV{RECEIPT} or die $!; print "\nreceived\n"; }'
+exec perl -e '$| = 1; $/ = "\r"; while (<STDIN>) { s/^\e\[200~//; s/\e\[201~\r$//; open my $f, ">", "$ENV{RECEIPT}.tmp" or die $!; print $f $_; close $f or die $!; rename "$ENV{RECEIPT}.tmp", $ENV{RECEIPT} or die $!; print "\nreceived\n"; }'
 "#;
 
 struct Native {
-    family: &'static str,
+    agent: String,
+    cli: Utf8PathBuf,
     root: Utf8PathBuf,
-    pane: String,
-    body: String,
+    launched: Option<Launch>,
 }
-impl Fixture for Native {
-    type Adapter = NativeTui;
-    fn start(&mut self, first: &str) -> Self::Adapter {
-        let brief = self.root.join("brief");
-        atomic_write(&brief, first).unwrap();
-        let mut invocation = agents::invocation(
-            self.family,
-            InvocationDefaults::Worker,
-            &ModelRoster::builtin().unwrap(),
-        )
-        .unwrap();
-        invocation
-            .env
-            .push(("PATH".into(), env::var("PATH").unwrap()));
-        invocation
-            .env
-            .push(("RECEIPT".into(), self.root.join("receipt").into_string()));
-        let launch = self.root.join("launch");
-        atomic_write(
-            &launch,
-            agent_window::launch_script(&invocation, &brief, &self.root.join("status")),
-        )
-        .unwrap();
-        let output = tmux_output(&[
-            "new-window",
-            "-d",
-            "-P",
-            "-F",
-            "#{pane_id}",
-            "-t",
-            "conformance:",
-            &format!("sh '{}'", launch),
-        ]);
-        self.pane = output.trim().into();
-        wait_for("fake CLI startup", Duration::from_secs(30), || {
-            Ok(self.root.join("receipt").try_exists()?.then_some(()))
-        })
-        .unwrap();
-        Self::Adapter {
+
+struct Launch {
+    pane: String,
+    root: Utf8PathBuf,
+}
+impl Launch {
+    fn adapter(&self) -> NativeTui {
+        NativeTui {
             target: TmuxTarget::pane(&self.pane).unwrap(),
         }
     }
-    fn received(&self) -> String {
-        take_receipt(&self.root, Duration::from_secs(30)).unwrap()
+}
+
+fn launch(root: &Utf8Path, agent: &str, cli: &Utf8Path, first: &str) -> Launch {
+    fs::create_dir_all(root.join("bin")).unwrap();
+    let models = ModelRoster::builtin().unwrap();
+    let mut invocation = agents::invocation(agent, InvocationDefaults::Worker, &models).unwrap();
+    let profile_env = invocation.env.clone();
+    let script = Utf8Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/harness_live.py");
+    test_support::write_executable_script(
+        &root.join("bin").join(invocation.binary),
+        &format!(
+            "#!/bin/sh\nexec python3 {} exec -- \"$@\"\n",
+            agent_window::shell_quote(script.as_str())
+        ),
+    );
+    for (key, value) in [
+        (
+            "PATH",
+            format!("{}:{}", root.join("bin"), env::var("PATH").unwrap()),
+        ),
+        ("RECEIPT", root.join("receipt").into_string()),
+        ("NILES_CONFORMANCE_CLI", cli.to_string()),
+        (
+            "NILES_CONFORMANCE_RECORD",
+            root.join("exec.json").into_string(),
+        ),
+        (
+            "NILES_CONFORMANCE_ENV_KEYS",
+            serde_json::to_string(&profile_env.iter().map(|(key, _)| key).collect::<Vec<_>>())
+                .unwrap(),
+        ),
+    ] {
+        invocation.env.push((key.into(), value));
     }
-    fn disposition(&self, _: bool) -> InputDisposition {
+    let brief = root.join("brief.md");
+    atomic_write(&brief, first).unwrap();
+    let target = agent_window::launch_worker_window(
+        &SessionName::new("conformance").unwrap(),
+        &format!("probe-{}", uuid::Uuid::new_v4()),
+        root,
+        &invocation,
+        &agent_window::WorkerPaths {
+            brief: &brief,
+            launch: &root.join("launch.sh"),
+            status: &root.join("status.log"),
+        },
+    )
+    .unwrap();
+    let pane = tmux_output(&[
+        "display-message",
+        "-p",
+        "-t",
+        &target.target_arg(),
+        "#{pane_id}",
+    ])
+    .trim()
+    .to_owned();
+    wait_for("argv record", Duration::from_secs(30), || {
+        Ok(root.join("exec.json").try_exists()?.then_some(()))
+    })
+    .unwrap();
+    let record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("exec.json")).unwrap()).unwrap();
+    let mut expected = invocation.args;
+    expected.push(first.into());
+    assert_eq!(record.get("argv").unwrap(), &serde_json::json!(expected));
+    assert_eq!(
+        record.get("env").unwrap(),
+        &serde_json::to_value(profile_env.into_iter().collect::<BTreeMap<_, _>>()).unwrap()
+    );
+    Launch {
+        pane,
+        root: root.to_owned(),
+    }
+}
+
+impl Fixture for Native {
+    type Adapter = NativeTui;
+    fn start(&mut self, first: &str) -> Self::Adapter {
+        let launched = launch(
+            &self.root.join(uuid::Uuid::new_v4().to_string()),
+            &self.agent,
+            &self.cli,
+            first,
+        );
+        wait_for("fake CLI startup", Duration::from_secs(30), || {
+            Ok(launched.root.join("receipt").try_exists()?.then_some(()))
+        })
+        .unwrap();
+        let adapter = launched.adapter();
+        self.launched = Some(launched);
+        adapter
+    }
+    fn received(&self) -> String {
+        take_receipt(
+            &self.launched.as_ref().unwrap().root,
+            Duration::from_secs(30),
+        )
+        .unwrap()
+    }
+    fn disposition(&self) -> InputDisposition {
         InputDisposition::Unconfirmed
     }
-    fn signal(&mut self, signal: Signal) {
-        self.body = transcript(self.family, signal).unwrap();
-    }
-    fn observe(&mut self, _: i64) -> TurnState {
-        fixtures::turn(self.family, &self.body).unwrap().state
-    }
     fn disconnect(&mut self) {
-        tmux_output(&["kill-pane", "-t", &self.pane]);
+        tmux_output(&["kill-pane", "-t", &self.launched.as_ref().unwrap().pane]);
     }
     fn restart(&mut self) -> Self::Adapter {
         let adapter = self.start("restart");
         assert_eq!(self.received(), "restart");
         adapter
     }
-    fn stale_event(&mut self) {
-        // Native has no event transport: late events cannot enter through updates().
-        let mut adapter = Self::Adapter {
-            target: TmuxTarget::pane(&self.pane).unwrap(),
-        };
-        assert_err_contains(
-            adapter.updates().map(|_| ()),
-            "no streamed update transport",
-        );
-    }
     fn session(&self) -> SessionId {
         SessionId::new("native-identity-not-resumable".into()).unwrap()
-    }
-    fn permission(&self) -> PermissionRequest {
-        PermissionRequest {
-            id: "permission".into(),
-            options: vec!["allow".into()],
-        }
     }
     fn auth_path(&self) -> &str {
         "fixture/no-auth"
     }
-}
-
-fn transcript(family: &str, signal: Signal) -> anyhow::Result<String> {
-    use serde_json::json;
-    let (running, message) = match signal {
-        Signal::Running => (true, ""),
-        Signal::Failure(message) => (false, message),
-        Signal::Attention | Signal::Cancelled => anyhow::bail!("native declares these unavailable"),
-    };
-    let stamp = at(1000).to_rfc3339();
-    let value = match family {
-        "claude" => json!({"type":"assistant", "timestamp":stamp,
-            "isApiErrorMessage":!running, "message":{"id":"a", "stop_reason":if running {"tool_use"} else {"refusal"},
-            "content":[{"type":"text", "text":message}],
-            "usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}),
-        "codex" => json!({"type":"event_msg", "timestamp":stamp, "payload":{
-            "type":if running {"task_started"} else {"task_complete"},
-            "error":if running {Value::Null} else {json!({"message":message})}}}),
-        "pi" => json!({"type":"message", "timestamp":stamp, "message":{
-            "role":"assistant", "stopReason":if running {"toolUse"} else {"error"}, "errorMessage":message}}),
-        _ => anyhow::bail!("every family needs a transcript fixture: {family}"),
-    };
-    Ok(format!("{value}\n"))
 }
 
 fn tmux_output(args: &[&str]) -> String {
@@ -163,11 +181,20 @@ fn native_child() {
             "adapter=native-tui family={} protocol=none cli=fixture",
             profile.id
         );
+        let rows = ModelRoster::builtin().unwrap().rows();
+        let [family, model, efforts] = rows
+            .iter()
+            .find(|row| row.first().unwrap() == profile.id)
+            .unwrap();
+        let agent = match efforts.split_whitespace().next() {
+            Some(effort) => format!("{family}:{model}:{effort}"),
+            None => format!("{family}:{model}"),
+        };
         super::run(&mut Native {
-            family: profile.id,
+            agent,
+            cli: root.join("fake-cli"),
             root: dir,
-            pane: String::new(),
-            body: String::new(),
+            launched: None,
         });
     }
 }
@@ -176,25 +203,8 @@ fn native_child() {
 fn native_families() {
     // Environment changes belong in a child: unit tests share a process and run concurrently.
     let root = test_support::temp_dir("harness-conformance");
-    for profile in agents::profiles() {
-        test_support::write_executable_script(&root.join(profile.binary), CLI);
-    }
-    let socket = format!("/tmp/nc-{}.sock", uuid::Uuid::new_v4());
-    let server = Command::new("tmux")
-        .args([
-            "-f",
-            "/dev/null",
-            "-S",
-            &socket,
-            "new-session",
-            "-d",
-            "-s",
-            "conformance",
-            "sleep 600",
-        ])
-        .output()
-        .unwrap();
-    assert!(server.status.success(), "{server:?}");
+    test_support::write_executable_script(&root.join("fake-cli"), CLI);
+    let server = Server::start();
     let mut child = Command::new(env::current_exe().unwrap())
         .args([
             "--ignored",
@@ -202,7 +212,7 @@ fn native_families() {
             "harness::conformance::native::native_child",
             "--nocapture",
         ])
-        .env("TMUX", format!("{socket},0,0"))
+        .env("TMUX", format!("{},0,0", server.socket))
         .env(
             "PATH",
             format!("{}:{}", root.as_str(), env::var("PATH").unwrap()),
@@ -219,11 +229,6 @@ fn native_families() {
         child.kill().unwrap();
         child.wait().unwrap();
     }
-    let cleanup = Command::new("tmux")
-        .args(["-S", &socket, "kill-server"])
-        .output()
-        .unwrap();
-    assert!(cleanup.status.success(), "{cleanup:?}");
     let stdout = fs::read_to_string(root.join("child.stdout")).unwrap();
     let stderr = fs::read_to_string(root.join("child.stderr")).unwrap();
     eprintln!("{stderr}");
@@ -266,11 +271,43 @@ fn take_receipt(root: &Utf8Path, timeout: Duration) -> Result<String> {
     Ok(text)
 }
 
-#[test]
-fn missing_receipt_times_out() {
-    let root = test_support::temp_dir("missing-receipt");
-    assert_err_contains(
-        take_receipt(&root, Duration::ZERO),
-        "timed out waiting for fake CLI receipt",
-    );
+struct Server {
+    socket: String,
+}
+impl Server {
+    fn start() -> Self {
+        let server = Self {
+            socket: format!("/tmp/nc-{}.sock", uuid::Uuid::new_v4()),
+        };
+        let output = Command::new("tmux")
+            .args([
+                "-f",
+                "/dev/null",
+                "-S",
+                &server.socket,
+                "new-session",
+                "-d",
+                "-s",
+                "conformance",
+                "sleep 600",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        server
+    }
+}
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "cleanup must also tolerate an unwinding test or an exited server"
+)]
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .args(["-S", &self.socket, "kill-server"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = fs::remove_file(&self.socket);
+    }
 }

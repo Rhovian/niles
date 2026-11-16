@@ -1,4 +1,8 @@
-use super::{operations::{InputDisposition, PermissionAnswer}, *};
+use super::{
+    operations::{InputDisposition, PermissionAnswer, ResumeOutcome},
+    *,
+};
+use crate::test_support::assert_err_contains;
 use agent_client_protocol::v1::schema::StopReason as V1StopReason;
 use std::cell::Cell;
 
@@ -32,22 +36,26 @@ impl Adapter for Permissive<'_> {
         self.called.set(self.called.get() | 1);
         Ok(())
     }
-    fn answer_permission(
-        &mut self,
-        _: &str,
-        _: PermissionAnswer,
-    ) -> anyhow::Result<()> {
+    fn answer_permission(&mut self, _: &str, _: PermissionAnswer) -> anyhow::Result<()> {
         self.called.set(self.called.get() | 4);
         Ok(())
     }
-    fn resume(&mut self, _: &SessionId) -> anyhow::Result<()> {
+    fn resume(&mut self, session: &SessionId) -> anyhow::Result<ResumeOutcome> {
         self.called.set(self.called.get() | 2);
-        Ok(())
+        Ok(if session == &SessionId::new("missing".into()).unwrap() {
+            ResumeOutcome::Missing(session.clone())
+        } else {
+            ResumeOutcome::Resumed(session.clone())
+        })
     }
 }
 
 #[test]
 fn declared_capabilities_gate_operations_before_adapter_dispatch() {
+    assert_err_contains(
+        SessionId::new(String::new()),
+        "empty harness session identity",
+    );
     let session = SessionId::new("conversation".to_owned()).unwrap();
     for (cancel, resume, attention) in [
         (true, false, false),
@@ -66,7 +74,19 @@ fn declared_capabilities_gate_operations_before_adapter_dispatch() {
         })
         .unwrap();
         assert_eq!(harness.cancel().is_ok(), capabilities.cancel);
-        assert_eq!(harness.resume(&session).is_ok(), capabilities.resume);
+        if resume {
+            assert_eq!(
+                harness.resume(&session).unwrap(),
+                ResumeOutcome::Resumed(session.clone())
+            );
+            let missing = SessionId::new("missing".into()).unwrap();
+            assert_eq!(
+                harness.resume(&missing).unwrap(),
+                ResumeOutcome::Missing(missing)
+            );
+        } else {
+            assert_err_contains(harness.resume(&session), "does not support resume");
+        }
         assert_eq!(harness.require_attention().is_ok(), capabilities.attention);
         assert_eq!(
             harness

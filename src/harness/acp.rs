@@ -1,5 +1,5 @@
 use super::launch::Billing;
-use super::operations::{InputDisposition, PermissionAnswer};
+use super::operations::{InputDisposition, PermissionAnswer, ResumeOutcome};
 use super::{Adapter, Capabilities, Prompt, SessionId, Turn};
 use crate::telemetry::transcript::{TextBlock, TextTurn};
 use crate::{agents::SessionConfig, store, util, wake};
@@ -136,8 +136,12 @@ impl Adapter for Headless<'_> {
     fn cancel(&mut self) -> Result<()> {
         self.request(Control::Cancel).map(drop)
     }
-    fn resume(&mut self, session: &SessionId) -> Result<()> {
-        self.request(Control::Resume(session.clone())).map(drop)
+    fn resume(&mut self, session: &SessionId) -> Result<ResumeOutcome> {
+        if self::session(self.dir)? != *session {
+            return Ok(ResumeOutcome::Missing(session.clone()));
+        }
+        self.request(Control::Resume(session.clone()))?;
+        Ok(ResumeOutcome::Resumed(session.clone()))
     }
     fn answer_permission(&mut self, request: &str, answer: PermissionAnswer) -> Result<()> {
         self.request(Control::Permission {

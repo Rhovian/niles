@@ -1,7 +1,7 @@
 use super::meta::read_meta;
 use super::worker_dir;
 use crate::agent_window::shell_quote;
-use crate::harness::operations::{InputDisposition, PermissionAnswer};
+use crate::harness::operations::{InputDisposition, PermissionAnswer, ResumeOutcome};
 use crate::harness::{
     Harness, Prompt,
     acp::{self, Headless},
@@ -149,7 +149,11 @@ pub(crate) fn resume(id: String) -> Result<()> {
     } else {
         let mut harness = target.harness()?;
         harness.require_resume()?;
-        harness.resume(&acp::session(&target.dir)?)?;
+        let session = acp::session(&target.dir)?;
+        ensure!(
+            harness.resume(&session)? == ResumeOutcome::Resumed(session),
+            "resume identity does not match this conversation"
+        );
     }
     println!("resumed: {}", target.id);
     Ok(())
