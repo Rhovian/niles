@@ -128,10 +128,17 @@ impl View {
             ))?;
         } else {
             let id = serde_json::to_string(responder.id())?;
-            let title = match request.tool_call.fields.title.as_deref() {
-                Some(title) => title,
-                None => "Operator input required",
-            };
+            const UNTITLED_REQUEST: &str = "Operator input required";
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the window owns the label for an untitled ACP request"
+            )]
+            let title = request
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .unwrap_or(UNTITLED_REQUEST);
             let mut display = format!("\n[permission {id}] {title}\n");
             for option in &request.options {
                 display.push_str(&format!("  {}: {}\n", option.option_id, option.name));
@@ -150,7 +157,7 @@ impl View {
         active: bool,
     ) -> Result<()> {
         let acp::ElicitationMode::Form(form) = request.mode else {
-            bail!("unsupported elicitation mode");
+            bail!("elicitation mode is not supported");
         };
         let acp::ElicitationScope::Session(scope) = form.scope else {
             bail!("request-scoped form elicitation is not supported");
@@ -256,6 +263,14 @@ impl View {
             }
             acp::SessionUpdate::ToolCallUpdate(update) => self.tool(update)?,
             acp::SessionUpdate::Plan(plan) => self.plan(plan.entries)?,
+            acp::SessionUpdate::AvailableCommandsUpdate(_)
+            | acp::SessionUpdate::CurrentModeUpdate(_)
+            | acp::SessionUpdate::ConfigOptionUpdate(_)
+            | acp::SessionUpdate::SessionInfoUpdate(_)
+            | acp::SessionUpdate::UsageUpdate(_)
+            | acp::SessionUpdate::Notice(_)
+            | acp::SessionUpdate::CompactionUpdate(_)
+            | acp::SessionUpdate::CompactionSummaryChunk(_) => {}
             _ => return Ok(()),
         }
         Ok(())

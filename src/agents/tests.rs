@@ -165,16 +165,20 @@ fn invocations_map_models_efforts_and_order_headless_defaults() {
                 }
             );
             let meta = session.meta.unwrap();
+            let options = meta.get("claudeCode").unwrap().get("options").unwrap();
             for (key, value) in [
                 ("model", invocation.spec.model()),
                 ("effort", invocation.spec.effort()),
             ] {
                 assert_eq!(
-                    meta["claudeCode"]["options"].get(key),
+                    options.get(key),
                     value.map(serde_json::Value::from).as_ref()
                 );
             }
-            assert_eq!(meta["systemPrompt"]["append"], "instructions");
+            assert_eq!(
+                meta.get("systemPrompt").unwrap().get("append").unwrap(),
+                "instructions"
+            );
         }
         assert_eq!(invocation.binary, invocation.spec.family(), "{spec}");
         assert_eq!(

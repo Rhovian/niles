@@ -41,10 +41,10 @@ impl Drop for SocketPath {
         if let Err(err) = fs::remove_file(&self.0) {
             eprintln!("ACP socket cleanup: {err}");
         }
-        if let Some(parent) = self.0.parent() {
-            if let Err(err) = fs::remove_dir(parent) {
-                eprintln!("ACP socket directory cleanup: {err}");
-            }
+        if let Some(parent) = self.0.parent()
+            && let Err(err) = fs::remove_dir(parent)
+        {
+            eprintln!("ACP socket directory cleanup: {err}");
         }
     }
 }

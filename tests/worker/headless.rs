@@ -80,7 +80,7 @@ impl Drop for Running {
     }
 }
 fn observed(dir: &Path, predicate: impl Fn(&Value) -> bool) -> Value {
-    let until = Instant::now() + Duration::from_secs(30);
+    let until = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
     loop {
         if let Ok(bytes) = fs::read(dir.join("acp-state.json")) {
             let state: Value = serde_json::from_slice(&bytes).unwrap();
@@ -122,14 +122,24 @@ fn fixture(label: &str, family: &str) -> (TestEnv, PathBuf) {
 }
 fn refused_send_preserves_wakes(env: &TestEnv, dir: &Path) {
     let log = fs::read(dir.join("status.log")).unwrap();
-    let cursor = fs::read(dir.join("status.cursor")).ok();
+    let cursor_path = dir.join("status.cursor");
+    let cursor = cursor_path
+        .try_exists()
+        .unwrap()
+        .then(|| fs::read(&cursor_path).unwrap());
     assert!(
         !env.run(&["send", "job", "--checkin", "off", "not sent"])
             .status
             .success()
     );
     assert_eq!(fs::read(dir.join("status.log")).unwrap(), log);
-    assert_eq!(fs::read(dir.join("status.cursor")).ok(), cursor);
+    assert_eq!(
+        cursor_path
+            .try_exists()
+            .unwrap()
+            .then(|| fs::read(&cursor_path).unwrap()),
+        cursor
+    );
 }
 #[test]
 fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
@@ -160,8 +170,8 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     // assignment, rather than loading it as an already dispatched conversation.
     let mut state: Value =
         serde_json::from_slice(&fs::read(dir.join("acp-state.json")).unwrap()).unwrap();
-    state["session"] = json!("conversation-533");
-    state["assignment_submitted"] = json!(false);
+    *state.get_mut("session").unwrap() = json!("conversation-533");
+    *state.get_mut("assignment_submitted").unwrap() = json!(false);
     atomic_write(
         dir.join("acp-state.json"),
         serde_json::to_vec(&state).unwrap(),
@@ -203,7 +213,7 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
                 .lines()
                 .any(|line| {
                     let message: Value = serde_json::from_str(line).unwrap();
-                    message["id"] == 102
+                    message.get("id") == Some(&json!(102))
                         && message.pointer("/result/outcome/outcome") == Some(&json!("cancelled"))
                 })
     });
@@ -218,8 +228,13 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
         .collect();
     let text: Vec<_> = turns
         .iter()
-        .filter(|turn| turn["content"]["type"] == "text")
-        .map(|turn| (&turn["role"], &turn["content"]["text"]))
+        .filter(|turn| turn.pointer("/content/type") == Some(&json!("text")))
+        .map(|turn| {
+            (
+                turn.get("role").unwrap(),
+                turn.pointer("/content/text").unwrap(),
+            )
+        })
         .collect();
     assert_eq!(
         text,
@@ -328,7 +343,7 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
     while resume.try_wait().unwrap().is_none() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
