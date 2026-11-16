@@ -65,21 +65,19 @@ impl Launch {
         worker: bool,
     ) -> Result<()> {
         if self.mode == Mode::Headless {
-            let mut env = invocation.env.clone();
-            env.extend(
-                invocation
-                    .spec
-                    .profile()
-                    .acp
-                    .context("missing ACP profile")?
-                    .adapter
-                    .configure(&invocation.spec, primary, worker),
-            );
+            let mut session = invocation
+                .spec
+                .profile()
+                .acp
+                .context("missing ACP profile")?
+                .adapter
+                .configure(&invocation.spec, primary, worker);
+            session.env.extend(invocation.env.clone());
             acp::prepare(
                 dir,
                 invocation.spec.family(),
                 self.billing.context("headless billing is required")?,
-                env,
+                session,
             )?;
             let executable = env::current_exe()?;
             invocation.binary = "sh";

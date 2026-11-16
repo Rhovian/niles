@@ -154,7 +154,7 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
             "adapter",
             "solo",
             &["--mode", "headless", "--billing", "subscription"][..],
-            "no qualified headless ACP adapter",
+            "ACP adapter claude-agent-acp not found on PATH",
             false,
         ),
         (

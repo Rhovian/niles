@@ -26,6 +26,10 @@ type PromptFuture = Pin<Box<dyn Future<Output = sdk::Result<acp::PromptResponse>
 enum Event {
     Update(acp::SessionNotification),
     Auth(Result<()>),
+    Elicitation(
+        acp::CreateElicitationRequest,
+        Responder<acp::CreateElicitationResponse>,
+    ),
     Permission(
         acp::RequestPermissionRequest,
         Responder<acp::RequestPermissionResponse>,
@@ -63,11 +67,12 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
         sdk::AcpAgentConfig::new("env")
             .args(removals)
             .arg(profile.binary)
-            .envs(config.env),
+            .envs(config.session.env.clone()),
     );
     let (events, incoming) = mpsc::unbounded_channel();
     let updates = events.clone();
     let auth = events.clone();
+    let questions = events.clone();
     let result = profile
         .client(move |identity| {
             auth.send(Event::Auth(identity))
@@ -89,6 +94,14 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
             },
             sdk::on_receive_request!(),
         )
+        .on_receive_request(
+            async move |request: acp::CreateElicitationRequest, responder, _| {
+                questions
+                    .send(Event::Elicitation(request, responder))
+                    .map_err(sdk::Error::into_internal_error)
+            },
+            sdk::on_receive_request!(),
+        )
         .connect_with(agent, async move |connection: ConnectionTo<sdk::Agent>| {
             let mut runner = Runner {
                 view: View::open(dir, profile)?,
@@ -96,12 +109,13 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
                 events: incoming,
                 authenticated: false,
                 profile,
+                session: config.session,
                 prompt: None,
                 queue: VecDeque::new(),
             };
             let result = runner.serve(dir, prompt).await;
             runner.view.flush_reply()?;
-            let cleanup = runner.view.cancel_permissions();
+            let cleanup = runner.view.cancel_requests();
             result.and(cleanup).map_err(Into::into)
         })
         .await;
@@ -116,12 +130,17 @@ struct Runner {
     events: mpsc::UnboundedReceiver<Event>,
     authenticated: bool,
     profile: agents::AcpProfile,
+    session: agents::SessionConfig,
     prompt: Option<PromptFuture>,
     queue: VecDeque<String>,
 }
 impl Runner {
     fn event(&mut self, event: Event) -> Result<()> {
         match event {
+            Event::Elicitation(request, responder) => {
+                self.view
+                    .elicitation(request, responder, self.prompt.is_some())
+            }
             Event::Update(update) => self.view.notification(update),
             Event::Auth(auth) => {
                 auth?;
@@ -156,9 +175,17 @@ impl Runner {
             .until(
                 self.connection
                     .send_request(
-                        acp::InitializeRequest::new(ProtocolVersion::V1).client_info(
-                            acp::Implementation::new("niles", env!("CARGO_PKG_VERSION")),
-                        ),
+                        acp::InitializeRequest::new(ProtocolVersion::V1)
+                            .client_capabilities(
+                                acp::ClientCapabilities::new().elicitation(
+                                    acp::ElicitationCapabilities::new()
+                                        .form(acp::ElicitationFormCapabilities::new()),
+                                ),
+                            )
+                            .client_info(acp::Implementation::new(
+                                "niles",
+                                env!("CARGO_PKG_VERSION"),
+                            )),
                     )
                     .block_task(),
             )
@@ -202,20 +229,26 @@ impl Runner {
             let session = self
                 .until(
                     self.connection
-                        .send_request(acp::NewSessionRequest::new(
-                            util::current_dir_utf8()?.into_std_path_buf(),
-                        ))
+                        .send_request(
+                            acp::NewSessionRequest::new(
+                                util::current_dir_utf8()?.into_std_path_buf(),
+                            )
+                            .meta(self.session.meta.clone()),
+                        )
                         .block_task(),
                 )
                 .await?;
             self.view.state.session = Some(SessionId::new(session.session_id.to_string())?);
+            self.set_mode().await?;
             self.view.set_state(TurnState::Idle(StopReason::EndTurn))?;
         }
         // SDK 5.3.0 stdio.rs uses Unblock too: terminal reads stay off executor
         // threads, without making Tokio shutdown wait on an uncancellable stdin read.
         let mut input = BufReader::new(Unblock::new(io::stdin())).lines();
         let mut reads = JoinSet::new();
-        println!("Type a prompt, :cancel, :resume, or :approve <request-id> <option-id>.");
+        println!(
+            "Type a prompt, :cancel, :resume, :approve <request-id> <option-id>, or :answer <request-id> <JSON response>."
+        );
         if !submitted && !prompt.is_empty() {
             self.start(prompt)?;
         }
@@ -272,16 +305,41 @@ impl Runner {
         let request = acp::LoadSessionRequest::new(
             self.view.protocol_session()?,
             util::current_dir_utf8()?.into_std_path_buf(),
-        );
+        )
+        .meta(self.session.meta.clone());
         let result = self
             .until(self.connection.send_request(request).block_task())
             .await;
         self.view.replaying = false;
         result?;
+        self.set_mode().await?;
         self.view.set_state(TurnState::Idle(StopReason::EndTurn))
+    }
+    async fn set_mode(&mut self) -> Result<()> {
+        if let Some(mode) = &self.session.mode {
+            self.until(
+                self.connection
+                    .send_request(acp::SetSessionModeRequest::new(
+                        self.view.protocol_session()?,
+                        mode.clone(),
+                    ))
+                    .block_task(),
+            )
+            .await?;
+        }
+        Ok(())
     }
     fn window_command(&self, line: String) -> Result<Control> {
         let line = line.replace("\x1b[200~", "").replace("\x1b[201~", "");
+        if let Some(answer) = line.strip_prefix(":answer ") {
+            let (id, answer) = answer
+                .split_once(' ')
+                .context("use :answer <request-id> <JSON response>")?;
+            return Ok(Control::Answer {
+                id: id.into(),
+                answer: serde_json::from_str(answer)?,
+            });
+        }
         if let Some(answer) = line.strip_prefix(":approve ") {
             let (id, answer) = answer
                 .split_once(' ')
@@ -321,9 +379,10 @@ impl Runner {
                         .send_notification(acp::CancelNotification::new(
                             self.view.protocol_session()?,
                         ))?;
-                    self.view.cancel_permissions()?;
+                    self.view.cancel_requests()?;
                     println!("Cancel requested; waiting for cancellation confirmation.");
                 }
+                Control::Answer { id, answer } => self.view.answer_question(&id, answer)?,
                 Control::Permission { id, answer } => self.view.answer(&id, answer)?,
                 Control::Resume(session) => {
                     ensure!(

@@ -1,3 +1,4 @@
+use super::acp::SessionConfig;
 use crate::telemetry::SessionLink;
 use camino::Utf8Path;
 use serde_json::{Map, Value};
@@ -15,6 +16,7 @@ pub(crate) struct AcpProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AcpAdapter {
     Codex,
+    Claude,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +114,20 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
-        acp: None,
+        acp: Some(AcpProfile {
+            binary: "claude-agent-acp",
+            adapter: AcpAdapter::Claude,
+            subscription: "Claude.ai subscription",
+            auth_kind: "account",
+            remove_env: &[
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_CODE_USE_BEDROCK",
+                "CLAUDE_CODE_USE_VERTEX",
+                "CLAUDE_CODE_USE_FOUNDRY",
+            ],
+        }),
         tested_version: "2.1.312",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
@@ -182,7 +197,7 @@ impl AcpAdapter {
         spec: &super::AgentSpec,
         primary: &str,
         worker: bool,
-    ) -> Vec<(String, String)> {
+    ) -> SessionConfig {
         match self {
             Self::Codex => {
                 let mut config = Map::from_iter([
@@ -196,18 +211,46 @@ impl AcpAdapter {
                     spec.effort()
                         .map(|effort| ("model_reasoning_effort".into(), effort.into())),
                 );
-                vec![
-                    ("CODEX_CONFIG".into(), Value::Object(config).to_string()),
-                    (
-                        "INITIAL_AGENT_MODE".into(),
+                SessionConfig {
+                    env: vec![
+                        ("CODEX_CONFIG".into(), Value::Object(config).to_string()),
+                        (
+                            "INITIAL_AGENT_MODE".into(),
+                            if worker {
+                                "agent-full-access"
+                            } else {
+                                "workspace-write"
+                            }
+                            .into(),
+                        ),
+                    ],
+                    ..Default::default()
+                }
+            }
+            // claude-agent-acp 0.107.3 new-session-meta.ts / session-mode.ts.
+            // permissionMode in SDK options is ignored; use ACP session/set_mode.
+            Self::Claude => {
+                let mut options = Map::new();
+                options.extend(spec.model().map(|value| ("model".into(), value.into())));
+                options.extend(spec.effort().map(|value| ("effort".into(), value.into())));
+                SessionConfig {
+                    meta: Some(Map::from_iter([
+                        (
+                            "systemPrompt".into(),
+                            serde_json::json!({"type":"preset", "preset":"claude_code", "append":primary}),
+                        ),
+                        ("claudeCode".into(), serde_json::json!({"options": options})),
+                    ])),
+                    mode: Some(
                         if worker {
-                            "agent-full-access"
+                            "bypassPermissions"
                         } else {
-                            "workspace-write"
+                            "default"
                         }
                         .into(),
                     ),
-                ]
+                    ..Default::default()
+                }
             }
         }
     }

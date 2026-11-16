@@ -4,10 +4,11 @@ use anyhow::{Result, ensure};
 use sdk::v1::{self, schema as acp};
 use serde::{Deserialize, Serialize};
 
-// codex-acp 2.6.0 AuthStatusMeta.ts predates the schema's unstable auth-status payload.
+// codex-acp 2.6.0 AuthStatusMeta.ts and claude-agent-acp 0.107.3 auth-status.ts
+// share this extension, predating the schema's unstable auth-status payload.
 #[derive(Debug, Clone, Serialize, Deserialize, sdk::JsonRpcNotification)]
 #[notification(method = "_auth/status_update")]
-struct CodexAuthStatus {
+struct SubscriptionStatus {
     #[serde(rename = "authStatus")]
     identity: Identity,
 }
@@ -22,8 +23,8 @@ impl AcpProfile {
         mut authenticated: impl FnMut(Result<()>) -> sdk::Result<()> + Send,
     ) -> v1::Builder<sdk::Client, impl sdk::HandleDispatchFrom<sdk::Agent>> {
         match self.adapter {
-            AcpAdapter::Codex => sdk::Client.v1().on_receive_notification(
-                async move |status: CodexAuthStatus, _| {
+            AcpAdapter::Codex | AcpAdapter::Claude => sdk::Client.v1().on_receive_notification(
+                async move |status: SubscriptionStatus, _| {
                     authenticated(self.verify_identity(&status.identity.kind))
                 },
                 sdk::on_receive_notification!(),
@@ -39,7 +40,7 @@ impl AcpProfile {
     }
     pub(crate) fn verify_initialize(self, init: &acp::InitializeResponse) -> Result<()> {
         match self.adapter {
-            AcpAdapter::Codex => ensure!(
+            AcpAdapter::Codex | AcpAdapter::Claude => ensure!(
                 init.agent_capabilities
                     .meta
                     .as_ref()
@@ -51,6 +52,7 @@ impl AcpProfile {
     }
     pub(crate) fn terminal_output(self, update: &acp::ToolCallUpdate) -> Option<&str> {
         match self.adapter {
+            AcpAdapter::Claude => None,
             AcpAdapter::Codex => update
                 .meta
                 .as_ref()?
@@ -59,4 +61,11 @@ impl AcpProfile {
                 .as_str(),
         }
     }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct SessionConfig {
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) meta: Option<acp::Meta>,
+    pub(crate) mode: Option<acp::SessionModeId>,
 }

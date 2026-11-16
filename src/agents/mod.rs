@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 
 mod acp;
+pub(crate) use acp::SessionConfig;
 mod families;
 pub(crate) mod picker;
 pub(crate) mod roster;

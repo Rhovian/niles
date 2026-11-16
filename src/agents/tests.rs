@@ -121,6 +121,7 @@ fn rejects_invalid_agent_specs() {
 fn invocations_map_models_efforts_and_order_headless_defaults() {
     use InvocationDefaults::{Foreground, Headless, Worker};
     for (spec, defaults, args) in [
+        ("claude", Foreground, ""),
         ("claude:opus:max", Foreground, "--model opus --effort max"),
         (
             "codex:gpt-5.5:xhigh",
@@ -149,7 +150,33 @@ fn invocations_map_models_efforts_and_order_headless_defaults() {
         ),
     ] {
         let invocation = invocation(spec, defaults, &models()).unwrap();
-        assert_eq!(invocation.binary, spec.split_once(':').unwrap().0, "{spec}");
+        if invocation.spec.family() == "claude" && !matches!(defaults, Headless) {
+            let session = invocation.spec.profile().acp.unwrap().adapter.configure(
+                &invocation.spec,
+                "instructions",
+                matches!(defaults, Worker),
+            );
+            assert_eq!(
+                session.mode.unwrap().to_string(),
+                if matches!(defaults, Foreground) {
+                    "default"
+                } else {
+                    "bypassPermissions"
+                }
+            );
+            let meta = session.meta.unwrap();
+            for (key, value) in [
+                ("model", invocation.spec.model()),
+                ("effort", invocation.spec.effort()),
+            ] {
+                assert_eq!(
+                    meta["claudeCode"]["options"].get(key),
+                    value.map(serde_json::Value::from).as_ref()
+                );
+            }
+            assert_eq!(meta["systemPrompt"]["append"], "instructions");
+        }
+        assert_eq!(invocation.binary, invocation.spec.family(), "{spec}");
         assert_eq!(
             invocation.args,
             args.split_whitespace().collect::<Vec<_>>(),

@@ -20,6 +20,7 @@ pub(super) struct View {
     pub(super) replaying: bool,
     pub(super) cancelling: bool,
     permissions: BTreeMap<String, (Vec<acp::PermissionOption>, PermissionResponder)>,
+    questions: BTreeMap<String, Responder<acp::CreateElicitationResponse>>,
     // Schema 1.18.0 v1/client.rs ContentChunk is a delta. The shared transcript
     // needs a complete message block, while the window streams each delta.
     reply: String,
@@ -45,6 +46,7 @@ impl View {
             replaying: false,
             cancelling: false,
             permissions: BTreeMap::new(),
+            questions: BTreeMap::new(),
             reply: String::new(),
         })
     }
@@ -65,7 +67,12 @@ impl View {
         self.state.assignment_submitted = true;
         self.set_state(TurnState::Running)
     }
-    pub(super) fn cancel_permissions(&mut self) -> Result<()> {
+    pub(super) fn cancel_requests(&mut self) -> Result<()> {
+        for (_, responder) in mem::take(&mut self.questions) {
+            responder.respond(acp::CreateElicitationResponse::new(
+                acp::ElicitationAction::Cancel,
+            ))?;
+        }
         for (_, (_, responder)) in mem::take(&mut self.permissions) {
             responder.respond(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
@@ -97,7 +104,7 @@ impl View {
             .remove()
             .1
             .respond(acp::RequestPermissionResponse::new(outcome))?;
-        if self.permissions.is_empty() {
+        if self.permissions.is_empty() && self.questions.is_empty() {
             self.set_state(TurnState::Running)?;
         }
         Ok(())
@@ -131,18 +138,72 @@ impl View {
             }
             display.push_str(&format!("Use :approve {id} <option-id>\n"));
             self.permissions.insert(id, (request.options, responder));
-            self.flush_reply()?;
-            self.render(display)?;
-            self.set_state(TurnState::RequiresAction)?;
-            if self.dir.join("status.log").exists() {
-                util::append_line(
-                    &wake::status_log_path(&self.dir),
-                    &wake::line(
-                        wake::WakeKind::Attention,
-                        "headless permission requires operator input",
-                    ),
-                )?;
-            }
+            self.attention(display)?;
+        }
+        Ok(())
+    }
+    // claude-agent-acp 0.107.3 elicitation.ts maps AskUserQuestion to SDK forms.
+    pub(super) fn elicitation(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+        responder: Responder<acp::CreateElicitationResponse>,
+        active: bool,
+    ) -> Result<()> {
+        let acp::ElicitationMode::Form(form) = request.mode else {
+            bail!("unsupported elicitation mode");
+        };
+        let acp::ElicitationScope::Session(scope) = form.scope else {
+            bail!("request-scoped form elicitation is not supported");
+        };
+        ensure!(
+            self.state
+                .session
+                .as_ref()
+                .is_some_and(|id| id.0 == scope.session_id.to_string()),
+            "question belongs to another session"
+        );
+        if self.cancelling || !active {
+            responder.respond(acp::CreateElicitationResponse::new(
+                acp::ElicitationAction::Cancel,
+            ))?;
+        } else {
+            let id = serde_json::to_string(responder.id())?;
+            let display = format!(
+                "\n[question {id}] {}\n{}\nUse :answer {id} {{\"action\":\"accept\",\"content\":{{<field>:<value>}}}} or {{\"action\":\"cancel\"}}\n",
+                request.message,
+                serde_json::to_string_pretty(&form.requested_schema)?
+            );
+            self.questions.insert(id, responder);
+            self.attention(display)?;
+        }
+        Ok(())
+    }
+    pub(super) fn answer_question(
+        &mut self,
+        id: &str,
+        answer: acp::CreateElicitationResponse,
+    ) -> Result<()> {
+        self.questions
+            .remove(id)
+            .context("question is no longer pending")?
+            .respond(answer)?;
+        if self.questions.is_empty() && self.permissions.is_empty() {
+            self.set_state(TurnState::Running)?;
+        }
+        Ok(())
+    }
+    fn attention(&mut self, display: String) -> Result<()> {
+        self.flush_reply()?;
+        self.render(display)?;
+        self.set_state(TurnState::RequiresAction)?;
+        if self.dir.join("status.log").exists() {
+            util::append_line(
+                &wake::status_log_path(&self.dir),
+                &wake::line(
+                    wake::WakeKind::Attention,
+                    "headless request requires operator input",
+                ),
+            )?;
         }
         Ok(())
     }
@@ -153,7 +214,7 @@ impl View {
         })))
     }
     pub(super) fn completed(&mut self, response: sdk::Result<acp::PromptResponse>) -> Result<()> {
-        self.cancel_permissions()?;
+        self.cancel_requests()?;
         match response {
             Ok(response) => self.show_state(response.stop_reason.into()),
             Err(err) => self.failed(err.to_string()),

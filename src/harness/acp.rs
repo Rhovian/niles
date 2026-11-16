@@ -2,7 +2,8 @@ use super::launch::Billing;
 use super::operations::{InputDisposition, PermissionAnswer};
 use super::{Adapter, Capabilities, Prompt, SessionId, Turn};
 use crate::telemetry::transcript::{TextBlock, TextTurn};
-use crate::{store, util, wake};
+use crate::{agents::SessionConfig, store, util, wake};
+use agent_client_protocol::v1::schema::CreateElicitationResponse;
 use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,8 @@ pub(crate) use runner::run;
 struct Config {
     family: String,
     billing: Billing,
-    env: Vec<(String, String)>,
+    #[serde(flatten)]
+    session: SessionConfig,
 }
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -37,14 +39,14 @@ pub(crate) fn prepare(
     dir: &Utf8Path,
     family: &str,
     billing: Billing,
-    env: Vec<(String, String)>,
+    session: SessionConfig,
 ) -> Result<()> {
     store::write_json(
         &dir.join("acp.json"),
         &Config {
             family: family.into(),
             billing,
-            env,
+            session,
         },
     )
 }
@@ -87,6 +89,10 @@ fn checked_socket(root: Utf8PathBuf) -> Result<Utf8PathBuf> {
 enum Control {
     Prompt(String),
     Cancel,
+    Answer {
+        id: String,
+        answer: CreateElicitationResponse,
+    },
     Resume(SessionId),
     Permission {
         id: String,

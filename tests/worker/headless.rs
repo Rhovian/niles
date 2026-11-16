@@ -1,6 +1,7 @@
 use super::support::*;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 use std::process::{Child, Stdio};
 use std::thread;
@@ -8,7 +9,8 @@ use std::time::{Duration, Instant};
 
 const PEER: &str = r#"#!/usr/bin/env python3
 import sys,json,os,time
-sid='conversation-533';prompt=None;cancelling=False
+sid='conversation-533';prompt=None;cancelling=False;mode=None
+claude='claude-agent-acp' in sys.argv[0]
 send=lambda v: print(json.dumps(dict(jsonrpc='2.0',**v)),flush=True)
 reply=lambda id,result: send(dict(id=id,result=result))
 update=lambda text: send(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='agent_message_chunk',content=dict(type='text',text=text)))))
@@ -16,22 +18,35 @@ for line in sys.stdin:
     m=json.loads(line)
     with open('peer.log','a') as f:f.write(json.dumps(m)+'\n')
     method=m.get('method');p=m.get('params',{})
+    if claude and method in ['session/new','session/load']:
+        assert p['_meta']['claudeCode']['options']==dict(model='sonnet',effort='high')
+        assert p['_meta']['systemPrompt']['append']
+        mode='default'
     if method=='initialize':
-        assert not os.environ.get('CODEX_API_KEY') and not os.environ.get('OPENAI_API_KEY')
+        assert p['clientCapabilities']['elicitation']==dict(form={})
+        if claude:assert not os.environ.get('ANTHROPIC_API_KEY')
+        else:assert not os.environ.get('CODEX_API_KEY') and not os.environ.get('OPENAI_API_KEY')
         reply(m['id'],dict(protocolVersion=1,agentCapabilities=dict(loadSession=True,_meta=dict(authStatus={}))))
         send(dict(method='_auth/status_update',params=dict(authStatus=dict(kind=('account' if os.environ.get('PEER_AUTH')=='account_then_api' else os.environ.get('PEER_AUTH','account'))))))
     elif method=='session/new':reply(m['id'],dict(sessionId=sid))
+    elif method=='session/set_mode':
+        assert p['sessionId']==sid and p['modeId']=='bypassPermissions';mode=p['modeId'];reply(m['id'],{})
     elif method=='session/load':
         assert p['sessionId']==sid
         while os.path.exists('hold-load') and not os.path.exists('release-load'):time.sleep(.01)
         update('APPROVED');reply(m['id'],{})
     elif method=='session/prompt':
+        if claude:assert mode=='bypassPermissions'
         prompt=m['id'];text=p['prompt'][0]['text'];cancelling=False
         if os.environ.get('PEER_AUTH')=='account_then_api':
             update('AUTH_PARTIAL')
             send(dict(method='_auth/status_update',params=dict(authStatus=dict(kind='api_key'))))
         elif text=='approval':
             send(dict(id=100,method='session/request_permission',params=dict(sessionId=sid,toolCall=dict(toolCallId='tool-533',title='Owned test command'),options=[dict(optionId='yes',name='Allow once',kind='allow_once') ])))
+        elif text=='request-scoped':
+            send(dict(id=105,method='elicitation/create',params=dict(mode='form',requestId=prompt,message='Configure',requestedSchema=dict(type='object',properties={}))))
+        elif text=='question':
+            send(dict(id=103,method='elicitation/create',params=dict(mode='form',sessionId=sid,message='Choose a color',requestedSchema=dict(type='object',properties=dict(color=dict(type='string',enum=['Blue','Green'])),required=['color']))))
         elif text=='error':send(dict(id=prompt,error=dict(code=-32603,message='peer failed')))
         elif text!='hold':update(text);reply(prompt,dict(stopReason='end_turn'))
     elif method=='session/cancel':
@@ -48,6 +63,13 @@ for line in sys.stdin:
             send(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='tool_call',toolCallId='tool-533',title='Owned tool',rawInput={}))))
             update('APP');update('ROVED');reply(prompt,dict(stopReason='end_turn'))
             send(dict(id=102,method='session/request_permission',params=dict(sessionId=sid,toolCall=dict(toolCallId='idle-tool',title='Idle approval'),options=[])))
+    elif m.get('id')==103:
+        if m['result']['action']=='accept':
+            assert m['result']['content']==dict(color='Blue')
+            update('BLUE');reply(prompt,dict(stopReason='end_turn'))
+            send(dict(id=104,method='elicitation/create',params=dict(mode='form',sessionId=sid,message='Late',requestedSchema=dict(type='object',properties={}))))
+        else:assert cancelling and m['result']['action']=='cancel'
+    elif m.get('id')==104:assert m['result']['action']=='cancel'
     elif m.get('id')==102:assert m['result']['outcome']==dict(outcome='cancelled')
 "#;
 struct Running(Child);
@@ -70,10 +92,17 @@ fn observed(dir: &Path, predicate: impl Fn(&Value) -> bool) -> Value {
         thread::sleep(Duration::from_millis(10));
     }
 }
-fn fixture(label: &str) -> (TestEnv, PathBuf) {
-    let env = TestEnv::with_manifest(label, "codex");
-    write_executable(&env.bin.join("codex-acp"), PEER);
-    fs::remove_file(env.bin.join("codex")).unwrap();
+fn fixture(label: &str, family: &str) -> (TestEnv, PathBuf) {
+    let env = TestEnv::with_manifest(label, family);
+    write_executable(
+        &env.bin.join(if family == "codex" {
+            "codex-acp"
+        } else {
+            "claude-agent-acp"
+        }),
+        PEER,
+    );
+    fs::remove_file(env.bin.join(family)).unwrap();
     assert_command_success(
         "headless spawn",
         &env.spawn(
@@ -104,7 +133,7 @@ fn refused_send_preserves_wakes(env: &TestEnv, dir: &Path) {
 }
 #[test]
 fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
-    let (env, dir) = fixture("headless-contract");
+    let (env, dir) = fixture("headless-contract", "claude");
     refused_send_preserves_wakes(&env, &dir);
     let socket_dir = PathBuf::from(format!(
         "/tmp/niles-acp-{:x}",
@@ -139,10 +168,9 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     )
     .unwrap();
 
-    let child = Running(
+    let mut child = Running(
         env.niles(&env.root, &["acp", dir.to_str().unwrap(), "approval"])
-            .env("CODEX_API_KEY", "must-not-reach-adapter")
-            .env("OPENAI_API_KEY", "must-not-reach-adapter")
+            .env("ANTHROPIC_API_KEY", "must-not-reach-adapter")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -200,6 +228,31 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
             (&json!("assistant"), &json!("APPROVED"))
         ]
     );
+    for answer in [true, false] {
+        assert_command_success(
+            "question",
+            &env.run(&["send", "job", "--checkin", "off", "question"]),
+        );
+        observed(&dir, |s| {
+            s.pointer("/turn/state") == Some(&json!("RequiresAction"))
+        });
+        if answer {
+            writeln!(
+                child.0.stdin.as_mut().unwrap(),
+                ":answer 103 {{\"action\":\"accept\",\"content\":{{\"color\":\"Blue\"}}}}"
+            )
+            .unwrap();
+            observed(&dir, |s| {
+                s.pointer("/turn/state/Idle") == Some(&json!("EndTurn"))
+            });
+            assert!(stdout_of(&env.run(&["peek", "job"])).contains("BLUE"));
+        } else {
+            assert_command_success("cancel question", &env.run(&["cancel", "job"]));
+            observed(&dir, |s| {
+                s.pointer("/turn/state/Idle") == Some(&json!("Cancelled"))
+            });
+        }
+    }
     assert_command_success(
         "pending turn",
         &env.run(&["send", "job", "--checkin", "off", "approval"]),
@@ -285,14 +338,28 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
         &resume.wait_with_output().unwrap(),
         "reply not confirmed (10s deadline); operation may still be pending",
     );
+    assert_command_success(
+        "request-scoped form",
+        &env.run(&["send", "job", "--checkin", "off", "request-scoped"]),
+    );
+    observed(&dir, |s| {
+        s.pointer("/turn/state/Idle/Error/message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| {
+                message.contains("request-scoped form elicitation is not supported")
+            })
+    });
 }
 #[test]
 fn headless_rejects_an_authentication_identity_that_disagrees_with_billing() {
-    let (env, dir) = fixture("headless-billing");
-    for identity in ["api_key", "account_then_api"] {
+    for (family, identity) in [("codex", "api_key"), ("claude", "account_then_api")] {
+        let (env, dir) = fixture("headless-billing", family);
         let mut child = env
             .niles(&env.root, &["acp", dir.to_str().unwrap(), "must not run"])
             .env("PEER_AUTH", identity)
+            .env("CODEX_API_KEY", "must-not-reach-codex")
+            .env("OPENAI_API_KEY", "must-not-reach-codex")
+            .env("ANTHROPIC_API_KEY", "must-not-reach-claude")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
