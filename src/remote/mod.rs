@@ -115,8 +115,6 @@ fn resolve(source: &Source, id: &str) -> Result<Option<ForegroundSession>> {
         .find(|record| session_id(record) == id))
 }
 
-// The runtime is created only when this sync CLI entry point is invoked.
-#[tokio::main]
 pub(crate) async fn run(port: u16) -> Result<()> {
     let config = blocking(|| user::FileConfig::load(&user::path()?))
         .await?

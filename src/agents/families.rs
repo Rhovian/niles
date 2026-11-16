@@ -1,10 +1,28 @@
+use super::acp::SessionConfig;
 use crate::telemetry::SessionLink;
 use camino::Utf8Path;
+use serde_json::{Map, Value};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AcpProfile {
+    pub(crate) binary: &'static str,
+    pub(crate) subscription: &'static str,
+    pub(crate) auth_kind: &'static str,
+    pub(crate) adapter: AcpAdapter,
+    pub(crate) remove_env: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AcpAdapter {
+    Codex,
+    Claude,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentProfile {
     pub id: &'static str,
+    pub(crate) acp: Option<AcpProfile>,
     pub binary: &'static str,
     pub tested_version: &'static str,
     pub foreground_args: &'static [&'static str],
@@ -60,6 +78,18 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
         binary: "codex",
+        acp: Some(AcpProfile {
+            binary: "codex-acp",
+            adapter: AcpAdapter::Codex,
+            subscription: "ChatGPT subscription",
+            auth_kind: "account",
+            remove_env: &[
+                "CODEX_API_KEY",
+                "OPENAI_API_KEY",
+                "DEFAULT_AUTH_REQUEST",
+                "MODEL_PROVIDER",
+            ],
+        }),
         tested_version: "0.165.0",
         // The shared daemon lets a running session continue in the background, out of its tmux
         // pane.
@@ -84,6 +114,20 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "claude",
         binary: "claude",
+        acp: Some(AcpProfile {
+            binary: "claude-agent-acp",
+            adapter: AcpAdapter::Claude,
+            subscription: "Claude.ai subscription",
+            auth_kind: "account",
+            remove_env: &[
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_CODE_USE_BEDROCK",
+                "CLAUDE_CODE_USE_VERTEX",
+                "CLAUDE_CODE_USE_FOUNDRY",
+            ],
+        }),
         tested_version: "2.1.312",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
@@ -103,6 +147,7 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "pi",
         binary: "pi",
+        acp: None,
         tested_version: "1.4.0",
         foreground_args: &[],
         worker_args: &[],
@@ -143,6 +188,72 @@ pub fn tier_args(profile: &AgentProfile, model: Option<&str>, effort: Option<&st
         }
     }
     args
+}
+
+impl AcpAdapter {
+    // codex-acp 2.6.0 src/index.ts and CodexAcpServer.ts consume this session config.
+    pub(crate) fn configure(
+        self,
+        spec: &super::AgentSpec,
+        primary: &str,
+        worker: bool,
+    ) -> SessionConfig {
+        match self {
+            Self::Codex => {
+                let mut config = Map::from_iter([
+                    ("forced_login_method".into(), "chatgpt".into()),
+                    ("model_provider".into(), "openai".into()),
+                    ("developer_instructions".into(), primary.into()),
+                    ("approvals_reviewer".into(), "user".into()),
+                ]);
+                config.extend(spec.model().map(|model| ("model".into(), model.into())));
+                config.extend(
+                    spec.effort()
+                        .map(|effort| ("model_reasoning_effort".into(), effort.into())),
+                );
+                SessionConfig {
+                    env: vec![
+                        ("CODEX_CONFIG".into(), Value::Object(config).to_string()),
+                        (
+                            "INITIAL_AGENT_MODE".into(),
+                            if worker {
+                                "agent-full-access"
+                            } else {
+                                "workspace-write"
+                            }
+                            .into(),
+                        ),
+                    ],
+                    ..Default::default()
+                }
+            }
+            // claude-agent-acp 0.107.3 new-session-meta.ts / session-mode.ts.
+            // permissionMode in SDK options is ignored; use ACP session/set_mode.
+            Self::Claude => {
+                let mut options = Map::new();
+                options.extend(spec.model().map(|value| ("model".into(), value.into())));
+                options.extend(spec.effort().map(|value| ("effort".into(), value.into())));
+                SessionConfig {
+                    meta: Some(Map::from_iter([
+                        (
+                            "systemPrompt".into(),
+                            serde_json::json!({"type":"preset", "preset":"claude_code", "append":primary}),
+                        ),
+                        ("claudeCode".into(), serde_json::json!({"options": options})),
+                    ])),
+                    mode: Some(
+                        if worker {
+                            "bypassPermissions"
+                        } else {
+                            "default"
+                        }
+                        .into(),
+                    ),
+                    ..Default::default()
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

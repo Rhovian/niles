@@ -69,7 +69,11 @@ interactive fixture tests described below run in CI.
 3. Map relevant changes onto `src/agents/families.rs` (launch and bypass args, brief flags,
    `headless`, tier flags, `launch_env`, `composer`), `src/agents/roster.yaml` (models and effort
    ladders), `src/doctor.rs` (version first line), `src/telemetry/*.rs` (session files),
-   and trust or onboarding prompts.
+   and trust or onboarding prompts. For headless adapters also check `src/harness/acp/`
+   and the ACP profile in `families.rs`: initialization/auth identity, permission and
+   form-elicitation payloads, prompt errors, cancellation confirmation, and session/load replay.
+   Re-run a live subscription launch, steer, approval, question, cancel, and process-restart/resume
+   probe before updating the tested adapter version in README.
 4. Run `scripts/cli-versions.sh --plan`, show it to the operator and ask for approval. Only on
    their yes, run `scripts/cli-versions.sh --update`, then re-run the script: every target row
    must show `installed` = `latest`. Planning preflights all three installations; unsupported

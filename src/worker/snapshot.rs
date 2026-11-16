@@ -34,6 +34,7 @@ pub(crate) struct WorkerSnapshot {
     /// `done:` → follow-up → `done:` counts as two reports.
     pub(crate) log_len: u64,
     pub(crate) last_actionable: Option<ActionableWake>,
+    pub(crate) last_answer: Option<ActionableWake>,
     /// The wake cursor: how far `niles wait` has delivered. No cursor means no wait has ever
     /// consumed a line, which is position zero.
     cursor: u64,
@@ -52,6 +53,7 @@ impl WorkerSnapshot {
             log: None,
             log_len: 0,
             last_actionable: None,
+            last_answer: None,
             cursor: 0,
             wait_running: false,
         };
@@ -73,7 +75,8 @@ impl WorkerSnapshot {
 
     fn set_log(&mut self, log: Option<Vec<u8>>) {
         self.log_len = log.as_ref().map_or(0, |log| log.len() as u64);
-        self.last_actionable = log.as_deref().and_then(last_actionable_wake);
+        (self.last_actionable, self.last_answer) =
+            log.as_deref().map_or((None, None), last_actionable_wakes);
         self.log = log;
     }
 
@@ -178,17 +181,21 @@ pub(super) fn status_log(worker_dir: &Utf8Path) -> Result<Option<Vec<u8>>> {
 /// The last actionable line in the log, complete lines only.
 ///
 /// A trailing partial line is still being written, so it stays for the next poll.
-fn last_actionable_wake(log: &[u8]) -> Option<ActionableWake> {
+fn last_actionable_wakes(log: &[u8]) -> (Option<ActionableWake>, Option<ActionableWake>) {
     let mut found = None;
+    let mut answer = None;
     for (end, line) in wake::complete_lines(log) {
         if let Some(kind) = WakeKind::actionable(&line) {
             found = Some(ActionableWake {
                 end: end as u64,
                 kind,
             });
+            if kind != WakeKind::Attention {
+                answer = found;
+            }
         }
     }
-    found
+    (found, answer)
 }
 
 #[cfg(test)]

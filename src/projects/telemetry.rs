@@ -96,7 +96,7 @@ mod tests {
     use crate::test_support;
     use crate::test_support::telemetry::{archive, lead, pi_link, write};
     use serde_json::json;
-    use std::fs;
+    use std::{collections::BTreeSet, fs};
 
     #[test]
     fn exports_latest_archived_and_superseded_usage_without_transcript_text() {
@@ -184,10 +184,10 @@ mod tests {
             .unwrap()
             .keys()
             .map(String::as_str)
-            .collect::<Vec<_>>();
+            .collect::<BTreeSet<_>>();
         assert_eq!(
             keys,
-            [
+            BTreeSet::from([
                 "buckets",
                 "closed_at",
                 "created_at",
@@ -196,7 +196,7 @@ mod tests {
                 "id",
                 "model",
                 "project"
-            ]
+            ])
         );
         assert!(!wire.to_string().contains("private prompt"));
         assert!(!wire.to_string().contains(root.as_str()));

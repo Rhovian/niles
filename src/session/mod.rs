@@ -1,4 +1,4 @@
-use crate::harness::Mode;
+use crate::harness::Launch;
 use crate::tmux::{self, LeadStart};
 use crate::util::{current_dir_utf8, dated_directories, parse_timestamp_id};
 use crate::workspace_manifest::setup::SetupSelection;
@@ -19,13 +19,13 @@ pub(crate) use brief::{SessionMeta, latest_lead, live_lead, read_session_meta};
 ///
 /// Niles creates one session per project, named after its registry entry and tagged with its path.
 /// Its lead and workers run in that session.
-pub(crate) fn run(
+pub(crate) async fn run(
     start: LeadStart,
     agent: Option<&str>,
-    mode: Mode,
+    launch: Launch,
     selection: Option<SetupSelection>,
 ) -> Result<()> {
-    mode.require_available()?;
+    launch.validate()?;
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;
@@ -37,7 +37,7 @@ pub(crate) fn run(
     else {
         return Ok(());
     };
-    launch_foreground_agent(&workspace, &manifest, agent)
+    launch_foreground_agent(&workspace, &manifest, agent, launch).await
 }
 
 pub(crate) fn sessions_dir(workspace: &Utf8Path) -> Result<Utf8PathBuf> {

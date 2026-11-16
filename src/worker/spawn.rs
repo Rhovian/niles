@@ -5,7 +5,7 @@ use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
 use crate::config::spec::{ProjectConfig, load_project_config_from};
-use crate::harness::Mode;
+use crate::harness::{Launch, Mode};
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
@@ -36,9 +36,8 @@ const UNLABELED_TASK_LABEL: &str = "-";
 
 #[derive(Debug, clap::Args)]
 pub struct Assignment {
-    /// Harness launch mode.
-    #[arg(long, value_enum, default_value_t)]
-    pub mode: Mode,
+    #[command(flatten)]
+    pub launch: Launch,
     /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
@@ -64,7 +63,7 @@ pub fn spawn(
     tree: Option<SpawnTree>,
     selection: Option<&SetupSelection>,
 ) -> Result<()> {
-    assignment.mode.require_available()?;
+    assignment.launch.validate()?;
     let SpawnTask {
         label: task_label,
         text: task,
@@ -103,11 +102,14 @@ pub fn spawn(
     };
     let resolved = super::skills::prepare(&primary_skill, binding, &assignment.with, &project)?;
     invocation.pass_primary(&resolved.prompt)?;
-    if find_on_path(invocation.binary).is_none() {
+    assignment.launch.qualify(&invocation.spec)?;
+    if matches!(assignment.launch.mode, Mode::NativeTui)
+        && find_on_path(invocation.binary).is_none()
+    {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let dir = store::workers_dir(&project)?.join(&id);
-    let session_link = agents::session_link(invocation.spec.family(), &dir);
+    let session_link = assignment.launch.session_link(&invocation.spec, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }
@@ -150,7 +152,6 @@ pub fn spawn(
     invocation
         .env
         .push(("NILES_AGENT_DIR".to_owned(), dir.to_string()));
-    let agent_spec = &invocation.spec;
     #[expect(clippy::disallowed_methods, reason = "launch cwd")]
     let agent_dir = tree.as_deref().unwrap_or(project.as_path());
 
@@ -165,6 +166,9 @@ pub fn spawn(
 
     let brief_path = write_brief(&dir, &id, &skill, task_label.as_deref(), agent_dir, &task)?;
 
+    assignment
+        .launch
+        .configure(&mut invocation, &dir, &resolved.prompt, true)?;
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
     fs::OpenOptions::new()
@@ -201,6 +205,7 @@ pub fn spawn(
         }
     };
 
+    let agent_spec = &invocation.spec;
     let meta = WorkerMeta {
         setup: setup.map(|file| file.setup.clone()),
         id: id.clone(),

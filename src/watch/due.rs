@@ -16,7 +16,7 @@ pub(super) fn check_due(
         };
         if now < checkin.deadline
             || worker
-                .last_actionable
+                .last_answer
                 .is_some_and(|wake| checkin.answered_by(wake))
         {
             continue;

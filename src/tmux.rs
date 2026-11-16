@@ -227,6 +227,18 @@ fn new_window_session_target(session: &SessionName) -> String {
     format!("{}:", target::exact(session.as_str()))
 }
 
+pub(crate) fn resume_window(target: &WindowTarget, cwd: &Utf8Path, command: &str) -> Result<()> {
+    run(&[
+        "respawn-window",
+        "-k",
+        "-t",
+        &target.target_arg(),
+        "-c",
+        cwd.as_str(),
+        command,
+    ])
+}
+
 pub(crate) fn kill_window(target: &WindowTarget) -> Result<()> {
     run(&["kill-window", "-t", &target.target_arg()])
 }

@@ -137,6 +137,27 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
     let missing = env.root.join("missing");
     for (id, skill, flags, error, bare) in [
         (
+            "billing",
+            "solo",
+            &["--mode", "headless"][..],
+            "requires --billing subscription",
+            true,
+        ),
+        (
+            "api",
+            "solo",
+            &["--mode", "headless", "--billing", "api-key"][..],
+            "API-key adapters are not qualified",
+            true,
+        ),
+        (
+            "adapter",
+            "solo",
+            &["--mode", "headless", "--billing", "subscription"][..],
+            "ACP adapter claude-agent-acp not found on PATH",
+            false,
+        ),
+        (
             "archive",
             "solo",
             &[][..],

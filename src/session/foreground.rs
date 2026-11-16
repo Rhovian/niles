@@ -1,5 +1,6 @@
 use super::brief::{ManagerSession, prepare_manager_session};
 use crate::config::spec::load_project_config_from;
+use crate::harness::{Launch, Mode, acp};
 #[cfg(test)]
 use crate::store::atomic_write;
 use crate::workspace_manifest::WorkspaceManifest;
@@ -10,10 +11,11 @@ use std::process::{Command, ExitStatus, Stdio};
 
 const SIGNAL_EXIT_LABEL: &str = "signal";
 
-pub(super) fn launch_foreground_agent(
+pub(super) async fn launch_foreground_agent(
     workspace: &Utf8Path,
     manifest: &WorkspaceManifest,
     agent: Option<&str>,
+    launch: Launch,
 ) -> Result<()> {
     let agent = match agent {
         Some(agent) => {
@@ -28,13 +30,15 @@ pub(super) fn launch_foreground_agent(
     };
     let mut invocation = foreground_invocation_for_project(workspace, agent)?;
     let primary = skills::resolve(&manifest.entry, workspace, &skills::global_dir()?)?;
-    let prepared = prepare_manager_session(
+    launch.qualify(&invocation.spec)?;
+    let mut prepared = prepare_manager_session(
         workspace,
         &invocation.spec,
         &manifest.entry,
         manifest.source.as_ref(),
         primary.primary_body()?,
     )?;
+    prepared.meta.session_link = launch.session_link(&invocation.spec, &prepared.dir);
     invocation.pass_primary(&prepared.brief)?;
     if let Some(file) = &manifest.source {
         invocation.env.push((
@@ -45,6 +49,7 @@ pub(super) fn launch_foreground_agent(
     }
     eprintln!("skill: {primary}");
     prepared.write()?;
+    launch.configure(&mut invocation, &prepared.dir, &prepared.brief, false)?;
     let ManagerSession { meta, dir, .. } = prepared;
     if let Some(link) = &meta.session_link {
         invocation.args.extend(link.args());
@@ -57,9 +62,14 @@ pub(super) fn launch_foreground_agent(
         &dir,
         workspace,
         meta.lead_pane.as_deref(),
-        invocation.spec.profile().composer,
+        (launch.mode == Mode::NativeTui)
+            .then_some(invocation.spec.profile().composer)
+            .flatten(),
     );
 
+    if launch.mode == Mode::Headless {
+        return acp::run(&dir, entry_prompt(&dir)).await;
+    }
     let status = run_foreground_process(
         workspace,
         invocation.binary,

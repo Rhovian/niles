@@ -12,18 +12,20 @@ pub(crate) enum WakeKind {
     NeedsDecision,
     Closed,
     Gone,
+    Attention,
     Working,
     Stage,
 }
 
 impl WakeKind {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Done,
         Self::Failed,
         Self::Blocked,
         Self::NeedsDecision,
         Self::Closed,
         Self::Gone,
+        Self::Attention,
         Self::Working,
         Self::Stage,
     ];
@@ -36,6 +38,7 @@ impl WakeKind {
             Self::NeedsDecision => "needs-decision",
             Self::Closed => "closed",
             Self::Gone => "gone",
+            Self::Attention => "attention",
             Self::Working => "working",
             Self::Stage => "stage",
         }

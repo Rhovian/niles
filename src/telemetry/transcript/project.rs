@@ -108,6 +108,9 @@ fn function_turn(mut value: Value, timestamp: Option<DateTime<Utc>>) -> Option<T
 // Durable response_item records avoid duplicate event_msg mirrors.
 // https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/protocol/src/models.rs
 pub(super) fn file_turns(family: Family, mut line: Value) -> Result<Vec<TextTurn>> {
+    if matches!(family, Family::Acp) {
+        return Ok(vec![serde_json::from_value(line)?]);
+    }
     let timestamp = line
         .get("timestamp")
         .map(|value| serde_json::from_value::<Option<DateTime<Utc>>>(value.clone()))

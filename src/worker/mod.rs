@@ -13,7 +13,7 @@ mod close;
 mod gates;
 mod list;
 mod meta;
-mod pane;
+pub(crate) mod pane;
 mod report;
 mod resolve;
 mod skills;

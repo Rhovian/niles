@@ -100,7 +100,7 @@ impl WatchMemory {
 
             if let Some(checkin) = checkins.get(&worker.id) {
                 if worker
-                    .last_actionable
+                    .last_answer
                     .is_some_and(|wake| checkin.answered_by(wake))
                 {
                     plan.disarms.push(Disarm {
@@ -354,10 +354,22 @@ mod tests {
             memory.commit(plan.nudges.first().unwrap());
         }
 
-        // A report that lands after arming does answer it.
+        let attention = memory
+            .plan(
+                &[worker("impl", &format!("{WINDOW}attention: permission\n"))],
+                &checkins,
+                at(1300),
+            )
+            .unwrap();
+        assert!(attention.disarms.is_empty());
+        assert_eq!(reports(&attention), vec![reported("impl", "attention")]);
+        // A report that lands after arming does answer it, including beneath a newer alert.
         let plan = memory
             .plan(
-                &[worker("impl", &format!("{WINDOW}{DONE}done: answered\n"))],
+                &[worker(
+                    "impl",
+                    &format!("{WINDOW}{DONE}done: answered\nattention: permission\n"),
+                )],
                 &checkins,
                 at(1300),
             )

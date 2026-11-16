@@ -85,10 +85,19 @@ impl Target {
             .metadata()
             .with_context(|| format!("failed to inspect {}", self.status))?;
         let identity = (metadata.dev(), metadata.ino());
-        // A replacement invalidates the cache, not a cursor that send already advanced.
-        if self.identity.is_some_and(|previous| previous != identity) {
-            self.scanned = persisted;
+        if self.identity != Some(identity) {
+            // A replacement invalidates the cache, not a cursor send already advanced.
+            if self.identity.is_some() {
+                self.scanned = persisted;
+            }
             self.unreported = false;
+            let mut delivered = Vec::new();
+            (&mut file).take(persisted).read_to_end(&mut delivered)?;
+            for (_, line) in wake::complete_lines(&delivered) {
+                if let Some(kind) = WakeKind::parse_line(&line) {
+                    self.observe(kind);
+                }
+            }
         }
         self.identity = Some(identity);
         let len = metadata.len();
@@ -118,9 +127,7 @@ impl Target {
                 self.liveness.reset();
             }
             if let Some(kind) = WakeKind::parse_line(&line) {
-                if kind != WakeKind::Closed {
-                    self.unreported = !kind.wakes();
-                }
+                self.observe(kind);
                 if kind.wakes() {
                     return Ok(Some((kind, render(&line), self.scanned + end as u64)));
                 }
@@ -129,6 +136,12 @@ impl Target {
 
         self.scanned += complete as u64;
         Ok(None)
+    }
+
+    fn observe(&mut self, kind: WakeKind) {
+        if !matches!(kind, WakeKind::Closed | WakeKind::Attention) {
+            self.unreported = !kind.wakes();
+        }
     }
 
     fn next_report(&mut self, persisted: u64) -> Result<Option<(String, u64)>> {
