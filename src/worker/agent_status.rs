@@ -14,7 +14,7 @@ done means hand back, not exit: stay open until the lead closes you. Follow-up a
 Report uncertainty with blocked or needs-decision; report inability to complete with failed.
 Details must be non-empty and contain no control characters. Invalid submissions fail before appending a status line; correct the error and resubmit.
 NILES_AGENT_DIR must name an absolute worker directory with an existing status.log. done and stage also require valid meta.json.
-closed and gone are reserved for Niles. A gone wake means a worker exited or stayed idle without reporting.
+closed, gone and attention are reserved for Niles. A gone wake means a worker exited or stayed idle without reporting.
 Finding tags, roles and routing are skill conventions, not requirements of this contract.";
 
 #[derive(Debug, Subcommand)]

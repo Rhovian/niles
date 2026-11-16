@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use camino::Utf8Path;
 use chrono::{DateTime, Utc};
 use project::file_turns;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom};
@@ -33,14 +33,14 @@ impl TranscriptSource {
 }
 
 /// One visible text/tool block, in persisted order. Identical blocks remain distinct.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct TextTurn {
     pub(crate) role: TextRole,
     pub(crate) timestamp: Option<DateTime<Utc>>,
     pub(crate) content: TextBlock,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum TextRole {
     User,
@@ -58,7 +58,7 @@ impl TextRole {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum TextBlock {
     Text { text: String },
@@ -70,6 +70,7 @@ pub(super) enum Family {
     Claude,
     Codex,
     Pi,
+    Acp,
 }
 
 /// Independent of usage/activity reads. Owns an append cursor, not a polling timer.
@@ -105,6 +106,7 @@ impl TranscriptReader {
                 super::claude::transcript_path(home, session_id)?.map(|(_, path)| path),
                 Family::Claude,
             ),
+            SessionLink::Acp { dir } => (Some(dir.join("transcript.jsonl")), Family::Acp),
             SessionLink::Codex => (
                 super::codex::read_codex_source(home, workspace, needle, created_at)?
                     .map(|(path, _)| path),

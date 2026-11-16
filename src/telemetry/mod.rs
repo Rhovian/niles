@@ -1,3 +1,4 @@
+use crate::harness::acp;
 use crate::util;
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -39,6 +40,7 @@ pub(crate) use processes::process_activity;
 pub(crate) enum SessionLink {
     Claude { session_id: String },
     Codex,
+    Acp { dir: Utf8PathBuf },
     Pi { session_dir: Utf8PathBuf },
 }
 
@@ -142,7 +144,7 @@ impl SessionLink {
     pub(crate) fn args(&self) -> Vec<String> {
         match self {
             Self::Claude { session_id } => vec!["--session-id".into(), session_id.clone()],
-            Self::Codex => Vec::new(),
+            Self::Codex | Self::Acp { .. } => Vec::new(),
             Self::Pi { session_dir } => vec!["--session-dir".into(), session_dir.to_string()],
         }
     }
@@ -166,6 +168,10 @@ pub(crate) fn read_session(
     let home = util::home_dir()?;
     match link {
         SessionLink::Claude { session_id } => read_claude(&home, session_id),
+        SessionLink::Acp { dir } => Ok(acp::turn(dir)?.map(|turn| SessionRecord {
+            turn: Some(turn),
+            usage: None,
+        })),
         SessionLink::Codex => read_codex(&home, workspace, needle, created_at),
         SessionLink::Pi { session_dir } => read_pi(session_dir),
     }

@@ -119,38 +119,46 @@ fn skipped_closed_lines_neither_consume_a_cursor_nor_hide_a_later_report() {
 
 #[test]
 fn an_idle_unreported_worker_is_recorded_once_after_the_grace() {
-    let mut f = fixture("wait-idle-gone", "working: busy\n");
-    let sessions = f.dir.join("sessions");
-    fs::create_dir(&sessions).unwrap();
-    atomic_write(sessions.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-10-01T16:00:00Z\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\"}}\n").unwrap();
-    write_worker_meta(
-        &f.workspace,
-        "worker",
-        "unresolved",
-        "2026-01-02T03:04:05Z".parse().unwrap(),
-        Some(SessionLink::Pi {
-            session_dir: sessions,
-        }),
-    );
-    assert!(!f.poll().unwrap());
-    let mut past = super::super::liveness::Liveness::default();
-    assert!(
-        past.observe(
-            Some(worker::WaitHealth::Idle),
-            Instant::now() - Duration::from_secs(31)
-        )
-        .is_none()
-    );
-    f.targets.get_mut("worker").unwrap().liveness = past;
-    assert!(f.poll().unwrap());
-    assert_eq!(
-        f.output,
-        b"worker gone: worker idle for 30s without reporting\n"
-    );
-    f.targets.clear();
-    f.output.clear();
-    assert!(!f.poll().unwrap());
-    assert!(f.output.is_empty());
+    for restarted in [false, true] {
+        let mut f = fixture("wait-idle-gone", "working: busy\nattention: approve\n");
+        let sessions = f.dir.join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        atomic_write(sessions.join("session.jsonl"), "{\"type\":\"message\",\"timestamp\":\"2026-10-01T16:00:00Z\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\"}}\n").unwrap();
+        write_worker_meta(
+            &f.workspace,
+            "worker",
+            "unresolved",
+            "2026-01-02T03:04:05Z".parse().unwrap(),
+            Some(SessionLink::Pi {
+                session_dir: sessions,
+            }),
+        );
+        assert!(f.poll().unwrap());
+        assert_eq!(f.output, b"worker attention: approve\n");
+        f.output.clear();
+        if restarted {
+            f.targets.clear();
+        }
+        assert!(!f.poll().unwrap());
+        let mut past = super::super::liveness::Liveness::default();
+        assert!(
+            past.observe(
+                Some(worker::WaitHealth::Idle),
+                Instant::now() - Duration::from_secs(31)
+            )
+            .is_none()
+        );
+        f.targets.get_mut("worker").unwrap().liveness = past;
+        assert!(f.poll().unwrap());
+        assert_eq!(
+            f.output,
+            b"worker gone: worker idle for 30s without reporting\n"
+        );
+        f.targets.clear();
+        f.output.clear();
+        assert!(!f.poll().unwrap());
+        assert!(f.output.is_empty());
+    }
 }
 
 #[test]

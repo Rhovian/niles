@@ -6,6 +6,7 @@ mod close;
 mod close_recovery;
 #[path = "../common/mod.rs"]
 mod common;
+mod headless;
 mod list;
 mod peek;
 mod report;

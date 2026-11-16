@@ -1,11 +1,9 @@
-use super::{
-    operations::{Cancellation, InputDisposition, Update, V1StopReason},
-    *,
-};
+use super::{operations::InputDisposition, *};
+use agent_client_protocol::v1::schema::StopReason as V1StopReason;
 use std::cell::Cell;
 
 #[test]
-fn v1_completion_preserves_stop_reasons_and_only_cancelled_confirms_cancellation() {
+fn v1_completion_preserves_stop_reasons() {
     for (wire, expected) in [
         ("end_turn", StopReason::EndTurn),
         ("max_tokens", StopReason::MaxTokens),
@@ -16,9 +14,6 @@ fn v1_completion_preserves_stop_reasons_and_only_cancelled_confirms_cancellation
         let reason: V1StopReason = serde_json::from_value(serde_json::json!(wire)).unwrap();
         let state = TurnState::from(reason);
         assert_eq!(state, TurnState::Idle(expected));
-        let mut cancellation = Cancellation::Requested;
-        cancellation.observe(&Update::State(state));
-        assert_eq!(cancellation == Cancellation::Confirmed, wire == "cancelled");
     }
 }
 
@@ -33,9 +28,9 @@ impl Adapter for Permissive<'_> {
     fn prompt(&mut self, _: Prompt) -> anyhow::Result<InputDisposition> {
         Ok(InputDisposition::Unconfirmed)
     }
-    fn cancel(&mut self) -> anyhow::Result<Cancellation> {
+    fn cancel(&mut self) -> anyhow::Result<()> {
         self.called.set(self.called.get() | 1);
-        Ok(Cancellation::Requested)
+        Ok(())
     }
     fn resume(&mut self, _: &SessionId) -> anyhow::Result<()> {
         self.called.set(self.called.get() | 2);

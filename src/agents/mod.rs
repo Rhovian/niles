@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 
+mod acp;
 mod families;
 pub(crate) mod picker;
 pub(crate) mod roster;
@@ -7,7 +8,7 @@ mod system_prompt;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use families::session_link;
+pub(crate) use families::{AcpProfile, session_link};
 pub use families::{SystemPromptArg, known_agent_ids, profile_for, profiles};
 pub use roster::ModelRoster;
 

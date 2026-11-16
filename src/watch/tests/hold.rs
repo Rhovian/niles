@@ -31,6 +31,15 @@ fn composer_hold_reaches_ceiling_and_restarts_after_clear() {
 fn working_worker_moves_checkin_without_a_nudge() {
     let (root, mut memory) = one_worker("working-hold", Some(due_checkin()));
     let dir = worker_dir(&root, "impl");
+    append_log(&root, "impl", "attention: approve\n");
+    atomic_write(
+        dir.join("status.cursor"),
+        fs::metadata(dir.join("status.log"))
+            .unwrap()
+            .len()
+            .to_string(),
+    )
+    .unwrap();
     let mut sink = RecordingSink {
         activity: Some(SessionState::Working),
         ..RecordingSink::default()

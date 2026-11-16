@@ -12,6 +12,17 @@ fn auth_spawn_peek_and_send_use_tmux_worker_metadata() {
         .output()
         .unwrap();
     assert_command_success("spawn", &spawn);
+    for (args, capability) in [
+        (&["cancel", "auth-fix"][..], "cancel"),
+        (&["resume", "auth-fix"][..], "resume"),
+        (&["approve", "auth-fix", "100", "yes"][..], "attention"),
+    ] {
+        assert_failure_contains(
+            capability,
+            &env.run(args),
+            &format!("harness does not support {capability}"),
+        );
+    }
     let spawn_stdout = stdout_of(&spawn);
     assert!(spawn_stdout.contains("spawned: auth-fix"));
     assert!(spawn_stdout.contains("window: niles-auth-fix"));

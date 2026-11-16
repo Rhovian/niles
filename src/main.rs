@@ -39,8 +39,9 @@ use anyhow::Result;
 use clap::Parser;
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
-    match run() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    match run().await {
         Ok(code) => code,
         Err(err) => {
             eprintln!("Error: {err:?}");
@@ -49,7 +50,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<ExitCode> {
+async fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     let selection = || {
         cli.setup
@@ -61,22 +62,33 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         Some(CommandName::Agent { command }) => worker::agent_status::run(command)?,
         None => projects::explorer::home()?,
+        Some(CommandName::Acp { dir, prompt }) => harness::acp::run(&dir, prompt).await?,
+        Some(CommandName::Cancel { id }) => worker::pane::cancel(id)?,
+        Some(CommandName::Approve {
+            id,
+            request,
+            option,
+        }) => worker::pane::approve(id, request, option)?,
+        Some(CommandName::Resume { id }) => worker::pane::resume(id)?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
         Some(CommandName::Start {
             keep_skills,
             agent,
-            mode,
-        }) => session::run(
-            if keep_skills {
-                tmux::LeadStart::Unattended
-            } else {
-                tmux::LeadStart::Attended
-            },
-            agent.as_deref(),
-            mode,
-            selection()?,
-        )?,
+            launch,
+        }) => {
+            session::run(
+                if keep_skills {
+                    tmux::LeadStart::Unattended
+                } else {
+                    tmux::LeadStart::Attended
+                },
+                agent.as_deref(),
+                launch,
+                selection()?,
+            )
+            .await?
+        }
         Some(CommandName::Status { line }) => {
             return Ok(match projects::status::run(line) {
                 Ok(text) => {
@@ -96,7 +108,7 @@ fn run() -> Result<ExitCode> {
             #[cfg(feature = "remote")]
             match command {
                 Some(cli::RemoteCommand::Init { subject }) => remote::push::init(&subject)?,
-                None => remote::run(port)?,
+                None => remote::run(port).await?,
             }
             #[cfg(not(feature = "remote"))]
             {

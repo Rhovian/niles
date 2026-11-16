@@ -60,8 +60,15 @@ pub(crate) fn resolve_session(
         Some(TurnState::Idle(StopReason::Error(failure))) => {
             (Waiting, Some(Blocker::Refused(failure)))
         }
+        Some(TurnState::Running) if matches!(link, Some(SessionLink::Acp { .. })) => {
+            (Working, None)
+        }
         Some(TurnState::RequiresAction) => (SessionState::NeedsAttention, None),
-        Some(TurnState::Idle(_)) if started_at.is_none() => (Waiting, None),
+        Some(TurnState::Idle(_))
+            if started_at.is_none() || matches!(link, Some(SessionLink::Acp { .. })) =>
+        {
+            (Waiting, None)
+        }
         Some(state @ (TurnState::Running | TurnState::Idle(_))) => (
             match process_activity(if matches!(state, TurnState::Idle(_)) {
                 started_at

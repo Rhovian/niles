@@ -14,7 +14,7 @@ exclude = [".github/**", "apps/**", "package.json", "pnpm-lock.yaml", "pnpm-work
 
 [features]
 default = []
-remote = ["dep:axum", "dep:tokio", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:isahc", "dep:ece"]
+remote = ["dep:axum", "dep:tokio-stream", "dep:tower", "dep:web-push", "dep:openssl", "dep:base64", "dep:url", "dep:isahc", "dep:ece"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -39,7 +39,10 @@ indexing_slicing = "deny"
 
 [dependencies]
 axum = { version = "0.8", optional = true, default-features = false, features = ["http1", "json", "tokio"] }
-tokio = { version = "1", optional = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "net", "sync", "time", "io-util"] }
+agent-client-protocol = { version = "=5.3.0", features = ["process"] }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+blocking = "1"
 tokio-stream = { version = "0.1", optional = true, default-features = false }
 tower = { version = "0.5", optional = true, default-features = false, features = ["util"] }
 anyhow = "1.0"

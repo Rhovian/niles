@@ -81,6 +81,30 @@ prerequisites, and uses `niles setup` to configure and launch an entry agent wit
 Detach with `Ctrl-b d`; agents keep running. See the [interface reference](docs/setup.md) for keys and
 the status bar.
 
+## Headless Codex (ACP)
+
+Install `@agentclientprotocol/codex-acp@2.6.0` and sign in to its bundled Codex with
+ChatGPT (`codex-acp cli login`). Tested with the adapter's Codex 0.166.0.
+Headless launches require an explicit `--billing subscription`; Niles checks the
+reported account identity, removes API-key overrides, and refuses a mismatch.
+API-key billing, Claude ACP and pi ACP are not qualified at this checkpoint.
+
+In an existing project tmux window, launch the entry agent with
+`niles start --keep-skills --mode headless --billing subscription`. Add the same
+mode/billing flags to `niles spawn <id> --skill <skill> ...` for workers. The manifest
+still controls the allowed agents; select a listed Codex agent. Workers retain
+permission bypass.
+
+`niles peek <id>` reads the transcript and `niles send <id> <text>` submits an ACP
+prompt. Input during a running turn queues until that turn finishes. The window also
+accepts one prompt per line, `:cancel`, `:resume`, and `:approve <request-id> <option-id>` using the
+choices printed with a pending permission. From another window, use `niles approve
+<id> <request-id> <option-id>` (omit the option to cancel that request), `niles cancel
+<id>`, or `niles resume <id>`. Cancelling drops queued input; confirmation requires an
+idle `cancelled` response. Resume loads the same conversation, restarting an exited
+worker in its existing tmux window. Permission requests produce an `attention:` wake;
+explorer state comes from ACP. Peek shows messages and tool calls, not thoughts.
+
 ## How it works
 
 Each project is a tmux session. You, the operator, talk to the entry agent, whose skill sets what

@@ -1,4 +1,4 @@
-use crate::harness::Mode;
+use crate::harness::Launch;
 use crate::projects::onboard::unattended::Options;
 use crate::projects::panels::Panel;
 use crate::skills::SkillsCommand;
@@ -98,9 +98,8 @@ pub enum CommandName {
     /// Launch the start session in a project.
     #[command(hide = true)]
     Start {
-        /// Harness launch mode.
-        #[arg(long, value_enum, default_value_t)]
-        mode: Mode,
+        #[command(flatten)]
+        launch: Launch,
         #[arg(long)]
         keep_skills: bool,
         /// Launch the entry session on this listed tier agent instead of the manifest's
@@ -111,6 +110,22 @@ pub enum CommandName {
     /// Run the project explorer in the home session.
     #[command(hide = true)]
     Explorer,
+    /// Run an ACP adapter in this window.
+    #[command(hide = true)]
+    Acp {
+        dir: camino::Utf8PathBuf,
+        prompt: String,
+    },
+    /// Request cancellation of a headless worker turn.
+    Cancel { id: String },
+    /// Answer a headless permission; omit the option to cancel the request.
+    Approve {
+        id: String,
+        request: String,
+        option: Option<String>,
+    },
+    /// Resume a headless worker conversation.
+    Resume { id: String },
     /// `help` is a panel, so it is not also clap's subcommand.
     #[command(hide = true, disable_help_subcommand = true)]
     Panel {
