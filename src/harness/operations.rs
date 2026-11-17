@@ -32,20 +32,13 @@ impl From<WireStopReason> for TurnState {
     }
 }
 
-/// The adapter reports the exact conversation selected, or refuses that exact identity.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ResumeOutcome {
-    Resumed(SessionId),
-    Missing(SessionId),
-}
-
 pub(crate) trait Adapter {
     fn negotiate(&mut self) -> Result<Capabilities>;
     fn prompt(&mut self, prompt: Prompt) -> Result<InputDisposition>;
     fn cancel(&mut self) -> Result<()> {
         bail!("harness adapter declared cancel without an implementation")
     }
-    fn resume(&mut self, _session: &SessionId) -> Result<ResumeOutcome> {
+    fn resume(&mut self, _session: &SessionId) -> Result<()> {
         bail!("harness adapter declared resume without an implementation")
     }
     fn answer_permission(&mut self, _request: &str, _answer: PermissionAnswer) -> Result<()> {
@@ -85,7 +78,7 @@ impl<'a> Harness<'a> {
         ensure!(self.capabilities.cancel, "harness does not support cancel");
         self.adapter.cancel()
     }
-    pub(crate) fn resume(&mut self, session: &SessionId) -> Result<ResumeOutcome> {
+    pub(crate) fn resume(&mut self, session: &SessionId) -> Result<()> {
         self.require_resume()?;
         self.adapter.resume(session)
     }

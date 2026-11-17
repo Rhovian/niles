@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 
 mod acp;
-pub(crate) use acp::SessionConfig;
+pub(crate) use acp::{AuthSource, SessionConfig, SubscriptionStatus};
 mod families;
 pub(crate) mod picker;
 pub(crate) mod roster;
@@ -43,27 +43,33 @@ pub fn invocation(
 ) -> Result<AgentInvocation> {
     let spec = AgentSpec::parse(agent, models)?;
     validate_model(&spec, models)?;
-    let profile = spec.profile();
-    let args = match defaults {
-        InvocationDefaults::Foreground => profile.foreground_args,
-        InvocationDefaults::Worker | InvocationDefaults::Headless => profile.worker_args,
-    };
-    let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-    if matches!(defaults, InvocationDefaults::Headless) {
-        args.extend(profile.headless.iter().map(|arg| (*arg).to_owned()));
+    Ok(AgentInvocation::new(spec, defaults))
+}
+
+impl AgentInvocation {
+    pub(crate) fn new(spec: AgentSpec, defaults: InvocationDefaults) -> Self {
+        let profile = spec.profile();
+        let args = match defaults {
+            InvocationDefaults::Foreground => profile.foreground_args,
+            InvocationDefaults::Worker | InvocationDefaults::Headless => profile.worker_args,
+        };
+        let mut args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        if matches!(defaults, InvocationDefaults::Headless) {
+            args.extend(profile.headless.iter().map(|arg| (*arg).to_owned()));
+        }
+        args.extend(families::tier_args(profile, spec.model(), spec.effort()));
+        Self {
+            binary: profile.binary,
+            args,
+            system_prompt: profile.system_prompt,
+            env: profile
+                .launch_env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            spec,
+        }
     }
-    args.extend(families::tier_args(profile, spec.model(), spec.effort()));
-    Ok(AgentInvocation {
-        binary: profile.binary,
-        args,
-        system_prompt: profile.system_prompt,
-        env: profile
-            .launch_env
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-            .collect(),
-        spec,
-    })
 }
 
 impl AgentSpec {

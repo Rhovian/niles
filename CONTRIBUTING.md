@@ -72,6 +72,8 @@ interactive fixture tests described below run in CI.
    and trust or onboarding prompts. For headless adapters also check `src/harness/acp/`
    and the ACP profile in `families.rs`: initialization/auth identity, permission and
    form-elicitation payloads, prompt errors, cancellation confirmation, and session/load replay.
+   For pi also check `agents/acp.rs` readiness metadata and `agents/pi-subscription.js`
+   request-time OAuth enforcement, including a credential change during a running session.
    Re-run a live subscription launch, steer, approval, question, cancel, and process-restart/resume
    probe before updating the tested adapter version in README.
 4. Run `scripts/cli-versions.sh --plan`, show it to the operator and ask for approval. Only on

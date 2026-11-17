@@ -79,6 +79,13 @@ claude:
     - {effort: "xhigh", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", speed: 2, context_window: 1000000}
     - {effort: "max", tier: "standard", description: "speed and intelligence balance; flagship at medium / mid model at high", speed: 2, context_window: 1000000}
 pi:
+  # pi 1.4.0 bundled openai catalogue; pi owns this OAuth login.
+  openai/gpt-6.1-sol:
+    - {effort: "low", tier: "economy", description: "Native billing follows pi login/ambient key; lower reasoning effort", speed: null, context_window: 272000}
+    - {effort: "medium", tier: "standard", description: "Native billing follows pi login/ambient key; balanced reasoning effort", speed: null, context_window: 272000}
+    - {effort: "high", tier: "standard", description: "Native billing follows pi login/ambient key; higher reasoning effort", speed: null, context_window: 272000}
+    - {effort: "xhigh", tier: "frontier", description: "Native billing follows pi login/ambient key; extended reasoning effort", speed: null, context_window: 272000}
+    - {effort: "max", tier: "frontier", description: "Native billing follows pi login/ambient key; maximum reasoning effort", speed: null, context_window: 272000}
   deepseek/deepseek-v4.1-flash:
     - {effort: "low", tier: "mechanical", description: "sparse MoE; efficient reasoning and long-context tasks; smallest-model low-effort work", speed: null, context_window: 1048576}
     - {effort: "high", tier: "standard", description: "sparse MoE; efficient reasoning and long-context tasks; flagship at medium / mid model at high", speed: null, context_window: 1048576}

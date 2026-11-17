@@ -1,5 +1,5 @@
 use super::launch::Billing;
-use super::operations::{InputDisposition, PermissionAnswer, ResumeOutcome};
+use super::operations::{InputDisposition, PermissionAnswer};
 use super::{Adapter, Capabilities, Prompt, SessionId, Turn};
 use crate::telemetry::transcript::{TextBlock, TextTurn};
 use crate::{agents::SessionConfig, store, util, wake};
@@ -39,8 +39,9 @@ pub(crate) fn prepare(
     dir: &Utf8Path,
     family: &str,
     billing: Billing,
-    session: SessionConfig,
+    mut session: SessionConfig,
 ) -> Result<()> {
+    session.prepare(dir)?;
     store::write_json(
         &dir.join("acp.json"),
         &Config {
@@ -136,12 +137,8 @@ impl Adapter for Headless<'_> {
     fn cancel(&mut self) -> Result<()> {
         self.request(Control::Cancel).map(drop)
     }
-    fn resume(&mut self, session: &SessionId) -> Result<ResumeOutcome> {
-        if self::session(self.dir)? != *session {
-            return Ok(ResumeOutcome::Missing(session.clone()));
-        }
-        self.request(Control::Resume(session.clone()))?;
-        Ok(ResumeOutcome::Resumed(session.clone()))
+    fn resume(&mut self, session: &SessionId) -> Result<()> {
+        self.request(Control::Resume(session.clone())).map(drop)
     }
     fn answer_permission(&mut self, request: &str, answer: PermissionAnswer) -> Result<()> {
         self.request(Control::Permission {

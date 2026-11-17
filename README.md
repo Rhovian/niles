@@ -86,17 +86,24 @@ the status bar.
 Install `@agentclientprotocol/codex-acp@2.6.0` and sign in to its bundled Codex with
 ChatGPT (`codex-acp cli login`). Tested with the adapter's Codex 0.166.0.
 Headless launches require an explicit `--billing subscription`; Niles checks the
-reported account identity, removes API-key overrides, and refuses a mismatch.
+reported account identity for Codex, removes API-key overrides, and refuses a mismatch.
 For Claude, install `@agentclientprotocol/claude-agent-acp@0.107.3` and sign in
 with Claude.ai (`claude-agent-acp --cli auth login`). Tested with its Claude Code
 2.1.325. The existing native Claude login is shared; native and headless sessions
 can run in the same workspace. User/project permission restrictions still apply.
-API-key billing and pi ACP are not qualified yet.
+For pi, install stock `pi-acp@0.0.34` alongside pi 1.4.0 and use pi's own
+`/login` for `openai` (ChatGPT). Headless pi requires an explicit
+`pi:openai/<model>[:thinking]` spec, such as `pi:openai/gpt-6.1-sol:high`.
+It never borrows another CLI's login. Qualified with pi's own `openai` OAuth login.
+Stock pi raises no tool approvals; the live approval pass used an owned extension.
+Pi extension select/confirm dialogs use ACP permissions; input/editor dialogs are
+cancelled by this adapter version. ACP MCP parameters are not forwarded; Niles MCP
+injection is tracked in #495. API-key billing is not qualified.
 
 In an existing project tmux window, launch the entry agent with
 `niles start --keep-skills --mode headless --billing subscription`. Add the same
 mode/billing flags to `niles spawn <id> --skill <skill> ...` for workers. The manifest
-still controls the allowed agents; select a listed Codex or Claude agent. Workers retain
+still controls the allowed agents; select a listed Codex, Claude or pi agent. Workers retain
 permission bypass.
 
 `niles peek <id>` reads the transcript and `niles send <id> <text>` submits an ACP

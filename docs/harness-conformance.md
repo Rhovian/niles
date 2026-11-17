@@ -5,6 +5,7 @@ native family, using fake CLIs, a private tmux server with no host config, and t
 `agents::invocation` → `launch_worker_window` path. A pre-exec wrapper records actual argv and
 selected public launch-env values. Opening bytes are compared with the generated invocation;
 follow-ups wait for complete receipts published by the fake CLI, independently of terminal echo.
+The CI argv recorder uses the live driver's exec mode and requires python3.
 Startup/receipt and child-process waits have deadlines. Private servers have panic-safe cleanup.
 No live CLIs or credentials are used by the CI sequence; each family records `fixture/no-auth`.
 
@@ -17,24 +18,24 @@ No live CLIs or credentials are used by the CI sequence; each family records `fi
 | Quota classification | No distinct quota-shaped per-family fixtures yet; unverified. A renamed generic error string is not quota evidence |
 | Attention without/with response | Native refuses attention/permission dispatch. Supported protocol lifecycle cases await #533 |
 | Cancel requested versus confirmed | Native refuses cancel. Existing v1 stop-reason table checks confirmation; supported transport cases await #533 |
-| Exact resume / missing identity | Native refuses resume. Shared supported branch compares adapter-returned Resumed/Missing identities, not fixture state or error text |
+| Exact resume / missing identity | Native refuses resume. Supported branch loads the requested session and refuses an identity outside the bound worker session |
 | Disconnect, restart, stale generations | Shared sequence: disconnected and retired pane handles fail, replacement receives input. Native has no event stream; no stale-event injection claim |
 
-#533 must extend this sequence with protocol-peer stimuli and observations from the production
+The shared ACP fixture follow-up must extend this sequence with protocol-peer stimuli and observations from the production
 runner/adapter for quiet work, busy acknowledgments, attention, cancel and stale wire events.
-Expected session identities come from the peer's arranged conversations; resume results come
-from the adapter. Missing identities must produce `ResumeOutcome::Missing(requested_id)`, never
-an implicit new conversation. Returned identities alone do not prove conversation-history continuity;
+Resume stays bound to the worker's existing conversation: foreign identities are refused locally,
+and a missing bound identity must be refused by session/load, never silently create a new conversation.
+Successful load alone does not prove conversation-history continuity;
 a protocol fixture must also probe retained history after resume.
 
-## Manual live procedure (prepared, not validated)
+## Live compatibility procedure
 
-The previous ad hoc live run is not conformance evidence: it copied arguments and used
-model-written output as an opening receipt. No replacement live pass is claimed. Authentication
-and any handoffs are pending the operator's ruling; do not run the driver before that ruling.
-The driver never copies, refreshes or selects credentials. Its `prepare` mode starts no process.
+Run only with the operator's authorization and each CLI's own login. The driver records
+argv before exec; model-written receipts are output evidence, not proof of opening bytes.
+It never copies or exports credentials. Its `prepare` mode starts no process.
+The native live rerun covers the checkpoints below; the shared ACP fixture is a separate follow-up.
 
-1. After the ruling, prepare a disposable workspace with an installed skill and Niles manifest,
+1. Prepare a disposable workspace with an installed skill and Niles manifest,
    approved auth/config, and pinned CLIs from `src/agents/families.rs`. Build the Niles binary
    from the reviewed commit. Keep evidence outside temporary directories; attach it to the PR
    or issue. Record the auth path as a label, never a credential. Choose only public env flag

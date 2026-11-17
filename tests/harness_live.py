@@ -76,7 +76,8 @@ def main():
         for index, step in enumerate(plan["steps"]):
             folder = evidence / f"step-{index}"
             folder.mkdir()
-            env["NILES_CONFORMANCE_RECORD"] = str(folder / "exec.json")
+            command(["tmux", "-S", socket, "set-environment", "-g",
+                     "NILES_CONFORMANCE_RECORD", str(folder / "exec.json")])
             action = step["action"]
             if action == "spawn":
                 if current is not None:

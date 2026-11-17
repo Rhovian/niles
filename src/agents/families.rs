@@ -1,5 +1,6 @@
-use super::acp::SessionConfig;
+use super::acp::{AuthSource, ChildCommand, CommandFile, Readiness, SessionConfig};
 use crate::telemetry::SessionLink;
+use anyhow::Result;
 use camino::Utf8Path;
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -8,7 +9,7 @@ use uuid::Uuid;
 pub(crate) struct AcpProfile {
     pub(crate) binary: &'static str,
     pub(crate) subscription: &'static str,
-    pub(crate) auth_kind: &'static str,
+    pub(crate) auth: AuthSource,
     pub(crate) adapter: AcpAdapter,
     pub(crate) remove_env: &'static [&'static str],
 }
@@ -17,6 +18,7 @@ pub(crate) struct AcpProfile {
 pub(crate) enum AcpAdapter {
     Codex,
     Claude,
+    Pi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +84,7 @@ const PROFILES: &[AgentProfile] = &[
             binary: "codex-acp",
             adapter: AcpAdapter::Codex,
             subscription: "ChatGPT subscription",
-            auth_kind: "account",
+            auth: AuthSource::Notification("account"),
             remove_env: &[
                 "CODEX_API_KEY",
                 "OPENAI_API_KEY",
@@ -118,7 +120,7 @@ const PROFILES: &[AgentProfile] = &[
             binary: "claude-agent-acp",
             adapter: AcpAdapter::Claude,
             subscription: "Claude.ai subscription",
-            auth_kind: "account",
+            auth: AuthSource::Notification("account"),
             remove_env: &[
                 "ANTHROPIC_API_KEY",
                 "ANTHROPIC_AUTH_TOKEN",
@@ -147,7 +149,18 @@ const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "pi",
         binary: "pi",
-        acp: None,
+        acp: Some(AcpProfile {
+            binary: "pi-acp",
+            adapter: AcpAdapter::Pi,
+            subscription: "ChatGPT subscription (pi openai OAuth)",
+            auth: AuthSource::Command(Readiness {
+                binary: "pi",
+                args: &["auth", "check", "--provider", "openai", "--json"],
+                kind: "oauth",
+                hint: "pi requires its own openai ChatGPT login; run pi /login and select openai",
+            }),
+            remove_env: &["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"],
+        }),
         tested_version: "1.4.0",
         foreground_args: &[],
         worker_args: &[],
@@ -197,8 +210,8 @@ impl AcpAdapter {
         spec: &super::AgentSpec,
         primary: &str,
         worker: bool,
-    ) -> SessionConfig {
-        match self {
+    ) -> Result<SessionConfig> {
+        Ok(match self {
             Self::Codex => {
                 let mut config = Map::from_iter([
                     ("forced_login_method".into(), "chatgpt".into()),
@@ -252,7 +265,33 @@ impl AcpAdapter {
                     ..Default::default()
                 }
             }
-        }
+            Self::Pi => {
+                anyhow::ensure!(
+                    spec.model()
+                        .is_some_and(|model| model.starts_with("openai/")),
+                    "headless pi requires an explicit openai/<model> and pi's own ChatGPT login"
+                );
+                let mut invocation = super::AgentInvocation::new(
+                    spec.clone(),
+                    super::InvocationDefaults::Foreground,
+                );
+                invocation
+                    .args
+                    .extend(["--provider".into(), "openai".into()]);
+                invocation.pass_primary(primary)?;
+                SessionConfig {
+                    child: Some(ChildCommand {
+                        env_key: "PI_ACP_PI_COMMAND",
+                        invocation,
+                        file: CommandFile {
+                            flag: "--extension",
+                            body: include_str!("pi-subscription.js"),
+                        },
+                    }),
+                    ..Default::default()
+                }
+            }
+        })
     }
 }
 
