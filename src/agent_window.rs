@@ -128,46 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn opening_briefs_reach_every_family() {
-        use crate::test_support::{temp_dir, write_executable_script};
-        use std::process::Command;
-
-        let models = agents::ModelRoster::builtin().unwrap();
-        for profile in agents::profiles() {
-            let dir = temp_dir("opening-briefs");
-            let binary = dir.join(profile.binary);
-            write_executable_script(
-                &binary,
-                "#!/bin/sh\nfor arg do :; done\nprintf '%s' \"$arg\"\n",
-            );
-            let brief = dir.join("brief.md");
-            let text = "line one\n'$(exit 99)' \"quoted\"\nline two";
-            atomic_write(&brief, text).unwrap();
-            let invocation =
-                agents::invocation(profile.id, agents::InvocationDefaults::Worker, &models)
-                    .unwrap();
-            let launch = dir.join("launch.sh");
-            atomic_write(
-                &launch,
-                launch_script(&invocation, &brief, &dir.join("status.log")),
-            )
-            .unwrap();
-            let output = Command::new("/bin/sh")
-                .arg(&launch)
-                .env("PATH", format!("{}:/usr/bin:/bin", dir.as_str()))
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{}: {output:?}", profile.id);
-            assert_eq!(
-                String::from_utf8(output.stdout).unwrap(),
-                text,
-                "{}",
-                profile.id
-            );
-        }
-    }
-
-    #[test]
     fn shell_quotes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }

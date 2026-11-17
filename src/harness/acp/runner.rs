@@ -73,11 +73,8 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
     let updates = events.clone();
     let auth = events.clone();
     let questions = events.clone();
-    let result = profile
-        .client(move |identity| {
-            auth.send(Event::Auth(identity))
-                .map_err(sdk::Error::into_internal_error)
-        })
+    let client = sdk::Client
+        .v1()
         .on_receive_notification(
             async move |message: acp::SessionNotification, _| {
                 updates
@@ -101,24 +98,41 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
                     .map_err(sdk::Error::into_internal_error)
             },
             sdk::on_receive_request!(),
-        )
-        .connect_with(agent, async move |connection: ConnectionTo<sdk::Agent>| {
-            let mut runner = Runner {
-                view: View::open(dir, profile)?,
-                connection,
-                events: incoming,
-                authenticated: false,
-                profile,
-                session: config.session,
-                prompt: None,
-                queue: VecDeque::new(),
-            };
-            let result = runner.serve(dir, prompt).await;
-            runner.view.flush_reply()?;
-            let cleanup = runner.view.cancel_requests();
-            result.and(cleanup).map_err(Into::into)
-        })
-        .await;
+        );
+    let run = async move |connection: ConnectionTo<sdk::Agent>| {
+        let mut runner = Runner {
+            view: View::open(dir, profile)?,
+            connection,
+            events: incoming,
+            authenticated: matches!(profile.auth, agents::AuthSource::Command(_)),
+            profile,
+            session: config.session,
+            prompt: None,
+            queue: VecDeque::new(),
+        };
+        let result = runner.serve(dir, prompt).await;
+        runner.view.flush_reply()?;
+        let cleanup = runner.view.cancel_requests();
+        result.and(cleanup).map_err(Into::into)
+    };
+    let result = match profile.auth {
+        agents::AuthSource::Notification(kind) => {
+            client
+                .on_receive_notification(
+                    async move |status: agents::SubscriptionStatus, _| {
+                        auth.send(Event::Auth(status.verify(kind)))
+                            .map_err(sdk::Error::into_internal_error)
+                    },
+                    sdk::on_receive_notification!(),
+                )
+                .connect_with(agent, run)
+                .await
+        }
+        agents::AuthSource::Command(readiness) => match readiness.check().await {
+            Ok(()) => client.connect_with(agent, run).await,
+            Err(err) => Err(err.into()),
+        },
+    };
     if let Err(err) = &result {
         View::open(dir, profile)?.failed(err.to_string())?;
     }

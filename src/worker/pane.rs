@@ -149,7 +149,8 @@ pub(crate) fn resume(id: String) -> Result<()> {
     } else {
         let mut harness = target.harness()?;
         harness.require_resume()?;
-        harness.resume(&acp::session(&target.dir)?)?;
+        let session = acp::session(&target.dir)?;
+        harness.resume(&session)?;
     }
     println!("resumed: {}", target.id);
     Ok(())

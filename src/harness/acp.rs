@@ -39,8 +39,9 @@ pub(crate) fn prepare(
     dir: &Utf8Path,
     family: &str,
     billing: Billing,
-    session: SessionConfig,
+    mut session: SessionConfig,
 ) -> Result<()> {
+    session.prepare(dir)?;
     store::write_json(
         &dir.join("acp.json"),
         &Config {

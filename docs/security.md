@@ -15,7 +15,8 @@ invoking it authorizes fetching missing skills and writing the default project m
 The caller owns consent and CLI authentication; setup does not accept harness trust prompts.
 
 Native and headless prompt delivery use the harness contract. Worker permission bypass
-and entry-agent permission prompts apply at the launch boundary.
+and entry-agent permission prompts apply at the launch boundary. Permission answers, cancel
+and resume are gated by the adapter’s negotiated capabilities before dispatch.
 
 What Niles launches:
 
@@ -26,7 +27,7 @@ What Niles launches:
   printed for the operator to run.
 - Native workers start with approval prompts bypassed: Codex with
   `--dangerously-bypass-approvals-and-sandbox`, Claude with `--dangerously-skip-permissions`.
-  The entry agent keeps its prompts, because it is the one you talk to. Pi has no approval
+  The entry agent keeps its prompts, because it is the one you talk to. Pi has no built-in tool approval
   prompts in either role and runs with `PI_OFFLINE=1`.
 - All agents share the workspace, your environment and your credentials. Niles adds no sandbox
   or process isolation.
@@ -53,7 +54,11 @@ What Niles launches:
 Headless adapter configuration is generated in agent state, leaving user/project configuration
 files untouched. Codex ACP clears API-key and alternate-provider environment overrides and
 requests ChatGPT authentication explicitly. Claude ACP also removes API-key/provider environment
-overrides and requires a reported Claude.ai subscription identity.
+overrides and requires a reported Claude.ai subscription identity. Pi ACP requires pi's own
+`openai` OAuth readiness and pins the selected model in a private launch wrapper.
+A process-local native pi extension rejects API-key authentication at request time,
+including after credential changes or session/load; it does not copy credentials.
+Pi-acp has no ongoing auth-status notification.
 
 Worker launch, replacement and close reserve IDs outside movable worker directories. Shared project
 reservations exclude deregistration; joining through metadata publication and retirement share tree

@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn embedded_roster_parses_and_matches_profiles() {
         let roster = ModelRoster::builtin().unwrap();
-        assert_eq!(roster.registry_rows(|_, _, _| Ok(true)).unwrap().len(), 66);
+        assert_eq!(roster.registry_rows(|_, _, _| Ok(true)).unwrap().len(), 71);
         assert!(
             roster
                 .supported_efforts("claude", "haiku")

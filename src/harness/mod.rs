@@ -4,6 +4,8 @@ use anyhow::{Result, ensure};
 use chrono::{DateTime, Utc};
 
 pub(crate) mod acp;
+#[cfg(test)]
+mod conformance;
 mod launch;
 pub(crate) mod native;
 pub(crate) use launch::Launch;

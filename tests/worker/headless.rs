@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 const PEER: &str = r#"#!/usr/bin/env python3
 import sys,json,os,time
 sid='conversation-533';prompt=None;cancelling=False;mode=None
-claude='claude-agent-acp' in sys.argv[0]
+claude='claude-agent-acp' in sys.argv[0];pi='pi-acp' in sys.argv[0]
 send=lambda v: print(json.dumps(dict(jsonrpc='2.0',**v)),flush=True)
 reply=lambda id,result: send(dict(id=id,result=result))
 update=lambda text: send(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='agent_message_chunk',content=dict(type='text',text=text)))))
@@ -26,8 +26,8 @@ for line in sys.stdin:
         assert p['clientCapabilities']['elicitation']==dict(form={})
         if claude:assert not os.environ.get('ANTHROPIC_API_KEY')
         else:assert not os.environ.get('CODEX_API_KEY') and not os.environ.get('OPENAI_API_KEY')
-        reply(m['id'],dict(protocolVersion=1,agentCapabilities=dict(loadSession=True,_meta=dict(authStatus={}))))
-        send(dict(method='_auth/status_update',params=dict(authStatus=dict(kind=('account' if os.environ.get('PEER_AUTH')=='account_then_api' else os.environ.get('PEER_AUTH','account'))))))
+        reply(m['id'],dict(protocolVersion=1,agentCapabilities=(dict(loadSession=True) if pi else dict(loadSession=True,_meta=dict(authStatus={})))))
+        if not pi:send(dict(method='_auth/status_update',params=dict(authStatus=dict(kind=('account' if os.environ.get('PEER_AUTH')=='account_then_api' else os.environ.get('PEER_AUTH','account'))))))
     elif method=='session/new':reply(m['id'],dict(sessionId=sid))
     elif method=='session/set_mode':
         assert p['sessionId']==sid and p['modeId']=='bypassPermissions';mode=p['modeId'];reply(m['id'],{})
@@ -93,16 +93,38 @@ fn observed(dir: &Path, predicate: impl Fn(&Value) -> bool) -> Value {
     }
 }
 fn fixture(label: &str, family: &str) -> (TestEnv, PathBuf) {
-    let env = TestEnv::with_manifest(label, family);
+    let spec = if family == "pi" {
+        "pi:openai/gpt-6.1-sol:high"
+    } else {
+        family
+    };
+    let env = TestEnv::with_manifest(label, spec);
     write_executable(
         &env.bin.join(if family == "codex" {
             "codex-acp"
+        } else if family == "pi" {
+            "pi-acp"
         } else {
             "claude-agent-acp"
         }),
         PEER,
     );
-    fs::remove_file(env.bin.join(family)).unwrap();
+    if family == "pi" {
+        write_executable(
+            &env.bin.join("pi"),
+            r#"#!/usr/bin/env python3
+import json,os,pathlib,sys
+failure=os.environ.get('PEER_AUTH')
+if failure=='command-failed':sys.stderr.write('native readiness failed');sys.exit(2)
+if failure=='malformed':print('not JSON');sys.exit(0)
+p=pathlib.Path(os.environ['HOME'])/'.pi/agent/auth.json'
+a=json.loads(p.read_text()).get('openai',{}) if p.exists() else {}
+print(json.dumps(dict(status='ready' if a else 'not_ready',authType=a.get('type'))))
+"#,
+        );
+    } else {
+        fs::remove_file(env.bin.join(family)).unwrap();
+    }
     assert_command_success(
         "headless spawn",
         &env.spawn(
@@ -367,11 +389,35 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
 }
 #[test]
 fn headless_rejects_an_authentication_identity_that_disagrees_with_billing() {
-    for (family, identity) in [("codex", "api_key"), ("claude", "account_then_api")] {
+    for (family, identity) in [
+        ("codex", "api_key"),
+        ("claude", "account_then_api"),
+        ("pi", "missing"),
+        ("pi", "api_key"),
+        ("pi", "command-failed"),
+        ("pi", "malformed"),
+        ("pi", "binary-missing"),
+    ] {
         let (env, dir) = fixture("headless-billing", family);
+        if family == "pi" && identity == "api_key" {
+            let auth = env.home.join(".pi/agent/auth.json");
+            fs::create_dir_all(auth.parent().unwrap()).unwrap();
+            atomic_write(auth, r#"{"openai":{"type":"api_key","key":"fixture"}}"#).unwrap();
+        }
+        if identity == "binary-missing" {
+            fs::remove_file(env.bin.join("pi")).unwrap();
+        }
         let mut child = env
             .niles(&env.root, &["acp", dir.to_str().unwrap(), "must not run"])
             .env("PEER_AUTH", identity)
+            .env(
+                "PATH",
+                if identity == "binary-missing" {
+                    format!("{}:/usr/bin:/bin", env.bin.display())
+                } else {
+                    path_with_bin(&env.bin)
+                },
+            )
             .env("CODEX_API_KEY", "must-not-reach-codex")
             .env("OPENAI_API_KEY", "must-not-reach-codex")
             .env("ANTHROPIC_API_KEY", "must-not-reach-claude")
@@ -382,7 +428,15 @@ fn headless_rejects_an_authentication_identity_that_disagrees_with_billing() {
             .unwrap();
         let _input = child.stdin.take();
         let output = child.wait_with_output().unwrap();
-        assert_failure_contains("auth mismatch", &output, "not the declared subscription");
+        let error = if family == "pi" {
+            "pi requires its own openai ChatGPT login"
+        } else {
+            "not the declared subscription"
+        };
+        assert_failure_contains("auth mismatch", &output, error);
+        if identity == "command-failed" {
+            assert_failure_contains("native stderr", &output, "native readiness failed");
+        }
         if identity == "account_then_api" {
             assert!(
                 fs::read_to_string(dir.join("transcript.jsonl"))
@@ -390,7 +444,7 @@ fn headless_rejects_an_authentication_identity_that_disagrees_with_billing() {
                     .contains("AUTH_PARTIAL")
             );
         }
-        if identity == "api_key" {
+        if family == "codex" {
             assert!(
                 !fs::read_to_string(env.root.join("peer.log"))
                     .unwrap()
@@ -398,4 +452,43 @@ fn headless_rejects_an_authentication_identity_that_disagrees_with_billing() {
             );
         }
     }
+}
+
+#[test]
+fn pi_command_auth_and_bound_resume() {
+    use std::{io::Read, net::Shutdown};
+    let (env, dir) = fixture("headless-pi", "pi");
+    let auth = env.home.join(".pi/agent/auth.json");
+    fs::create_dir_all(auth.parent().unwrap()).unwrap();
+    atomic_write(auth, r#"{"openai":{"type":"oauth"}}"#).unwrap();
+    let mut child = Running(
+        env.niles(&env.root, &["acp", dir.to_str().unwrap(), "pi-ready"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    observed(&dir, |s| {
+        s.pointer("/turn/state") == Some(&json!({"Idle":"EndTurn"}))
+    });
+    let before = fs::read(dir.join("acp-state.json")).unwrap();
+    let hash = format!("{:x}", Sha256::digest(dir.to_str().unwrap().as_bytes()));
+    let mut socket = UnixStream::connect(format!("/tmp/niles-acp-{hash}/rpc")).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
+    socket
+        .write_all(br#"{"method":"resume","params":"missing-session"}"#)
+        .unwrap();
+    socket.shutdown(Shutdown::Write).unwrap();
+    let mut response = String::new();
+    socket.read_to_string(&mut response).unwrap();
+    assert!(
+        response.contains("resume identity does not match this conversation"),
+        "{response}"
+    );
+    assert_eq!(fs::read(dir.join("acp-state.json")).unwrap(), before);
+    assert_command_success("resume after local refusal", &env.run(&["resume", "job"]));
+    drop(child.0.stdin.take());
 }

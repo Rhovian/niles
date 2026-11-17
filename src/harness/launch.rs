@@ -71,7 +71,7 @@ impl Launch {
                 .acp
                 .context("missing ACP profile")?
                 .adapter
-                .configure(&invocation.spec, primary, worker);
+                .configure(&invocation.spec, primary, worker)?;
             session.env.extend(invocation.env.clone());
             acp::prepare(
                 dir,

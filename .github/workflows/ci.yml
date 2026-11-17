@@ -47,6 +47,9 @@ jobs:
       - name: Install tmux (macOS)
         if: runner.os == 'macOS'
         run: brew install tmux
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test --features "${{ matrix.features }}" --no-fail-fast

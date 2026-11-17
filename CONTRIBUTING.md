@@ -72,6 +72,8 @@ interactive fixture tests described below run in CI.
    and trust or onboarding prompts. For headless adapters also check `src/harness/acp/`
    and the ACP profile in `families.rs`: initialization/auth identity, permission and
    form-elicitation payloads, prompt errors, cancellation confirmation, and session/load replay.
+   For pi also check `agents/acp.rs` readiness metadata and `agents/pi-subscription.js`
+   request-time OAuth enforcement, including a credential change during a running session.
    Re-run a live subscription launch, steer, approval, question, cancel, and process-restart/resume
    probe before updating the tested adapter version in README.
 4. Run `scripts/cli-versions.sh --plan`, show it to the operator and ask for approval. Only on
@@ -97,7 +99,9 @@ interactive fixture tests described below run in CI.
    and does not verify installed CLIs' interactive behavior. Check composer markers,
    worker brief-as-TUI-opening-turn, the lead's `--append-system-prompt` (claude, pi) and
    `foreground_args`, and telemetry readers against the notes and each CLI's `--help`.
-7. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
+7. Run the [shared harness conformance procedure](docs/harness-conformance.md#live-compatibility-procedure)
+   against the pinned versions, recording the auth path and evidence for each case.
+8. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
    change and file, and briefly any “no impact” items. On pass, propose updating `tested_version`
    and the README table together using the verified compat `version` column, on an
    `<issue>-<slug>` branch. Commit only when asked. `niles compat` is a new visible command,
