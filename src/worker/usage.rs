@@ -56,8 +56,15 @@ pub(crate) fn collect(
     workspace: &Utf8Path,
     lead: Option<session::SessionMeta>,
 ) -> Result<Vec<SessionUsage>> {
+    collect_snapshots(worker_snapshot(workspace)?, lead)
+}
+
+pub(crate) fn collect_snapshots(
+    workers: impl IntoIterator<Item = WorkerSnapshot>,
+    lead: Option<session::SessionMeta>,
+) -> Result<Vec<SessionUsage>> {
     let mut sessions = Vec::new();
-    for worker in worker_snapshot(workspace)? {
+    for worker in workers {
         let Some(meta) = worker.meta.as_ref() else {
             let error = worker.read_error.context("missing worker metadata error")?;
             bail!(
@@ -210,6 +217,13 @@ pub(crate) fn worker_session(
         .meta
         .as_ref()
         .context("worker metadata is unreadable")?;
+    meta_session(meta, now)
+}
+
+pub(crate) fn meta_session(
+    meta: &WorkerMeta,
+    now: DateTime<Utc>,
+) -> Result<telemetry::ResolvedSession> {
     let starting_until = match meta.starting_until {
         Some(deadline) => deadline,
         None => telemetry::initial_deadline(meta.created_at, None)?,

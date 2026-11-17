@@ -41,19 +41,23 @@ pub(super) fn collect(entries: Vec<Entry>) -> Result<Vec<Row>> {
         };
         rows.push(Row { entry, state });
     }
-    sort_rows(&mut rows);
+    rows.sort_by_key(|row| sort_key(&row.state));
     Ok(rows)
 }
 
-fn sort_rows(rows: &mut [Row]) {
-    rows.sort_by_key(|row| match row.state {
-        State::Waiting(Some(since)) => (0, Some(since)),
+pub(super) fn sort_key(state: &State) -> (u8, Option<DateTime<Utc>>) {
+    match state {
+        State::Waiting(Some(since)) => (0, Some(*since)),
         State::Waiting(None) => (1, None),
         State::Missing | State::NotRunning | State::Running | State::Starting => (2, None),
-    });
+    }
 }
 
-fn project_state(state: SessionState, usage: Option<&Usage>, workers_working: bool) -> State {
+pub(super) fn project_state(
+    state: SessionState,
+    usage: Option<&Usage>,
+    workers_working: bool,
+) -> State {
     if workers_working || state == SessionState::Working {
         State::Running
     } else if state == SessionState::Starting {
@@ -116,7 +120,7 @@ mod tests {
                 State::Waiting(Some(now - chrono::Duration::minutes(2))),
             ),
         ];
-        sort_rows(&mut rows);
+        rows.sort_by_key(|row| sort_key(&row.state));
         assert_eq!(
             rows.map(|row| row.entry.name.as_str().to_owned()),
             ["c", "b", "d", "a"]

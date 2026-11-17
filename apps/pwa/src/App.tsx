@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { TAILNET_UNREACHABLE, incompatibleMessage, leadBase, workerBase, type Session } from './api';
+import { isReadableWorker, TAILNET_UNREACHABLE, incompatibleMessage, leadBase, workerBase, type Session } from './api';
 import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
@@ -55,7 +55,7 @@ export function App() {
     setSelected(undefined); setMenu(false); setHelp(false);
   };
   const workerHost = hosts.find(host => host.id === worker?.host.id);
-  const member = workerHost?.state === 'ready' ? workerHost.projects.find(project => project.name === worker?.project)?.workers.find(item => item.id === worker?.id) : undefined;
+  const member = workerHost?.state === 'ready' ? workerHost.projects.find(project => project.name === worker?.project)?.workers.filter(isReadableWorker).find(item => item.id === worker?.id) : undefined;
   const compatible = hosts.some(host => host.state === 'ready');
   const loaded = hosts.some(host => host.state !== 'loading');
   return <div class="app">

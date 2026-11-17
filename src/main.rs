@@ -37,7 +37,7 @@ mod test_support;
 use crate::cli::{Cli, CommandName};
 use anyhow::Result;
 use clap::Parser;
-use std::process::ExitCode;
+use std::process::{self, ExitCode};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -45,7 +45,8 @@ async fn main() -> ExitCode {
         Ok(code) => code,
         Err(err) => {
             eprintln!("Error: {err:?}");
-            ExitCode::FAILURE
+            // Runtime drop waits for blocking jobs; fatal errors must exit immediately.
+            process::exit(1)
         }
     }
 }

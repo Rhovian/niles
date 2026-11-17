@@ -1,4 +1,4 @@
-import { type Project, startProject, stopProject, closeWorker } from './api';
+import { type Project, isReadableWorker, startProject, stopProject, closeWorker } from './api';
 import { useState } from 'preact/hooks';
 
 const stateGlyphs = { working: '●', starting: '◌', idle: '○', waiting: '⚠', live: '●' } as const;
@@ -31,14 +31,16 @@ export function Navigation({ projects, selected, openProject, openWorker, refres
         {liveStates.has(project.state) && <span class="badge project-live" id={`live-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}><StateIcon state={project.lead_state} /></span>}
       </button>
       {expanded === project.name && <div class="project-details" id={`project-${encodeURIComponent(JSON.stringify([prefix, project.name]))}`}>
+        {project.session_error && <p role="alert">Lead: {project.session_error}</p>}
         {!liveStates.has(project.state) && <p class="badge">{project.state}</p>}
         <button onClick={() => openProject(project.name)}>Open {project.name} lead chat</button>
         {project.state !== 'missing' && <button disabled={pending} onClick={() => {
           if (project.state === 'not running') void act(() => startProject(project.name, prefix));
           else if (window.confirm(`Stop ${project.name}?`)) void act(() => stopProject(project.name, prefix));
         }}>{project.state === 'not running' ? 'Start' : 'Stop'} {project.name}</button>}
-        {[...new Set(project.workers.map(worker => worker.skill))].sort().map(skill => {
-          const workers = project.workers.filter(worker => worker.skill === skill);
+        {project.workers.map(worker => 'error' in worker && <p key={worker.id} role="alert">{worker.id}: {worker.error}</p>)}
+        {[...new Set(project.workers.filter(isReadableWorker).map(worker => worker.skill))].sort().map(skill => {
+          const workers = project.workers.filter(isReadableWorker).filter(worker => worker.skill === skill);
           return workers.length > 0 && <details key={skill} open>
             <summary>{skill}</summary><ul class="workers">{workers.map(worker => {
               const workerExpanded = expandedWorker === worker.id;

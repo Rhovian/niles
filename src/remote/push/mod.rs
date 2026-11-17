@@ -253,6 +253,10 @@ fn finish_delivery(
         Err(WebPushError::EndpointNotFound(_) | WebPushError::EndpointNotValid(_)) => {
             store.prune(subscription)
         }
-        Err(error) => Err(error.into()),
+        Err(error) => {
+            let device = DeviceId::from_endpoint(&subscription.0.endpoint);
+            eprintln!("remote push delivery to device {device:?}: {error}");
+            Ok(())
+        }
     }
 }

@@ -144,7 +144,7 @@ fn rejects_non_browser_endpoints_and_bad_encryption_keys() {
     );
 }
 #[test]
-fn prunes_only_gone_endpoints_and_propagates_other_failures() {
+fn prunes_only_gone_endpoints_and_keeps_other_delivery_failures_nonfatal() {
     let (_root, store, subscription) = fixture();
     for code in [404, 410] {
         store
@@ -165,7 +165,10 @@ fn prunes_only_gone_endpoints_and_propagates_other_failures() {
     store
         .save("alice".into(), subscription.clone(), None)
         .unwrap();
-    assert!(finish_delivery(&store, &subscription, Err(WebPushError::InvalidResponse)).is_err());
+    for error in [WebPushError::InvalidResponse, WebPushError::Unspecified] {
+        finish_delivery(&store, &subscription, Err(error)).unwrap();
+        assert_eq!(store.subscriptions().unwrap().len(), 1);
+    }
 }
 #[tokio::test]
 async fn push_routes_authorize_validate_and_never_cache() {

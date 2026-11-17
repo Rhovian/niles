@@ -7,11 +7,12 @@ import { projects, type Project, type Session } from './api';
 
 const registered: Project[] = [
   { name: 'demo', state: 'waiting', lead_state: 'waiting', workers: [
+    { id: 'broken', error: 'worker metadata is unreadable' },
     { id: 'nav', skill: 'worker', lost: false, state: 'working', model: 'gpt-6.1' }, { id: 'review', skill: 'reviewer', lost: true },
     { id: 'audit', skill: 'codex-trim', lost: false, state: 'idle' }, { id: 'lookup', skill: 'solo', lost: false, state: 'starting' },
     { id: 'plan', skill: 'custom-style', lost: false },
   ] },
-  { name: 'offline', state: 'not running', workers: [] },
+  { name: 'offline', state: 'not running', session_error: 'session metadata is unreadable', workers: [] },
   { name: 'missing', state: 'missing', workers: [] },
 ];
 let leads: Session[] = [{ id: 'demo:one', project: 'demo', agent: { family: 'codex', entry_skill: 'lead' }, waiting: true, worker_count: 5 }];
@@ -37,6 +38,7 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(screen.queryByRole('button', { name: 'Start offline' })).toBeNull();
   expect(menu.querySelectorAll('details')).toHaveLength(0);
   expandProject('demo');
+  expect(screen.getByRole('alert').textContent).toBe('broken: worker metadata is unreadable');
   for (const text of ['demo', 'offline', 'nav', 'review', 'audit', 'lookup', 'plan', 'Lost']) expect(menu.textContent).toContain(text);
   expect([...menu.querySelectorAll('summary')].map(item => item.textContent)).toEqual(['codex-trim', 'custom-style', 'reviewer', 'solo', 'worker']);
   expect(menu.querySelectorAll('details')).toHaveLength(5);
@@ -55,6 +57,8 @@ it('shows the logo without auto-selecting a live project and opens the explorer 
   expect(screen.getByRole('button', { name: 'Telemetry', exact: true })).toBeDefined();
   expect(screen.getByRole('button', { name: 'nav', exact: true })).toBeDefined();
   expect(screen.queryByRole('button', { name: 'Start missing' })).toBeNull();
+  expandProject('offline');
+  expect(screen.getByRole('alert').textContent).toBe('Lead: session metadata is unreadable');
   fireEvent.click(screen.getByRole('button', { name: 'Help' }));
   expect(screen.getByRole('heading', { name: 'Help' })).toBeDefined();
   expect(screen.queryByRole('navigation')).toBeNull();

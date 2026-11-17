@@ -104,18 +104,12 @@ pub(crate) fn close_worker(name: &str, id: &str, run: &Run) -> Result<Closed> {
     let Some(entry) = registry::find(name)? else {
         return Ok(Closed::NotFound);
     };
-    let Some(worker) = worker::live_worker_locations(&entry.path)?
-        .into_iter()
-        .find(|worker| worker.id == id)
-    else {
+    let Some(_) = worker::location(&entry.path, id)? else {
         return Ok(Closed::NotFound);
     };
-    if let Err(error) = run(&entry.path, &["close", &worker.id]) {
+    if let Err(error) = run(&entry.path, &["close", id]) {
         // A concurrent close may already have archived it; preserve genuine failures.
-        if worker::live_worker_locations(&entry.path)?
-            .iter()
-            .any(|live| live.id == worker.id)
-        {
+        if worker::location(&entry.path, id)?.is_some() {
             return Err(error);
         }
         eprintln!("remote concurrent close: {error:#}");

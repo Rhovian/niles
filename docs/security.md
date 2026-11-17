@@ -148,6 +148,12 @@ Each request authenticates its TCP peer through `tailscale whois --json --proto=
 match that node ID. Forwarding headers cannot select the peer. WhoIs failures and malformed
 responses fail closed; another node gets 403 even with a forged login header.
 
+Remote navigation reports unreadable worker or current lead metadata individually, without paths.
+Its metadata-only reads exclude wait cursors and status logs and do not repeat diagnostics per poll.
+Push observation skips a corrupt lead; current-session, historical and telemetry lead reads remain
+strict. CLI wait, stop, usage and status retain their explicit failures and recovery diagnostics.
+Fatal errors exit immediately, allowing the service manager to restart without waiting for blocking jobs.
+
 On the relay, Tailscale Serve terminates tailnet HTTPS, strips client-supplied identity headers
 and injects a verified `Tailscale-User-Login`. Serve proxies to Caddy on localhost only; Caddy
 serves the PWA and forwards `/h/<host>/...` to hosts' tailnet addresses, preserving that login.
@@ -227,6 +233,8 @@ operator messages. These reserved envelope forms are not authenticated operator 
 transcript stops operator observation for that session with a diagnostic; other sessions, waiting
 transitions and the remote API continue. Push transcript diagnostics contain only error categories,
 parser positions and OS error codes, never session identifiers, paths or malformed input values.
+Delivery failures log the operation and device fingerprint and leave other deliveries
+and the API running; only dead endpoints are pruned.
 Operator pushes contain only a generic reason, never message text.
 Historical messages are skipped when a transcript first becomes readable, including late discovery. Both reasons use the same
 host/session topic and browser tag, replacing queued and displayed notifications for that session.

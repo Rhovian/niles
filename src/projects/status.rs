@@ -1,12 +1,8 @@
 use super::{panels, registry, rows, windows};
 use crate::cli::StatusLine;
 #[cfg(feature = "remote")]
-use crate::session::{self, SessionMeta};
-#[cfg(feature = "remote")]
-use crate::telemetry::SessionState;
+use crate::session::SessionMeta;
 use crate::theme::{self, StyleKey, StyleRender, Theme};
-#[cfg(feature = "remote")]
-use crate::worker;
 use crate::worker::usage::SessionUsage;
 use crate::{telemetry, tmux};
 use anyhow::Result;
@@ -52,39 +48,6 @@ pub(crate) struct ForegroundSession {
     pub meta: SessionMeta,
     pub waiting: bool,
     pub worker_count: usize,
-}
-
-#[cfg(feature = "remote")]
-pub(crate) fn live_sessions() -> Result<Vec<ForegroundSession>> {
-    let mut sessions = Vec::new();
-    for row in rows::collect(registry::entries()?)? {
-        if matches!(row.state, rows::State::Missing | rows::State::NotRunning) {
-            continue;
-        }
-        let Some(meta) = session::latest_lead(&row.entry.path)? else {
-            continue;
-        };
-        let Some(windows) = tmux::windows(&row.entry.name.session()?)? else {
-            continue;
-        };
-        let labels = worker::window_labels(&row.entry.path)?;
-        let worker_count = labels
-            .iter()
-            .filter(|(_, target)| {
-                windows
-                    .iter()
-                    .any(|window| *target == format!("{}:{}", row.entry.name.as_str(), window.name))
-            })
-            .count();
-        let lead = worker::lead_session(&meta, chrono::Utc::now())?;
-        sessions.push(ForegroundSession {
-            project: row.entry.name.as_str().to_owned(),
-            meta,
-            waiting: lead.state.displayed() == SessionState::Waiting,
-            worker_count,
-        });
-    }
-    Ok(sessions)
 }
 
 /// The home session's header: projects, agents, lost agents, and their total tokens.
