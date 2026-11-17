@@ -221,8 +221,8 @@ esac
     let projects: serde_json::Value =
         serde_json::from_str(projects.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(
-        projects["projects"][0]["session_error"],
-        json!("session metadata is unreadable")
+        json_field(&projects, "/projects/0/session_error"),
+        "session metadata is unreadable"
     );
 }
 
