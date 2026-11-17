@@ -1,8 +1,8 @@
 use crate::config::user;
 use crate::projects::navigation::{self, Project};
-use crate::projects::status::{self, ForegroundSession};
+use crate::projects::status::ForegroundSession;
 use crate::projects::telemetry;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
@@ -120,14 +120,16 @@ pub(crate) async fn run(port: u16) -> Result<()> {
         .await?
         .remote;
     let relay = auth::Relay::new(config.relay_node)?;
-    let mut state = AppState::new(relay, Arc::new(status::live_sessions));
+    let mut state = AppState::new(relay, Arc::new(navigation::sessions));
     state.wake_hosts = Arc::new(wake::configured(config.wake_hosts)?);
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
     let ip = blocking(auth::tailnet_ip).await?;
-    let listener = TcpListener::bind((ip, port)).await?;
+    let listener = TcpListener::bind((ip, port))
+        .await
+        .context("bind remote listener")?;
     eprintln!("remote listening on {}", listener.local_addr()?);
     let notifier = state.push.clone();
-    let source = state.source.clone();
+    let source: Source = Arc::new(navigation::push_sessions);
     let observer = state.push_observer.clone();
     let server = axum::serve(
         listener,
@@ -136,8 +138,8 @@ pub(crate) async fn run(port: u16) -> Result<()> {
     .into_future();
     if let Some(store) = notifier {
         tokio::select! {
-            result = server => result?,
-            result = push::watch(source, store, observer) => result?,
+            result = server => result.context("serve remote API")?,
+            result = push::watch(source, store, observer) => result.context("watch Web Push notifications")?,
         }
     } else {
         server.await?;

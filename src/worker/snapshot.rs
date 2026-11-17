@@ -26,7 +26,7 @@ pub(crate) struct WorkerSnapshot {
     pub(crate) id: String,
     pub(crate) worker_dir: Utf8PathBuf,
     /// `None` when `meta.json` is missing or unreadable; `read_error` then says which of the two.
-    pub(super) meta: Option<WorkerMeta>,
+    pub(crate) meta: Option<WorkerMeta>,
     pub(crate) read_error: Option<String>,
     /// The status log's bytes, or `None` while there is no log to read.
     pub(super) log: Option<Vec<u8>>,
@@ -133,25 +133,29 @@ impl WorkerSnapshot {
 
 /// The workspace's live workers: those with a `meta.json`, which is what makes a directory a
 /// worker rather than a leftover.
-pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
+pub(crate) fn metadata_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
     let mut workers = Vec::new();
-    // Probe once before any cursor is read: a wait that finishes during the snapshot is either
-    // still reported as running or has already advanced the delivered workers' cursors.
-    let wait_running = wait_running(workspace)?;
     for entry in store::worker_locations(workspace)? {
         let (meta, read_error) = match read_meta_if_exists(&entry.worker_dir) {
             Ok(Some(meta)) => (Some(meta), None),
             Ok(None) => continue,
             Err(err) => (None, Some(format!("{err:#}"))),
         };
-        let log = status_log(&entry.worker_dir)?;
-        let cursor = read_wake_cursor(&entry.worker_dir)?;
-        let mut snapshot = WorkerSnapshot::new(entry.id, entry.worker_dir, log);
+        let mut snapshot = WorkerSnapshot::new(entry.id, entry.worker_dir, None);
         snapshot.meta = meta;
         snapshot.read_error = read_error;
-        snapshot.cursor = cursor;
-        snapshot.wait_running = wait_running;
         workers.push(snapshot);
+    }
+    Ok(workers)
+}
+
+pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
+    let wait_running = wait_running(workspace)?;
+    let mut workers = metadata_snapshot(workspace)?;
+    for snapshot in &mut workers {
+        snapshot.set_log(status_log(&snapshot.worker_dir)?);
+        snapshot.cursor = read_wake_cursor(&snapshot.worker_dir)?;
+        snapshot.wait_running = wait_running;
     }
     Ok(workers)
 }

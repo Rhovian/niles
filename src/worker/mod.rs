@@ -12,12 +12,12 @@ mod archive;
 mod close;
 mod gates;
 mod list;
-mod meta;
+pub(crate) mod meta;
 pub(crate) mod pane;
 mod report;
 mod resolve;
 mod skills;
-mod snapshot;
+pub(crate) mod snapshot;
 mod spawn;
 mod stage;
 pub(crate) mod usage;
@@ -83,20 +83,6 @@ pub(crate) fn window_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<
     Ok(labels)
 }
 
-#[cfg(feature = "remote")]
-pub(crate) fn model_labels(workspace: &camino::Utf8Path) -> anyhow::Result<Vec<(String, String)>> {
-    let mut labels = Vec::new();
-    for entry in live_worker_locations(workspace)? {
-        let meta = meta::read_meta(&entry.worker_dir)?;
-        let model = match meta.model {
-            Some(model) => model,
-            None => meta.agent,
-        };
-        labels.push((entry.id, model));
-    }
-    Ok(labels)
-}
-
 /// Worker directories whose metadata is present and readable.
 pub(crate) fn live_worker_locations(
     workspace: &camino::Utf8Path,
@@ -141,6 +127,20 @@ pub(crate) fn wait_health(
 }
 
 #[cfg(feature = "remote")]
+pub(crate) fn location(
+    project: &camino::Utf8Path,
+    id: &str,
+) -> anyhow::Result<Option<camino::Utf8PathBuf>> {
+    if validation::validate_id(id).is_err() {
+        return Ok(None);
+    }
+    let Some(dir) = store::worker_location(project, id)? else {
+        return Ok(None);
+    };
+    Ok(meta::meta_path(&dir).try_exists()?.then_some(dir))
+}
+
+#[cfg(feature = "remote")]
 pub(crate) struct ChatTarget {
     pub transcript: TranscriptSource,
     pub window: Option<WindowTarget>,
@@ -151,13 +151,12 @@ pub(crate) fn chat_target(
     project: &camino::Utf8Path,
     id: &str,
 ) -> anyhow::Result<Option<ChatTarget>> {
-    let Some(entry) = live_worker_locations(project)?
-        .into_iter()
-        .find(|entry| entry.id == id)
-    else {
+    let Some(dir) = location(project, id)? else {
         return Ok(None);
     };
-    let meta = meta::read_meta(&entry.worker_dir)?;
+    let Some(meta) = meta::read_meta_if_exists(&dir)? else {
+        return Ok(None);
+    };
     let window = match resolve::window_state(&meta) {
         TargetState::Live => Some(WindowTarget::parse(&meta.window)?),
         TargetState::OrphanRecovered { actual } => Some(actual),

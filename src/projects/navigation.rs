@@ -1,43 +1,42 @@
-use super::rows::State;
-use super::snapshot;
-use super::windows::WindowKind;
+use super::status::ForegroundSession;
+use super::{registry, rows, windows::LEAD_WINDOW};
 use crate::skills::SkillName;
-use crate::{theme, worker};
+use crate::telemetry::SessionState;
+use crate::worker::usage::SessionUsage;
+use crate::{session, tmux, worker};
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 pub(crate) struct Project {
     name: String,
-    state: ProjectState,
+    #[serde(serialize_with = "serialize_state")]
+    state: rows::State,
     workers: Vec<Worker>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lead_state: Option<AgentState>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum ProjectState {
-    Missing,
-    #[serde(rename = "not running")]
-    NotRunning,
-    Running,
-    Starting,
-    Waiting,
-}
-
-#[derive(Clone, Serialize)]
-struct Worker {
     #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
-    id: String,
-    skill: SkillName,
-    lost: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    state: Option<AgentState>,
+    session_error: Option<&'static str>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Worker {
+    Readable {
+        model: String,
+        id: String,
+        skill: SkillName,
+        lost: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<AgentState>,
+    },
+    Unreadable {
+        id: String,
+        error: &'static str,
+    },
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 enum AgentState {
     Working,
@@ -47,152 +46,206 @@ enum AgentState {
 }
 
 pub(crate) fn collect() -> Result<Vec<Project>> {
-    snapshot::collect()?
+    Ok(records()?.into_iter().map(|(project, _)| project).collect())
+}
+
+pub(crate) fn sessions() -> Result<Vec<ForegroundSession>> {
+    records()?
         .into_iter()
-        .map(|snapshot| {
-            let labels = if snapshot.agents.is_some() {
-                worker::model_labels(&snapshot.row.entry.path)?
-            } else {
-                Vec::new()
-            };
-            let mut project = project(snapshot);
-            for worker in &mut project.workers {
-                worker.model = labels
-                    .iter()
-                    .find(|(id, _)| id == &worker.id)
-                    .map(|(_, model)| model.clone());
-            }
-            Ok(project)
-        })
+        .filter_map(|(_, session)| session.transpose())
         .collect()
 }
 
-fn project(project: snapshot::Project) -> Project {
-    let state = match project.row.state {
-        State::Missing => ProjectState::Missing,
-        State::NotRunning => ProjectState::NotRunning,
-        State::Running => ProjectState::Running,
-        State::Starting => ProjectState::Starting,
-        State::Waiting(_) => ProjectState::Waiting,
-    };
-    let mut workers = Vec::new();
-    let mut lead_state = None;
-    if let Some(agents) = project.agents {
-        for window in agents.windows {
-            if matches!(window.kind, WindowKind::Lead) {
-                lead_state = Some(match window.segment.activity() {
-                    theme::State::Running => AgentState::Working,
-                    theme::State::Starting => AgentState::Starting,
-                    theme::State::Idle | theme::State::Waiting => AgentState::Waiting,
-                });
+pub(crate) fn push_sessions() -> Result<Vec<ForegroundSession>> {
+    Ok(records()?
+        .into_iter()
+        .flat_map(|(_, session)| session.into_iter().flatten())
+        .collect())
+}
+
+pub(crate) fn usage(
+    workspace: &camino::Utf8Path,
+    lead: Option<session::SessionMeta>,
+) -> Result<Vec<SessionUsage>> {
+    worker::usage::collect_snapshots(
+        worker::snapshot::metadata_snapshot(workspace)?
+            .into_iter()
+            .filter(|worker| worker.meta.is_some()),
+        lead,
+    )
+}
+
+type Record = (Project, Result<Option<ForegroundSession>>);
+fn records() -> Result<Vec<Record>> {
+    let mut records = Vec::new();
+    for entry in registry::entries()? {
+        let live = entry.path.is_dir() && entry.has_live_session()?;
+        let windows = if live {
+            tmux::windows(&entry.name.session()?)?
+        } else {
+            None
+        };
+        let lead = session::latest_lead(&entry.path);
+        let session_error = lead.is_err().then_some("session metadata is unreadable");
+        let activity = match &lead {
+            Ok(Some(meta)) if windows.is_some() => {
+                Some(worker::lead_session(meta, chrono::Utc::now())?)
             }
-            if let WindowKind::Worker(id, skill) = window.kind {
-                workers.push(Worker {
-                    model: None,
-                    id,
-                    skill,
-                    lost: false,
-                    state: Some(match window.segment.activity() {
-                        theme::State::Running => AgentState::Working,
-                        theme::State::Starting => AgentState::Starting,
-                        theme::State::Idle | theme::State::Waiting => AgentState::Idle,
-                    }),
+            Ok(Some(_) | None) => None,
+            Err(_error) => None,
+        };
+        let mut workers = Vec::new();
+        let mut working = false;
+        for snapshot in worker::snapshot::metadata_snapshot(&entry.path)? {
+            let meta = match snapshot.meta {
+                Some(meta) => meta,
+                None => {
+                    workers.push(Worker::Unreadable {
+                        id: snapshot.id,
+                        error: "worker metadata is unreadable",
+                    });
+                    continue;
+                }
+            };
+            if let Some(windows) = &windows {
+                let record = worker::usage::meta_session(&meta, chrono::Utc::now())?;
+                working |= record.state == SessionState::Working;
+                let lost = !windows.iter().any(|window| {
+                    meta.window == format!("{}:{}", entry.name.as_str(), window.name)
+                });
+                workers.push(Worker::Readable {
+                    id: snapshot.id,
+                    model: match meta.model {
+                        Some(model) => model,
+                        None => meta.agent,
+                    },
+                    skill: meta.skill,
+                    lost,
+                    state: if lost {
+                        None
+                    } else {
+                        Some(agent_state(record.state))
+                    },
                 });
             }
         }
-        workers.extend(agents.lost.into_iter().map(|(id, skill)| Worker {
-            model: None,
-            id,
-            skill,
-            lost: true,
-            state: None,
-        }));
+        workers.sort_by_key(|worker| match worker {
+            Worker::Readable { lost, .. } => u8::from(*lost),
+            Worker::Unreadable { .. } => 2,
+        });
+        let lead_activity = activity
+            .as_ref()
+            .map_or(SessionState::Unknown, |record| record.state);
+        let state = if !entry.path.is_dir() {
+            rows::State::Missing
+        } else if windows.is_none() {
+            rows::State::NotRunning
+        } else {
+            rows::project_state(
+                lead_activity,
+                activity.as_ref().and_then(|record| record.usage.as_ref()),
+                working,
+            )
+        };
+        let lead_state = windows
+            .as_ref()
+            .and_then(|windows| windows.iter().find(|window| window.name == LEAD_WINDOW))
+            .map(|_| match lead_activity {
+                SessionState::Working => AgentState::Working,
+                SessionState::Starting => AgentState::Starting,
+                SessionState::Waiting | SessionState::NeedsAttention | SessionState::Unknown => {
+                    AgentState::Waiting
+                }
+            });
+        let waiting = lead_activity.displayed() == SessionState::Waiting;
+        let worker_count = workers
+            .iter()
+            .filter(|worker| matches!(worker, Worker::Readable { lost: false, .. }))
+            .count();
+        let foreground = if windows.is_some() {
+            lead.map(|lead| {
+                lead.map(|meta| ForegroundSession {
+                    project: entry.name.as_str().to_owned(),
+                    meta,
+                    waiting,
+                    worker_count,
+                })
+            })
+        } else {
+            Ok(None)
+        };
+        let project = Project {
+            name: entry.name.as_str().to_owned(),
+            state,
+            workers,
+            lead_state,
+            session_error,
+        };
+        records.push((project, foreground));
     }
-    Project {
-        name: project.row.entry.name.as_str().to_owned(),
-        state,
-        workers,
-        lead_state,
+    records.sort_by_key(|(project, _)| rows::sort_key(&project.state));
+    Ok(records)
+}
+
+fn agent_state(state: SessionState) -> AgentState {
+    match state {
+        SessionState::Working => AgentState::Working,
+        SessionState::Starting => AgentState::Starting,
+        SessionState::Waiting | SessionState::NeedsAttention | SessionState::Unknown => {
+            AgentState::Idle
+        }
     }
+}
+
+fn serialize_state<S: Serializer>(state: &rows::State, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(match state {
+        rows::State::Missing => "missing",
+        rows::State::NotRunning => "not running",
+        rows::State::Running => "running",
+        rows::State::Starting => "starting",
+        rows::State::Waiting(_) => "waiting",
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::registry::{Entry, ProjectName};
-    use crate::projects::rows::Row;
-    use crate::projects::status::Segment;
-    use crate::projects::windows::{AgentWindow, SessionAgents};
-    use crate::theme::State as Activity;
     use serde_json::json;
 
     #[test]
     fn projects_expose_all_states_and_worker_activity_without_private_details() {
-        for ((state, label), (activity, expected)) in [
-            (State::Missing, "missing"),
-            (State::NotRunning, "not running"),
-            (State::Running, "running"),
-            (State::Starting, "starting"),
-            (State::Waiting(None), "waiting"),
-        ]
-        .into_iter()
-        .zip([
-            (Some(Activity::Running), "working"),
-            (Some(Activity::Starting), "starting"),
-            (Some(Activity::Waiting), "idle"),
-            (Some(Activity::Idle), "idle"),
-            (None, "idle"),
-        ]) {
-            let window = |kind| AgentWindow {
-                name: "private-window".into(),
-                kind,
-                segment: Segment {
-                    label: "private-label".into(),
-                    state: activity,
-                    tokens: None,
-                    age: None,
-                },
+        for (state, label) in [
+            (rows::State::Missing, "missing"),
+            (rows::State::NotRunning, "not running"),
+            (rows::State::Running, "running"),
+            (rows::State::Starting, "starting"),
+            (rows::State::Waiting(None), "waiting"),
+            (rows::State::Waiting(Some(chrono::Utc::now())), "waiting"),
+        ] {
+            let project = Project {
+                name: "demo".into(),
+                state,
+                workers: Vec::new(),
+                lead_state: None,
+                session_error: None,
             };
-            let project = project(snapshot::Project {
-                row: Row {
-                    entry: Entry {
-                        name: ProjectName::parse("demo").unwrap(),
-                        path: "/private/path".into(),
-                    },
-                    state,
-                },
-                agents: Some(SessionAgents {
-                    windows: vec![
-                        window(WindowKind::Lead),
-                        window(WindowKind::Plain),
-                        window(WindowKind::Worker("nav".into(), "worker".parse().unwrap())),
-                    ],
-                    lost: vec![("review".into(), "reviewer".parse().unwrap())],
-                }),
-            });
             assert_eq!(
                 serde_json::to_value(project).unwrap(),
-                json!({
-                    "name": "demo", "state": label, "lead_state": if expected == "idle" { "waiting" } else { expected }, "workers": [
-                        {"id": "nav", "skill": "worker", "lost": false, "state": expected},
-                        {"id": "review", "skill": "reviewer", "lost": true},
-                    ]
-                })
+                json!({"name":"demo", "state":label, "workers":[]})
             );
         }
-        let project = project(snapshot::Project {
-            row: Row {
-                entry: Entry {
-                    name: ProjectName::parse("offline").unwrap(),
-                    path: "/private/path".into(),
-                },
-                state: State::NotRunning,
-            },
-            agents: None,
-        });
-        assert_eq!(
-            serde_json::to_value(project).unwrap(),
-            json!({"name": "offline", "state": "not running", "workers": []})
-        );
+        for (activity, expected) in [
+            (SessionState::Working, "working"),
+            (SessionState::Starting, "starting"),
+            (SessionState::Unknown, "idle"),
+            (SessionState::Waiting, "idle"),
+            (SessionState::NeedsAttention, "idle"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(agent_state(activity)).unwrap(),
+                json!(expected),
+                "activity {activity:?}"
+            );
+        }
     }
 }

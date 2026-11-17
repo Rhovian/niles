@@ -58,7 +58,7 @@ fn project(entry: &registry::Entry, since: DateTime<Utc>) -> Result<Vec<Session>
             buckets: buckets.since(since),
         })
     };
-    let open = usage::collect(&entry.path, session::latest_lead(&entry.path)?)?
+    let open = super::navigation::usage(&entry.path, session::latest_lead(&entry.path)?)?
         .into_iter()
         .map(|open| {
             let buckets = match open.usage {

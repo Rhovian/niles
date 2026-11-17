@@ -9,9 +9,11 @@ export const sessionSchema = z.object({
 export type Session = z.infer<typeof sessionSchema>;
 export const sessionsSchema = z.object({ api_version: z.number().int(), sessions: z.array(sessionSchema) });
 export const projectSchema = z.object({
+  session_error: z.string().optional(),
   name: z.string().min(1), lead_state: z.enum(['working', 'starting', 'waiting']).optional(), state: z.enum(['missing', 'not running', 'running', 'starting', 'waiting']),
-  workers: z.array(z.object({ model: z.string().optional(), id: z.string().min(1), skill: z.string().regex(/^[A-Za-z0-9_-]+$/), lost: z.boolean(), state: z.enum(['idle', 'working', 'starting']).optional() })),
+  workers: z.array(z.union([z.object({ id: z.string().min(1), error: z.string() }), z.object({ model: z.string().optional(), id: z.string().min(1), skill: z.string().regex(/^[A-Za-z0-9_-]+$/), lost: z.boolean(), state: z.enum(['idle', 'working', 'starting']).optional() })])),
 });
+export const isReadableWorker = (worker: Project['workers'][number]) => 'skill' in worker;
 export type Project = z.infer<typeof projectSchema>;
 const projectsSchema = z.object({ api_version: z.number().int(), projects: z.array(projectSchema) });
 export async function projects(signal?: AbortSignal, prefix = '') {
