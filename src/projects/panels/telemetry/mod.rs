@@ -108,7 +108,14 @@ pub(super) fn panel(entries: &[registry::Entry], range: Range, theme: &Theme) ->
     let since = Window::new(Range::Month, now)?.start;
     let projects = entries
         .iter()
-        .map(|entry| collect::project(entry, lead_running(entry)?, since))
+        .map(|entry| {
+            collect::project(
+                entry,
+                lead_running(entry)?,
+                since,
+                &crate::agents::ModelCatalogue::default(),
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     let (width, _) = terminal::size().context("failed to read the terminal size")?;
     let dashboard = aggregate::dashboard(&projects, Window::new(range, now)?)?;

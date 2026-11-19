@@ -86,31 +86,32 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
 
 #[test]
 fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
-    let env = TestEnv::with_manifest("niles-worker-tier-test", "codex:gpt-5.7:xhigh");
-    atomic_write(
-        env.root.join("niles.yaml"),
-        "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }\n",
-    )
-    .unwrap();
+    let env = TestEnv::with_manifest("niles-worker-tier-test", "codex:gpt-6.2-sol:xhigh");
 
     let codex_spawn = env
         .spawn_command(
             "solo",
-            &["codex-hi", "--agent", "codex:gpt-5.7:xhigh", "Fix", "auth"],
+            &[
+                "codex-hi",
+                "--agent",
+                "codex:gpt-6.2-sol:xhigh",
+                "Fix",
+                "auth",
+            ],
         )
         .output()
         .unwrap();
     assert_command_success("codex tiered spawn", &codex_spawn);
     let codex_stdout = stdout_of(&codex_spawn);
-    assert!(codex_stdout.contains("agent: codex:gpt-5.7:xhigh"));
+    assert!(codex_stdout.contains("agent: codex:gpt-6.2-sol:xhigh"));
     assert!(codex_stdout.contains("agent_family: codex"));
-    assert!(codex_stdout.contains("model: gpt-5.7"));
+    assert!(codex_stdout.contains("model: gpt-6.2-sol"));
     assert!(codex_stdout.contains("effort: xhigh"));
 
     let codex_meta =
         fs::read_to_string(state_dir(&env.root).join("worker/codex-hi/meta.json")).unwrap();
     let codex_meta_json: serde_json::Value = serde_json::from_str(&codex_meta).unwrap();
-    assert!(codex_meta.contains(r#""agent": "codex:gpt-5.7:xhigh""#));
+    assert!(codex_meta.contains(r#""agent": "codex:gpt-6.2-sol:xhigh""#));
     assert!(codex_meta.contains(r#""skill": "solo""#));
     chrono::DateTime::parse_from_rfc3339(
         codex_meta_json
@@ -121,13 +122,13 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     )
     .unwrap();
     assert!(codex_meta.contains(r#""agent_family": "codex""#));
-    assert!(codex_meta.contains(r#""model": "gpt-5.7""#));
+    assert!(codex_meta.contains(r#""model": "gpt-6.2-sol""#));
     assert!(codex_meta.contains(r#""effort": "xhigh""#));
 
     let codex_launch =
         fs::read_to_string(state_dir(&env.root).join("worker/codex-hi/launch.sh")).unwrap();
     assert!(codex_launch.contains("'--dangerously-bypass-approvals-and-sandbox'"));
-    assert!(codex_launch.contains("'--model' 'gpt-5.7'"));
+    assert!(codex_launch.contains("'--model' 'gpt-6.2-sol'"));
     assert!(codex_launch.contains("'--config' 'model_reasoning_effort=\"xhigh\"'"));
 }
 
@@ -175,14 +176,14 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
             "bad-worker",
             "solo",
             &["--agent", "claude:opus:turbo"],
-            "invalid claude effort `turbo`",
+            "not listed in the manifest tiers",
             true,
         ),
         (
             "future-worker",
             "solo",
             &["--agent", "codex:gpt-5.7:xhigh"],
-            "invalid codex model `gpt-5.7`",
+            "not listed in the manifest tiers",
             true,
         ),
         (

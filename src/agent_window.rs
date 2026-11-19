@@ -100,8 +100,7 @@ mod tests {
             args: vec!["--flag".to_owned()],
             system_prompt: agents::profile_for("codex").unwrap().system_prompt,
             env: Vec::new(),
-            spec: agents::AgentSpec::parse("codex", &agents::ModelRoster::builtin().unwrap())
-                .unwrap(),
+            spec: agents::AgentSpec::parse("codex").unwrap(),
         };
         launch_script(
             &invocation,

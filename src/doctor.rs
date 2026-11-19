@@ -1,5 +1,4 @@
 use crate::agents::AgentSpec;
-use crate::config::spec::load_project_config_from;
 use crate::util::{self, current_dir_utf8, find_on_path};
 use crate::workspace_manifest::setup::SetupSelection;
 use crate::{build_info, workspace_manifest};
@@ -35,11 +34,11 @@ fn print_setup(workspace: &Utf8Path, selection: Option<&SetupSelection>) -> Resu
         println!("agents: no workspace manifest");
         return Ok(());
     };
-    let config = load_project_config_from(workspace)?;
+
     let bindings = manifest.tiers.agents();
     let mut binaries = BTreeMap::new();
     for agent in bindings {
-        let spec = AgentSpec::parse(agent, &config.models)?;
+        let spec = AgentSpec::parse(agent)?;
         let profile = spec.profile();
         binaries
             .entry(profile.binary)

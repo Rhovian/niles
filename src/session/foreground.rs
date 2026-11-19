@@ -1,8 +1,5 @@
 use super::brief::{ManagerSession, prepare_manager_session};
-use crate::config::spec::load_project_config_from;
 use crate::harness::{Launch, Mode, acp};
-#[cfg(test)]
-use crate::store::atomic_write;
 use crate::workspace_manifest::WorkspaceManifest;
 use crate::{agents, skills, watch};
 use anyhow::{Context, Result, bail};
@@ -19,16 +16,12 @@ pub(super) async fn launch_foreground_agent(
 ) -> Result<()> {
     let agent = match agent {
         Some(agent) => {
-            let config = load_project_config_from(workspace)?;
-            manifest
-                .tiers
-                .admit(agent, &config.models)
-                .context("invalid --agent")?;
+            manifest.tiers.admit(agent).context("invalid --agent")?;
             agent
         }
         None => &manifest.entry_agent,
     };
-    let mut invocation = foreground_invocation_for_project(workspace, agent)?;
+    let mut invocation = agents::invocation(agent, agents::InvocationDefaults::Foreground)?;
     let primary = skills::resolve(&manifest.entry, workspace, &skills::global_dir()?)?;
     launch.qualify(&invocation.spec)?;
     let mut prepared = prepare_manager_session(
@@ -108,18 +101,6 @@ fn run_foreground_process(
         .with_context(|| format!("failed to launch foreground agent `{binary}`"))
 }
 
-fn foreground_invocation_for_project(
-    root: &Utf8Path,
-    agent: &str,
-) -> Result<agents::AgentInvocation> {
-    let config = load_project_config_from(root)?;
-    agents::invocation(
-        agent,
-        agents::InvocationDefaults::Foreground,
-        &config.models,
-    )
-}
-
 fn entry_prompt(dir: &Utf8Path) -> String {
     format!(
         "# Niles start session\nsession_dir: {dir}\n\n{}",
@@ -139,30 +120,6 @@ mod tests {
     use crate::test_support::{temp_dir, write_executable_script};
     use camino::Utf8PathBuf;
     use std::fs;
-
-    #[test]
-    fn foreground_invocation_accepts_a_project_model_override() {
-        let root = temp_dir("foreground-model-override");
-        atomic_write(
-            root.join("niles.yaml"),
-            "models: { codex: { gpt-5.7: { efforts: [xhigh] } } }",
-        )
-        .unwrap();
-
-        let invocation = foreground_invocation_for_project(&root, "codex:gpt-5.7:xhigh").unwrap();
-
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|args| args == ["--model", "gpt-5.7"])
-        );
-        assert!(
-            invocation
-                .args
-                .contains(&"model_reasoning_effort=\"xhigh\"".to_owned())
-        );
-    }
 
     #[test]
     fn run_foreground_process_applies_cwd_and_env() {

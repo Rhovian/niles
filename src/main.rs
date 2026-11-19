@@ -176,7 +176,7 @@ async fn run() -> Result<ExitCode> {
         Some(CommandName::Log { id, decision }) => session::log::run(&id, &decision.join(" "))?,
         Some(CommandName::Workers) => worker::workers()?,
         Some(CommandName::Usage) => worker::usage()?,
-        Some(CommandName::Models) => models::models(selection()?.as_ref())?,
+        Some(CommandName::Models) => models::models()?,
         Some(CommandName::Report { id }) => worker::report(id)?,
         Some(CommandName::Peek { id, lines, quiet }) => worker::peek(id, lines, quiet)?,
         Some(CommandName::Send {

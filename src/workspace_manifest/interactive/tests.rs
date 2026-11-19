@@ -1,9 +1,9 @@
 use super::*;
-use crate::agents::roster::Tier;
 use crate::skills;
 use crate::store::{atomic_write, paths};
 use crate::test_support::default_manifest::{load, manifest_path};
 use crate::test_support::{self, manifest_body, remove_workspace, temp_test_path};
+use crate::workspace_manifest::Tier;
 use crate::workspace_manifest::TierBinding;
 use std::fs;
 
@@ -11,7 +11,7 @@ fn never(_: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
     anyhow::bail!("setup with an existing manifest or no terminal")
 }
 
-fn unexpected_picker(_: &Utf8Path, _: WorkspaceManifest, _: &ProjectConfig) -> Result<Choice> {
+fn unexpected_picker(_: &Utf8Path, _: WorkspaceManifest, _: &ModelCatalogue) -> Result<Choice> {
     anyhow::bail!("unexpected picker")
 }
 
@@ -198,10 +198,10 @@ fn secondaries_new_tiers_and_entry_agent_persist_together() {
 }
 
 #[test]
-fn loading_deduplicates_primary_and_secondary_aliases_in_order() {
+fn loading_deduplicates_primary_and_secondaries_in_order() {
     let mut manifest = test_support::manifest();
     manifest.tiers.standard.secondaries = vec![
-        "codex:gpt-6.1-sol:med".into(),
+        "codex:gpt-6.1-sol:medium".into(),
         "claude:sonnet:high".into(),
         "claude:sonnet:high".into(),
         "claude:fable:medium".into(),

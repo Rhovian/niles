@@ -1,8 +1,8 @@
 use super::columns::{self, Columns, Family, Pick};
 use crate::agents::AgentSpec;
-use crate::agents::roster::Tier;
-use crate::config::spec::ProjectConfig;
+use crate::agents::ModelCatalogue;
 use crate::selection::Selection;
+use crate::workspace_manifest::Tier;
 use crate::workspace_manifest::{self, TierBinding, WorkspaceManifest};
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::KeyCode;
@@ -77,7 +77,7 @@ pub(super) struct Form {
 }
 
 impl Form {
-    pub fn new(manifest: WorkspaceManifest, config: &ProjectConfig) -> Result<Self> {
+    pub fn new(manifest: WorkspaceManifest, catalogue: &ModelCatalogue) -> Result<Self> {
         let rows = TIERS
             .into_iter()
             .flat_map(|tier| {
@@ -102,7 +102,7 @@ impl Form {
             screen: Screen::Tiers,
             selection,
             error: String::new(),
-            families: columns::families(config)?,
+            families: columns::families(catalogue),
         })
     }
 
@@ -143,8 +143,8 @@ impl Form {
         self.draft != self.original
     }
 
-    fn accept(&mut self, config: &ProjectConfig) -> bool {
-        match workspace_manifest::check(&self.draft, &config.models) {
+    fn accept(&mut self) -> bool {
+        match workspace_manifest::check(&self.draft) {
             Ok(()) => {
                 self.error.clear();
                 true
@@ -190,7 +190,7 @@ impl Form {
         clippy::wildcard_enum_match_arm,
         reason = "each screen ignores unbound terminal keys"
     )]
-    pub fn key(&mut self, key: KeyCode, config: &ProjectConfig) -> Result<Option<Decision>> {
+    pub fn key(&mut self, key: KeyCode) -> Result<Option<Decision>> {
         if key == KeyCode::Char('q') {
             return Ok(Some(Decision::Quit));
         }
@@ -199,19 +199,19 @@ impl Form {
                 tier,
                 append,
                 columns,
-            } => match columns.key(key) {
+            } => match columns.key(key)? {
                 Pick::Pending => {}
                 Pick::Cancelled => self.screen = Screen::Tiers,
                 Pick::Selected(value) => {
                     let tier = *tier;
                     let append = *append;
-                    let selected = AgentSpec::parse(&value, &config.models)?;
+                    let selected = AgentSpec::parse(&value)?;
                     let mut duplicate = false;
                     for (position, row) in self.selection.iter().enumerate() {
                         if row.tier() == Some(tier)
                             && (append || position != self.selection.position())
                             && let Some(agent) = row.value()
-                            && AgentSpec::parse(agent, &config.models)? == selected
+                            && AgentSpec::parse(agent)? == selected
                         {
                             duplicate = true;
                             break;
@@ -258,18 +258,18 @@ impl Form {
                 _ => return Ok(None),
             },
             Screen::Review => match key {
-                KeyCode::Enter if self.accept(config) => return Ok(Some(Decision::Save)),
+                KeyCode::Enter if self.accept() => return Ok(Some(Decision::Save)),
                 KeyCode::Esc | KeyCode::Left => self.screen = Screen::Tiers,
                 _ => return Ok(None),
             },
             Screen::Tiers => match key {
                 KeyCode::Char('c') if !self.can_save() => return Ok(Some(Decision::Keep)),
                 KeyCode::Up | KeyCode::Down => self.selection.move_focus(key == KeyCode::Down),
-                KeyCode::Char('s') if self.can_save() && self.accept(config) => {
+                KeyCode::Char('s') if self.can_save() && self.accept() => {
                     self.screen = Screen::Review
                 }
                 KeyCode::Enter if self.setup => {
-                    if self.accept(config) {
+                    if self.accept() {
                         return Ok(Some(Decision::Save));
                     }
                 }
@@ -288,7 +288,7 @@ impl Form {
                         self.screen = Screen::Editing {
                             tier,
                             append,
-                            columns: Box::new(Columns::new(&self.families, current, config)?),
+                            columns: Box::new(Columns::new(&self.families, current)?),
                         };
                     } else {
                         let mut choices =

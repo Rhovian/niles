@@ -1,7 +1,6 @@
 use super::{register, registry};
+use crate::agents;
 use crate::agents::picker::{SetupAction, SetupTiers};
-use crate::agents::{self, ModelRoster};
-use crate::config::spec;
 use crate::store::{self, Publication};
 use crate::{skills, util, workspace_manifest as manifest};
 use anyhow::{Context, Result, ensure};
@@ -36,10 +35,10 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         store::parse_yaml(include_str!("onboard/modes.yaml"))?,
         false,
     )?;
-    let config = spec::load_project_config_from(cwd)?;
+    let catalogue = agents::ModelCatalogue::default();
     let generated = defaults::manifest(&installed)?;
     let entry = generated.entry.clone();
-    let mut tiers = SetupTiers::new(generated, &config)?;
+    let mut tiers = SetupTiers::new(generated, &catalogue)?;
     let mut entries = ui::Options::new(
         store::parse_yaml(include_str!("onboard/leads.yaml"))?,
         false,
@@ -107,7 +106,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
                     Step::Tiers
                 }
             },
-            Step::Tiers => match tiers.pick(cwd, &config)? {
+            Step::Tiers => match tiers.pick(cwd)? {
                 SetupAction::Quit => return Ok(None),
                 SetupAction::Back => {
                     if modes.chosen().0 != "lead" {
@@ -178,7 +177,7 @@ pub(crate) fn setup(cwd: &Utf8Path) -> Result<Option<WorkspaceManifest>> {
         .map(str::parse)
         .collect::<Result<Vec<skills::SkillName>>>()?;
     let finish = || {
-        finish(cwd, &global, &manifest, &starter_skills, &config.models)?;
+        finish(cwd, &global, &manifest, &starter_skills)?;
         manifest::load(cwd, None)
     };
     match entry_skill {
@@ -196,9 +195,8 @@ fn finish(
     global: &Utf8Path,
     manifest: &WorkspaceManifest,
     starter_skills: &[skills::SkillName],
-    models: &ModelRoster,
 ) -> Result<ManifestWrite> {
-    manifest::check(manifest, models)?;
+    manifest::check(manifest)?;
     let body = serde_saphyr::to_string(manifest)?;
     let names: BTreeSet<_> = manifest
         .bindings

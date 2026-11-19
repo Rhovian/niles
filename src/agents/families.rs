@@ -1,8 +1,13 @@
 use super::acp::{AuthSource, ChildCommand, CommandFile, Readiness, SessionConfig};
+use super::catalogue::{Catalogue, Model, Models, StdinRequest};
+use super::{AgentInvocation, AgentSpec, InvocationDefaults};
 use crate::telemetry::SessionLink;
 use anyhow::Result;
 use camino::Utf8Path;
+use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,11 +26,12 @@ pub(crate) enum AcpAdapter {
     Pi,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct AgentProfile {
     pub id: &'static str,
     pub(crate) acp: Option<AcpProfile>,
     pub binary: &'static str,
+    pub(crate) catalogue: Catalogue,
     pub tested_version: &'static str,
     pub foreground_args: &'static [&'static str],
     pub worker_args: &'static [&'static str],
@@ -79,6 +85,11 @@ pub(crate) fn session_link(family: &str, dir: &Utf8Path) -> Option<SessionLink> 
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
+        catalogue: Catalogue {
+            args: &["debug", "models"],
+            request: None,
+            decode: codex_models,
+        },
         binary: "codex",
         acp: Some(AcpProfile {
             binary: "codex-acp",
@@ -115,6 +126,25 @@ const PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: "claude",
+        catalogue: Catalogue {
+            args: &[
+                "-p",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--no-session-persistence",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "user",
+            ],
+            request: Some(StdinRequest {
+                body: r#"{"type":"control_request","request_id":"catalogue","request":{"subtype":"initialize"}}"#,
+                response_id_pointer: Some("/response/request_id"),
+            }),
+            decode: claude_models,
+        },
         binary: "claude",
         acp: Some(AcpProfile {
             binary: "claude-agent-acp",
@@ -148,6 +178,14 @@ const PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: "pi",
+        catalogue: Catalogue {
+            args: &["--mode", "rpc", "--no-session", "--no-extensions"],
+            request: Some(StdinRequest {
+                body: r#"{"id":"catalogue","type":"get_available_models"}"#,
+                response_id_pointer: None,
+            }),
+            decode: pi_models,
+        },
         binary: "pi",
         acp: Some(AcpProfile {
             binary: "pi-acp",
@@ -196,18 +234,149 @@ pub fn tier_args(profile: &AgentProfile, model: Option<&str>, effort: Option<&st
         match profile.tier_args.effort {
             EffortArg::Flag(flag) => args.extend([flag.to_owned(), effort.to_owned()]),
             EffortArg::Config { flag, key } => {
-                args.extend([flag.to_owned(), format!("{key}=\"{effort}\"")]);
+                args.extend([
+                    flag.to_owned(),
+                    format!("{key}={}", super::system_prompt::toml_basic_string(effort)),
+                ]);
             }
         }
     }
     args
 }
 
+// serde_json 1.0.154 owns wire decoding; each family's schema stays with its profile.
+// https://docs.rs/serde_json/1.0.154/serde_json/fn.from_value.html
+#[derive(Deserialize)]
+struct ModelList<T> {
+    models: Vec<T>,
+}
+#[derive(Deserialize)]
+struct Response<T> {
+    response: T,
+}
+#[derive(Deserialize)]
+struct Rpc<T> {
+    data: T,
+}
+
+fn codex_models(body: Value) -> Result<Models> {
+    #[derive(Deserialize)]
+    struct Entry {
+        slug: String,
+        visibility: String,
+        supported_reasoning_levels: Vec<Reasoning>,
+        context_window: Option<NonZeroU64>,
+    }
+    #[derive(Deserialize)]
+    struct Reasoning {
+        effort: String,
+    }
+    let list: ModelList<Entry> = serde_json::from_value(body)?;
+    Ok(list
+        .models
+        .into_iter()
+        .filter(|model| model.visibility != "hide")
+        .map(|model| {
+            (
+                model.slug,
+                Model {
+                    efforts: model
+                        .supported_reasoning_levels
+                        .into_iter()
+                        .map(|level| level.effort)
+                        .collect(),
+                    context_window: model.context_window,
+                },
+            )
+        })
+        .collect())
+}
+
+fn claude_models(body: Value) -> Result<Models> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Entry {
+        value: String,
+        #[serde(default)]
+        supported_effort_levels: Vec<String>,
+    }
+    let list: Response<Response<ModelList<Entry>>> = serde_json::from_value(body)?;
+    // A bare family already expresses the CLI default; it is not another model choice.
+    Ok(list
+        .response
+        .response
+        .models
+        .into_iter()
+        .filter(|model| model.value != "default")
+        .map(|model| {
+            (
+                model.value,
+                Model {
+                    efforts: model.supported_effort_levels,
+                    context_window: None,
+                },
+            )
+        })
+        .collect())
+}
+
+fn pi_models(body: Value) -> Result<Models> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Entry {
+        provider: String,
+        id: String,
+        reasoning: bool,
+        thinking_level_map: Option<BTreeMap<String, Option<Value>>>,
+        context_window: Option<NonZeroU64>,
+    }
+    let list: Rpc<ModelList<Entry>> = serde_json::from_value(body)?;
+    // pi-ai 1.5.2 getSupportedThinkingLevels: absent mappings keep base levels, explicit null
+    // disables a level, and extended levels need an explicit mapping. This is CLI vocabulary.
+    // https://unpkg.com/@earendil-works/pi-ai@1.5.2/dist/models.js
+    let base = ["off", "minimal", "low", "medium", "high"];
+    let extended = ["xhigh", "max"];
+    Ok(list
+        .data
+        .models
+        .into_iter()
+        .map(|model| {
+            let efforts = base
+                .iter()
+                .map(|level| (*level, true))
+                .chain(extended.iter().map(|level| (*level, false)))
+                .filter(|(level, default)| {
+                    if !model.reasoning {
+                        return *level == "off";
+                    }
+                    match model
+                        .thinking_level_map
+                        .as_ref()
+                        .and_then(|map| map.get(*level))
+                    {
+                        Some(None) => false,
+                        Some(Some(_)) => true,
+                        None => *default,
+                    }
+                })
+                .map(|(level, _)| level.to_owned())
+                .collect();
+            (
+                format!("{}/{}", model.provider, model.id),
+                Model {
+                    efforts,
+                    context_window: model.context_window,
+                },
+            )
+        })
+        .collect())
+}
+
 impl AcpAdapter {
     // codex-acp 2.6.0 src/index.ts and CodexAcpServer.ts consume this session config.
     pub(crate) fn configure(
         self,
-        spec: &super::AgentSpec,
+        spec: &AgentSpec,
         primary: &str,
         worker: bool,
     ) -> Result<SessionConfig> {
@@ -271,10 +440,8 @@ impl AcpAdapter {
                         .is_some_and(|model| model.starts_with("openai/")),
                     "headless pi requires an explicit openai/<model> and pi's own ChatGPT login"
                 );
-                let mut invocation = super::AgentInvocation::new(
-                    spec.clone(),
-                    super::InvocationDefaults::Foreground,
-                );
+                let mut invocation =
+                    AgentInvocation::new(spec.clone(), InvocationDefaults::Foreground);
                 invocation
                     .args
                     .extend(["--provider".into(), "openai".into()]);

@@ -122,7 +122,7 @@ rule supported by the source format; otherwise mark the affected totals unknown.
 | --- | --- |
 | Skill | Worker `skill`, lead `entry_skill` are primary attribution; auxiliary skills are not separate sessions. No historical skill revision/hash is guaranteed. |
 | Model / effort | Metadata describes launch. Inspect transcript model/effort records for switches; segment only where usage can be assigned, otherwise label mixed/unknown. |
-| Tier | Resolved `agent` is not selected tier or proof of an explicit override. Do not reverse-map through today's roster. |
+| Tier | Resolved `agent` is not selected tier or proof of an explicit override. Do not reverse-map through today's model list. |
 | Task / issue | Use `task_label` when present; otherwise corroborate briefs, timestamps and `decisions.log`. Label inferred joins and confidence; leave unsupported joins unknown. |
 | Setup | A recorded setup name does not snapshot historical manifest contents; today's setup is not evidence of yesterday's routing. |
 

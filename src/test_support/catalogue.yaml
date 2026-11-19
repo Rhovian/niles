@@ -1,0 +1,15 @@
+codex:
+  gpt-6.2-sol: {"efforts":["low","high","ultra"],"context_window":500000}
+  gpt-5.5: {"efforts":["low","medium","high","xhigh"],"context_window":1050000}
+  gpt-6-astra: {"efforts":["low","medium","high","xhigh","max","ultra"],"context_window":1050000}
+  gpt-6-luna: {"efforts":["low","medium","high","xhigh","max"],"context_window":1050000}
+  gpt-6.1-sol: {"efforts":["low","medium","high","xhigh","max","ultra"],"context_window":1050000}
+  fixture: {"efforts":["medium","high"],"context_window":1000}
+  spare: {"efforts":["low"],"context_window":1000}
+claude:
+  fable: {"efforts":["low","medium","high","xhigh","max"],"context_window":1000000}
+  haiku: {"efforts":[],"context_window":1000000}
+  opus: {"efforts":["low","medium","high","xhigh","max"],"context_window":1000000}
+  sonnet: {"efforts":["low","medium","high","xhigh","max"],"context_window":1000000}
+pi:
+  tencent/hy3: {"efforts":["low","high"],"context_window":262144}
