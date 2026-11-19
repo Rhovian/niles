@@ -88,7 +88,7 @@ interactive fixture tests described below run in CI.
    operator logins. A workspace manifest is required. It uses the first exact binding for each
    family in binding order (entry first, then alphabetical), then tier order
    (standard, frontier, economy, mechanical), primary before secondaries. Model and effort come
-   from that binding, validated against the effective registry; unused families are skipped.
+   from that binding, passed to the CLI unvalidated; unused families are skipped.
    A pass requires tool execution writing the random sample label supplied only in the primary
    prompt, exit 0 and an unchanged version. The opening turn asks for that run's sample label.
    On failure quote the TSV row, argv from stderr, and the kept evidence directory's `stdout`
