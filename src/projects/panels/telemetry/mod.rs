@@ -2,6 +2,7 @@
 //! live sessions' context and the window's events.
 
 use super::{lead_running, registry};
+use crate::agents::ModelCatalogue;
 use crate::telemetry::BUCKET;
 use crate::theme::Theme;
 use anyhow::{Context, Result};
@@ -108,7 +109,14 @@ pub(super) fn panel(entries: &[registry::Entry], range: Range, theme: &Theme) ->
     let since = Window::new(Range::Month, now)?.start;
     let projects = entries
         .iter()
-        .map(|entry| collect::project(entry, lead_running(entry)?, since))
+        .map(|entry| {
+            collect::project(
+                entry,
+                lead_running(entry)?,
+                since,
+                &ModelCatalogue::default(),
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     let (width, _) = terminal::size().context("failed to read the terminal size")?;
     let dashboard = aggregate::dashboard(&projects, Window::new(range, now)?)?;

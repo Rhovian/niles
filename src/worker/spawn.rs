@@ -4,13 +4,12 @@ use super::resolve::resolve_live_worker_if_exists;
 use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
-use crate::config::spec::{ProjectConfig, load_project_config_from};
 use crate::harness::{Launch, Mode};
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
 use crate::util::{current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template};
-use crate::workspace_manifest::setup::SetupSelection;
+use crate::workspace_manifest::{Tier, setup::SetupSelection};
 use crate::{agent_window, agents, telemetry, wake, watch, workspace_manifest};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -45,8 +44,8 @@ pub struct Assignment {
     #[arg(long = "with")]
     with: Vec<SkillName>,
     /// Manifest tier whose primary to launch (standard by default).
-    #[arg(long, value_enum, default_value_t = agents::roster::Tier::Standard, conflicts_with = "agent")]
-    pub tier: agents::roster::Tier,
+    #[arg(long, value_enum, default_value_t = Tier::Standard, conflicts_with = "agent")]
+    pub tier: Tier,
 }
 
 pub struct SpawnTask {
@@ -77,7 +76,7 @@ pub fn spawn(
     let project = current_dir_utf8()?;
     let _project_lock = Scope::Project(&project).reserve()?;
     let _worker_lock = Scope::Worker(&project, &id).reserve()?;
-    let config = load_project_config_from(&project)?;
+
     let manifest_path = workspace_manifest::manifest_path(&project, selection)?;
     let manifest = workspace_manifest::load(&project, selection).with_context(|| {
         format!(
@@ -86,14 +85,11 @@ pub fn spawn(
         )
     })?;
     let manifest = manifest.with_context(|| format!("cannot resolve skill '{skill}': manifest {manifest_path} does not exist. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"))?;
-    let agent = resolve_agent(&manifest_path, &manifest, &skill, tier, agent, &config)?;
+    let agent = resolve_agent(&manifest_path, &manifest, &skill, tier, agent)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
     let cadence = watch::resolve_cadence(checkin.as_deref(), Some(&manifest), &manifest_path)?;
-    // The one launch decision, resolved before any worker state is written: unknown agent names
-    // and models the family does not offer are rejected here, by the same resolver the lead uses.
-    let mut invocation =
-        agents::invocation(&agent, agents::InvocationDefaults::Worker, &config.models)?;
+    let mut invocation = agents::invocation(&agent, agents::InvocationDefaults::Worker)?;
     let primary_skill = skills::resolve(&skill, &project, &skills::global_dir()?)?;
     let empty_composition = workspace_manifest::Binding::default();
     let binding = match manifest.bindings.get(&skill) {
@@ -274,9 +270,8 @@ fn resolve_agent(
     path: &Utf8Path,
     manifest: &workspace_manifest::WorkspaceManifest,
     skill: &SkillName,
-    tier: agents::roster::Tier,
+    tier: Tier,
     agent: Option<String>,
-    config: &ProjectConfig,
 ) -> Result<String> {
     if *skill == manifest.entry {
         bail!("entry skill {skill} cannot be spawned");
@@ -284,7 +279,7 @@ fn resolve_agent(
     if let Some(agent) = agent {
         manifest
             .tiers
-            .admit(&agent, &config.models)
+            .admit(&agent)
             .with_context(|| format!("invalid --agent for manifest {path}"))?;
         return Ok(agent);
     }

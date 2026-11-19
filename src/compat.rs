@@ -1,6 +1,5 @@
 use crate::agent_window::shell_quote;
 use crate::agents::{self, AgentSpec, InvocationDefaults};
-use crate::config::spec::load_project_config_from;
 use crate::doctor::version_line;
 use crate::store::atomic_write;
 use crate::util::{current_dir_utf8, find_on_path, read_optional_string, utf8_path};
@@ -27,13 +26,13 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
     })
     .collect::<Result<Vec<_>>>()?;
     let root = current_dir_utf8()?;
-    let models = load_project_config_from(&root)?.models;
+
     let manifest = workspace_manifest::load(&root, selection)?
         .context("compat requires a workspace manifest")?;
     let specs = manifest
         .tiers
         .agents()
-        .map(|agent| AgentSpec::parse(agent, &models))
+        .map(AgentSpec::parse)
         .collect::<Result<Vec<_>>>()?;
     let mut passed = true;
     println!("family\tversion\tresult\tdetail");
@@ -48,8 +47,7 @@ pub(crate) fn compat(families: &[String], selection: Option<&SetupSelection>) ->
             continue;
         };
         let version = version_line(&path, "--version");
-        let mut invocation =
-            agents::invocation(&spec.canonical(), InvocationDefaults::Headless, &models)?;
+        let mut invocation = agents::invocation(&spec.canonical(), InvocationDefaults::Headless)?;
         let dir = utf8_path(
             env::temp_dir().join(format!("niles-compat-{}", Uuid::new_v4())),
             "compat directory",

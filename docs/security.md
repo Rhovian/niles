@@ -40,14 +40,13 @@ What Niles launches:
 
 | Boundary | Source or input | What Niles does | Remaining risk |
 | --- | --- | --- | --- |
-| Repository configuration | `niles.yaml` or `.niles.yaml` | Accepts only model and effort entries; unknown fields fail. It can't change executables or launch arguments. | It can add models and efforts that spawns may select. |
 | Repository code execution | `.niles/setups/<name>.yaml`, when you select it | Runs its `worktree.setup` and `gates.post` only from a setup you name with `--setup`; prints gate argv at spawn. | Selecting a repository setup runs its commands as you. See [Named setups](#named-setups). |
 | Workspace skills | `.niles/skills/<name>/SKILL.md` | Lists installed skills by scanning workspace/global skill directories, prints each skill's source at launch, rejects workspace symlinks, and enforces size limits. | Skill text reaches agents at system-prompt privilege. See [Skills](#skills-as-an-instruction-source). |
 | Imported skills | The pinned GitHub repository | Pins a full commit SHA, fetches only from github.com with hooks off and symlinks as plain files, caps content at 8 MiB, and never runs imported scripts. | Agents may still choose to run those scripts. |
 | Global state | State under `~/.niles/`, outside the clone | Opens state files with `O_NOFOLLOW`; validates worker IDs and labels; uses fixed-length SHA-256 workspace keys with a reserved state leaf to isolate projects. | Parent directories aren't protected; locks don't authenticate writers. |
 | Status lines and pane text | Worker status lines and captured pane text | Declares the orchestration contract independently of skills; `niles agent status` rejects invalid kinds and details before appending, and checks reports and staging for `done`. A follow-up dispatch resets the stage requirement and round budget. Escapes control characters in `niles wait`, caps lines at 4,096 bytes, never copies status text into nudges, and sends text with bracketed paste, refusing ESC. | Same-user writers can bypass submission checks by editing the log directly; malformed lines are still skipped by wait. `niles workers`, `report` and `peek` print stored text unsanitized. Any text can still mislead an agent or you. |
 | Headless ACP | Adapter JSON-RPC and local command socket | Keeps one runner per state directory under a lock; uses a private per-user socket directory, checks session identity and offered permission options, binds form answers to pending requests, and strips terminal controls from rendered text. Verifies declared subscription identity before opening a session and on subsequent auth updates. | Same-user writers can forge configuration/state or connect to the socket. An approved tool executes with the agent's permissions; worker bypass remains enabled. |
-| Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; validates models against the roster. | Agents act with your full permissions. |
+| Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; passes models and efforts to the CLI for validation. | Agents act with your full permissions. |
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
@@ -285,3 +284,19 @@ importing a missing skill also installs or updates its required imports. Missing
 invalid skill references and fetch failures stop setup before writing
 the manifest. The validated manifest is written with atomic exclusive publication, preserving a manifest
 that appeared concurrently. No editor or external setup command is launched by the wizard.
+
+Model discovery resolves the installed CLIs before changing into a fresh temporary directory
+outside the caller's repository. Claude's print mode skips its workspace-trust prompt, so running
+it inside a repository would execute project hooks and load project MCP configuration without
+that prompt. The neutral directory prevents that project discovery, including Pi's project-local
+extensions. User and managed CLI configuration remain trusted and can execute startup code.
+
+Discovery disables session persistence, Claude MCP servers (`--strict-mcp-config` without an
+MCP config), and Pi extensions (`--no-extensions`). It writes the optional catalogue request,
+closes stdin, and collects stdout and stderr through process exit. A query has a 30-second
+deadline; exceeding it kills the direct child and fails. Catalogue JSON is data. Launch values
+use argument vectors or shell quoting; configuration-backed values are encoded as TOML strings
+or JSON, rather than interpolated into configuration syntax.
+
+Catalogue failures are shown in their family or context section, preserving unrelated data.
+The catalogue command returns a failure status after printing the working families.

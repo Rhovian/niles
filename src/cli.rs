@@ -224,7 +224,7 @@ pub enum CommandName {
     Workers,
     /// Print usage for live start and worker sessions as JSON.
     Usage,
-    /// List effective built-in and workspace model rosters.
+    /// List models and efforts from installed agent CLIs.
     Models,
     /// List installed skills, sources and descriptions.
     Skills {

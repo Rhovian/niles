@@ -3,8 +3,8 @@
 
 use self::items::{Edit, Item, Note, Step, Tier};
 use super::registry::{self, ProjectName};
+use crate::agents::ModelCatalogue;
 use crate::agents::picker;
-use crate::config::spec::{ProjectConfig, load_project_config_from};
 use crate::config::user;
 use crate::selection::{self, Selection};
 use crate::theme::{StyleKey, Theme};
@@ -33,7 +33,7 @@ fn items(project: Option<&ProjectName>) -> Result<Vec<Item>> {
         .iter()
         .find(|entry| entry.name == *name)
         .with_context(|| format!("{} is not registered", name.as_str()))?;
-    items::project(&entry.path)
+    Ok(items::project(&entry.path, &ModelCatalogue::default()))
 }
 
 pub(super) fn run(project: Option<&ProjectName>, theme: &Theme) -> Result<()> {
@@ -248,19 +248,19 @@ fn pick_tier(
     tier: &Tier,
     theme: &Theme,
 ) -> Result<()> {
-    edit_tiers(root, *tier, |manifest, config, tier| {
-        picker::configure(terminal, root, manifest, config, theme, tier)
+    edit_tiers(root, *tier, |manifest, catalogue, tier| {
+        picker::configure(terminal, root, manifest, catalogue, theme, tier)
     })
 }
 
 fn edit_tiers(
     root: &Utf8Path,
     tier: Tier,
-    pick: impl FnOnce(WorkspaceManifest, &ProjectConfig, Tier) -> Result<picker::Choice>,
+    pick: impl FnOnce(WorkspaceManifest, &ModelCatalogue, Tier) -> Result<picker::Choice>,
 ) -> Result<()> {
-    let config = load_project_config_from(root)?;
+    let catalogue = ModelCatalogue::default();
     let manifest = load_manifest(root)?;
-    match pick(manifest.clone(), &config, tier)? {
+    match pick(manifest.clone(), &catalogue, tier)? {
         picker::Choice::Save(draft) => {
             workspace_manifest::save_changes(root, None, &manifest, &draft)?;
         }

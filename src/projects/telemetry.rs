@@ -1,6 +1,5 @@
 use super::registry;
 use crate::agents::AgentSpec;
-use crate::config::spec::load_project_config_from;
 use crate::session;
 #[cfg(test)]
 use crate::store::atomic_write;
@@ -39,14 +38,13 @@ pub(crate) fn collect() -> Result<Vec<Session>> {
 // race accepted: close/supersede can move a session between these reads. Like the local panel,
 // one snapshot can miss or double-count it; refreshing replaces that cached snapshot.
 fn project(entry: &registry::Entry, since: DateTime<Utc>) -> Result<Vec<Session>> {
-    let models = load_project_config_from(&entry.path)?.models;
     let make_session = |id,
                         entry_session,
                         agent: &str,
                         created_at,
                         (closed_at, buckets): (Option<DateTime<Utc>>, Buckets)|
      -> Result<Session> {
-        let agent = AgentSpec::parse(agent, &models)?;
+        let agent = AgentSpec::parse(agent)?;
         Ok(Session {
             project: entry.name.as_str().to_owned(),
             id,

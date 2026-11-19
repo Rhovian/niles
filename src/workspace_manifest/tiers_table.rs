@@ -1,6 +1,6 @@
 use super::{TierBinding, WorkspaceManifest};
-use crate::agents::roster::Tier;
-use crate::config::spec::ProjectConfig;
+use crate::agents::AgentSpec;
+use crate::workspace_manifest::Tier;
 use anyhow::Result;
 use std::io::Write;
 
@@ -16,9 +16,8 @@ pub(crate) const MISSING: &str = "-";
 pub(crate) fn print_manifest_tiers<W: Write>(
     output: &mut W,
     manifest: &WorkspaceManifest,
-    config: &ProjectConfig,
 ) -> Result<()> {
-    let rows = manifest_tiers(manifest, config);
+    let rows = manifest_tiers(manifest);
     let tier_width = rows
         .iter()
         .map(|row| cells(&cell(row.tier.as_str())))
@@ -46,11 +45,11 @@ pub(crate) fn print_manifest_tiers<W: Write>(
     Ok(())
 }
 
-pub(crate) fn manifest_tiers(manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<TierRow> {
+pub(crate) fn manifest_tiers(manifest: &WorkspaceManifest) -> Vec<TierRow> {
     manifest
         .tiers
         .iter()
-        .map(|(tier, binding)| tier_row(tier, binding, config))
+        .map(|(tier, binding)| tier_row(tier, binding))
         .collect()
 }
 
@@ -63,8 +62,8 @@ pub(crate) struct TierRow {
     pub invalid_reason: Option<String>,
 }
 
-fn tier_row(tier: Tier, binding: &TierBinding, config: &ProjectConfig) -> TierRow {
-    match super::types::exact_spec(&binding.primary, &config.models) {
+fn tier_row(tier: Tier, binding: &TierBinding) -> TierRow {
+    match AgentSpec::parse(&binding.primary) {
         Ok(spec) => TierRow {
             tier,
             family: cell(spec.family()),
@@ -113,7 +112,7 @@ fn cells(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agents, test_support};
+    use crate::test_support;
 
     fn manifest(primary: &str) -> WorkspaceManifest {
         let mut manifest = test_support::manifest();
@@ -123,10 +122,7 @@ mod tests {
 
     fn render(manifest: &WorkspaceManifest) -> String {
         let mut output = Vec::new();
-        let config = ProjectConfig {
-            models: agents::ModelRoster::builtin().unwrap(),
-        };
-        print_manifest_tiers(&mut output, manifest, &config).unwrap();
+        print_manifest_tiers(&mut output, manifest).unwrap();
         String::from_utf8(output).unwrap()
     }
 
@@ -150,7 +146,7 @@ mod tests {
 
     #[test]
     fn an_unpinned_model_or_effort_is_not_invented() {
-        // The display names inexact input rather than inventing a launch choice.
+        // Omitted values belong to the CLI; the table leaves their cells empty.
         let rendered = render(&manifest("codex"));
 
         // Cells, not spacing: padding shifts whenever another tier gets wider.
@@ -163,7 +159,7 @@ mod tests {
             ["standard", "codex", "-", "-"],
             "{rendered}"
         );
-        assert!(rendered.contains("must name an exact"));
+        assert!(!rendered.contains("reason:"));
     }
 
     #[test]

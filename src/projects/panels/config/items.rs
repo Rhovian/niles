@@ -1,21 +1,16 @@
 //! The CONFIG panel's rows: each key with its value and the file that sets it.
 
-use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    agents::ModelRoster,
-    config::{
-        spec::{
-            PROJECT_CONFIG_FILES, ProjectConfig, load_project_config_from, project_config_file,
-        },
-        user::{DEFAULT_BINDINGS, DEFAULT_THEME, FileConfig},
-    },
+    agents::{self, ModelCatalogue},
+    config::user::{DEFAULT_BINDINGS, DEFAULT_THEME, FileConfig},
     projects::registry,
     watch,
     workspace_manifest::{self, MISSING, WorkspaceManifest, clamp, manifest_tiers},
 };
 
+const CLI: &str = "CLI";
 const BUILTIN: &str = "builtin";
 const MANIFEST: &str = "manifest";
 const CONFIG_YAML: &str = "config.yaml";
@@ -27,7 +22,7 @@ const REASON_WIDTH: usize = 68;
 pub(super) enum Item {
     Section(String),
     Setting(Setting),
-    /// A file that failed to load, in place of the settings it holds.
+    /// A source diagnostic alongside sections that remain available.
     Broken(String),
 }
 
@@ -77,7 +72,7 @@ pub(super) enum Step {
     Recheck(Utf8PathBuf),
 }
 
-pub(super) use crate::agents::roster::Tier;
+pub(super) use crate::workspace_manifest::Tier;
 
 pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Item> {
     let mut items = vec![Item::Section(CONFIG_YAML.to_owned())];
@@ -116,19 +111,11 @@ pub(super) fn global(config: &Utf8Path, registry: &[registry::Entry]) -> Vec<Ite
     items
 }
 
-pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
-    let file = match project_config_file(root)? {
-        Some(file) => file,
-        None => PROJECT_CONFIG_FILES[0],
-    };
-    let config = load_project_config_from(root);
+pub(super) fn project(root: &Utf8Path, catalogue: &ModelCatalogue) -> Vec<Item> {
     let mut items = Vec::new();
     match workspace_manifest::load(root, None) {
         Ok(Some(manifest)) => {
-            match &config {
-                Ok(config) => items.extend(tiers(root, &manifest, config)),
-                Err(error) => items.extend([Item::Section("tiers".to_owned()), broken(error)]),
-            }
+            items.extend(tiers(root, &manifest));
             items.extend(watch(root, &manifest));
         }
         Ok(None) => items.extend([
@@ -137,16 +124,13 @@ pub(super) fn project(root: &Utf8Path) -> Result<Vec<Item>> {
         ]),
         Err(error) => items.extend([Item::Section(MANIFEST.to_owned()), broken(&error)]),
     }
-    match &config {
-        Ok(config) => items.extend(files(config, file)?),
-        Err(error) => items.extend([Item::Section(file.to_owned()), broken(error)]),
-    }
-    Ok(items)
+    items.extend(models(catalogue));
+    items
 }
 
-fn tiers(root: &Utf8Path, manifest: &WorkspaceManifest, config: &ProjectConfig) -> Vec<Item> {
+fn tiers(root: &Utf8Path, manifest: &WorkspaceManifest) -> Vec<Item> {
     let mut items = Vec::new();
-    for row in manifest_tiers(manifest, config) {
+    for row in manifest_tiers(manifest) {
         items.push(Item::Section(format!("tiers.{}", row.tier.as_str())));
         let mut invalid = row.invalid_reason.map(Note::Invalid);
         let edit = Some(Edit::Tier {
@@ -206,30 +190,22 @@ fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> [Item; 3] {
     ]
 }
 
-/// The models `niles.yaml` adds or changes.
-fn files(config: &ProjectConfig, file: &'static str) -> Result<Vec<Item>> {
-    let builtin = ModelRoster::builtin()?.rows();
+/// Installed CLIs supply the available models and effort levels.
+fn models(catalogue: &ModelCatalogue) -> Vec<Item> {
     let mut items = vec![Item::Section("models".to_owned())];
-    let models = config
-        .models
-        .rows()
-        .into_iter()
-        .filter(|row| !builtin.contains(row));
-    let models = models.map(|[family, model, efforts]| {
-        let mut setting = plain(&format!("{family}:{model}"), &efforts, file);
-        if let Some([.., builtin]) = builtin.iter().find(|[f, m, _]| *f == family && *m == model) {
-            setting.note = Note::Builtin(builtin.clone());
+    for profile in agents::profiles() {
+        match catalogue.models(profile.id) {
+            Ok(models) => items.extend(models.map(|(model, efforts)| {
+                Item::Setting(plain(
+                    &format!("{}:{model}", profile.id),
+                    &efforts.join(" "),
+                    CLI,
+                ))
+            })),
+            Err(error) => items.push(broken(&error)),
         }
-        setting
-    });
-    items.extend(listed(models));
-    Ok(items)
-}
-
-/// A section's settings, or one builtin `-` row so an empty section is visible.
-fn listed(settings: impl Iterator<Item = Setting>) -> Vec<Item> {
-    let mut items = settings.map(Item::Setting).collect::<Vec<_>>();
-    if items.is_empty() {
+    }
+    if items.len() == 1 {
         items.push(Item::Setting(plain(MISSING, MISSING, BUILTIN)));
     }
     items

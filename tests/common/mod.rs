@@ -12,6 +12,8 @@ use std::{env, fs, thread};
 #[path = "../../src/test_support/process.rs"]
 mod process;
 pub use process::*;
+mod catalogues;
+pub use catalogues::write_catalogues;
 
 #[path = "../../src/test_support/skills.rs"]
 mod skills;
@@ -122,9 +124,7 @@ impl TestEnv {
         atomic_write(root.join(TEST_ENV_MARKER), "").unwrap();
         fs::create_dir_all(&bin).unwrap();
         write_executable(&bin.join("tmux"), tmux);
-        for agent in ["claude", "codex"] {
-            write_executable(&bin.join(agent), "#!/bin/sh\nexit 0\n");
-        }
+        write_catalogues(&bin);
         Self {
             root,
             home,

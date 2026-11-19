@@ -76,25 +76,28 @@ fn global_rows_show_builtin_overridden_and_invalid_config() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-fn project(label: &str, manifest: Option<&str>, file: Option<&str>) -> Utf8PathBuf {
+fn project(label: &str, manifest: Option<&str>) -> Utf8PathBuf {
     let root = temp_test_path(label);
     fs::create_dir_all(&root).unwrap();
     fs::create_dir_all(paths::project_dir(&root).unwrap()).unwrap();
     if let Some(manifest) = manifest {
         atomic_write(workspace_manifest::manifest_path(&root).unwrap(), manifest).unwrap();
     }
-    if let Some(file) = file {
-        atomic_write(root.join(".niles.yaml"), file).unwrap();
-    }
     root
 }
 
 #[test]
 fn project_rows_show_tiers_and_standard_primary_is_editable() {
-    let root = project("config-project-tiers", Some(manifest_body()), None);
-    let items = items::project(&root).unwrap();
+    let root = project("config-project-tiers", Some(manifest_body()));
+    let items = items::project(&root, &ModelCatalogue::fixture().with_error("pi"));
     let rows = table(&items);
     assert!(rows.iter().any(|row| row == "[tiers.standard]"));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("pi model catalogue: fixture failure"))
+    );
+    assert!(rows.iter().any(|row| row == "[watch]"));
+    assert!(rows.iter().any(|row| row.contains("codex:gpt-6.2-sol")));
     assert!(
         rows.iter()
             .any(|row| row.starts_with("model | gpt-6.1-sol"))
@@ -110,48 +113,27 @@ fn project_rows_show_tiers_and_standard_primary_is_editable() {
 }
 
 #[test]
-fn missing_manifest_and_invalid_project_file_show_in_their_sections() {
-    let root = project("config-missing", None, None);
-    let items = items::project(&root).unwrap();
-    assert_rows(
-        &items,
-        &[
-            "[manifest]",
-            "✗ global manifest.yaml",
-            "[models]",
-            "- | - | builtin | ",
-        ],
-    );
-    assert!(items.iter().all(|item| item.edit().is_none()));
-    test_support::remove_workspace(&root).unwrap();
-
-    let root = project(
-        "config-invalid",
-        Some(manifest_body()),
-        Some("agents: {lead: {}}\n"),
-    );
-    let rows = table(&items::project(&root).unwrap());
+fn missing_manifest_is_shown_without_hiding_models() {
+    let root = project("config-missing", None);
+    let items = items::project(&root, &ModelCatalogue::fixture());
+    let rows = table(&items);
     assert_eq!(rows.first().unwrap(), "[manifest]");
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row.contains("unknown field `agents`"))
-            .count(),
-        2
-    );
-    assert_eq!(rows.iter().rev().nth(1).unwrap(), "[.niles.yaml]");
+    assert_eq!(rows.get(1).unwrap(), "✗ global manifest.yaml");
+    assert!(rows.iter().any(|row| row == "[models]"));
+    assert!(items.iter().all(|item| item.edit().is_none()));
     test_support::remove_workspace(&root).unwrap();
 }
 
 #[test]
 fn saving_a_skill_and_checkin_keeps_the_other_fields() {
     let text = format!("{}checkin: 300s\nrecheck: backoff\n", manifest_body());
-    let root = project("config-save", Some(&text), None);
+    let root = project("config-save", Some(&text));
     let before = workspace_manifest::load(&root).unwrap().unwrap();
     save_manifest(&root, |manifest| {
         manifest.tiers.standard.primary = "codex:gpt-5.5:high".into();
     })
     .unwrap();
-    let rows = items::project(&root).unwrap();
+    let rows = items::project(&root, &ModelCatalogue::fixture());
     let (setting, step) = rows
         .iter()
         .find_map(|item| match item {
@@ -206,12 +188,10 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
     let first = project(
         "config-setup-first",
         Some(&format!("{}checkin: 2m\n", manifest_body())),
-        None,
     );
     let second = project(
         "config-setup-second",
         Some(&format!("{}checkin: 5m\n", manifest_body())),
-        None,
     );
     let named = first.join(".niles/setups/tdd.yaml");
     fs::create_dir_all(named.parent().unwrap()).unwrap();
@@ -221,7 +201,7 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
     let selected = manifest::load(&first, Some(&selection)).unwrap().unwrap();
     assert_eq!(selected.checkin.as_deref(), Some("15m"));
     for (root, cadence) in [(&first, "2m"), (&second, "5m")] {
-        let rows = table(&items::project(root).unwrap());
+        let rows = table(&items::project(root, &ModelCatalogue::fixture()));
         assert!(
             rows.iter()
                 .any(|row| row.starts_with(&format!("checkin | {cadence} |"))),
@@ -245,7 +225,7 @@ fn explorer_project_scopes_read_and_save_their_own_default_after_a_named_load() 
 
 #[test]
 fn config_tier_edit_saves_secondaries_and_entry_agent_on_the_latest_manifest() {
-    let root = project("config-picker-save", Some(manifest_body()), None);
+    let root = project("config-picker-save", Some(manifest_body()));
     let before = load_manifest(&root).unwrap();
     let mut draft = before.clone();
     draft
@@ -254,10 +234,10 @@ fn config_tier_edit_saves_secondaries_and_entry_agent_on_the_latest_manifest() {
         .secondaries
         .push("claude:fable:medium".into());
     draft.entry_agent = "claude:fable:medium".into();
-    edit_tiers(&root, Tier::Standard, |received, config, tier| {
+    edit_tiers(&root, Tier::Standard, |received, _config, tier| {
         assert_eq!(received, before);
         assert_eq!(tier, Tier::Standard);
-        manifest::check(&draft, &config.models).unwrap();
+        manifest::check(&draft).unwrap();
         let mut concurrent = received;
         concurrent.checkin = Some("1h".into());
         workspace_manifest::save(&root, &concurrent).unwrap();

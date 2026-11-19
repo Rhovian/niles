@@ -2,16 +2,16 @@ use anyhow::{Context, Result, bail};
 
 mod acp;
 pub(crate) use acp::{AuthSource, SessionConfig, SubscriptionStatus};
+pub(crate) mod catalogue;
 mod families;
 pub(crate) mod picker;
-pub(crate) mod roster;
 mod system_prompt;
 #[cfg(test)]
 mod tests;
 
+pub use catalogue::ModelCatalogue;
 pub(crate) use families::{AcpProfile, session_link};
 pub use families::{SystemPromptArg, known_agent_ids, profile_for, profiles};
-pub use roster::ModelRoster;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InvocationDefaults {
@@ -29,20 +29,22 @@ pub struct AgentInvocation {
     pub env: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AgentSpec {
     profile: &'static families::AgentProfile,
     model: Option<String>,
     effort: Option<String>,
 }
 
-pub fn invocation(
-    agent: &str,
-    defaults: InvocationDefaults,
-    models: &ModelRoster,
-) -> Result<AgentInvocation> {
-    let spec = AgentSpec::parse(agent, models)?;
-    validate_model(&spec, models)?;
+impl PartialEq for AgentSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.family() == other.family() && self.model == other.model && self.effort == other.effort
+    }
+}
+impl Eq for AgentSpec {}
+
+pub fn invocation(agent: &str, defaults: InvocationDefaults) -> Result<AgentInvocation> {
+    let spec = AgentSpec::parse(agent)?;
     Ok(AgentInvocation::new(spec, defaults))
 }
 
@@ -73,61 +75,41 @@ impl AgentInvocation {
 }
 
 impl AgentSpec {
-    pub fn parse(agent: &str, models: &ModelRoster) -> Result<Self> {
+    pub fn parse(agent: &str) -> Result<Self> {
         let (family, rest) = match agent.split_once(':') {
             Some((family, rest)) => (family, Some(rest)),
             None => (agent, None),
         };
-        // A model name may itself contain `:` (OpenRouter's `:free` variants). Such a name must be
-        // on the roster, which is what tells its colon from the one before an effort.
-        let listed = |model: &str| {
-            profile_for(family).is_some_and(|profile| {
-                models
-                    .supported_efforts(profile.id, &model.to_ascii_lowercase())
-                    .is_some()
-            })
-        };
         let (model, effort) = match rest {
-            Some(rest) if listed(rest) => (Some(rest), None),
             Some(rest) => match rest.rsplit_once(':') {
-                Some((model, effort)) if listed(model) || !model.contains(':') => {
-                    (Some(model), Some(effort))
-                }
-                Some(_) => bail!("invalid agent spec `{agent}`; expected family[:model[:effort]]"),
+                Some((model, effort)) => (Some(model), (!effort.is_empty()).then_some(effort)),
                 None => (Some(rest), None),
             },
             None => (None, None),
         };
+        Self::from_parts(family, model, effort)
+    }
+
+    pub fn from_parts(family: &str, model: Option<&str>, effort: Option<&str>) -> Result<Self> {
         if [Some(family), model, effort]
             .into_iter()
             .flatten()
             .any(|part| part.trim().is_empty())
         {
-            bail!("invalid agent spec `{agent}`; family, model, and effort cannot be empty");
+            let spec = [Some(family), model, effort]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(":");
+            bail!("invalid agent spec `{spec}`; family, model, and effort cannot be empty");
         }
-
-        Self::from_parts(family, model, effort, models)
-    }
-
-    pub fn from_parts(
-        family: &str,
-        model: Option<&str>,
-        effort: Option<&str>,
-        models: &ModelRoster,
-    ) -> Result<Self> {
         let profile =
             profile_for(family).with_context(|| format!("unknown agent family `{family}`"))?;
-        let family = profile.id;
         if effort.is_some() && model.is_none() {
-            bail!("invalid agent spec; effort requires a model");
+            bail!("invalid {family} agent spec; effort requires a model");
         }
-        let model = model
-            .map(|value| roster::normalize_model(family, value))
-            .transpose()?;
-        let effort = effort
-            .zip(model.as_deref())
-            .map(|(value, model)| normalize_effort(family, model, value, models))
-            .transpose()?;
+        let model = model.map(str::to_owned);
+        let effort = effort.map(str::to_owned);
 
         Ok(Self {
             profile,
@@ -165,40 +147,10 @@ impl AgentSpec {
         if let Some(effort) = &self.effort {
             spec.push(':');
             spec.push_str(effort);
+        } else if self.model.as_ref().is_some_and(|model| model.contains(':')) {
+            // The empty effort slot disambiguates colons belonging to the model.
+            spec.push(':');
         }
         spec
     }
-}
-
-fn normalize_effort(
-    family: &str,
-    model: &str,
-    effort: &str,
-    models: &ModelRoster,
-) -> Result<String> {
-    let normalized = roster::normalize_effort(effort);
-    match models.supported_efforts(family, model) {
-        None => Ok(normalized),
-        Some(supported) if supported.iter().any(|candidate| candidate == &normalized) => {
-            Ok(normalized)
-        }
-        Some([]) => {
-            bail!("{family} model `{model}` takes no effort; drop the effort from the agent spec")
-        }
-        Some(_) => {
-            bail!("invalid {family} effort `{effort}` for model `{model}` in agent spec")
-        }
-    }
-}
-
-pub(crate) fn validate_model(spec: &AgentSpec, models: &ModelRoster) -> Result<()> {
-    let Some(model) = spec.model() else {
-        return Ok(());
-    };
-
-    if models.supported_efforts(spec.family(), model).is_some() {
-        return Ok(());
-    }
-
-    bail!("invalid {} model `{model}` in agent spec", spec.family())
 }

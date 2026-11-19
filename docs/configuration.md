@@ -1,6 +1,6 @@
 # Configuration
 
-Reference for the workspace manifest, model registry and Niles state. The
+Reference for the workspace manifest, CLI model discovery and Niles state. The
 [README](../README.md#configuration) shows where the manifest lives and a minimal example.
 
 ## Manifest keys
@@ -17,8 +17,8 @@ Reference for the workspace manifest, model registry and Niles state. The
 | `worktree` | top level | `env` and `setup` for `spawn --worktree`; see [worktrees](#worktrees). |
 | `checkin`, `recheck` | top level | Watcher cadence; see [check-ins](#check-ins). |
 
-Agents are written `family:model:effort`, such as `claude:sonnet:high`; models without effort
-support, such as `claude:haiku`, omit the suffix. Scalar bindings and `when:` groups are rejected.
+Tier agents may name a family alone, a model, or a model with an effort. Scalar bindings and
+`when:` groups are rejected.
 For direct editing with native sub-agents, [set `entry: solo`](skills.md#entry-sessions).
 
 `niles spawn <id> --skill <name>` uses the standard primary. `--tier <tier>` picks another listed
@@ -30,60 +30,37 @@ before upgrading; there is no automatic migration.
 
 ## Models
 
-The first of `niles.yaml` or `.niles.yaml` in the repository extends the built-in roster. Listing
-an existing model replaces its entry, and `efforts: []` marks a model with no effort qualifier.
-The optional `context_window`, in tokens, lets the telemetry panel show a percentage:
+`niles models`, the model picker and the config panel read available models and efforts from
+installed agent CLIs. Codex supplies `debug models`, Claude supplies its stream-JSON initialize
+response, and Pi supplies `get_available_models` in RPC mode. Context windows come from session
+transcripts, falling back to the CLI's catalogue when available.
 
-```yaml
-models:
-  codex:
-    gpt-5.7:
-      efforts: [low, medium, high, xhigh]
-      context_window: 400000
-```
+Agent specs use `family[:model[:effort]]`. Omit the model and effort to use the CLI's default.
+For a model ID containing colons, append `:` when omitting the effort, as in
+`pi:provider/model:variant:`. The final colon separates the model from its optional effort.
+Niles passes model and effort values unchanged to the CLI, which reports unsupported values at
+launch. Manifest tiers still restrict which agent specs workers may launch. Onboarding starts
+with each installed family's CLI defaults in the standard tier; choose other tiers yourself.
 
-`~/.niles/roster.yaml` replaces the full entry list for any model it names, or adds a model to a
-built-in family. It loads before project overrides, and new project models need an entry here to
-appear in `niles models`. The shipped list is `src/agents/roster.yaml`:
+Model configuration belongs to each agent CLI. The old `niles.yaml` and `.niles.yaml` files are
+no longer read. `niles models` lists the available models independently of manifest tier assignments.
+Its columns are `family`, `model`, `effort` and `context_window`; an unavailable context window
+is `unknown`.
 
-```yaml
-codex:
-  gpt-6-sol:
-    - effort: high
-      tier: standard
-      description: Complex work with a balance of intelligence and cost
-      speed: null
-      context_window: 1050000
-```
+A failed CLI is reported for its family while working catalogues remain available. The picker
+shows the failure and disables that family's choices. The config panel retains the manifest and
+other model families. Telemetry shows capacity lookup failures in CONTEXT while retaining token
+and event data. `niles models` prints working families and exits nonzero with the failed-family
+diagnostics on stderr.
 
-Speed ranks from 1 (fastest) to 4 (slowest); `null` means unverified and shows as
-`unknown`. Omit `effort` for a model without one. `niles models` lists only pairs some skill in
-the manifest allows, or every pair when there is no manifest. Invalid overrides are errors.
+An open view caches catalogue results. Restart Niles after changing CLI model configuration or
+fixing a discovery error.
 
 ### Pi models through OpenRouter
 
 Install `@earendil-works/pi-coding-agent`, launch `pi`, and use `/login` to store your OpenRouter
 key in `~/.pi/agent/auth.json`. Pi doesn't read `.env` files, and an exported
 `OPENROUTER_API_KEY` reaches workers only if the tmux server started after the export.
-
-Pi's bundled catalog lags the pi models in Niles's roster. Add them to `~/.pi/agent/models.json`,
-which merges into pi's OpenRouter provider:
-
-```json
-{
-  "providers": {
-    "openrouter": {
-      "models": [
-        { "id": "deepseek/deepseek-v4.1-flash", "reasoning": true },
-        { "id": "tencent/hy3", "reasoning": true },
-        { "id": "z-ai/glm-5.3-flash", "reasoning": true }
-      ]
-    }
-  }
-}
-```
-
-These entries omit prices, so Niles reports their token usage without a cost estimate.
 
 ## Worktrees
 
@@ -129,7 +106,6 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 - `~/.niles/remote/`: push keys and subscriptions, if you use [remote access](remote.md).
 - One tmux session per project, with status bar options set on that session only.
 
-Niles reads `~/.niles/roster.yaml` and `niles.yaml` but never writes them, and it doesn't edit
-your agent CLIs' or tmux configuration. To remove Niles, close its projects in the home view
+Niles doesn't edit your agent CLIs' or tmux configuration. To remove Niles, close its projects in the home view
 (`c`), uninstall the binary, and delete `~/.niles`, any
 `.niles/` directories in your repositories, and branches left by worktree spawns.

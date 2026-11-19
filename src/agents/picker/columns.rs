@@ -1,5 +1,5 @@
+use crate::agents::ModelCatalogue;
 use crate::agents::{self, AgentSpec};
-use crate::config::spec::ProjectConfig;
 use crate::selection::Selection;
 use crate::util::find_on_path;
 use anyhow::{Context, Result};
@@ -9,7 +9,7 @@ use ratatui::crossterm::event::KeyCode;
 pub(super) struct Family {
     pub name: String,
     pub installed: bool,
-    pub models: Vec<Model>,
+    pub models: Result<Vec<Model>, String>,
 }
 
 #[derive(Clone)]
@@ -18,29 +18,26 @@ pub(super) struct Model {
     pub efforts: Vec<String>,
 }
 
-pub(super) fn families(config: &ProjectConfig) -> Result<Vec<Family>> {
+pub(super) fn families(catalogue: &ModelCatalogue) -> Vec<Family> {
     agents::profiles()
         .map(|profile| {
             let name = profile.id;
-            let models = config
-                .models
-                .model_names(name)
-                .map(|model| {
-                    Ok(Model {
-                        name: model.to_owned(),
-                        efforts: config
-                            .models
-                            .supported_efforts(name, model)
-                            .context("listed model has no roster entry")?
-                            .to_vec(),
-                    })
+            let models = catalogue
+                .models(name)
+                .map(|models| {
+                    models
+                        .map(|(name, efforts)| Model {
+                            name: name.to_owned(),
+                            efforts: efforts.to_vec(),
+                        })
+                        .collect()
                 })
-                .collect::<Result<_>>()?;
-            Ok(Family {
+                .map_err(|error| error.to_string());
+            Family {
                 name: name.to_owned(),
                 installed: find_on_path(profile.binary).is_some(),
                 models,
-            })
+            }
         })
         .collect()
 }
@@ -68,8 +65,8 @@ pub(crate) struct Columns {
 }
 
 impl Columns {
-    pub(super) fn new(families: &[Family], current: &str, config: &ProjectConfig) -> Result<Self> {
-        let current = AgentSpec::parse(current, &config.models)?;
+    pub(super) fn new(families: &[Family], current: &str) -> Result<Self> {
+        let current = AgentSpec::parse(current)?;
         let mut families =
             Selection::new(families.to_vec()).context("picker has no agent families")?;
         families.prefer(|family| family.name == current.family());
@@ -88,7 +85,7 @@ impl Columns {
         clippy::wildcard_enum_match_arm,
         reason = "unbound terminal keys leave the selection unchanged"
     )]
-    pub(super) fn key(&mut self, key: KeyCode) -> Pick {
+    pub(super) fn key(&mut self, key: KeyCode) -> Result<Pick> {
         match key {
             KeyCode::Up | KeyCode::Down => {
                 let forward = key == KeyCode::Down;
@@ -112,35 +109,33 @@ impl Columns {
             }
             KeyCode::Left | KeyCode::Esc => {
                 self.column = match self.column {
-                    Column::Family => return Pick::Cancelled,
+                    Column::Family => return Ok(Pick::Cancelled),
                     Column::Model => Column::Family,
                     Column::Effort => Column::Model,
                 };
             }
             KeyCode::Right | KeyCode::Enter => {
                 let family = self.families.current();
+                if family.models.is_err() {
+                    return Ok(Pick::Pending);
+                }
                 match (&self.column, &self.models, &self.efforts) {
                     (Column::Family, Some(_), _) => self.column = Column::Model,
                     (Column::Model, _, Some(_)) => self.column = Column::Effort,
                     (_, models, efforts) => {
-                        let mut value = family.name.clone();
-                        if let Some(models) = models {
-                            value.push(':');
-                            value.push_str(&models.current().name);
-                        }
-                        if self.column == Column::Effort
-                            && let Some(efforts) = efforts
-                        {
-                            value.push(':');
-                            value.push_str(efforts.current());
-                        }
-                        return Pick::Selected(value);
+                        let model = models.as_ref().map(|models| models.current().name.as_str());
+                        let effort = efforts
+                            .as_ref()
+                            .filter(|_| self.column == Column::Effort)
+                            .map(|efforts| efforts.current().as_str());
+                        let selected = AgentSpec::from_parts(&family.name, model, effort)?;
+                        return Ok(Pick::Selected(selected.canonical()));
                     }
                 }
             }
-            _ => return Pick::Pending,
+            _ => return Ok(Pick::Pending),
         }
-        Pick::Pending
+        Ok(Pick::Pending)
     }
 
     fn select_model(&mut self) {
@@ -148,7 +143,10 @@ impl Columns {
         let model = Some(&self.current)
             .filter(|spec| spec.family() == family.name)
             .and_then(AgentSpec::model);
-        self.models = Selection::new(family.models.clone());
+        self.models = match &family.models {
+            Ok(models) => Selection::new(models.clone()),
+            Err(_) => None,
+        };
         if let Some(models) = &mut self.models {
             models.prefer(|entry| Some(entry.name.as_str()) == model);
         }

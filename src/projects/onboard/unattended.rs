@@ -1,5 +1,4 @@
 use crate::agents::AgentSpec;
-use crate::config::spec;
 use crate::skills::{self, SkillName};
 use crate::theme::Theme;
 use crate::workspace_manifest::{self, Tiers, WorkspaceManifest};
@@ -44,7 +43,6 @@ pub(crate) fn run(options: Options) -> Result<()> {
             "unknown skill {name}; fetchable: {choices}; import custom skills first"
         );
     }
-    let config = spec::load_project_config_from(&cwd)?;
     let mut manifest = WorkspaceManifest {
         entry: options.entry_skill,
         entry_agent: options.entry_agent,
@@ -55,9 +53,9 @@ pub(crate) fn run(options: Options) -> Result<()> {
         recheck: None,
         worktree: None,
     };
-    manifest.tiers.dedup(&config.models)?;
+    manifest.tiers.dedup()?;
     for agent in manifest.tiers.agents() {
-        let spec = AgentSpec::parse(agent, &config.models)?;
+        let spec = AgentSpec::parse(agent)?;
         let binary = spec.profile().binary;
         ensure!(
             util::find_on_path(binary).is_some(),
@@ -92,13 +90,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
             "CLI not found on PATH: tmux"
         );
     }
-    let written = super::finish(
-        &cwd,
-        &global,
-        &manifest,
-        &options.starter_skills,
-        &config.models,
-    )?;
+    let written = super::finish(&cwd, &global, &manifest, &options.starter_skills)?;
     ensure!(
         matches!(written, super::ManifestWrite::Written),
         "manifest already exists: {path}"

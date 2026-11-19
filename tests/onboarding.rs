@@ -126,14 +126,8 @@ fn lead_saves_secondary_edits_and_independent_entry_agent() {
     let value: serde_json::Value =
         serde_saphyr::from_str(&fs::read_to_string(manifest(&env)).unwrap()).unwrap();
     assert_eq!(json_field(&value, "/entry"), "lead");
-    assert_eq!(
-        json_field(&value, "/tiers/standard/primary"),
-        "codex:gpt-6.1-sol:medium"
-    );
-    assert_eq!(
-        json_field(&value, "/entry_agent"),
-        "codex:gpt-6.1-sol:medium"
-    );
+    assert_eq!(json_field(&value, "/tiers/standard/primary"), "codex");
+    assert_eq!(json_field(&value, "/entry_agent"), "codex");
     assert_eq!(
         value
             .pointer("/tiers/standard/secondaries")
@@ -142,7 +136,7 @@ fn lead_saves_secondary_edits_and_independent_entry_agent() {
             .unwrap()
             .last()
             .unwrap(),
-        "codex:gpt-6.1-sol:high"
+        "codex:gpt-6.2-sol:high"
     );
 }
 
@@ -282,7 +276,7 @@ fn back_walk_preserves_edits_and_checks_and_skips_lead_for_solo() {
             .unwrap()
             .last()
             .unwrap(),
-        "codex:gpt-6.1-sol:high"
+        "codex:gpt-6.2-sol:high"
     );
     assert!(env.home.join(".niles/skills/reviewer/SKILL.ref").exists());
 }

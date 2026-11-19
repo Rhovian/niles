@@ -1,9 +1,7 @@
 use super::*;
-use crate::agents::ModelRoster;
 use crate::store::{self, atomic_write};
 use crate::util;
-use std::collections::BTreeMap;
-use std::{fs, iter};
+use std::fs;
 #[test]
 fn generated_defaults_match_literal_expectations() {
     for (name, description) in
@@ -14,24 +12,17 @@ fn generated_defaults_match_literal_expectations() {
         let path = format!("{}/skills/{name}/SKILL.md", env!("CARGO_MANIFEST_DIR"));
         assert!(Utf8Path::new(&path).exists());
     }
-    let roster = ModelRoster::builtin().unwrap();
-    let cases: BTreeMap<String, String> =
-        store::parse_yaml(include_str!("../../test_support/onboarding.yaml")).unwrap();
-    for (installed, expected) in cases {
-        let generated =
-            defaults::manifest(&installed.split_whitespace().collect::<Vec<_>>()).unwrap();
-        manifest::check(&generated, &roster).unwrap();
+    for installed in [
+        vec!["claude"],
+        vec!["codex", "pi"],
+        vec!["claude", "codex", "pi"],
+    ] {
+        let generated = defaults::manifest(&installed).unwrap();
+        manifest::check(&generated).unwrap();
         assert!(generated.bindings.is_empty());
-        let mut actual = Vec::new();
-        for (tier, agents) in generated.tiers.iter() {
-            let families = iter::once(&agents.primary)
-                .chain(&agents.secondaries)
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join(",");
-            actual.push(format!("{}={families}", tier.as_str()));
-        }
-        assert_eq!(actual.join("\n") + "\n", expected, "{installed}");
+        assert_eq!(generated.entry_agent, *installed.first().unwrap());
+        assert_eq!(generated.tiers.agents().collect::<Vec<_>>(), installed);
+        assert_eq!(generated.tiers.iter().count(), 1);
     }
 }
 

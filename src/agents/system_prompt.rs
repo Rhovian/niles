@@ -38,7 +38,7 @@ impl AgentInvocation {
 // Codex 0.162.1 parses --config values as TOML, then falls back to raw strings:
 // https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/utils/cli/src/config_override.rs
 // No TOML serializer is a dependency; encode basic strings per TOML 1.0.0 §String.
-fn toml_basic_string(text: &str) -> String {
+pub(super) fn toml_basic_string(text: &str) -> String {
     let mut encoded = String::from("\"");
     for ch in text.chars() {
         match ch {
@@ -58,7 +58,7 @@ fn toml_basic_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{InvocationDefaults, ModelRoster, invocation};
+    use crate::agents::{AgentSpec, InvocationDefaults, invocation};
 
     #[test]
     fn toml_strings_escape_metacharacters_controls_and_preserve_unicode() {
@@ -66,13 +66,21 @@ mod tests {
             toml_basic_string("\\\"\n\r\t\u{08}\u{0c}\u{1b}\u{7f}é"),
             "\"\\\\\\\"\\n\\r\\t\\u0008\\u000C\\u001B\\u007Fé\""
         );
+        let effort = "quoted\"\\\n雪";
+        let spec = AgentSpec::from_parts("codex", Some("fixture"), Some(effort)).unwrap();
+        let invocation = AgentInvocation::new(spec, InvocationDefaults::Worker);
+        let config = invocation.args.last().unwrap();
+        let decoded: toml::Table = toml::from_str(config).unwrap();
+        assert_eq!(
+            decoded.get("model_reasoning_effort").unwrap().as_str(),
+            Some(effort)
+        );
         assert_eq!(toml_basic_string(""), "\"\"");
     }
 
     #[test]
     fn limits_reject_before_mutation_and_allow_the_raw_boundary() {
-        let models = ModelRoster::builtin().unwrap();
-        let mut agent = invocation("codex", InvocationDefaults::Worker, &models).unwrap();
+        let mut agent = invocation("codex", InvocationDefaults::Worker).unwrap();
         let args = agent.args.clone();
         let env = agent.env.clone();
         for text in ["bad\0text".into(), "é".repeat(MAX_PRIMARY_BYTES / 2 + 1)] {
