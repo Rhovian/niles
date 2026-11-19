@@ -83,40 +83,9 @@ the status bar.
 
 ## Headless agents (ACP)
 
-Install `@agentclientprotocol/codex-acp@2.6.0` and sign in to its bundled Codex with
-ChatGPT (`codex-acp cli login`). Tested with the adapter's Codex 0.166.0.
-Headless launches require an explicit `--billing subscription`; Niles checks the
-reported account identity for Codex, removes API-key overrides, and refuses a mismatch.
-For Claude, install `@agentclientprotocol/claude-agent-acp@0.107.3` and sign in
-with Claude.ai (`claude-agent-acp --cli auth login`). Tested with its Claude Code
-2.1.325. The existing native Claude login is shared; native and headless sessions
-can run in the same workspace. User/project permission restrictions still apply.
-For pi, install stock `pi-acp@0.0.34` alongside pi 1.4.0 and use pi's own
-`/login` for `openai` (ChatGPT). Headless pi requires an explicit
-`pi:openai/<model>[:thinking]` spec, such as `pi:openai/gpt-6.1-sol:high`.
-It never borrows another CLI's login. Qualified with pi's own `openai` OAuth login.
-Stock pi raises no tool approvals; the live approval pass used an owned extension.
-Pi extension select/confirm dialogs use ACP permissions; input/editor dialogs are
-cancelled by this adapter version. ACP MCP parameters are not forwarded; Niles MCP
-injection is tracked in #495. API-key billing is not qualified.
-
-In an existing project tmux window, launch the entry agent with
-`niles start --keep-skills --mode headless --billing subscription`. Add the same
-mode/billing flags to `niles spawn <id> --skill <skill> ...` for workers. The manifest
-still controls the allowed agents; select a listed Codex, Claude or pi agent. Workers retain
-permission bypass.
-
-`niles peek <id>` reads the transcript and `niles send <id> <text>` submits an ACP
-prompt. Input during a running turn queues until that turn finishes. The window also
-accepts one prompt per line, `:cancel`, `:resume`, and `:approve <request-id> <option-id>` using the
-choices printed with a pending permission. Claude questions print their form fields;
-answer in the window with `:answer <request-id> {"action":"accept","content":{"<field>":"<value>"}}`
-or `:answer <request-id> {"action":"cancel"}`. From another window, use `niles approve
-<id> <request-id> <option-id>` (omit the option to cancel that request), `niles cancel
-<id>`, or `niles resume <id>`. Cancelling drops queued input; confirmation requires an
-idle `cancelled` response. Resume loads the same conversation, restarting an exited
-worker in its existing tmux window. Permission requests and questions produce an `attention:` wake;
-explorer state comes from ACP. Peek shows messages and tool calls, not thoughts.
+Headless mode uses the Agent Client Protocol (ACP) to run agents.
+In a project tmux window, run `niles start --mode headless --billing subscription`.
+See [headless setup and controls](docs/headless.md).
 
 ## How it works
 

@@ -75,7 +75,7 @@ interactive fixture tests described below run in CI.
    For pi also check `agents/acp.rs` readiness metadata and `agents/pi-subscription.js`
    request-time OAuth enforcement, including a credential change during a running session.
    Re-run a live subscription launch, steer, approval, question, cancel, and process-restart/resume
-   probe before updating the tested adapter version in README.
+   probe before updating the [tested adapter table](docs/headless.md#adapters-and-login).
 4. Run `scripts/cli-versions.sh --plan`, show it to the operator and ask for approval. Only on
    their yes, run `scripts/cli-versions.sh --update`, then re-run the script: every target row
    must show `installed` = `latest`. Planning preflights all three installations; unsupported
