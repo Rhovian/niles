@@ -35,7 +35,7 @@ impl Setups {
 fn invalid_setup_names_fail_at_the_cli_boundary() {
     let env = TestEnv::new("setup-names");
     for name in ["a/b", ".", "../x", "global:a:b", "global:", "builtin:tdd"] {
-        let output = env.run(&["models", "--setup", name]);
+        let output = env.run(&["skills", "--setup", name]);
         assert!(!output.status.success(), "{name}");
         assert!(
             stderr_of(&output).contains("invalid setup"),
@@ -66,11 +66,11 @@ fn flag_selection_overrides_a_malformed_unused_environment_value() {
     atomic_write(path, manifest("claude:haiku")).unwrap();
     let output = setups
         .env
-        .niles(&setups.env.root, &["models", "--setup", "workspace:tdd"])
+        .niles(&setups.env.root, &["skills", "--setup", "workspace:tdd"])
         .env("NILES_SETUP", "invalid:selection")
         .output()
         .unwrap();
-    assert_success_contains("flag wins over env", &output, "haiku");
+    assert_success_contains("flag wins over env", &output, "skill: solo ");
 }
 
 #[test]

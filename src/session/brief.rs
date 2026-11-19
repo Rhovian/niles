@@ -203,8 +203,7 @@ mod tests {
     fn lead_brief_render_fills_every_placeholder() {
         let workspace = temp_test_path("brief-{dir}-render");
         let dir = workspace.join(".niles/sessions/test-session");
-        let models = agents::ModelRoster::builtin().unwrap();
-        let agent = agents::AgentSpec::parse("codex:gpt-5.5:xhigh", &models).unwrap();
+        let agent = agents::AgentSpec::parse("codex:gpt-5.5:xhigh").unwrap();
 
         let body = render_entry_brief(
             &agent,

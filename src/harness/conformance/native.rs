@@ -1,5 +1,5 @@
 use super::*;
-use crate::agents::{InvocationDefaults, ModelRoster};
+use crate::agents::InvocationDefaults;
 use crate::harness::native::NativeTui;
 use crate::tmux::{SessionName, TmuxTarget};
 use crate::{agent_window, agents, store::atomic_write, test_support};
@@ -49,8 +49,7 @@ impl Launch {
 
 fn launch(root: &Utf8Path, agent: &str, cli: &Utf8Path, first: &str) -> Launch {
     fs::create_dir_all(root.join("bin")).unwrap();
-    let models = ModelRoster::builtin().unwrap();
-    let mut invocation = agents::invocation(agent, InvocationDefaults::Worker, &models).unwrap();
+    let mut invocation = agents::invocation(agent, InvocationDefaults::Worker).unwrap();
     let profile_env = invocation.env.clone();
     let script = Utf8Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/harness_live.py");
     test_support::write_executable_script(
@@ -181,15 +180,15 @@ fn native_child() {
             "adapter=native-tui family={} protocol=none cli=fixture",
             profile.id
         );
-        let rows = ModelRoster::builtin().unwrap().rows();
-        let [family, model, efforts] = rows
-            .iter()
-            .find(|row| row.first().unwrap() == profile.id)
-            .unwrap();
-        let agent = match efforts.split_whitespace().next() {
-            Some(effort) => format!("{family}:{model}:{effort}"),
-            None => format!("{family}:{model}"),
-        };
+        let catalogue = agents::ModelCatalogue::fixture();
+        let (model, efforts) = catalogue.models(profile.id).unwrap().next().unwrap();
+        let agent = agents::AgentSpec::from_parts(
+            profile.id,
+            Some(model),
+            efforts.first().map(String::as_str),
+        )
+        .unwrap()
+        .canonical();
         super::run(&mut Native {
             agent,
             cli: root.join("fake-cli"),

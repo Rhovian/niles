@@ -5,6 +5,7 @@ use crate::projects::panels::{Cell, table};
 use crate::projects::rows::abbreviate;
 use crate::telemetry::sum;
 use crate::theme::{StyleKey, StyleRender, Theme};
+use crate::workspace_manifest::clamp;
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use ratatui::style::Style;
@@ -237,8 +238,14 @@ fn chart(dashboard: &Dashboard<'_>, theme: &Theme) -> Result<Block> {
 
 fn context(dashboard: &Dashboard<'_>, theme: &Theme) -> Block {
     let mut block = Block::new("CONTEXT", theme);
+    for (project, error) in &dashboard.catalogue_errors {
+        block.line(
+            &clamp(&format!("{project}: {error}"), 160),
+            theme.style(StyleKey::Waiting),
+        );
+    }
     if dashboard.context.is_empty() {
-        block.line("no live sessions", theme.style(StyleKey::Muted));
+        block.line("no context usage recorded", theme.style(StyleKey::Muted));
         return block;
     }
     let rows = dashboard

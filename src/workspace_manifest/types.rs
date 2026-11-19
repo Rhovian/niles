@@ -1,10 +1,10 @@
-use crate::agents::roster::Tier;
-use crate::agents::{self, AgentSpec, ModelRoster};
+use crate::agents::AgentSpec;
 use crate::duration;
 use crate::skills::SkillName;
 #[cfg(test)]
 use crate::store::parse_yaml;
-use anyhow::{Context, Result, bail, ensure};
+use crate::workspace_manifest::Tier;
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
@@ -222,7 +222,7 @@ impl Binding {
 }
 
 impl Tiers {
-    pub(crate) fn dedup(&mut self, models: &ModelRoster) -> Result<()> {
+    pub(crate) fn dedup(&mut self) -> Result<()> {
         for binding in [
             Some(&mut self.standard),
             self.frontier.as_mut(),
@@ -232,10 +232,10 @@ impl Tiers {
         .into_iter()
         .flatten()
         {
-            let mut seen = vec![exact_spec(&binding.primary, models)?];
+            let mut seen = vec![AgentSpec::parse(&binding.primary)?];
             let mut secondaries = Vec::new();
             for agent in mem::take(&mut binding.secondaries) {
-                let spec = exact_spec(&agent, models)?;
+                let spec = AgentSpec::parse(&agent)?;
                 if !seen.contains(&spec) {
                     seen.push(spec);
                     secondaries.push(agent);
@@ -271,20 +271,19 @@ impl Tiers {
 
     /// Admits `agent` only if it is one of the listed tier agents: the spending gate every launch
     /// passes through.
-    pub fn admit(&self, agent: &str, models: &ModelRoster) -> Result<()> {
-        let requested = AgentSpec::parse(agent, models)?;
-        agents::validate_model(&requested, models)?;
+    pub fn admit(&self, agent: &str) -> Result<()> {
+        let requested = AgentSpec::parse(agent)?;
         ensure!(
-            self.allows(&requested, models)?,
+            self.allows(&requested)?,
             "agent {agent} is not listed in the manifest tiers; allowed agents: {}",
             self.agents().collect::<Vec<_>>().join(", ")
         );
         Ok(())
     }
 
-    pub fn allows(&self, requested: &AgentSpec, models: &ModelRoster) -> Result<bool> {
+    pub fn allows(&self, requested: &AgentSpec) -> Result<bool> {
         for agent in self.agents() {
-            if exact_spec(agent, models)? == *requested {
+            if AgentSpec::parse(agent)? == *requested {
                 return Ok(true);
             }
         }
@@ -307,22 +306,6 @@ impl Tiers {
             iter::once(tier.primary.as_str()).chain(tier.secondaries.iter().map(String::as_str))
         })
     }
-}
-
-pub(super) fn exact_spec(agent: &str, models: &ModelRoster) -> Result<AgentSpec> {
-    let spec = AgentSpec::parse(agent, models)?;
-    let Some(model) = spec.model() else {
-        bail!("manifest agent `{agent}` must name an exact family:model:effort");
-    };
-    if spec.effort().is_none()
-        && models
-            .supported_efforts(spec.family(), model)
-            .is_none_or(|efforts| !efforts.is_empty())
-    {
-        bail!("manifest agent `{agent}` must name an exact effort");
-    }
-    agents::validate_model(&spec, models)?;
-    Ok(spec)
 }
 
 #[cfg(test)]

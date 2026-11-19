@@ -1,7 +1,6 @@
 use super::WorkspaceManifest;
 use super::setup::{ManifestFile, SetupSelection};
-use crate::agents::ModelRoster;
-use crate::config::spec;
+use crate::agents::AgentSpec;
 use crate::skills::{self, files};
 use crate::store;
 #[cfg(test)]
@@ -57,23 +56,23 @@ pub(crate) fn load_for_skill_listing(
         if let ManifestFile::Named(source) = &file {
             manifest.source = Some(source.clone());
         }
-        let config = spec::load_project_config_from(root)?;
+
         manifest
             .tiers
-            .dedup(&config.models)
+            .dedup()
             .with_context(|| format!("invalid manifest {path}"))?;
-        check(manifest, &config.models).with_context(|| format!("invalid manifest {path}"))?;
+        check(manifest).with_context(|| format!("invalid manifest {path}"))?;
     }
     Ok(manifest)
 }
 
-pub(crate) fn check(manifest: &WorkspaceManifest, models: &ModelRoster) -> Result<()> {
+pub(crate) fn check(manifest: &WorkspaceManifest) -> Result<()> {
     for agent in manifest.tiers.agents() {
-        super::types::exact_spec(agent, models).context("invalid manifest agent")?;
+        AgentSpec::parse(agent).context("invalid manifest agent")?;
     }
     manifest
         .tiers
-        .admit(&manifest.entry_agent, models)
+        .admit(&manifest.entry_agent)
         .context("invalid entry_agent")
 }
 
@@ -115,9 +114,6 @@ mod tests {
             ("absent-entry", format!("entry: absent\nentry_agent: claude:sonnet:high\n{TIERS}"), "skill `absent` has no SKILL.md"),
             ("missing-tiers", "entry: lead\nentry_agent: claude:sonnet:high\n".to_owned(), "missing field `tiers`"),
             ("unknown-tier", body.replacen("standard:", "unknown:", 1), "unknown field `unknown`"),
-            ("no-effort", body.replacen("claude:sonnet:high", "claude:sonnet", 1), "must name an exact effort"),
-            ("bad-effort", body.replacen("claude:sonnet:high", "claude:sonnet:invalid", 1), "invalid"),
-            ("no-model", body.replacen("claude:sonnet:high", "claude", 1), "must name an exact"),
             ("legacy", "lead: claude\nworker: codex\n".to_owned(), "missing field `entry`"),
             ("missing-standard", body.replacen("  standard:\n    primary: codex:gpt-6.1-sol:medium\n    secondaries: [claude:sonnet:high]\n", "", 1), "missing field `standard`"),
             ("unknown-field", body.replacen("primary:", "when:", 1), "unknown field `when`"),

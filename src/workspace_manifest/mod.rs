@@ -12,3 +12,6 @@ pub(crate) use tiers_table::{MISSING, clamp, manifest_tiers};
 pub use types::{Binding, Gates, Rounds, WorkspaceManifest};
 pub(crate) use types::{RunGate, TierBinding, Tiers};
 pub use worktree::WorktreeConfig;
+
+mod tier;
+pub use tier::Tier;

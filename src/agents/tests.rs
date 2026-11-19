@@ -1,29 +1,34 @@
 use super::*;
 
-fn models() -> ModelRoster {
-    ModelRoster::builtin().unwrap()
-}
-
 #[test]
 fn parses_agent_model_effort_specs() {
-    let max = Some("max");
+    let max = Some("MAX");
     for (input, family, model, effort) in [
+        ("pi:provider/model:free:", "pi", "provider/model:free", None),
+        (
+            "pi:provider/model:free:future",
+            "pi",
+            "provider/model:free",
+            Some("future"),
+        ),
         ("codex:gpt-5.5:xhigh", "codex", "gpt-5.5", Some("xhigh")),
-        ("claude:sonnet:med", "claude", "sonnet", Some("medium")),
-        ("Claude:Opus:MAX", "claude", "opus", max),
-        ("Claude:Haiku", "claude", "haiku", None),
-        ("CODEX:GPT-5.6-LUNA:MAX", "codex", "gpt-5.6-luna", max),
+        ("claude:sonnet:med", "claude", "sonnet", Some("med")),
+        ("Claude:Opus:MAX", "claude", "Opus", max),
+        ("Claude:Haiku", "claude", "Haiku", None),
+        ("CODEX:GPT-5.6-LUNA:MAX", "codex", "GPT-5.6-LUNA", max),
     ] {
-        let spec = AgentSpec::parse(input, &models()).unwrap();
+        let spec = AgentSpec::parse(input).unwrap();
         assert_eq!(
             (spec.family(), spec.model(), spec.effort()),
             (family, Some(model), effort),
             "{input}"
         );
-        if input == "codex:gpt-5.5:xhigh" {
-            assert_eq!(spec.canonical(), input);
-        }
+        assert_eq!(AgentSpec::parse(&spec.canonical()).unwrap(), spec);
     }
+    for spec in ["codex::high", "claude:"] {
+        assert!(AgentSpec::parse(spec).is_err(), "{spec}");
+    }
+    assert!(AgentSpec::from_parts("codex", None, Some("high")).is_err());
 }
 
 #[test]
@@ -33,87 +38,8 @@ fn only_supported_families_are_launchable() {
         ["codex", "claude", "pi"]
     );
     for spec in ["hermes", "hermes:z-ai/glm-5.3-flash:high"] {
-        let error = invocation(spec, InvocationDefaults::Worker, &models()).unwrap_err();
+        let error = invocation(spec, InvocationDefaults::Worker).unwrap_err();
         assert!(error.to_string().contains("unknown agent family `hermes`"));
-    }
-}
-
-#[test]
-fn model_names_may_contain_colons() {
-    let models = roster::parse(
-        r#"pi:
-  nvidia/nemotron:free:
-    - &entry {effort: low, tier: economy, description: colon fixture, speed: null, context_window: 1024}
-    - {<<: *entry, effort: high, tier: standard}
-"#,
-    )
-    .unwrap();
-    let bare = AgentSpec::parse("pi:nvidia/nemotron:free", &models).unwrap();
-    assert_eq!(
-        (bare.model(), bare.effort()),
-        (Some("nvidia/nemotron:free"), None)
-    );
-    let tiered = AgentSpec::parse("pi:nvidia/nemotron:free:high", &models).unwrap();
-    assert_eq!(tiered.canonical(), "pi:nvidia/nemotron:free:high");
-    assert!(AgentSpec::parse("codex::high", &models).is_err());
-}
-
-#[test]
-fn effort_is_checked_against_the_model_not_the_family() {
-    // The ladders the codex CLI reports: astra climbs to `ultra`, luna stops at `max`, and 5.5
-    // stops at `xhigh`. One family-wide list could not tell these apart.
-    AgentSpec::parse("codex:gpt-6-astra:ultra", &models()).unwrap();
-    AgentSpec::parse("codex:gpt-5.6-luna:max", &models()).unwrap();
-    AgentSpec::parse("codex:gpt-5.5:xhigh", &models()).unwrap();
-
-    for spec in ["codex:gpt-5.6-luna:ultra", "codex:gpt-5.5:max"] {
-        let error = AgentSpec::parse(spec, &models()).unwrap_err().to_string();
-        assert!(error.contains("invalid codex effort"), "{error}");
-        assert!(error.contains("for model"), "{error}");
-    }
-
-    let error = AgentSpec::parse("claude:haiku:low", &models())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("takes no effort"), "{error}");
-}
-
-#[test]
-fn a_model_off_the_roster_is_rejected_whatever_it_looks_like() {
-    // A full id, a plausible sibling, a future slug: the roster is the whole rule, so none of them
-    // are launchable until they are a line in it.
-    for (family, model, effort) in [
-        ("claude", "claude-opus-5", ""),
-        ("codex", "gpt-5.5-codex", ""),
-        ("codex", "gpt-5.4", ""),
-        ("codex", "omega", ""),
-        ("codex", "anthropic/claude-opus-5", ""),
-        ("pi", "anthropic/claude-opus-5", ""),
-        ("pi", "x-ai/grok-4.6", ""),
-        ("pi", "hy3", ""),
-        ("codex", "gpt-5.5-codex", ":turbo"),
-    ] {
-        let spec = AgentSpec::parse(&format!("{family}:{model}{effort}"), &models()).unwrap();
-        let error = validate_model(&spec, &models()).unwrap_err().to_string();
-        assert!(
-            error.contains(&format!("invalid {family} model `{model}`")),
-            "{error}"
-        );
-    }
-}
-
-#[test]
-fn rejects_invalid_agent_specs() {
-    for spec in [
-        "custom",
-        "codex:gpt-5.5:xhigh:extra",
-        "codex::xhigh",
-        "custom:model:high",
-        "claude:opus:turbo",
-        "codex:gpt-5.5:turbo",
-        "codex:not a model:high",
-    ] {
-        assert!(AgentSpec::parse(spec, &models()).is_err(), "{spec}");
     }
 }
 
@@ -122,6 +48,11 @@ fn invocations_map_models_efforts_and_order_headless_defaults() {
     use InvocationDefaults::{Foreground, Headless, Worker};
     for (spec, defaults, args) in [
         ("claude", Foreground, ""),
+        (
+            "codex:future-model:future-effort",
+            Worker,
+            r#"--no-daemon --dangerously-bypass-approvals-and-sandbox --model future-model --config model_reasoning_effort="future-effort""#,
+        ),
         ("claude:opus:max", Foreground, "--model opus --effort max"),
         (
             "codex:gpt-5.5:xhigh",
@@ -149,7 +80,7 @@ fn invocations_map_models_efforts_and_order_headless_defaults() {
             "-p --model tencent/hy3 --thinking low",
         ),
     ] {
-        let invocation = invocation(spec, defaults, &models()).unwrap();
+        let invocation = invocation(spec, defaults).unwrap();
         if invocation.spec.family() == "claude" && !matches!(defaults, Headless) {
             let adapter = invocation.spec.profile().acp.unwrap().adapter;
             let session = adapter
@@ -200,11 +131,11 @@ fn pi_acp_wrapper_preserves_rpc_arguments_and_pins_subscription_configuration() 
     for spec in ["pi", "pi:tencent/hy3:low"] {
         assert!(
             adapter
-                .configure(&AgentSpec::parse(spec, &models()).unwrap(), "", true)
+                .configure(&AgentSpec::parse(spec).unwrap(), "", true)
                 .is_err()
         );
     }
-    let spec = AgentSpec::parse("pi:openai/gpt-6.1-sol:high", &models()).unwrap();
+    let spec = AgentSpec::parse("pi:openai/gpt-6.1-sol:high").unwrap();
     let primary = "instructions 'quoted'\n$(false)";
     let mut config = adapter.configure(&spec, primary, true).unwrap();
     assert!(

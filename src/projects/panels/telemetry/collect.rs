@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::collections::BTreeSet;
 
 use super::super::registry;
 use crate::skills::SkillName;
 use crate::{
-    agents::{AgentSpec, ModelRoster},
-    config::spec::load_project_config_from,
+    agents::{AgentSpec, ModelCatalogue},
     session,
     telemetry::Buckets,
     wake::WakeKind,
@@ -17,6 +17,7 @@ pub(super) struct Project {
     pub(super) name: String,
     pub(super) sessions: Vec<Session>,
     pub(super) events: Vec<Event>,
+    pub(super) catalogue_errors: BTreeSet<String>,
 }
 
 pub(super) struct Session {
@@ -57,12 +58,14 @@ pub(super) fn project(
     entry: &registry::Entry,
     lead_running: bool,
     since: DateTime<Utc>,
+    models: &ModelCatalogue,
 ) -> Result<Project> {
-    let models = load_project_config_from(&entry.path)?.models;
     let mut sessions = Vec::new();
+    let mut catalogue_errors = BTreeSet::new();
     let mut events = Vec::new();
     // The latest lead is read live whether or not it runs; only a running one has context.
     for open in usage::collect(&entry.path, session::latest_lead(&entry.path)?)? {
+        let spec = AgentSpec::parse(&open.agent)?;
         let lead = open.entry;
         if !lead {
             events.push(event(open.created_at, &open.id, EventKind::Spawned));
@@ -76,7 +79,16 @@ pub(super) fn project(
         } else {
             Some(Live {
                 prompt_tokens,
-                context_window: transcript_window.or(roster_window(&open.agent, &models)?),
+                context_window: match transcript_window {
+                    Some(window) => Some(window),
+                    None => match catalogue_window(&spec, models) {
+                        Ok(window) => window,
+                        Err(error) => {
+                            catalogue_errors.insert(error.to_string());
+                            None
+                        }
+                    },
+                },
             })
         };
         sessions.push(Session {
@@ -107,6 +119,7 @@ pub(super) fn project(
         name: entry.name.as_str().to_owned(),
         sessions,
         events,
+        catalogue_errors,
     })
 }
 
@@ -129,10 +142,10 @@ fn closed_session(closed: ClosedSession) -> Session {
     }
 }
 
-/// The roster's window for the model `agent` was launched with; `None` when it names no model.
-pub(super) fn roster_window(agent: &str, models: &ModelRoster) -> Result<Option<u64>> {
-    let spec = AgentSpec::parse(agent, models)?;
-    Ok(spec
-        .model()
-        .and_then(|model| models.context_window(spec.family(), model)))
+/// The CLI's window for the model `agent` was launched with; `None` when it names no model.
+pub(super) fn catalogue_window(spec: &AgentSpec, models: &ModelCatalogue) -> Result<Option<u64>> {
+    spec.model()
+        .map(|model| models.context_window(spec.family(), model))
+        .transpose()
+        .map(Option::flatten)
 }

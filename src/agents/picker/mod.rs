@@ -1,6 +1,6 @@
-use crate::agents::roster::Tier;
-use crate::config::spec::ProjectConfig;
+use crate::agents::ModelCatalogue;
 use crate::theme::Theme;
+use crate::workspace_manifest::Tier;
 use crate::workspace_manifest::WorkspaceManifest;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -25,10 +25,10 @@ pub(crate) enum Choice {
 pub(crate) fn tiers(
     root: &Utf8Path,
     manifest: WorkspaceManifest,
-    config: &ProjectConfig,
+    catalogue: &ModelCatalogue,
 ) -> Result<Choice> {
-    let mut form = Form::new(manifest, config)?;
-    let decision = screen(root, &mut form, |form, key| form.key(key, config))?;
+    let mut form = Form::new(manifest, catalogue)?;
+    let decision = screen(root, &mut form, |form, key| form.key(key))?;
     Ok(choice(&form, decision))
 }
 
@@ -49,8 +49,8 @@ pub(crate) enum SetupAction {
 
 pub(crate) struct SetupTiers(Form);
 impl SetupTiers {
-    pub(crate) fn new(manifest: WorkspaceManifest, config: &ProjectConfig) -> Result<Self> {
-        let mut form = Form::new(manifest, config)?;
+    pub(crate) fn new(manifest: WorkspaceManifest, catalogue: &ModelCatalogue) -> Result<Self> {
+        let mut form = Form::new(manifest, catalogue)?;
         form.setup = true;
         Ok(Self(form))
     }
@@ -58,18 +58,18 @@ impl SetupTiers {
         &self.0.draft
     }
 
-    fn key(form: &mut Form, key: KeyCode, config: &ProjectConfig) -> Result<Option<SetupAction>> {
+    fn key(form: &mut Form, key: KeyCode) -> Result<Option<SetupAction>> {
         if matches!(key, KeyCode::Esc | KeyCode::Left) && matches!(form.screen, Screen::Tiers) {
             return Ok(Some(SetupAction::Back));
         }
-        Ok(form.key(key, config)?.map(|decision| match decision {
+        Ok(form.key(key)?.map(|decision| match decision {
             Decision::Save | Decision::Keep => SetupAction::Next,
             Decision::Quit => SetupAction::Quit,
         }))
     }
 
-    pub(crate) fn pick(&mut self, root: &Utf8Path, config: &ProjectConfig) -> Result<SetupAction> {
-        screen(root, &mut self.0, |form, key| Self::key(form, key, config))
+    pub(crate) fn pick(&mut self, root: &Utf8Path) -> Result<SetupAction> {
+        screen(root, &mut self.0, Self::key)
     }
 }
 
@@ -108,14 +108,12 @@ pub(crate) fn configure(
     terminal: &mut DefaultTerminal,
     root: &Utf8Path,
     manifest: WorkspaceManifest,
-    config: &ProjectConfig,
+    catalogue: &ModelCatalogue,
     theme: &Theme,
     tier: Tier,
 ) -> Result<Choice> {
-    let mut form = Form::new(manifest, config)?;
+    let mut form = Form::new(manifest, catalogue)?;
     form.select_agent(tier, 0)?;
-    let decision = run_form(terminal, root, &mut form, theme, |form, key| {
-        form.key(key, config)
-    })?;
+    let decision = run_form(terminal, root, &mut form, theme, |form, key| form.key(key))?;
     Ok(choice(&form, decision))
 }

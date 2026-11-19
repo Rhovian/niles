@@ -186,7 +186,10 @@ impl Columns {
             .families
             .iter()
             .map(|family| {
-                if family.installed {
+                if family.models.is_err() {
+                    ListItem::new(format!("{} (catalogue error)", family.name))
+                        .style(theme.style(StyleKey::Waiting))
+                } else if family.installed {
                     ListItem::new(clamp(&family.name, 60))
                 } else {
                     ListItem::new(format!("{} (not installed)", clamp(&family.name, 60)))
@@ -201,6 +204,16 @@ impl Columns {
             self.families.position(),
             Column::Family,
         );
+        if let Err(error) = &self.families.current().models {
+            frame.render_widget(
+                Paragraph::new(clamp(error, 500))
+                    .wrap(Wrap { trim: false })
+                    .style(theme.style(StyleKey::Waiting))
+                    .block(Block::new().title("MODEL")),
+                models,
+            );
+            return;
+        }
         let Some(model_choices) = &self.models else {
             return;
         };

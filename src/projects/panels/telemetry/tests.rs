@@ -1,7 +1,7 @@
 use super::aggregate::dashboard;
 use super::collect::{Event, EventKind, Live, Project, Session, project};
 use super::*;
-use crate::agents::ModelRoster;
+use crate::agents::{AgentSpec, ModelCatalogue};
 use crate::projects::registry::{Entry, ProjectName};
 use crate::telemetry::{Usage, fixtures};
 use crate::test_support::telemetry::{archive, lead, pi_link, write};
@@ -97,7 +97,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
     let since = utc("2026-09-20T00:00:00Z");
     let pi_total = fixtures::pi().total_tokens().unwrap();
 
-    let first = project(&entry, false, since).unwrap();
+    let first = project(&entry, false, since, &ModelCatalogue::fixture()).unwrap();
     let latest_id = latest.file_name().unwrap();
     let superseded_id = superseded.file_name().unwrap();
     assert_eq!(
@@ -137,7 +137,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
     }
 
     fs::remove_dir_all(&transcripts).unwrap();
-    let second = project(&entry, true, since).unwrap();
+    let second = project(&entry, true, since, &ModelCatalogue::fixture()).unwrap();
     assert_eq!(
         totals(&second),
         [
@@ -146,33 +146,61 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
             (superseded_id, "coordinator", pi_total),
         ]
     );
-    // Losing a live transcript does not erase the registry's context capacity.
     let live = second.sessions.first().unwrap().live.as_ref().unwrap();
     assert_eq!(
         (live.prompt_tokens, live.context_window),
         (None, Some(262_144))
     );
+    let failed = project(
+        &entry,
+        true,
+        since,
+        &ModelCatalogue::fixture().with_error("pi"),
+    )
+    .unwrap();
+    assert_eq!(totals(&failed), totals(&second));
+    assert_eq!(failed.catalogue_errors.len(), 1);
+    let projects = [failed];
+    let board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap()).unwrap();
+    let rendered = render::dashboard(&board, &Theme::parse(None).unwrap(), 80).unwrap();
+    assert!(rendered.contains("pi model catalogue: fixture failure"));
+    assert!(rendered.contains("TOKENS") && rendered.contains("BY MODEL"));
     assert!(!latest.join("usage.json").exists());
     // Each turn fits; only the total across the two buckets overflows.
     let input = u64::MAX.checked_sub(130).unwrap();
     let overflow = fixtures::PI.replace("\"input\":20", &format!("\"input\":{input}"));
     write(&transcripts.join("lead2/001.jsonl"), &overflow);
-    let projects = [project(&entry, true, since).unwrap()];
+    let projects = [project(&entry, true, since, &ModelCatalogue::fixture()).unwrap()];
     let board = dashboard(&projects, Window::new(Range::Month, local(2, 12)).unwrap()).unwrap();
     assert_eq!(board.projects, [("demo", pi_total.checked_mul(2).unwrap())]);
     assert!(render::dashboard(&board, &Theme::parse(None).unwrap(), 80).is_ok());
+    let path = latest.join("session.json");
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    *meta.get_mut("agent").unwrap() = "corrupt-family".into();
+    write(&path, &serde_json::to_string(&meta).unwrap());
+    let error = project(&entry, true, since, &ModelCatalogue::fixture())
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("unknown agent family"),
+        "{error:#}"
+    );
     test_support::remove_workspace(&entry.path).unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
-fn the_roster_window_is_for_the_launched_model() {
-    let models = ModelRoster::builtin().unwrap();
+fn the_catalogue_window_is_for_the_launched_model() {
+    let models = ModelCatalogue::fixture();
     assert_eq!(
-        collect::roster_window("claude:opus:high", &models).unwrap(),
+        collect::catalogue_window(&AgentSpec::parse("claude:opus:high").unwrap(), &models).unwrap(),
         Some(1_000_000)
     );
-    assert_eq!(collect::roster_window("claude", &models).unwrap(), None);
+    assert_eq!(
+        collect::catalogue_window(&AgentSpec::parse("claude").unwrap(), &models).unwrap(),
+        None
+    );
 }
 
 fn session(id: &str, skill: &'static str, agent: &str, usage: Usage, live: bool) -> Session {
@@ -237,11 +265,13 @@ fn projects() -> Vec<Project> {
         .collect();
     vec![
         Project {
+            catalogue_errors: Default::default(),
             name: "api".into(),
             sessions: api,
             events,
         },
         Project {
+            catalogue_errors: Default::default(),
             name: "web".into(),
             sessions: vec![session(
                 "rev",
@@ -253,6 +283,7 @@ fn projects() -> Vec<Project> {
             events: Vec::new(),
         },
         Project {
+            catalogue_errors: Default::default(),
             name: "idle".into(),
             sessions: Vec::new(),
             events: Vec::new(),

@@ -1,7 +1,6 @@
 //! Test-only scaffolding shared across the crate.
-use crate::config::spec::{self, ProjectConfig};
 use crate::skills::SkillName;
-use crate::store::{self, atomic_write, paths};
+use crate::store::{self, paths};
 use crate::telemetry::SessionLink;
 use crate::util;
 use crate::workspace_manifest::WorkspaceManifest;
@@ -97,12 +96,6 @@ pub(crate) fn render(w: u16, h: u16, draw: impl FnOnce(&mut ratatui::Frame<'_>))
         .iter()
         .map(|cell| cell.symbol())
         .collect()
-}
-
-pub(crate) fn project_config(body: &str) -> anyhow::Result<ProjectConfig> {
-    let root = temp_dir("project-config");
-    atomic_write(root.join("niles.yaml"), body)?;
-    spec::load_project_config_from(&root)
 }
 
 /// Remove both the workspace fixture and its global orchestration state.

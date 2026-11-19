@@ -1,8 +1,8 @@
 use super::setup::SetupSelection;
 use super::tiers_table::print_manifest_tiers;
 use super::{WorkspaceManifest, check, load, manifest_path, save};
+use crate::agents::ModelCatalogue;
 use crate::agents::picker::{self, Choice};
-use crate::config::spec::{ProjectConfig, load_project_config_from};
 use crate::projects::onboard;
 use crate::tmux::LeadStart;
 use anyhow::{Context, Result};
@@ -31,9 +31,9 @@ fn ensure(
     interactive: bool,
     output: &mut impl Write,
     set_up: impl FnOnce(&Utf8Path) -> Result<Option<WorkspaceManifest>>,
-    pick: impl FnOnce(&Utf8Path, WorkspaceManifest, &ProjectConfig) -> Result<Choice>,
+    pick: impl FnOnce(&Utf8Path, WorkspaceManifest, &ModelCatalogue) -> Result<Choice>,
 ) -> Result<Option<WorkspaceManifest>> {
-    let config = load_project_config_from(root)?;
+    let catalogue = ModelCatalogue::default();
     let path = manifest_path(root, selection)?;
     let existing = match load(root, selection)? {
         Some(manifest) => manifest,
@@ -43,10 +43,10 @@ fn ensure(
         ),
     };
     if !interactive {
-        print_manifest_tiers(output, &existing, &config)?;
+        print_manifest_tiers(output, &existing)?;
         return Ok(Some(existing));
     }
-    match pick(root, existing.clone(), &config)? {
+    match pick(root, existing.clone(), &catalogue)? {
         Choice::Save(draft) => save_changes(root, selection, &existing, &draft).map(Some),
         Choice::Keep => Ok(Some(existing)),
         Choice::Quit => Ok(None),
@@ -75,7 +75,7 @@ pub(crate) fn save_changes(
         changed = true;
     }
     if changed {
-        check(&latest, &load_project_config_from(root)?.models)?;
+        check(&latest)?;
         save(root, &latest, selection)?;
     }
     Ok(latest)

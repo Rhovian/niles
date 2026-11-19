@@ -1,25 +1,22 @@
 use super::*;
-use crate::agents::ModelRoster;
-use crate::agents::roster::Tier;
-use crate::config::spec::ProjectConfig;
+use crate::agents::ModelCatalogue;
+use crate::workspace_manifest::Tier;
 use crate::{test_support, workspace_manifest};
 use columns::{Column, Columns, Pick};
 use form::{Decision, Screen};
 use ratatui::crossterm::event::KeyCode;
 
-fn config() -> ProjectConfig {
-    ProjectConfig {
-        models: ModelRoster::builtin().unwrap(),
-    }
+fn config() -> ModelCatalogue {
+    ModelCatalogue::fixture()
 }
 
 fn columns(value: &str) -> Columns {
-    Columns::new(&columns::families(&config()).unwrap(), value, &config()).unwrap()
+    Columns::new(&columns::families(&config()), value).unwrap()
 }
 
 fn keys(form: &mut Form, keys: impl IntoIterator<Item = KeyCode>) {
     for key in keys {
-        form.key(key, &config()).unwrap();
+        form.key(key).unwrap();
     }
 }
 
@@ -51,44 +48,44 @@ fn entry(form: &mut Form) {
 #[test]
 fn current_value_back_navigation_and_effort_completion() {
     for (value, enters) in [
-        ("codex:gpt-6.1-sol:high", 2),
+        ("codex:gpt-6.2-sol:ultra", 2),
         ("claude:opus:high", 2),
         ("claude:haiku", 1),
     ] {
         let mut picker = columns(value);
         for back in [KeyCode::Left, KeyCode::Esc] {
-            picker.key(KeyCode::Right);
+            picker.key(KeyCode::Right).unwrap();
             assert_eq!(picker.column, Column::Model);
             if enters == 2 {
-                picker.key(KeyCode::Enter);
+                picker.key(KeyCode::Enter).unwrap();
                 assert_eq!(picker.column, Column::Effort);
-                picker.key(back);
+                picker.key(back).unwrap();
                 assert_eq!(picker.column, Column::Model);
             }
-            picker.key(back);
+            picker.key(back).unwrap();
             assert_eq!(picker.column, Column::Family);
-            assert!(matches!(picker.key(back), Pick::Cancelled));
+            assert!(matches!(picker.key(back).unwrap(), Pick::Cancelled));
         }
         for _ in 0..enters {
-            assert!(matches!(picker.key(KeyCode::Enter), Pick::Pending));
+            assert!(matches!(picker.key(KeyCode::Enter).unwrap(), Pick::Pending));
         }
         assert!(
-            matches!(picker.key(KeyCode::Enter), Pick::Selected(selected) if selected == value)
+            matches!(picker.key(KeyCode::Enter).unwrap(), Pick::Selected(selected) if selected == value)
         );
     }
 }
 
 #[test]
-fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
-    assert!(Columns::new(&[], "claude", &config()).is_err());
+fn menu_uses_catalogue_and_defaults_to_first_entry() {
+    assert!(Columns::new(&[], "claude").is_err());
     let mut picker = columns("codex:gpt-5.4:high");
     let models = picker.models.as_ref().unwrap();
     assert!(!models.iter().any(|model| model.name == "gpt-5.4"));
-    assert_eq!(models.current().name, "gpt-5.5");
-    picker.key(KeyCode::Enter);
+    assert_eq!(models.current().name, "fixture");
+    picker.key(KeyCode::Enter).unwrap();
     for key in [KeyCode::Down, KeyCode::Up] {
         for _ in 0..100 {
-            picker.key(key);
+            picker.key(key).unwrap();
         }
         let models = picker.models.as_ref().unwrap();
         let edge = if key == KeyCode::Down {
@@ -98,6 +95,28 @@ fn menu_is_effective_roster_only_and_defaults_to_first_entry() {
         };
         assert_eq!(models.current().name, edge.unwrap().name);
     }
+    let catalogue = config().with_error("pi");
+    let families = columns::families(&catalogue);
+    let mut failed = Columns::new(&families, "pi").unwrap();
+    assert!(matches!(failed.key(KeyCode::Enter).unwrap(), Pick::Pending));
+    assert_eq!(failed.column, Column::Family);
+    let mut form = Form::new(test_support::manifest(), &catalogue).unwrap();
+    form.screen = Screen::Editing {
+        tier: Tier::Standard,
+        append: false,
+        columns: Box::new(failed),
+    };
+    assert!(render(&form).contains("fixture failure"));
+    let mut working = Columns::new(&families, "codex:gpt-6.2-sol:ultra").unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            working.key(KeyCode::Enter).unwrap(),
+            Pick::Pending
+        ));
+    }
+    assert!(
+        matches!(working.key(KeyCode::Enter).unwrap(), Pick::Selected(value) if value == "codex:gpt-6.2-sol:ultra")
+    );
 }
 
 #[test]
@@ -106,7 +125,7 @@ fn editing_primary_renders_hints_preserves_other_rows_and_can_be_restored() {
     assert!(!render(&form).contains("s save"));
     assert!(render(&form).contains("c continue"));
     assert!(matches!(
-        form.key(KeyCode::Char('c'), &config()).unwrap(),
+        form.key(KeyCode::Char('c')).unwrap(),
         Some(Decision::Keep)
     ));
     keys(&mut form, [KeyCode::Char('s'), KeyCode::Right]);
@@ -124,7 +143,7 @@ fn editing_primary_renders_hints_preserves_other_rows_and_can_be_restored() {
     expected.standard.primary = "codex:gpt-6.1-sol:low".into();
     assert_eq!(form.draft.tiers, expected);
     assert!(render(&form).contains("s save"));
-    assert!(form.key(KeyCode::Char('c'), &config()).unwrap().is_none());
+    assert!(form.key(KeyCode::Char('c')).unwrap().is_none());
     keys(&mut form, [KeyCode::Right]);
     choose(&mut form, "codex:gpt-6.1-sol:medium");
     assert!(!form.can_save());
@@ -156,27 +175,27 @@ fn setup_and_configuration_share_editing_but_enter_continues_setup() {
         assert_eq!(form.draft, draft);
         if setup {
             assert_eq!(
-                SetupTiers::key(&mut form, KeyCode::Esc, &config()).unwrap(),
+                SetupTiers::key(&mut form, KeyCode::Esc).unwrap(),
                 Some(SetupAction::Back)
             );
             assert!(matches!(
-                form.key(KeyCode::Enter, &config()).unwrap(),
+                form.key(KeyCode::Enter).unwrap(),
                 Some(Decision::Save)
             ));
         } else {
             keys(&mut form, [KeyCode::Char('s')]);
-            let decision = form.key(KeyCode::Enter, &config()).unwrap().unwrap();
+            let decision = form.key(KeyCode::Enter).unwrap().unwrap();
             assert!(matches!(choice(&form, decision), Choice::Save(saved) if *saved == draft));
         }
         assert!(matches!(
-            form.key(KeyCode::Char('q'), &config()).unwrap(),
+            form.key(KeyCode::Char('q')).unwrap(),
             Some(Decision::Quit)
         ));
     }
     let mut form = form();
     form.setup = true;
     assert!(matches!(
-        form.key(KeyCode::Enter, &config()).unwrap(),
+        form.key(KeyCode::Enter).unwrap(),
         Some(Decision::Save)
     ));
 }
@@ -214,25 +233,22 @@ fn secondary_edit_reorder_boundaries_and_removal_preserve_primary() {
     );
     assert_eq!(form.draft.tiers.frontier, original.tiers.frontier);
     assert_eq!(form.draft.entry_agent, original.entry_agent);
-    workspace_manifest::check(&form.draft, &config().models).unwrap();
+    workspace_manifest::check(&form.draft).unwrap();
 }
 
 #[test]
-fn duplicate_primary_secondary_and_effort_aliases_are_refused() {
-    for primary in ["codex:gpt-6.1-sol:medium", "codex:gpt-6.1-sol:med"] {
-        let mut manifest = test_support::manifest();
-        manifest.tiers.standard.primary = primary.into();
-        let secondary = manifest.tiers.standard.secondaries.first().unwrap().clone();
-        let mut form = Form::new(manifest, &config()).unwrap();
-        for (key, value) in [
-            (KeyCode::Char('a'), "codex:gpt-6.1-sol:medium"),
-            (KeyCode::Right, secondary.as_str()),
-        ] {
-            keys(&mut form, [key]);
-            choose(&mut form, value);
-            assert_eq!(form.draft, form.original);
-            assert!(render(&form).contains("Duplicate agent"));
-        }
+fn duplicate_primary_and_secondary_are_refused() {
+    let manifest = test_support::manifest();
+    let secondary = manifest.tiers.standard.secondaries.first().unwrap().clone();
+    let mut form = Form::new(manifest, &config()).unwrap();
+    for (key, value) in [
+        (KeyCode::Char('a'), "codex:gpt-6.1-sol:medium"),
+        (KeyCode::Right, secondary.as_str()),
+    ] {
+        keys(&mut form, [key]);
+        choose(&mut form, value);
+        assert_eq!(form.draft, form.original);
+        assert!(render(&form).contains("Duplicate agent"));
     }
 }
 
