@@ -51,11 +51,11 @@ fn launch(root: &Utf8Path, agent: &str, cli: &Utf8Path, first: &str) -> Launch {
     fs::create_dir_all(root.join("bin")).unwrap();
     let mut invocation = agents::invocation(agent, InvocationDefaults::Worker).unwrap();
     let profile_env = invocation.env.clone();
-    let script = Utf8Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/harness_live.py");
+    let script = Utf8Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/harness_exec.py");
     test_support::write_executable_script(
         &root.join("bin").join(invocation.binary),
         &format!(
-            "#!/bin/sh\nexec python3 {} exec -- \"$@\"\n",
+            "#!/bin/sh\nexec python3 {} -- \"$@\"\n",
             agent_window::shell_quote(script.as_str())
         ),
     );

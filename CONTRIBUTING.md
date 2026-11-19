@@ -74,8 +74,6 @@ interactive fixture tests described below run in CI.
    form-elicitation payloads, prompt errors, cancellation confirmation, and session/load replay.
    For pi also check `agents/acp.rs` readiness metadata and `agents/pi-subscription.js`
    request-time OAuth enforcement, including a credential change during a running session.
-   Re-run a live subscription launch, steer, approval, question, cancel, and process-restart/resume
-   probe before updating the [tested adapter table](docs/headless.md#adapters-and-login).
 4. Run `scripts/cli-versions.sh --plan`, show it to the operator and ask for approval. Only on
    their yes, run `scripts/cli-versions.sh --update`, then re-run the script: every target row
    must show `installed` = `latest`. Planning preflights all three installations; unsupported
@@ -99,10 +97,7 @@ interactive fixture tests described below run in CI.
    and does not verify installed CLIs' interactive behavior. Check composer markers,
    worker brief-as-TUI-opening-turn, the lead's `--append-system-prompt` (claude, pi) and
    `foreground_args`, and telemetry readers against the notes and each CLI's `--help`.
-7. A CLI version bump needs only steps 1–6. Run the
-   [shared harness conformance procedure](docs/harness-conformance.md#live-compatibility-procedure)
-   only when a change touches an adapter or Niles' launch or brief code.
-8. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
+7. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
    change and file, and briefly any “no impact” items. On pass, propose updating `tested_version`
    and the README table together using the verified compat `version` column, on an
    `<issue>-<slug>` branch. Commit only when asked. `niles compat` is a new visible command,
