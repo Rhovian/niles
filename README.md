@@ -31,7 +31,7 @@ with the version):
 | --- | --- |
 | Claude Code | 2.1.328 |
 | Codex | 0.170.0 |
-| pi coding agent | 1.4.0 |
+| pi coding agent | 1.5.2 |
 
 ## Quickstart
 

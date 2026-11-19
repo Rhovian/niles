@@ -199,7 +199,7 @@ const PROFILES: &[AgentProfile] = &[
             }),
             remove_env: &["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"],
         }),
-        tested_version: "1.4.0",
+        tested_version: "1.5.2",
         foreground_args: &[],
         worker_args: &[],
         headless: &["-p"],
