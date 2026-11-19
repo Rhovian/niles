@@ -4,7 +4,7 @@ use common::*;
 use serde_json::json;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, Stdio};
 use std::time::Duration;
