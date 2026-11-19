@@ -160,7 +160,7 @@ const PROFILES: &[AgentProfile] = &[
                 "CLAUDE_CODE_USE_FOUNDRY",
             ],
         }),
-        tested_version: "2.1.327",
+        tested_version: "2.1.328",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
