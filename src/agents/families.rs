@@ -103,7 +103,7 @@ const PROFILES: &[AgentProfile] = &[
                 "MODEL_PROVIDER",
             ],
         }),
-        tested_version: "0.165.0",
+        tested_version: "0.170.0",
         // The shared daemon lets a running session continue in the background, out of its tmux
         // pane.
         foreground_args: &["--no-daemon"],
@@ -160,7 +160,7 @@ const PROFILES: &[AgentProfile] = &[
                 "CLAUDE_CODE_USE_FOUNDRY",
             ],
         }),
-        tested_version: "2.1.312",
+        tested_version: "2.1.327",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
