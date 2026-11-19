@@ -20,7 +20,7 @@ fn generated_defaults_match_literal_expectations() {
         let generated = defaults::manifest(&installed).unwrap();
         manifest::check(&generated).unwrap();
         assert!(generated.bindings.is_empty());
-        assert_eq!(generated.entry_agent, installed[0]);
+        assert_eq!(generated.entry_agent, *installed.first().unwrap());
         assert_eq!(generated.tiers.agents().collect::<Vec<_>>(), installed);
         assert_eq!(generated.tiers.iter().count(), 1);
     }

@@ -9,7 +9,7 @@ use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
 use crate::util::{current_dir_utf8, find_on_path, remove_dir_all_if_exists, render_template};
-use crate::workspace_manifest::setup::SetupSelection;
+use crate::workspace_manifest::{Tier, setup::SetupSelection};
 use crate::{agent_window, agents, telemetry, wake, watch, workspace_manifest};
 use anyhow::{Context, Result, bail};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -44,8 +44,8 @@ pub struct Assignment {
     #[arg(long = "with")]
     with: Vec<SkillName>,
     /// Manifest tier whose primary to launch (standard by default).
-    #[arg(long, value_enum, default_value_t = crate::workspace_manifest::Tier::Standard, conflicts_with = "agent")]
-    pub tier: crate::workspace_manifest::Tier,
+    #[arg(long, value_enum, default_value_t = Tier::Standard, conflicts_with = "agent")]
+    pub tier: Tier,
 }
 
 pub struct SpawnTask {
@@ -270,7 +270,7 @@ fn resolve_agent(
     path: &Utf8Path,
     manifest: &workspace_manifest::WorkspaceManifest,
     skill: &SkillName,
-    tier: crate::workspace_manifest::Tier,
+    tier: Tier,
     agent: Option<String>,
 ) -> Result<String> {
     if *skill == manifest.entry {

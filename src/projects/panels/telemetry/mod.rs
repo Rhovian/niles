@@ -2,6 +2,7 @@
 //! live sessions' context and the window's events.
 
 use super::{lead_running, registry};
+use crate::agents::ModelCatalogue;
 use crate::telemetry::BUCKET;
 use crate::theme::Theme;
 use anyhow::{Context, Result};
@@ -113,7 +114,7 @@ pub(super) fn panel(entries: &[registry::Entry], range: Range, theme: &Theme) ->
                 entry,
                 lead_running(entry)?,
                 since,
-                &crate::agents::ModelCatalogue::default(),
+                &ModelCatalogue::default(),
             )
         })
         .collect::<Result<Vec<_>>>()?;

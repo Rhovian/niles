@@ -177,7 +177,7 @@ fn closed_sessions_are_read_once_and_the_latest_lead_never_cached() {
     let path = latest.join("session.json");
     let mut meta: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    meta["agent"] = "corrupt-family".into();
+    *meta.get_mut("agent").unwrap() = "corrupt-family".into();
     write(&path, &serde_json::to_string(&meta).unwrap());
     let error = project(&entry, true, since, &ModelCatalogue::fixture())
         .map(|_| ())

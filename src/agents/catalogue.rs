@@ -1,4 +1,5 @@
 use super::profiles;
+use crate::util;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
@@ -57,7 +58,7 @@ impl ModelCatalogue {
             .get(family)
             .context("unknown catalogue family")?
             .get_or_init(|| {
-                let Some(binary) = crate::util::find_on_path(profile.binary) else {
+                let Some(binary) = util::find_on_path(profile.binary) else {
                     return Ok(Models::new());
                 };
                 query::models(profile.catalogue, binary.as_std_path())
@@ -108,8 +109,9 @@ impl ModelCatalogue {
 
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
+        use crate::store;
         let raw: BTreeMap<String, Models> =
-            crate::store::parse_yaml(include_str!("../test_support/catalogue.yaml")).unwrap();
+            store::parse_yaml(include_str!("../test_support/catalogue.yaml")).unwrap();
         Self {
             families: profiles()
                 .map(|p| {

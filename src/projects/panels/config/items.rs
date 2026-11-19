@@ -3,7 +3,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    agents::ModelCatalogue,
+    agents::{self, ModelCatalogue},
     config::user::{DEFAULT_BINDINGS, DEFAULT_THEME, FileConfig},
     projects::registry,
     watch,
@@ -193,7 +193,7 @@ fn watch(root: &Utf8Path, manifest: &WorkspaceManifest) -> [Item; 3] {
 /// Installed CLIs supply the available models and effort levels.
 fn models(catalogue: &ModelCatalogue) -> Vec<Item> {
     let mut items = vec![Item::Section("models".to_owned())];
-    for profile in crate::agents::profiles() {
+    for profile in agents::profiles() {
         match catalogue.models(profile.id) {
             Ok(models) => items.extend(models.map(|(model, efforts)| {
                 Item::Setting(plain(

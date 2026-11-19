@@ -58,7 +58,7 @@ pub(super) fn toml_basic_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{InvocationDefaults, invocation};
+    use crate::agents::{AgentSpec, InvocationDefaults, invocation};
 
     #[test]
     fn toml_strings_escape_metacharacters_controls_and_preserve_unicode() {
@@ -67,8 +67,7 @@ mod tests {
             "\"\\\\\\\"\\n\\r\\t\\u0008\\u000C\\u001B\\u007Fé\""
         );
         let effort = "quoted\"\\\n雪";
-        let spec =
-            crate::agents::AgentSpec::from_parts("codex", Some("fixture"), Some(effort)).unwrap();
+        let spec = AgentSpec::from_parts("codex", Some("fixture"), Some(effort)).unwrap();
         let invocation = AgentInvocation::new(spec, InvocationDefaults::Worker);
         let config = invocation.args.last().unwrap();
         let decoded: toml::Table = toml::from_str(config).unwrap();

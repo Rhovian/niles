@@ -69,7 +69,7 @@ impl SetupTiers {
     }
 
     pub(crate) fn pick(&mut self, root: &Utf8Path) -> Result<SetupAction> {
-        screen(root, &mut self.0, |form, key| Self::key(form, key))
+        screen(root, &mut self.0, Self::key)
     }
 }
 
