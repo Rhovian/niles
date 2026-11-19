@@ -99,8 +99,9 @@ interactive fixture tests described below run in CI.
    and does not verify installed CLIs' interactive behavior. Check composer markers,
    worker brief-as-TUI-opening-turn, the lead's `--append-system-prompt` (claude, pi) and
    `foreground_args`, and telemetry readers against the notes and each CLI's `--help`.
-7. Run the [shared harness conformance procedure](docs/harness-conformance.md#live-compatibility-procedure)
-   against the pinned versions, recording the auth path and evidence for each case.
+7. A CLI version bump needs only steps 1–6. Run the
+   [shared harness conformance procedure](docs/harness-conformance.md#live-compatibility-procedure)
+   only when a change touches an adapter or Niles' launch or brief code.
 8. Report per CLI: tested → latest, compat result, each relevant change with the proposed Niles
    change and file, and briefly any “no impact” items. On pass, propose updating `tested_version`
    and the README table together using the verified compat `version` column, on an
