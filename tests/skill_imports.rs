@@ -201,7 +201,7 @@ fn resting_refs_load_offline_and_work_in_all_instruction_lists_and_entry() {
     fs::remove_dir_all(pack.env.home.join(".niles/cache")).unwrap();
     let hidden = pack.remote.with_extension("offline");
     fs::rename(&pack.remote, &hidden).unwrap();
-    assert_command_success("manifest load stays offline", &pack.run(&["models"]));
+    assert_command_success("manifest load stays offline", &pack.run(&["doctor"]));
     fs::rename(hidden, &pack.remote).unwrap();
     let output = pack.spawn(&["job", "--with", "pdf", "task"]);
     assert_command_success("refetch on cache miss and inject", &output);
@@ -248,7 +248,7 @@ fn conflicts_and_origin_rules_fail_before_worker_creation() {
         "local skill already exists",
     );
     edit_manifest(&pack.env.root, |body| format!("{body}pdf: {{}}\n"));
-    let output = pack.run(&["models"]);
+    let output = pack.run(&["doctor"]);
     assert_failure_contains("dual documents", &output, "has both");
     assert!(stderr_of(&output).contains("SKILL.md") && stderr_of(&output).contains("SKILL.ref"));
     fs::remove_file(pack.env.root.join(".niles/skills/pdf/SKILL.md")).unwrap();
@@ -258,7 +258,7 @@ fn conflicts_and_origin_rules_fail_before_worker_creation() {
     symlink(&outside, &pointer).unwrap();
     assert_failure_contains(
         "workspace pointer symlink",
-        &pack.run(&["models"]),
+        &pack.run(&["doctor"]),
         "without symlinks",
     );
 }

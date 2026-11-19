@@ -139,7 +139,7 @@ fn invalid_primaries_fail_before_worker_or_session_creation() {
     let env = TestEnv::with_manifest("skills-bounds", "codex");
     let path = write_skill(&env.root.join(".niles"), "worker", "valid", "body");
     atomic_write(&path, "malformed frontmatter").unwrap();
-    assert_command_success("load checks existence only", &env.run(&["models"]));
+    assert_command_success("load checks existence only", &env.run(&["doctor"]));
     assert_failure_contains(
         "malformed skill",
         &env.spawn("worker", &["job", "task"]),
