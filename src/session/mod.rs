@@ -1,4 +1,4 @@
-use crate::harness::Launch;
+use crate::harness::{Launch, LaunchArgs};
 use crate::tmux::{self, LeadStart};
 use crate::util::{current_dir_utf8, dated_directories, parse_timestamp_id};
 use crate::workspace_manifest::setup::SetupSelection;
@@ -22,10 +22,10 @@ pub(crate) use brief::{SessionMeta, latest_lead, live_lead, read_session_meta};
 pub(crate) async fn run(
     start: LeadStart,
     agent: Option<&str>,
-    launch: Launch,
+    launch: LaunchArgs,
     selection: Option<SetupSelection>,
 ) -> Result<()> {
-    launch.validate()?;
+    let launch = launch.resolve(Launch::NativeTui {})?;
     let workspace = current_dir_utf8()?;
     // Fails here, before any manifest prompting, so being outside tmux costs one line and no setup.
     tmux::current_session()?;

@@ -4,16 +4,25 @@
 
 | CLI | Adapter package | Tested adapter version | Login |
 | --- | --- | --- | --- |
-| Codex | `@agentclientprotocol/codex-acp` | 2.6.0 | `codex-acp cli login` (bundled Codex, ChatGPT) |
-| Claude Code | `@agentclientprotocol/claude-agent-acp` | 0.107.3 | `claude-agent-acp --cli auth login` (Claude.ai) |
+| Codex | `@agentclientprotocol/codex-acp` | 2.9.0 | `codex-acp cli login` (bundled Codex, ChatGPT) |
+| Claude Code | `@agentclientprotocol/claude-agent-acp` | 0.109.1 | `claude-agent-acp --cli auth login` (Claude.ai) |
 | pi | `pi-acp` | 0.0.34 | `/login` in pi, select `openai` (ChatGPT OAuth) |
 
 Install the listed adapter. Pair stock `pi-acp` with pi. See [tested CLI versions](../README.md#requirements).
 
 ## Launch and billing
 
-`niles start --keep-skills --mode headless --billing subscription` starts the entry agent. Pass the mode and billing flags to `niles spawn <id> --skill <skill> ...`. Select manifest-listed agents. Workers retain permission bypass.
-Headless mode requires `--billing subscription`. Niles removes Codex API-key overrides and refuses account identity mismatches. API-key billing is unqualified.
+Set the workspace manifest's worker launch default.
+
+```yaml
+workers: {mode: headless, billing: subscription}
+```
+
+Run `niles spawn <id> --skill <skill> <task>` as usual. Each worker uses the manifest's mode and billing unless you override them with `--mode` or `--billing`. Use `--mode native-tui` for one native worker, or remove `workers` (or set `workers: {mode: native-tui}`) to restore the native default. An agent that can't run headless fails at spawn.
+
+`niles start --keep-skills --mode headless --billing subscription` starts the entry agent in headless mode. The entry agent defaults to native mode.
+
+Headless mode requires an explicit `subscription` billing declaration in the manifest or on the command line. Niles removes Codex API-key overrides and refuses account identity mismatches. Workers retain permission bypass.
 Claude shares its native login, supports both modes in one workspace, and respects user and project permission restrictions. Pi requires its own login and an explicit `pi:openai/<model>[:thinking]` spec.
 
 ## Window commands

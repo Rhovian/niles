@@ -147,6 +147,19 @@ mod tests {
                 "unknown field",
             ));
         }
+        for (values, cause) in [
+            ("mode: headless", "missing field `billing`"),
+            (
+                "mode: headless, billing: api-key",
+                "unknown variant `api-key`",
+            ),
+            (
+                "mode: native-tui, billing: subscription",
+                "unknown field `billing`",
+            ),
+        ] {
+            cases.push(("workers", format!("{body}workers: {{{values}}}\n"), cause));
+        }
         for (label, body, cause) in cases {
             let error = format!("{:#}", load_body(label, &body).unwrap_err());
             assert!(
@@ -221,7 +234,7 @@ mod tests {
                 .filter(|key| !["entry", "entry_agent", "tiers"].contains(key))
                 .is_sorted()
         );
-        for gone in ["checkin:", "recheck:", "worktree:"] {
+        for gone in ["checkin:", "recheck:", "worktree:", "workers:"] {
             assert!(!body.contains(gone), "{body}");
         }
         let mut configured = WorkspaceManifest {
@@ -230,6 +243,7 @@ mod tests {
             worktree: Some(
                 store::parse_yaml("env: {CACHE: /tmp/cache}\nsetup: echo ready").unwrap(),
             ),
+            workers: Some(store::parse_yaml("mode: headless\nbilling: subscription").unwrap()),
             ..manifest
         };
         configured.bindings.get_mut(&skill("worker")).unwrap().gates =

@@ -1,5 +1,5 @@
 use super::brief::{ManagerSession, prepare_manager_session};
-use crate::harness::{Launch, Mode, acp};
+use crate::harness::{Launch, acp};
 use crate::workspace_manifest::WorkspaceManifest;
 use crate::{agents, skills, watch};
 use anyhow::{Context, Result, bail};
@@ -55,12 +55,12 @@ pub(super) async fn launch_foreground_agent(
         &dir,
         workspace,
         meta.lead_pane.as_deref(),
-        (launch.mode == Mode::NativeTui)
+        (!launch.is_headless())
             .then_some(invocation.spec.profile().composer)
             .flatten(),
     );
 
-    if launch.mode == Mode::Headless {
+    if launch.is_headless() {
         return acp::run(&dir, entry_prompt(&dir)).await;
     }
     let status = run_foreground_process(

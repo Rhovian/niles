@@ -1,5 +1,6 @@
 use crate::agents::AgentSpec;
 use crate::duration;
+use crate::harness::Launch;
 use crate::skills::SkillName;
 #[cfg(test)]
 use crate::store::parse_yaml;
@@ -39,6 +40,9 @@ pub struct WorkspaceManifest {
     pub recheck: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<super::WorktreeConfig>,
+    /// Default launch mode and billing for workers spawned from this workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) workers: Option<Launch>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

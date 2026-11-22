@@ -20,10 +20,11 @@ fn entry_delivers_entry_agent_and_session_header_to_builtin_cli() {
 #[test]
 fn entry_agent_is_chosen_apart_from_standard_primary_and_overridable_within_tiers() {
     let env = start_fixture("niles-foreground-entry-agent", |body| {
-        body.replace(
+        let body = body.replace(
             "entry_agent: claude:haiku",
             "entry_agent: claude:sonnet:high",
-        )
+        );
+        format!("{body}workers: {{mode: headless, billing: subscription}}\n")
     });
     let args_log = env.root.join("args");
     let start = |extra: &[&str]| {

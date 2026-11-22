@@ -5,6 +5,12 @@ pub(crate) use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) fn headless_by_default(env: &TestEnv) {
+    edit_manifest(&env.root, |body| {
+        format!("{body}workers: {{mode: headless, billing: subscription}}\n")
+    });
+}
+
 pub(crate) fn write_corrupt_worker_fixture(workspace: &Path, id: &str) -> PathBuf {
     let worker_dir = state_dir(workspace).join("worker").join(id);
     fs::create_dir_all(&worker_dir).unwrap();

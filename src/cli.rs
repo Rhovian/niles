@@ -1,4 +1,4 @@
-use crate::harness::Launch;
+use crate::harness::LaunchArgs;
 use crate::projects::onboard::unattended::Options;
 use crate::projects::panels::Panel;
 use crate::skills::SkillsCommand;
@@ -99,7 +99,7 @@ pub enum CommandName {
     #[command(hide = true)]
     Start {
         #[command(flatten)]
-        launch: Launch,
+        launch: LaunchArgs,
         #[arg(long)]
         keep_skills: bool,
         /// Launch the entry session on this listed tier agent instead of the manifest's

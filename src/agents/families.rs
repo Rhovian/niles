@@ -373,7 +373,7 @@ fn pi_models(body: Value) -> Result<Models> {
 }
 
 impl AcpAdapter {
-    // codex-acp 2.6.0 src/index.ts and CodexAcpServer.ts consume this session config.
+    // codex-acp 2.9.0 src/index.ts and CodexAcpServer.ts consume this session config.
     pub(crate) fn configure(
         self,
         spec: &AgentSpec,
@@ -409,7 +409,7 @@ impl AcpAdapter {
                     ..Default::default()
                 }
             }
-            // claude-agent-acp 0.107.3 new-session-meta.ts / session-mode.ts.
+            // claude-agent-acp 0.109.1 new-session-meta.ts / session-mode.ts.
             // permissionMode in SDK options is ignored; use ACP session/set_mode.
             Self::Claude => {
                 let mut options = Map::new();
