@@ -108,7 +108,7 @@ printf 'service = {\n\tprogram = %s\n\tpid = %s\n}\n' "$SERVICE_PROGRAM" "$pid"
     #[cfg(target_os = "macos")]
     {
         fs::create_dir_all(plist.parent().unwrap()).unwrap();
-        atomic_write(&plist, &format!(
+        atomic_write(&plist, format!(
             "<plist version=\"1.0\"><dict><key>ProgramArguments</key><array><string>{disabled}</string><string>remote</string></array></dict></plist>"
         )).unwrap();
     }
