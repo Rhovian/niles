@@ -3,16 +3,12 @@ use crate::agents::InvocationDefaults;
 use crate::harness::native::NativeTui;
 use crate::tmux::{SessionName, TmuxTarget};
 use crate::{agent_window, agents, store::atomic_write, test_support};
-use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::{
     collections::BTreeMap,
     env, fs,
     fs::File,
-    io::ErrorKind,
     process::{Command, Stdio},
-    thread,
-    time::{Duration, Instant},
 };
 
 // Like the existing real-tmux fixtures, the fake accepts bracketed paste without advertising
@@ -39,14 +35,6 @@ struct Launch {
     pane: String,
     root: Utf8PathBuf,
 }
-impl Launch {
-    fn adapter(&self) -> NativeTui {
-        NativeTui {
-            target: TmuxTarget::pane(&self.pane).unwrap(),
-        }
-    }
-}
-
 fn launch(root: &Utf8Path, agent: &str, cli: &Utf8Path, first: &str) -> Launch {
     fs::create_dir_all(root.join("bin")).unwrap();
     let mut invocation = agents::invocation(agent, InvocationDefaults::Worker).unwrap();
@@ -121,8 +109,8 @@ fn launch(root: &Utf8Path, agent: &str, cli: &Utf8Path, first: &str) -> Launch {
 }
 
 impl Fixture for Native {
-    type Adapter = NativeTui;
-    fn start(&mut self, first: &str) -> Self::Adapter {
+    type Generation = String;
+    fn start(&mut self, first: &str) -> Self::Generation {
         let launched = launch(
             &self.root.join(uuid::Uuid::new_v4().to_string()),
             &self.agent,
@@ -133,9 +121,19 @@ impl Fixture for Native {
             Ok(launched.root.join("receipt").try_exists()?.then_some(()))
         })
         .unwrap();
-        let adapter = launched.adapter();
+        let pane = launched.pane.clone();
         self.launched = Some(launched);
-        adapter
+        pane
+    }
+    fn restart(&mut self, _previous: &Self::Generation, prompt: &str) -> Self::Generation {
+        let pane = self.start(prompt);
+        assert_eq!(self.received(), prompt);
+        pane
+    }
+    fn connect(pane: &Self::Generation) -> Result<impl Adapter + '_> {
+        Ok(NativeTui {
+            target: TmuxTarget::pane(pane)?,
+        })
     }
     fn received(&self) -> String {
         take_receipt(
@@ -147,13 +145,11 @@ impl Fixture for Native {
     fn disposition(&self) -> InputDisposition {
         InputDisposition::Unconfirmed
     }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::default()
+    }
     fn disconnect(&mut self) {
         tmux_output(&["kill-pane", "-t", &self.launched.as_ref().unwrap().pane]);
-    }
-    fn restart(&mut self) -> Self::Adapter {
-        let adapter = self.start("restart");
-        assert_eq!(self.received(), "restart");
-        adapter
     }
     fn session(&self) -> SessionId {
         SessionId::new("native-identity-not-resumable".into()).unwrap()
@@ -180,42 +176,26 @@ fn native_child() {
             "adapter=native-tui family={} protocol=none cli=fixture",
             profile.id
         );
-        let catalogue = agents::ModelCatalogue::fixture();
-        let (model, efforts) = catalogue.models(profile.id).unwrap().next().unwrap();
-        let agent = agents::AgentSpec::from_parts(
-            profile.id,
-            Some(model),
-            efforts.first().map(String::as_str),
-        )
-        .unwrap()
-        .canonical();
-        super::run(&mut Native {
-            agent,
-            cli: root.join("fake-cli"),
-            root: dir,
-            launched: None,
-        });
+        let agent = fixture_spec(profile.id).canonical();
+        super::run(
+            &mut Native {
+                agent,
+                cli: root.join("fake-cli"),
+                root: dir,
+                launched: None,
+            },
+            LifecycleCoverage::Full,
+        );
     }
 }
 
 #[test]
 fn native_families() {
-    // Environment changes belong in a child: unit tests share a process and run concurrently.
     let root = test_support::temp_dir("harness-conformance");
     test_support::write_executable_script(&root.join("fake-cli"), CLI);
     let server = Server::start();
-    let mut child = Command::new(env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "harness::conformance::native::native_child",
-            "--nocapture",
-        ])
+    let mut child = child_command("harness::conformance::native::native_child", &root)
         .env("TMUX", format!("{},0,0", server.socket))
-        .env(
-            "PATH",
-            format!("{}:{}", root.as_str(), env::var("PATH").unwrap()),
-        )
         .env("NILES_CONFORMANCE_ROOT", root.as_str())
         .stdout(File::create(root.join("child.stdout")).unwrap())
         .stderr(File::create(root.join("child.stderr")).unwrap())
@@ -235,39 +215,6 @@ fn native_families() {
         result.as_ref().is_ok_and(|status| status.success()),
         "{result:?}\n{stdout}\n{stderr}"
     );
-}
-
-// std has no deadline-aware process or file wait. Child::try_wait is nonblocking:
-// https://doc.rust-lang.org/1.89.0/std/process/struct.Child.html#method.try_wait
-fn wait_for<T>(
-    label: &str,
-    timeout: Duration,
-    mut poll: impl FnMut() -> Result<Option<T>>,
-) -> Result<T> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .context("deadline overflow")?;
-    loop {
-        if let Some(value) = poll()? {
-            return Ok(value);
-        }
-        ensure!(Instant::now() < deadline, "timed out waiting for {label}");
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn take_receipt(root: &Utf8Path, timeout: Duration) -> Result<String> {
-    let path = root.join("receipt");
-    let text = wait_for("fake CLI receipt", timeout, || {
-        match fs::read_to_string(&path) {
-            Ok(text) => Ok(Some(text)),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    })?;
-    // Consume each publication so repeated identical prompts need their own CLI receipt.
-    fs::remove_file(path)?;
-    Ok(text)
 }
 
 struct Server {

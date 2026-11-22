@@ -1,32 +1,30 @@
 # Harness conformance
 
-`src/harness/conformance.rs` takes a fixture with a real harness Adapter. CI enumerates every
-native family, using fake CLIs, a private tmux server with no host config, and the shipped
-`agents::invocation` → `launch_worker_window` path. A pre-exec wrapper records actual argv and
-selected public launch-env values. Opening bytes are compared with the generated invocation;
-follow-ups wait for complete receipts published by the fake CLI, independently of terminal echo.
-The CI argv recorder is `tests/harness_exec.py` and requires python3.
-Startup/receipt and child-process waits have deadlines. Private servers have panic-safe cleanup.
-No live CLIs or credentials are used by the CI sequence; each family records `fixture/no-auth`.
-Installed CLI checks use `niles compat`; see
+`src/harness/conformance.rs` runs the shared spec against real harness adapters in CI.
+The native fixture enumerates every family through
+`agents::invocation` → `launch_worker_window` in a private tmux server. It uses
+`tests/harness_exec.py` to record launch argv and selected environment values.
+The ACP fixture launches the production runner and uses the same one-request socket
+connections as worker commands. The fake peers in `tests/harness_acp.py` exercise
+Codex's launch config, Claude's session metadata and mode, and pi's native readiness
+command and generated child command. Codex and Claude advertise and send auth status.
+The pi-acp-shaped peer omits auth status from both initialization and notifications.
+All three peers exercise resume and restart. The Claude peer also supplies the
+stimuli for the shared ACP runner's history, queue, permission, and cancel checks.
+
+Both fixtures use complete input receipts from the fake CLI or peer. The ACP peer uses
+a distinct completion reason so the opening-turn assertion cannot match the Idle state
+written during initialization. The fixtures require Python 3 and use no live credentials.
+Installed CLI checks use `niles compat`. See
 [Agent CLI compatibility](../CONTRIBUTING.md#agent-cli-compatibility).
 
-| Guarantee | Native coverage / remaining work |
+| Guarantee | Coverage |
 | --- | --- |
-| First and multiline input | Shared sequence: actual launch argv and exact fake-CLI follow-up receipt |
-| Accepted versus queued; busy input | Native returns Unconfirmed. No busy/queue acknowledgment assertion; needs the ACP peer fixture in #574 |
-| Long quiet work | Existing `session_lifecycle_requires_turn_evidence_deadline_and_liveness` exercises production `resolve_session` at a later clock time; not repeated per native adapter |
-| Provider failure | Existing Claude/Codex error-frame tests and pi's state-reader test; not synthetic fixture observations |
-| Quota classification | No distinct quota-shaped per-family fixtures yet; unverified. A renamed generic error string is not quota evidence |
-| Attention without/with response | Native refuses attention/permission dispatch. Supported protocol lifecycle cases await #574 |
-| Cancel requested versus confirmed | Native refuses cancel. Existing v1 stop-reason table checks confirmation; supported transport cases await #574 |
-| Exact resume / missing identity | Native refuses resume. Supported branch loads the requested session and refuses an identity outside the bound worker session |
-| Disconnect, restart, stale generations | Shared sequence: disconnected and retired pane handles fail, replacement receives input. Native has no event stream; no stale-event injection claim |
-
-The shared ACP fixture follow-up ([#574](https://github.com/Rhovian/niles/issues/574)) must extend this
-sequence with protocol-peer stimuli and observations from the production runner/adapter for quiet
-work, busy acknowledgments, attention, cancel and stale wire events.
-Resume stays bound to the worker's existing conversation: foreign identities are refused locally,
-and a missing bound identity must be refused by session/load, never silently create a new conversation.
-Successful load alone does not prove conversation-history continuity;
-a protocol fixture must also probe retained history after resume.
+| First and multiline input | Shared sequence compares the exact bytes received by the CLI or ACP peer. Native also checks actual launch argv. |
+| Input acknowledgment and queueing | Both return Unconfirmed for idle dispatch. ACP returns Queued while a permission is pending and sends that input after the active turn ends. |
+| Quiet work | The resolver test `session_lifecycle_requires_turn_evidence_deadline_and_liveness` covers elapsed time and liveness. |
+| Provider failure and quota | Existing Claude/Codex error-frame tests and pi's state-reader test cover provider failures. Distinct quota-shaped fixtures remain open. |
+| Attention and response | Native refuses attention and permission dispatch. ACP surfaces a pending request and returns the selected option to the peer. |
+| Cancel requested and confirmed | Native refuses cancel. ACP stays Running while the peer withholds confirmation, automatically cancels a late permission, and reports Cancelled after the peer confirms. |
+| Exact resume, missing identity, and retained history | Native refuses resume. ACP loads the bound session, refuses a foreign identity and a peer-side missing session, and probes retained history after load. Replay leaves one copy in the transcript. |
+| Disconnect, restart, and stale generations | The old pane or open socket connection fails after restart. ACP recovers a stale socket path, loads the bound session from the same worker directory, and receives new input without resending the opening assignment. |
