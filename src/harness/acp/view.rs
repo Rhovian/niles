@@ -149,7 +149,7 @@ impl View {
         }
         Ok(())
     }
-    // claude-agent-acp 0.107.3 elicitation.ts maps AskUserQuestion to SDK forms.
+    // claude-agent-acp 0.109.1 elicitation.ts maps AskUserQuestion to SDK forms.
     pub(super) fn elicitation(
         &mut self,
         request: acp::CreateElicitationRequest,

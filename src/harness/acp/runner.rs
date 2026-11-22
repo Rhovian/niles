@@ -235,7 +235,7 @@ impl Runner {
         let listener = UnixListener::bind(&path)?;
         let _socket = SocketPath(path);
         let submitted = self.view.state.assignment_submitted;
-        // codex-acp 2.6.0 does not persist an unprompted thread (live retry probe).
+        // codex-acp 2.9.0 does not persist an unprompted thread (live retry probe).
         // Only a submitted assignment has a conversation to resume.
         if submitted {
             self.load().await?;

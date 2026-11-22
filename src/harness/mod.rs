@@ -8,16 +8,9 @@ pub(crate) mod acp;
 mod conformance;
 mod launch;
 pub(crate) mod native;
-pub(crate) use launch::Launch;
+pub(crate) use launch::{Launch, LaunchArgs};
 #[cfg(test)]
 mod tests;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum Mode {
-    #[default]
-    NativeTui,
-    Headless,
-}
 
 /// A conversation identity, independent of its process or display surface.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

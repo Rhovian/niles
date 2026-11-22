@@ -52,6 +52,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
         checkin: None,
         recheck: None,
         worktree: None,
+        workers: None,
     };
     manifest.tiers.dedup()?;
     for agent in manifest.tiers.agents() {

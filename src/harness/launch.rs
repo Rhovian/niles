@@ -1,8 +1,9 @@
-use super::{Mode, acp};
+use super::acp;
 use crate::agent_window::shell_quote;
 use crate::{agents, telemetry::SessionLink, util};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use camino::Utf8Path;
+use serde::{Deserialize, Serialize};
 use std::env;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
@@ -11,27 +12,61 @@ pub(crate) enum Billing {
     ApiKey,
 }
 
-#[derive(Debug, Clone, Copy, Default, clap::Args)]
-pub(crate) struct Launch {
-    #[arg(long, value_enum, default_value_t)]
-    pub(crate) mode: Mode,
-    /// Required for headless launches; never inferred from ambient credentials.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum Mode {
+    NativeTui,
+    Headless,
+}
+
+#[derive(Debug, Clone, Copy, clap::Args)]
+pub(crate) struct LaunchArgs {
+    /// Launch mode. Defaults to native-tui, or the workspace's workers setting for spawn.
+    #[arg(long, value_enum)]
+    mode: Option<Mode>,
+    /// Headless billing must be declared here or in the workspace's workers setting for spawn.
     #[arg(long, value_enum)]
     billing: Option<Billing>,
 }
-impl Launch {
-    pub(crate) fn validate(self) -> Result<()> {
-        ensure!(
-            matches!(
-                (self.mode, self.billing),
-                (Mode::NativeTui, None) | (Mode::Headless, Some(Billing::Subscription))
+
+impl LaunchArgs {
+    pub(crate) fn resolve(self, default: Launch) -> Result<Launch> {
+        let mode = match (self.mode, default) {
+            (Some(mode), _) => mode,
+            (None, Launch::NativeTui {}) => Mode::NativeTui,
+            (None, Launch::Headless { .. }) => Mode::Headless,
+        };
+        match (mode, self.billing) {
+            (Mode::NativeTui, None) => Ok(Launch::NativeTui {}),
+            (Mode::Headless, Some(Billing::Subscription)) => Ok(Launch::Headless {
+                billing: HeadlessBilling::Subscription,
+            }),
+            (Mode::Headless, None) if default.is_headless() => Ok(default),
+            (Mode::NativeTui, Some(_)) | (Mode::Headless, None | Some(Billing::ApiKey)) => bail!(
+                "headless launch requires --billing subscription; API-key adapters are not qualified yet"
             ),
-            "headless launch requires --billing subscription; API-key adapters are not qualified yet"
-        );
-        Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum Launch {
+    NativeTui {},
+    Headless { billing: HeadlessBilling },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum HeadlessBilling {
+    Subscription,
+}
+
+impl Launch {
+    pub(crate) fn is_headless(self) -> bool {
+        matches!(self, Self::Headless { .. })
     }
     pub(crate) fn qualify(self, spec: &agents::AgentSpec) -> Result<()> {
-        if self.mode == Mode::Headless {
+        if self.is_headless() {
             let profile = spec
                 .profile()
                 .acp
@@ -49,7 +84,7 @@ impl Launch {
         spec: &agents::AgentSpec,
         dir: &Utf8Path,
     ) -> Option<SessionLink> {
-        if self.mode == Mode::Headless {
+        if self.is_headless() {
             Some(SessionLink::Acp {
                 dir: dir.to_owned(),
             })
@@ -64,7 +99,10 @@ impl Launch {
         primary: &str,
         worker: bool,
     ) -> Result<()> {
-        if self.mode == Mode::Headless {
+        if let Self::Headless {
+            billing: HeadlessBilling::Subscription,
+        } = self
+        {
             let mut session = invocation
                 .spec
                 .profile()
@@ -76,7 +114,7 @@ impl Launch {
             acp::prepare(
                 dir,
                 invocation.spec.family(),
-                self.billing.context("headless billing is required")?,
+                Billing::Subscription,
                 session,
             )?;
             let executable = env::current_exe()?;

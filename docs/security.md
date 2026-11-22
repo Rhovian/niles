@@ -81,6 +81,7 @@ commands there you would run yourself. Model spending approval is project-wide:
 only exact agents in the manifest's `tiers` list may be selected by `spawn --agent`, and
 `--tier` selects only a listed tier. A skill needs no composition binding to use those agents;
 composition bindings grant no additional model access.
+The manifest's `workers` setting can select a subscription-backed ACP adapter for worker launches.
 
 Workspace keys are the full SHA-256 digest of the absolute path's UTF-8 bytes, in lowercase
 hexadecimal. Their fixed length bounds state paths regardless of workspace path length, and

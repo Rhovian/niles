@@ -87,12 +87,15 @@ fn spawn_outside_tmux_fails_with_guidance_instead_of_inventing_a_session() {
 #[test]
 fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     let env = TestEnv::with_manifest("niles-worker-tier-test", "codex:gpt-6.2-sol:xhigh");
+    headless_by_default(&env);
 
     let codex_spawn = env
         .spawn_command(
             "solo",
             &[
                 "codex-hi",
+                "--mode",
+                "native-tui",
                 "--agent",
                 "codex:gpt-6.2-sol:xhigh",
                 "Fix",
@@ -142,13 +145,6 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
             "solo",
             &["--mode", "headless"][..],
             "requires --billing subscription",
-            true,
-        ),
-        (
-            "api",
-            "solo",
-            &["--mode", "headless", "--billing", "api-key"][..],
-            "API-key adapters are not qualified",
             true,
         ),
         (
@@ -213,8 +209,30 @@ fn spawn_rejects_invalid_input_before_writing_a_worker() {
         if bare {
             command.env_remove("TMUX");
         }
+        if id == "adapter" {
+            command.env("PATH", &env.bin);
+        }
         let output = command.output().unwrap();
         assert_failure_contains(id, &output, error);
+        assert!(!state_dir(&env.root).join("worker").join(id).exists());
+    }
+
+    write_spawn_manifest(&env.root, "pi:anthropic/claude-sonnet");
+    headless_by_default(&env);
+    write_executable(&env.bin.join("pi-acp"), "#!/bin/sh\nexit 1\n");
+    for (id, args, error) in [
+        (
+            "api",
+            &["api", "--billing", "api-key", "Task"][..],
+            "API-key adapters are not qualified",
+        ),
+        (
+            "provider",
+            &["provider", "Task"][..],
+            "headless pi requires an explicit openai/<model>",
+        ),
+    ] {
+        assert_failure_contains(id, &env.spawn("solo", args), error);
         assert!(!state_dir(&env.root).join("worker").join(id).exists());
     }
 }

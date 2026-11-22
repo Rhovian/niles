@@ -5,7 +5,7 @@ use sdk::v1::schema as acp;
 use serde::{Deserialize, Serialize, ser::Error as _};
 use tokio::process::Command;
 
-// codex-acp 2.6.0 AuthStatusMeta.ts and claude-agent-acp 0.107.3 auth-status.ts
+// codex-acp 2.9.0 AuthStatusMeta.ts and claude-agent-acp 0.109.1 auth-status.ts
 // share this extension, predating the schema's unstable auth-status payload.
 #[derive(Debug, Clone, Serialize, Deserialize, sdk::JsonRpcNotification)]
 #[notification(method = "_auth/status_update")]

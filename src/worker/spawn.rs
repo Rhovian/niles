@@ -4,7 +4,7 @@ use super::resolve::resolve_live_worker_if_exists;
 use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
-use crate::harness::{Launch, Mode};
+use crate::harness::{Launch, LaunchArgs};
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
 use crate::tmux::{self, WindowTarget};
@@ -36,7 +36,7 @@ const UNLABELED_TASK_LABEL: &str = "-";
 #[derive(Debug, clap::Args)]
 pub struct Assignment {
     #[command(flatten)]
-    pub launch: Launch,
+    pub launch: LaunchArgs,
     /// Installed primary skill to launch on a project tier.
     #[arg(long)]
     pub skill: SkillName,
@@ -62,7 +62,6 @@ pub fn spawn(
     tree: Option<SpawnTree>,
     selection: Option<&SetupSelection>,
 ) -> Result<()> {
-    assignment.launch.validate()?;
     let SpawnTask {
         label: task_label,
         text: task,
@@ -85,6 +84,13 @@ pub fn spawn(
         )
     })?;
     let manifest = manifest.with_context(|| format!("cannot resolve skill '{skill}': manifest {manifest_path} does not exist. Run spawn from the lead's workspace and pass --tree <path> or --worktree <branch> to place the worker elsewhere"))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "native is the built-in worker launch default"
+    )]
+    let launch = assignment
+        .launch
+        .resolve(manifest.workers.unwrap_or(Launch::NativeTui {}))?;
     let agent = resolve_agent(&manifest_path, &manifest, &skill, tier, agent)?;
     // Resolved with the agent, before any worker state is written: a typo in `--checkin` or in the
     // manifest's check-in keys is the lead's, and it must not leave a launched worker behind it.
@@ -98,14 +104,12 @@ pub fn spawn(
     };
     let resolved = super::skills::prepare(&primary_skill, binding, &assignment.with, &project)?;
     invocation.pass_primary(&resolved.prompt)?;
-    assignment.launch.qualify(&invocation.spec)?;
-    if matches!(assignment.launch.mode, Mode::NativeTui)
-        && find_on_path(invocation.binary).is_none()
-    {
+    launch.qualify(&invocation.spec)?;
+    if !launch.is_headless() && find_on_path(invocation.binary).is_none() {
         bail!("agent binary {} not found on PATH", invocation.binary);
     }
     let dir = store::workers_dir(&project)?.join(&id);
-    let session_link = assignment.launch.session_link(&invocation.spec, &dir);
+    let session_link = launch.session_link(&invocation.spec, &dir);
     if let Some(link) = &session_link {
         invocation.args.extend(link.args());
     }
@@ -162,9 +166,9 @@ pub fn spawn(
 
     let brief_path = write_brief(&dir, &id, &skill, task_label.as_deref(), agent_dir, &task)?;
 
-    assignment
-        .launch
-        .configure(&mut invocation, &dir, &resolved.prompt, true)?;
+    launch
+        .configure(&mut invocation, &dir, &resolved.prompt, true)
+        .map_err(|err| abandon_spawn(err, &dir, None, &format!("configure worker {id}")))?;
     let launch_path = dir.join("launch.sh");
     let status_path = wake::status_log_path(&dir);
     fs::OpenOptions::new()

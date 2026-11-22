@@ -39,5 +39,6 @@ pub(super) fn manifest(installed: &[&str]) -> Result<WorkspaceManifest> {
         checkin: None,
         recheck: None,
         worktree: None,
+        workers: None,
     })
 }

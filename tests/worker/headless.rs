@@ -125,20 +125,8 @@ print(json.dumps(dict(status='ready' if a else 'not_ready',authType=a.get('type'
     } else {
         fs::remove_file(env.bin.join(family)).unwrap();
     }
-    assert_command_success(
-        "headless spawn",
-        &env.spawn(
-            "solo",
-            &[
-                "job",
-                "--mode",
-                "headless",
-                "--billing",
-                "subscription",
-                "Task",
-            ],
-        ),
-    );
+    headless_by_default(&env);
+    assert_command_success("headless spawn", &env.spawn("solo", &["job", "Task"]));
     let dir = state_dir(&env.root).join("worker/job");
     (env, dir)
 }
