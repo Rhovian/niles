@@ -30,10 +30,11 @@ pub(crate) struct LaunchArgs {
 
 impl LaunchArgs {
     pub(crate) fn resolve(self, default: Launch) -> Result<Launch> {
-        let mode = self.mode.unwrap_or_else(|| match default {
-            Launch::NativeTui {} => Mode::NativeTui,
-            Launch::Headless { .. } => Mode::Headless,
-        });
+        let mode = match (self.mode, default) {
+            (Some(mode), _) => mode,
+            (None, Launch::NativeTui {}) => Mode::NativeTui,
+            (None, Launch::Headless { .. }) => Mode::Headless,
+        };
         match (mode, self.billing) {
             (Mode::NativeTui, None) => Ok(Launch::NativeTui {}),
             (Mode::Headless, Some(Billing::Subscription)) => Ok(Launch::Headless {
