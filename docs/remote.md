@@ -131,6 +131,13 @@ text is returned. Run matching web/backend releases on every host.
 
 ## Restart, upgrade and uninstall
 
+Run `niles doctor` to see the documented user service's configured executable, whether that
+file includes `remote`, and whether the running service uses it. Older binaries that omit
+features from `--version` report `unknown`. If doctor reports a different
+running binary, first make sure the configured executable includes `remote`, then restart the
+service. For a remote-enabled binary, `niles update` preserves the feature in Cargo instructions
+and refuses to run the release updater.
+
 Restart after any config or key change:
 
 ```sh

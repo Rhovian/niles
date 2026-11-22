@@ -8,5 +8,7 @@ pub(crate) const CLAP_VERSION: &str = concat!(
     env!("NILES_BUILD_GIT_HASH"),
     ", built ",
     env!("NILES_BUILD_TIMESTAMP"),
+    ", features: ",
+    env!("NILES_BUILD_FEATURES"),
     ")"
 );

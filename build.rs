@@ -15,6 +15,12 @@ fn main() -> Result<(), env::VarError> {
         Err(error) => return Err(error),
     };
     println!("cargo:rustc-env=NILES_BUILD_VERSION={version}");
+    let features = if env::var_os("CARGO_FEATURE_REMOTE").is_some() {
+        "remote"
+    } else {
+        "none"
+    };
+    println!("cargo:rustc-env=NILES_BUILD_FEATURES={features}");
 
     let repo = GitRepo::for_manifest(&manifest_dir);
     if let Some(repo) = &repo {
