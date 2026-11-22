@@ -76,7 +76,7 @@ impl Fixture for Acp {
     type Generation = Utf8PathBuf;
 
     fn start(&mut self, first: &str) -> Self::Generation {
-        let dir = self.root.join("worker");
+        let dir = self.root.join("session");
         fs::create_dir(&dir).unwrap();
         let profile = self.spec.profile().acp.unwrap();
         let session = profile
