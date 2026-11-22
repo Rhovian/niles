@@ -139,6 +139,10 @@ Size limits are in [skill workflows](skills.md).
 
 ### Remote API
 
+Doctor runs the user service's configured executable directly with `--version`. It trusts that
+executable as the service manager does when starting the service. Doctor compares file identity
+without changing the service.
+
 The `remote` feature is off in release binaries. `niles remote` binds the host's IPv4 address
 from `tailscale ip -4`, never a wildcard or LAN address. Set `remote.relay_node` in
 `~/.niles/config.yaml` to the relay's stable Tailscale node ID (the `Node.StableID` from

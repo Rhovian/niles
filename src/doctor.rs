@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod service;
+
 const UNKNOWN_SOURCE_METADATA: &str = "unknown";
 const SOURCE_DIFFERS: &str = "unknown (source HEAD differs from binary build)";
 
@@ -18,6 +21,10 @@ pub(crate) fn doctor(selection: Option<&SetupSelection>) -> Result<()> {
     println!("version: {}", build_info::VERSION);
     println!("git_hash: {}", build_info::GIT_HASH);
     println!("built_at: {}", build_info::BUILD_TIMESTAMP);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Err(error) = service::print_status() {
+        println!("remote service: unavailable: {error:#}");
+    }
     println!("workspace: {workspace}");
     print_dev_mode(&workspace)?;
     print_setup(&workspace, selection)?;
