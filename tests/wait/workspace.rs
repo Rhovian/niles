@@ -23,7 +23,12 @@ fn pending_reports_are_one_immediate_batch_with_one_line_per_worker() {
     assert_eq!(lines, ["a done: one", "b needs-decision: choose"]);
     assert_eq!(cursor(&first), "");
 
-    let output = run_wait(&workspace, &["--timeout", "0", "--ack", &batch.ack]);
+    let replay = run_wait(&workspace, &["--timeout", "0"]);
+    assert_command_success("unacknowledged batch replay", &replay);
+    let replay = wake_batch(&replay);
+    assert_eq!(replay.wakes, batch.wakes);
+
+    let output = run_wait(&workspace, &["--timeout", "0", "--ack", &replay.ack]);
     assert_command_success("next line", &output);
     let next = wake_batch(&output);
     assert_eq!(next.wakes, "a blocked: two\n");

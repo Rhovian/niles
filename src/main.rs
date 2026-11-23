@@ -13,7 +13,6 @@ mod config;
 mod doctor;
 mod duration;
 mod harness;
-mod mcp;
 mod models;
 mod projects;
 #[cfg(feature = "remote")]
@@ -70,7 +69,6 @@ async fn run() -> Result<ExitCode> {
     };
     match cli.command {
         Some(CommandName::Agent { command }) => worker::agent_status::run(command, &mut output)?,
-        Some(CommandName::Mcp) => mcp::run(cli.setup).await?,
         None => projects::explorer::home()?,
         Some(CommandName::Acp { dir, prompt }) => harness::acp::run(&dir, prompt).await?,
         Some(CommandName::Cancel(args)) => worker::pane::cancel(args.id, &mut output)?,
@@ -154,7 +152,7 @@ async fn run() -> Result<ExitCode> {
             let id = args.run(message.resolve()?, selection()?.as_ref(), &mut output)?;
             cli::send_hints(output.out, &id)?;
         }
-        Some(CommandName::Wait(args)) => return args.run(|| false)?.emit(output.out),
+        Some(CommandName::Wait(args)) => return args.run()?.emit(output.out),
         Some(CommandName::Quiet { id }) => {
             if watch::quiet(&id)? {
                 println!("quiet: {id}");

@@ -15,11 +15,8 @@ fn skill_selects_primary_instructions_outside_the_opening_turn() {
             "{brief}"
         );
         let script = fs::read_to_string(dir.join("launch.sh")).unwrap();
-        let mcp = script
-            .find("'--mcp-config' '{\"mcpServers\":{\"niles\"")
-            .unwrap();
-        let primary = script.find("'--append-system-prompt'").unwrap();
-        assert!(mcp < primary, "{script}");
+        assert!(script.contains("'--append-system-prompt'"), "{script}");
+        assert!(!script.contains("'--mcp-config'"), "{script}");
     }
 }
 
@@ -47,7 +44,7 @@ fn replacement_skills_discover_the_binary_contract_for_every_family() {
         assert!(script.contains("Answer questions."));
         assert!(!script.contains("Niles orchestration contract"));
         let brief = fs::read_to_string(dir.join("brief.md")).unwrap();
-        assert!(brief.contains("Report with the Niles `agent_status` tool."));
+        assert!(brief.contains("Read the reporting contract in `niles agent status --help`."));
         assert!(
             brief.contains("`niles skills` lists skills; `niles agent skill <name>` loads one.")
         );

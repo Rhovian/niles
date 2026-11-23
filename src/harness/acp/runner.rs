@@ -51,7 +51,7 @@ impl Drop for SocketPath {
 pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
     let lock = open_lock_file(&dir.join("acp.lock"))?;
     lock.try_lock().context("ACP runner is already active")?;
-    let mut config: Config = store::read_optional_json(&dir.join("acp.json"))?
+    let config: Config = store::read_optional_json(&dir.join("acp.json"))?
         .context("missing ACP launch configuration")?;
     let profile = agents::profile_for(&config.family)
         .and_then(|profile| profile.acp)
@@ -60,7 +60,6 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
         "Headless ACP · {} · billing: {}",
         profile.binary, profile.subscription
     );
-    let mcp_servers = profile.configure_mcp(&mut config.session.env)?;
     // SDK 5.3.0 acp_agent.rs exposes env setters, not removals. env -u removes
     // overrides after those setters, without mutating the CLI process environment.
     let removals = profile.remove_env.iter().flat_map(|key| ["-u", *key]);
@@ -108,7 +107,6 @@ pub(crate) async fn run(dir: &Utf8Path, prompt: String) -> Result<()> {
             authenticated: matches!(profile.auth, agents::AuthSource::Command(_)),
             profile,
             session: config.session,
-            mcp_servers,
             prompt: None,
             queue: VecDeque::new(),
         };
@@ -147,7 +145,6 @@ struct Runner {
     authenticated: bool,
     profile: agents::AcpProfile,
     session: agents::SessionConfig,
-    mcp_servers: Vec<acp::McpServer>,
     prompt: Option<PromptFuture>,
     queue: VecDeque<String>,
 }
@@ -250,8 +247,7 @@ impl Runner {
                             acp::NewSessionRequest::new(
                                 util::current_dir_utf8()?.into_std_path_buf(),
                             )
-                            .meta(self.session.meta.clone())
-                            .mcp_servers(self.mcp_servers.clone()),
+                            .meta(self.session.meta.clone()),
                         )
                         .block_task(),
                 )
@@ -324,8 +320,7 @@ impl Runner {
             self.view.protocol_session()?,
             util::current_dir_utf8()?.into_std_path_buf(),
         )
-        .meta(self.session.meta.clone())
-        .mcp_servers(self.mcp_servers.clone());
+        .meta(self.session.meta.clone());
         let result = self
             .until(self.connection.send_request(request).block_task())
             .await;

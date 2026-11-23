@@ -13,7 +13,7 @@ struct Fixture {
 
 impl Fixture {
     fn poll(&mut self) -> Result<bool> {
-        let wakes = poll_workers(&self.workspace, &mut self.targets, || false)?;
+        let wakes = poll_workers(&self.workspace, &mut self.targets)?;
         let delivered = !wakes.is_empty();
         for (line, receipt) in wakes {
             writeln!(self.output, "{line}")?;
@@ -229,7 +229,7 @@ fn receipts_preserve_later_advances_and_apply_only_to_matching_generations() {
         Change::ReplaceWorker,
     ] {
         let mut f = fixture("wait-receipt", "done: original\nblocked: another\n");
-        let mut batch = poll_workers(&f.workspace, &mut f.targets, || false).unwrap();
+        let mut batch = poll_workers(&f.workspace, &mut f.targets).unwrap();
         match change {
             Change::AdvanceCursor => {
                 Target::new("worker".into(), f.dir.clone())

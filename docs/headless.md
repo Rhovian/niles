@@ -37,4 +37,4 @@ From another window, use `niles peek <id>` for transcripts, `niles send <id> <te
 
 ## Known limits
 
-Stock pi raises no tool approvals. Extension select and confirm dialogs use ACP permissions. The pi adapter cancels input and editor dialogs. Adapters receive no ACP MCP parameters. [#495](https://github.com/Rhovian/niles/issues/495) tracks Niles MCP injection. Peek shows messages and tool calls only.
+Stock pi raises no tool approvals. Extension select and confirm dialogs use ACP permissions. The pi adapter cancels input and editor dialogs. Peek shows messages and tool calls only.

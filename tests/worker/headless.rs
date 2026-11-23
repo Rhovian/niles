@@ -19,20 +19,8 @@ for line in sys.stdin:
     with open('peer.log','a') as f:f.write(json.dumps(m)+'\n')
     method=m.get('method');p=m.get('params',{})
     if method in ['session/new','session/load']:
-        servers=p.get('mcpServers',[])
-        if not claude:
-            assert not servers
-            if not pi:
-                server=json.loads(os.environ['CODEX_CONFIG'])['mcp_servers']['niles']
-                assert server['args']==['mcp'] and server['tool_timeout_sec']>3600
-                assert os.path.isabs(server['command'])
-                assert 'NILES_AGENT_DIR' in server['env_vars']
-        else:
-            assert int(os.environ['MCP_TOOL_TIMEOUT'])>3600000
-            [server]=servers
-            assert server['name']=='niles' and server['args']==['mcp']
-            assert os.path.isabs(server['command'])
-            assert {e['name']:e['value'] for e in server['env']}['NILES_AGENT_DIR']==os.environ['NILES_AGENT_DIR']
+        assert not p.get('mcpServers',[])
+        if not claude and not pi:assert 'mcp_servers' not in json.loads(os.environ['CODEX_CONFIG'])
     if claude and method in ['session/new','session/load']:
         assert p['_meta']['claudeCode']['options']==dict(model='sonnet',effort='high')
         assert p['_meta']['systemPrompt']['append']
@@ -215,6 +203,13 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     observed(&dir, |s| {
         s.pointer("/turn/state") == Some(&json!("RequiresAction"))
     });
+    // The state is visible before the wake is appended. An answer from the runner
+    // confirms it finished handling the request, and a bad option leaves it pending.
+    assert_failure_contains(
+        "bad option",
+        &env.run(&["approve", "job", "100", "wrong"]),
+        "unknown permission option",
+    );
     assert!(stdout_of(&env.run(&["workers"])).contains("needs_attention"));
     assert_eq!(
         fs::read_to_string(dir.join("status.log"))
@@ -222,11 +217,6 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
             .matches("attention:")
             .count(),
         1
-    );
-    assert_failure_contains(
-        "bad option",
-        &env.run(&["approve", "job", "100", "wrong"]),
-        "unknown permission option",
     );
     let _partial_client = UnixStream::connect(socket_dir.join("rpc")).unwrap();
     let approval_started = Instant::now();

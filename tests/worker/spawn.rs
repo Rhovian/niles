@@ -133,7 +133,7 @@ fn spawn_maps_model_effort_specs_into_worker_launches_and_metadata() {
     assert!(codex_launch.contains("'--dangerously-bypass-approvals-and-sandbox'"));
     assert!(codex_launch.contains("'--model' 'gpt-6.2-sol'"));
     assert!(codex_launch.contains("'--config' 'model_reasoning_effort=\"xhigh\"'"));
-    assert!(codex_launch.contains("'-c' 'mcp_servers.niles={command="));
+    assert!(!codex_launch.contains("mcp_servers.niles"));
 }
 
 #[test]

@@ -50,12 +50,10 @@ spawn is in its [`SKILL.md`](../skills/lead/SKILL.md).
 
 ## Orchestration contract
 
-Every spawned worker's opening brief directs it to the `agent_status` tool. The tool
-description and `niles agent status --help` carry the same orchestration contract, which
-applies to every skill, including replacements.
+Every spawned worker's opening brief points to `niles agent status --help` for the
+orchestration contract. It applies to every skill, including replacements.
 
-Submit outcomes with `agent_status` or `niles agent status <kind> <detail>`. Niles owns
-`status.log`.
+Submit outcomes with `niles agent status <kind> <detail>`. Niles owns `status.log`.
 Unknown kinds, empty details and control characters are rejected before a status line is
 appended. `done` also requires a nonempty `report.md` and completion of any configured staging
 protocol. Correct a rejected submission and resubmit; a rejected command doesn't wake anyone.
@@ -63,11 +61,10 @@ protocol. Correct a rejected submission and resubmit; a rejected command doesn't
 `done`, `failed`, `blocked` and `needs-decision` wake the entry agent. `working` and `stage`
 don't. `done` hands back the dispatch; the worker stays live for `niles send` until closed.
 Niles owns `closed` and `gone`; `gone` signals exit or idle without a report.
-Both wait surfaces return an `ack` with a wake batch. Pass it to the next wait after receiving
-the batch, using `--ack` on the CLI. Only the latest batch token can be acknowledged.
-Unacknowledged wakes can replay. `niles wait` prints wake lines and a final `ack: <token>` line
-on stdout, with diagnostics on stderr. It exits 0 for a wake (including `gone`), 11 when
-superseded, or 22 on timeout.
+`niles wait` prints wake lines and a final `ack: <token>` line to stdout, with diagnostics
+on stderr. Pass the token to the next wait with `niles wait --ack <token>`. Only the latest
+batch token can be acknowledged, and unacknowledged wakes can replay. Wait exits 0 for
+a wake, 11 when superseded, or 22 on timeout.
 
 Finding tags such as `code` and `policy`, role names, and routing between skills are
 optional skill conventions. The binary doesn't interpret findings or choose their recipient.

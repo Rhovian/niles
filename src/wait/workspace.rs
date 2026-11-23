@@ -4,7 +4,7 @@ use super::exit::Outcome;
 use super::{Identity, Target, render};
 use crate::wake::{self, WakeKind};
 use crate::{store, util, worker};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, TryLockError};
@@ -59,9 +59,7 @@ pub(crate) fn wait(
     interval: Duration,
     timeout: Duration,
     mut ack: Option<String>,
-    cancelled: impl Fn() -> bool,
 ) -> Result<Outcome> {
-    ensure!(!cancelled(), "wait cancelled");
     let registration = Registration::start()?;
     let workspace = util::current_dir_utf8()?;
     let batch_path = registration.path.with_file_name("wait.batch");
@@ -76,7 +74,6 @@ pub(crate) fn wait(
         // Serialize takeover with acknowledging and publishing batches.
         let gate = open_lock_file(&registration.path)?;
         gate.lock()?;
-        ensure!(!cancelled(), "wait cancelled");
         if !registration.current()? {
             return Ok(Outcome::Superseded);
         }
@@ -84,7 +81,7 @@ pub(crate) fn wait(
             Batch::acknowledge(&batch_path, &workspace, &ack)?;
         }
         if Instant::now() >= next_poll {
-            let batch = poll_workers(&workspace, &mut targets, &cancelled)?;
+            let batch = poll_workers(&workspace, &mut targets)?;
             if !batch.is_empty() {
                 let (wakes, receipts) = batch.into_iter().unzip();
                 let ack = Batch::publish(&batch_path, receipts)?;
@@ -110,7 +107,6 @@ pub(crate) fn wait(
 fn poll_workers(
     workspace: &Utf8Path,
     targets: &mut BTreeMap<String, Target>,
-    cancelled: impl Fn() -> bool,
 ) -> Result<Vec<(String, Receipt)>> {
     let workers = worker::live_worker_locations(workspace)?;
     let live: BTreeSet<_> = workers.iter().map(|worker| worker.id.as_str()).collect();
@@ -152,7 +148,6 @@ fn poll_workers(
         if let Some(report) = report
             && let Some(meta) = worker::meta::read_meta_if_exists(&target.dir)?
         {
-            ensure!(!cancelled(), "wait cancelled");
             let metadata = report.log.metadata()?;
             let line = render(&format!("{} {}", target.id, report.line));
             delivered.push((

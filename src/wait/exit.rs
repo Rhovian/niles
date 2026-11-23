@@ -1,20 +1,10 @@
 use anyhow::{Context, Result};
-use schemars::JsonSchema;
-use serde::Serialize;
 use std::{io::Write, process::ExitCode, time::Duration};
 
-#[derive(JsonSchema, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum Outcome {
-    Wake {
-        wakes: Vec<String>,
-        ack: String,
-    },
+    Wake { wakes: Vec<String>, ack: String },
     Superseded,
-    Timeout {
-        #[serde(skip)]
-        timeout: Duration,
-    },
+    Timeout { timeout: Duration },
 }
 
 impl Outcome {

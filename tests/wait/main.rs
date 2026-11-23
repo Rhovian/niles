@@ -2,7 +2,6 @@
 
 #[path = "../common/mod.rs"]
 mod common;
-mod mcp;
 mod send;
 mod status_lines;
 mod support;
