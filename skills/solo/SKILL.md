@@ -19,4 +19,4 @@ Stay within the operator's request and follow the workspace's instructions. Ask 
 
 Use your harness's native sub-agents when parallelism helps. Native sub-agents are invisible to Niles: they have no Niles status line, wake, or usage rollup. You coordinate their work and verify the result.
 
-Niles's worker commands are available through `niles --help`. Spawn Niles workers only when the operator asks.
+Use the `niles` MCP tools for worker coordination when available. The CLI equivalent is listed by `niles --help`. Spawn Niles workers only when the operator asks.

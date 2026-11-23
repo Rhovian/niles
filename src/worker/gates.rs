@@ -1,3 +1,4 @@
+use crate::commands::Output;
 use crate::workspace_manifest::RunGate;
 use anyhow::{Context, Result};
 use camino::Utf8Path;
@@ -6,7 +7,7 @@ use std::io::{Error, ErrorKind, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,13 @@ const LOG_CAP: usize = 1_048_576;
 const TAIL_CAP: usize = 4096;
 const POLL: Duration = Duration::from_millis(10);
 
-pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) -> Result<bool> {
+pub(super) fn run(
+    gate: &RunGate,
+    cwd: &Utf8Path,
+    dir: &Utf8Path,
+    round: usize,
+    output: &mut Output<'_>,
+) -> Result<bool> {
     let path = dir.join(format!("gate-{round}-{}.log", gate.name));
     let log = File::create(&path)?;
     let (reader, writer) = UnixStream::pair()?;
@@ -24,6 +31,7 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
     let mut child = match Command::new(command)
         .args(args)
         .current_dir(cwd)
+        .stdin(Stdio::null())
         .stdout(OwnedFd::from(writer))
         .stderr(OwnedFd::from(stderr))
         .process_group(0)
@@ -31,14 +39,18 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
     {
         Ok(child) => child,
         Err(error) => {
-            println!("{} fail (could not start: {error})\nlog: {path}", gate.name);
+            writeln!(
+                output.out,
+                "{} fail (could not start: {error})\nlog: {path}",
+                gate.name
+            )?;
             return Ok(false);
         }
     };
     let (reason, tail) = collect(&mut child, reader, log, gate.timeout)?;
     let passed = reason.is_none();
     let outcome = reason.map_or_else(|| "pass".to_owned(), |reason| format!("fail ({reason})"));
-    println!("{} {outcome}\nlog: {path}", gate.name);
+    writeln!(output.out, "{} {outcome}\nlog: {path}", gate.name)?;
     if !passed {
         // Lossy decoding can expand bytes. Reserve a byte for the printed newline.
         let text = String::from_utf8_lossy(&tail);
@@ -48,7 +60,7 @@ pub(super) fn run(gate: &RunGate, cwd: &Utf8Path, dir: &Utf8Path, round: usize) 
         }
         let mut lines: Vec<_> = text[start..].lines().rev().take(40).collect();
         lines.reverse();
-        println!("{}", lines.join("\n"));
+        writeln!(output.out, "{}", lines.join("\n"))?;
     }
     Ok(passed)
 }

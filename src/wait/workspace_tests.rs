@@ -2,6 +2,7 @@ use super::*;
 use crate::store::atomic_write;
 use crate::telemetry::SessionLink;
 use crate::test_support::{self, TempDir, remove_workspace, write_worker_meta};
+use std::io::Write;
 
 struct Fixture {
     workspace: TempDir,
@@ -12,7 +13,13 @@ struct Fixture {
 
 impl Fixture {
     fn poll(&mut self) -> Result<bool> {
-        poll_workers(&self.workspace, &mut self.targets, &mut self.output)
+        let wakes = poll_workers(&self.workspace, &mut self.targets, || false)?;
+        let delivered = !wakes.is_empty();
+        for (line, receipt) in wakes {
+            writeln!(self.output, "{line}")?;
+            receipt.acknowledge(&self.workspace)?;
+        }
+        Ok(delivered)
     }
 
     fn append(&self, text: &str) {
@@ -177,7 +184,7 @@ fn corrupt_worker_metadata_stops_the_wait_without_consuming_reports() {
 }
 
 #[test]
-fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
+fn a_later_probe_error_leaves_the_whole_batch_unacknowledged() {
     let mut f = fixture("wait-partial-probe-error", "done: ready\n");
     let broken = f.dir.parent().unwrap().join("z-broken");
     let sessions = broken.join("sessions");
@@ -193,11 +200,8 @@ fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
     );
     atomic_write(broken.join("status.log"), "working: busy\n").unwrap();
     let error = f.poll().unwrap_err();
-    assert_eq!(f.output, b"worker done: ready\n");
-    assert_eq!(
-        fs::read_to_string(f.dir.join("status.cursor")).unwrap(),
-        "12\n"
-    );
+    assert!(f.output.is_empty());
+    assert_eq!(fs::read_to_string(f.dir.join("status.cursor")).unwrap(), "");
     assert_eq!(
         fs::read_to_string(broken.join("status.cursor")).unwrap(),
         ""
@@ -209,5 +213,46 @@ fn a_later_probe_error_preserves_printed_wakes_and_unprinted_cursors() {
     f.targets.clear();
     f.output.clear();
     assert!(f.poll().unwrap());
-    assert_eq!(f.output, b"z-broken done: repaired\n");
+    assert_eq!(f.output, b"worker done: ready\nz-broken done: repaired\n");
+}
+
+#[test]
+fn receipts_preserve_later_advances_and_apply_only_to_matching_generations() {
+    enum Change {
+        AdvanceCursor,
+        ReplaceLog,
+        ReplaceWorker,
+    }
+    for change in [
+        Change::AdvanceCursor,
+        Change::ReplaceLog,
+        Change::ReplaceWorker,
+    ] {
+        let mut f = fixture("wait-receipt", "done: original\nblocked: another\n");
+        let mut batch = poll_workers(&f.workspace, &mut f.targets, || false).unwrap();
+        match change {
+            Change::AdvanceCursor => {
+                Target::new("worker".into(), f.dir.clone())
+                    .skip_to_end()
+                    .unwrap();
+            }
+            Change::ReplaceLog => {
+                atomic_write(f.dir.join("status.log"), "done: replacement\n").unwrap();
+            }
+            Change::ReplaceWorker => {
+                // Keep the log inode to model inode reuse by the replacement worker.
+                write_worker_meta(
+                    &f.workspace,
+                    "worker",
+                    "unresolved",
+                    "2026-01-02T03:04:06Z".parse().unwrap(),
+                    None,
+                );
+            }
+        }
+        let path = f.dir.join("status.cursor");
+        let expected = fs::read_to_string(&path).unwrap();
+        batch.pop().unwrap().1.acknowledge(&f.workspace).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), expected);
+    }
 }

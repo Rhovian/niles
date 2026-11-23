@@ -1,3 +1,4 @@
+use crate::commands::Output;
 use std::{fs, io::ErrorKind};
 
 use anyhow::{Context, Result, bail};
@@ -9,18 +10,18 @@ use super::{
     resolve::{latest_archive, resolve_live_worker_if_exists},
 };
 
-pub fn report(id: String) -> Result<()> {
+pub fn report(id: String, output: &mut Output<'_>) -> Result<()> {
     if let Some(worker_dir) = resolve_live_worker_if_exists(&id)? {
-        return print_report(&id, &worker_dir, false);
+        return print_report(&id, &worker_dir, false, output);
     }
 
     let Some(archive) = latest_archive(&id)? else {
         bail!("no report found for worker '{id}': no live worker or archive found");
     };
-    print_report(&id, &archive, true)
+    print_report(&id, &archive, true, output)
 }
 
-fn print_report(id: &str, dir: &Utf8Path, archived: bool) -> Result<()> {
+fn print_report(id: &str, dir: &Utf8Path, archived: bool, output: &mut Output<'_>) -> Result<()> {
     let path = report_path(dir);
     let body = match fs::read_to_string(&path) {
         Ok(body) => body,
@@ -38,8 +39,11 @@ fn print_report(id: &str, dir: &Utf8Path, archived: bool) -> Result<()> {
         Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
     };
     if archived {
-        eprintln!("serving archived report from {path} (archive: {dir})");
+        writeln!(
+            output.err,
+            "serving archived report from {path} (archive: {dir})"
+        )?;
     }
-    print!("{body}");
+    write!(output.out, "{body}")?;
     Ok(())
 }

@@ -1,29 +1,31 @@
 //! Workspace wake delivery. Each poll prints at most one actionable line per live worker.
-//! The workspace lock serializes presence replacement with delivery; worker cursor locks
-//! serialize delivery with `send`. Output is flushed before its cursor is advanced.
+//! The workspace lock serializes presence replacement with batch publication and acknowledgement.
+//! Worker cursor locks serialize acknowledgement with `send`.
 
 use crate::duration::parse_duration;
 use crate::wake::{self, WakeKind};
 use crate::worker;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-use std::fs;
+use serde::{Deserialize, Serialize};
+use std::fs::{self, Metadata};
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::time::Duration;
 pub(crate) mod cursor;
+mod delivery;
 mod exit;
 mod liveness;
 mod workspace;
 use cursor::{cursor_path, open_lock_file, read_cursor, write_cursor};
-pub(crate) use exit::WaitExit;
+pub(crate) use exit::{Outcome, format_duration};
 pub(crate) use workspace::wait;
 
 pub const EXIT_WAKE: u8 = 0;
 pub const EXIT_SUPERSEDED: u8 = 11;
 pub const EXIT_TIMEOUT: u8 = 22;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_INTERVAL: Duration = Duration::from_secs(60 * 60);
 // Includes the newline added at delivery.
 const MAX_LINE_BYTES: usize = 4096;
@@ -38,10 +40,26 @@ struct Target {
     dir: Utf8PathBuf,
     status: Utf8PathBuf,
     scanned: u64,
-    identity: Option<(u64, u64)>,
+    identity: Option<Identity>,
     unreported: bool,
     liveness: liveness::Liveness,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+struct Identity(u64, u64);
+
+impl From<&Metadata> for Identity {
+    fn from(metadata: &Metadata) -> Self {
+        Self(metadata.dev(), metadata.ino())
+    }
+}
+
+struct Report {
+    kind: WakeKind,
+    line: String,
+    end: u64,
+    log: fs::File,
+}
+
 impl Target {
     fn resolve(id: String) -> Result<Self> {
         let dir = worker::worker_dir(&id)?;
@@ -68,7 +86,7 @@ impl Target {
         clippy::arithmetic_side_effects,
         reason = "take caps consumed bytes at metadata length"
     )]
-    fn next_actionable(&mut self, persisted: u64) -> Result<Option<(WakeKind, String, u64)>> {
+    fn next_actionable(&mut self, persisted: u64) -> Result<Option<Report>> {
         let mut file = match fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -84,7 +102,7 @@ impl Target {
         let metadata = file
             .metadata()
             .with_context(|| format!("failed to inspect {}", self.status))?;
-        let identity = (metadata.dev(), metadata.ino());
+        let identity = Identity::from(&metadata);
         if self.identity != Some(identity) {
             // A replacement invalidates the cache, not a cursor send already advanced.
             if self.identity.is_some() {
@@ -116,7 +134,8 @@ impl Target {
         let unread = len
             .checked_sub(self.scanned)
             .context("status cursor exceeds log length")?;
-        file.take(unread)
+        (&mut file)
+            .take(unread)
             .read_to_end(&mut appended)
             .with_context(|| format!("failed to read {}", self.status))?;
 
@@ -129,7 +148,12 @@ impl Target {
             if let Some(kind) = WakeKind::parse_line(&line) {
                 self.observe(kind);
                 if kind.wakes() {
-                    return Ok(Some((kind, render(&line), self.scanned + end as u64)));
+                    return Ok(Some(Report {
+                        kind,
+                        line: render(&line),
+                        end: self.scanned + end as u64,
+                        log: file,
+                    }));
                 }
             }
         }
@@ -144,13 +168,13 @@ impl Target {
         }
     }
 
-    fn next_report(&mut self, persisted: u64) -> Result<Option<(String, u64)>> {
+    fn next_report(&mut self, persisted: u64) -> Result<Option<Report>> {
         self.scanned = self.scanned.max(persisted);
-        while let Some((kind, line, end)) = self.next_actionable(persisted)? {
-            if kind != WakeKind::Closed {
-                return Ok(Some((line, end)));
+        while let Some(report) = self.next_actionable(persisted)? {
+            if report.kind != WakeKind::Closed {
+                return Ok(Some(report));
             }
-            self.scanned = end;
+            self.scanned = report.end;
         }
         Ok(None)
     }
@@ -166,9 +190,9 @@ impl Target {
         self.scanned = self.scanned.max(persisted);
 
         let mut skipped = Vec::new();
-        while let Some((_, line, end)) = self.next_actionable(persisted)? {
-            skipped.push(line);
-            self.scanned = end;
+        while let Some(report) = self.next_actionable(persisted)? {
+            skipped.push(report.line);
+            self.scanned = report.end;
         }
         // A failed scan leaves `scanned` just past the last complete line, which is where the
         // next wait should resume from.

@@ -31,7 +31,7 @@ pub(crate) struct WorkerMeta {
     pub(super) effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) task_label: Option<String>,
-    pub(super) created_at: DateTime<Utc>,
+    pub(crate) created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) starting_until: Option<DateTime<Utc>>,
     pub(super) project: Utf8PathBuf,

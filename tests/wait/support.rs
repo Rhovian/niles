@@ -33,6 +33,22 @@ pub(crate) fn assert_drained(output: &Output) {
     assert!(stdout_of(output).is_empty());
 }
 
+pub(crate) struct WakeBatch {
+    pub(crate) wakes: String,
+    pub(crate) ack: String,
+}
+
+pub(crate) fn wake_batch(output: &Output) -> WakeBatch {
+    let stdout = stdout_of(output);
+    let (wakes, ack) = stdout
+        .rsplit_once("\nack: ")
+        .expect("CLI wake batch must include its ack");
+    WakeBatch {
+        wakes: format!("{wakes}\n"),
+        ack: ack.trim_end().to_owned(),
+    }
+}
+
 pub(crate) fn wait_once(status: &[u8]) -> (PathBuf, PathBuf, Output) {
     let workspace = temp_workspace("niles-wait-status");
     let dir = worker_with_status(&workspace, "auth-fix", status);

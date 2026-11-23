@@ -1,46 +1,50 @@
-use std::{process::ExitCode, time::Duration};
+use anyhow::{Context, Result};
+use schemars::JsonSchema;
+use serde::Serialize;
+use std::{io::Write, process::ExitCode, time::Duration};
 
-pub(super) enum Outcome {
-    Wake,
+#[derive(JsonSchema, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum Outcome {
+    Wake {
+        wakes: Vec<String>,
+        ack: String,
+    },
     Superseded,
-    Timeout { timeout: Duration },
+    Timeout {
+        #[serde(skip)]
+        timeout: Duration,
+    },
 }
 
-pub(crate) struct WaitExit {
-    code: u8,
-    stderr: Option<String>,
-}
-
-impl WaitExit {
-    pub(super) fn from_outcome(outcome: Outcome) -> Self {
-        match outcome {
-            Outcome::Wake => Self {
-                code: super::EXIT_WAKE,
-                stderr: None,
-            },
-            Outcome::Superseded => Self {
-                code: super::EXIT_SUPERSEDED,
-                stderr: Some("wait: superseded by a newer workspace wait".to_owned()),
-            },
-            Outcome::Timeout { timeout } => Self {
-                code: super::EXIT_TIMEOUT,
-                stderr: Some(format!(
+impl Outcome {
+    pub(crate) fn emit(self, out: &mut dyn Write) -> Result<ExitCode> {
+        Ok(ExitCode::from(match self {
+            Self::Wake { wakes, ack } => {
+                for wake in wakes {
+                    writeln!(out, "{wake}").context("failed to print workspace wake")?;
+                }
+                writeln!(out, "ack: {ack}").context("failed to print workspace acknowledgement")?;
+                out.flush()
+                    .context("failed to flush workspace wake batch")?;
+                super::EXIT_WAKE
+            }
+            Self::Superseded => {
+                eprintln!("wait: superseded by a newer workspace wait");
+                super::EXIT_SUPERSEDED
+            }
+            Self::Timeout { timeout } => {
+                eprintln!(
                     "wait: timeout target=workspace timeout={}",
                     format_duration(timeout)
-                )),
-            },
-        }
-    }
-
-    pub(crate) fn emit(self) -> ExitCode {
-        if let Some(stderr) = self.stderr {
-            eprintln!("{stderr}");
-        }
-        ExitCode::from(self.code)
+                );
+                super::EXIT_TIMEOUT
+            }
+        }))
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub(crate) fn format_duration(duration: Duration) -> String {
     let nanos = duration.as_nanos();
     if nanos == 0 {
         return "0s".to_owned();

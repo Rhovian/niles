@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::store::ARCHIVE_DIR;
 
-pub(super) fn validate_id(id: &str) -> Result<()> {
+pub(crate) fn validate_id(id: &str) -> Result<()> {
     validate_name("worker id", id)
 }
 

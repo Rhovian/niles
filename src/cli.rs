@@ -1,14 +1,14 @@
+use crate::commands::{Approve, Close, Message, Peek, SendArgs, SpawnArgs, Target, Wait};
 use crate::harness::LaunchArgs;
 use crate::projects::onboard::unattended::Options;
 use crate::projects::panels::Panel;
 use crate::skills::SkillsCommand;
 use crate::update::Channel;
-use crate::worker::Assignment;
+use crate::worker::Spawned;
 use crate::worker::agent_status::AgentCommand;
 use anyhow::{Context, Result, bail};
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::io;
-use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -49,7 +49,7 @@ pub struct MessageInput {
 }
 
 impl MessageInput {
-    pub fn resolve(self) -> Result<String> {
+    pub fn resolve(self) -> Result<Message> {
         let message = if self.message.is_empty() {
             match self.words.as_slice() {
                 [stdin] if stdin == "-" => {
@@ -68,10 +68,7 @@ impl MessageInput {
         } else {
             self.message.join("\n")
         };
-        if message.trim().is_empty() {
-            bail!("a message is required");
-        }
-        Ok(message)
+        message.try_into()
     }
 }
 
@@ -116,14 +113,13 @@ pub enum CommandName {
         dir: camino::Utf8PathBuf,
         prompt: String,
     },
+    /// Serve local agent tools over MCP stdio.
+    #[command(hide = true)]
+    Mcp,
     /// Request cancellation of a headless worker turn.
-    Cancel { id: String },
+    Cancel(Target),
     /// Answer a headless permission; omit the option to cancel the request.
-    Approve {
-        id: String,
-        request: String,
-        option: Option<String>,
-    },
+    Approve(Approve),
     /// Resume a headless worker conversation.
     Resume { id: String },
     /// `help` is a panel, so it is not also clap's subcommand.
@@ -157,37 +153,10 @@ pub enum CommandName {
     /// Spawn a worker agent in a tmux window
     ///
     /// Launch an installed primary skill.
-    ///
-    /// `--wait` starts the workspace wait after spawning, so the turn does not need a
-    /// separate `niles wait`.
     #[command(verbatim_doc_comment)]
     Spawn {
-        /// Wait for workspace reports after spawning.
-        #[arg(long)]
-        wait: bool,
-        /// Worker task id used for window and metadata names.
-        id: String,
         #[command(flatten)]
-        assignment: Box<Assignment>,
-        /// Task label for grouping warm workers.
-        #[arg(long = "task", value_name = "LABEL")]
-        task_label: Option<String>,
-        /// Agent id to launch; defaults to this skill's workspace manifest binding.
-        #[arg(short, long)]
-        agent: Option<String>,
-        /// Run the agent in this directory while Niles tracks it from this workspace.
-        #[arg(long, value_name = "PATH", conflicts_with = "worktree")]
-        tree: Option<camino::Utf8PathBuf>,
-        /// Create or join a managed git worktree on this branch.
-        #[arg(long, value_name = "BRANCH")]
-        worktree: Option<String>,
-        /// Create the worktree branch from this ref without tracking it.
-        #[arg(long, value_name = "REF", requires = "worktree")]
-        base: Option<String>,
-        /// Check-in delay for this worker: a duration such as 1s, 90s, 5m or 1h. Defaults to
-        /// this workspace's manifest `checkin`, then 5m. `0` or `off` arms none.
-        #[arg(long, value_name = "DELAY")]
-        checkin: Option<String>,
+        args: Box<SpawnArgs>,
         #[command(flatten)]
         message: MessageInput,
     },
@@ -198,20 +167,7 @@ pub enum CommandName {
     /// operator says so. Closing archives the worker's directory, so `niles report <id>` still
     /// works after.
     #[command(verbatim_doc_comment)]
-    Close {
-        /// Worker id to close.
-        #[arg(
-            required_unless_present_any = ["task_label", "all"],
-            conflicts_with_all = ["task_label", "all"]
-        )]
-        id: Option<String>,
-        /// Close every live worker with this task label.
-        #[arg(long = "task", value_name = "LABEL", conflicts_with = "all")]
-        task_label: Option<String>,
-        /// Close every live worker.
-        #[arg(long, action = ArgAction::SetTrue)]
-        all: bool,
-    },
+    Close(Close),
     /// Append a decision to the current start session log.
     Log {
         /// Worker id, or `-` for a session-wide decision.
@@ -232,40 +188,18 @@ pub enum CommandName {
         command: Option<SkillsCommand>,
     },
     /// Print a worker's durable report file.
-    Report {
-        /// Worker task id.
-        id: String,
-    },
+    Report(Target),
     /// Capture the tail of a worker tmux pane.
-    Peek {
-        /// Worker task id.
-        id: String,
-        /// Number of lines to capture. Use 0 for full tmux history.
-        #[arg(short, long, default_value_t = crate::worker::DEFAULT_PEEK_LINES)]
-        lines: usize,
-        /// Disarm this worker's check-in after successfully capturing the pane.
-        #[arg(long)]
-        quiet: bool,
-    },
+    Peek(Peek),
     /// Send a message to a worker tmux pane
     ///
     /// Advances the worker's wake cursor first, so a status line written before the message
     /// cannot satisfy the wait that follows it. Any actionable line stepped over is printed.
     /// Appends a reminder with this worker's report path and status-line command.
-    ///
-    /// `--wait` starts the workspace wait, with `niles wait`'s exit codes. Exit 11 means
-    /// a newer workspace wait took over after the message was sent: do not resend.
     #[command(verbatim_doc_comment)]
     Send {
-        /// Wait for workspace reports after sending.
-        #[arg(long)]
-        wait: bool,
-        /// Check-in delay for this worker's next report: a duration such as 1s, 90s, 5m or 1h.
-        /// Defaults to the manifest `checkin`, then 5m. `0` or `off` arms none.
-        #[arg(long, value_name = "DELAY")]
-        checkin: Option<String>,
-        /// Worker task id.
-        id: String,
+        #[command(flatten)]
+        args: SendArgs,
         #[command(flatten)]
         message: MessageInput,
     },
@@ -273,31 +207,16 @@ pub enum CommandName {
     ///
     /// Includes workers spawned while waiting. Returns immediately when anything is pending,
     /// printing every pending report, at most one per worker: `<id> <kind>: <detail>`.
-    /// Each escaped line is at most 4096 bytes. Run one wait, act on the batch, then wait again.
+    /// Each escaped wake line is at most 4096 bytes. Pass the final ack token with --ack
+    /// on the next wait after receiving the batch. Wakes can replay until acknowledged.
     /// A newer wait supersedes the running wait without consuming its reports.
     ///
     /// A worker that has not reported produces `gone:` when its window/agent exits or it stays
     /// confirmed idle for 30s. Reported workers stay quiet. Gone wakes share the report cursor.
     /// Exits 0 on wakes (reports or gone), 11 when superseded, 22 on timeout. Stdout contains only
-    /// wake lines; diagnostics go to stderr. A kill after printing can replay that printed line.
+    /// the wake batch and its final acknowledgement line. Diagnostics go to stderr.
     #[command(verbatim_doc_comment)]
-    Wait {
-        /// Poll interval: a duration such as 500ms, 90s, 5m or 1h. Must be greater than zero.
-        #[arg(
-            long,
-            default_value = "2s",
-            value_parser = crate::wait::parse_interval
-        )]
-        interval: Duration,
-        /// Maximum time to wait: a duration such as 500ms, 90s, 5m or 1h. `0` checks once without
-        /// waiting.
-        #[arg(
-            long,
-            default_value = "1h",
-            value_parser = crate::wait::parse_timeout
-        )]
-        timeout: Duration,
-    },
+    Wait(Wait),
     /// Disarm a worker's check-in, so the watcher stops nudging about it
     ///
     /// `spawn` and `send` arm one, and the watcher nudges when it comes due with no report since.
@@ -319,10 +238,31 @@ pub enum RemoteCommand {
     },
 }
 
+pub(crate) fn send_hints(out: &mut dyn io::Write, id: &str) -> Result<()> {
+    writeln!(out, "wait: niles wait")?;
+    writeln!(out, "peek: niles peek {id}")?;
+    Ok(())
+}
+
+pub(crate) fn spawn_hints(out: &mut dyn io::Write, worker: Spawned) -> Result<()> {
+    let id = &worker.id;
+    send_hints(out, id)?;
+    writeln!(out, "report: niles report {id}")?;
+    writeln!(out, "send: niles send {id} <message>")?;
+    writeln!(out, "close: niles close {id}")?;
+    if let Some(label) = worker.task_label {
+        writeln!(out, "close_task: niles close --task {label}")?;
+    }
+    writeln!(out, "workers: niles workers")?;
+    if worker.checkin_armed {
+        writeln!(out, "quiet: niles quiet {id}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wait::{DEFAULT_INTERVAL, DEFAULT_TIMEOUT};
     use clap::{CommandFactory, error::ErrorKind};
 
     #[test]
@@ -393,6 +333,11 @@ mod tests {
             let conflict = [command.as_slice(), &["-m", "one", "two"]].concat();
             let error = Cli::try_parse_from(conflict).unwrap_err();
             assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+            let combined_wait = [command.as_slice(), &["--wait", "task"]].concat();
+            assert_eq!(
+                Cli::try_parse_from(combined_wait).unwrap_err().kind(),
+                ErrorKind::UnknownArgument
+            );
 
             for (args, expected) in [
                 (
@@ -412,27 +357,32 @@ mod tests {
             }
         }
 
-        let cli =
-            Cli::try_parse_from(["niles", "send", "job", "-m", "- item", "-m", "b", "--wait"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "niles",
+            "send",
+            "job",
+            "-m",
+            "- item",
+            "-m",
+            "b",
+            "--checkin",
+            "off",
+        ])
+        .unwrap();
         let message = match cli.command {
-            Some(CommandName::Send {
-                wait: true,
-                message,
-                ..
-            }) => Some(message),
+            Some(CommandName::Send { message, .. }) => Some(message),
             _ => None,
         }
-        .expect("send and wait");
-        assert_eq!(message.resolve().unwrap(), "- item\nb");
+        .expect("send command");
+        assert_eq!(
+            message.resolve().unwrap(),
+            "- item\nb".to_owned().try_into().unwrap()
+        );
     }
 
     #[test]
     fn wait_default_spellings_parse_to_the_runtime_defaults() {
         let cli = Cli::try_parse_from(["niles", "wait"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(CommandName::Wait { interval, timeout, .. })
-            if interval == DEFAULT_INTERVAL && timeout == DEFAULT_TIMEOUT)
-        );
+        assert!(matches!(cli.command, Some(CommandName::Wait(args)) if args == Wait::default()));
     }
 }

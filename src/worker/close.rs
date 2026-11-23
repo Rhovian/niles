@@ -3,6 +3,7 @@ use super::meta::{meta_path, read_meta_if_exists};
 use super::resolve::{no_live_worker_message, resolve_worker_if_exists};
 use super::validation::validate_task_label;
 use super::worktree;
+use crate::commands::Output;
 #[cfg(test)]
 use crate::store::atomic_write;
 use crate::store::{self, Scope};
@@ -42,20 +43,25 @@ enum WindowCloseOutcome {
 
 /// Tear down spawned workers. The tmux window may already be gone, so window
 /// close errors are reported but do not strand metadata.
-pub fn worker_close(id: Option<String>, task_label: Option<String>, all: bool) -> Result<()> {
+pub fn worker_close(
+    id: Option<String>,
+    task_label: Option<String>,
+    all: bool,
+    output: &mut Output<'_>,
+) -> Result<()> {
     match (id, task_label, all) {
         (Some(id), None, false) => {
             let outcome = close_worker_once(&id)?;
-            print_single_close_outcome(&outcome);
+            print_single_close_outcome(&outcome, output)?;
             Ok(())
         }
-        (None, Some(label), false) => close_workers_by_task(&label),
-        (None, None, true) => close_all_workers(),
+        (None, Some(label), false) => close_workers_by_task(&label, output),
+        (None, None, true) => close_all_workers(output),
         _ => bail!("use a worker id, --task <label>, or --all"),
     }
 }
 
-fn close_workers_by_task(label: &str) -> Result<()> {
+fn close_workers_by_task(label: &str, output: &mut Output<'_>) -> Result<()> {
     validate_task_label(label)?;
     let selection = select_worker_ids_by_task(label)?;
     if selection.ids.is_empty() && selection.unreadable.is_empty() {
@@ -65,16 +71,17 @@ fn close_workers_by_task(label: &str) -> Result<()> {
         format!("--task {label}"),
         selection.ids,
         selection.unreadable,
+        output,
     )
 }
 
-fn close_all_workers() -> Result<()> {
+fn close_all_workers(output: &mut Output<'_>) -> Result<()> {
     let ids = close_all_worker_ids()?;
     if ids.is_empty() {
-        println!("no live workers");
+        writeln!(output.out, "no live workers")?;
         return Ok(());
     }
-    close_worker_group("--all".to_owned(), ids, Vec::new())
+    close_worker_group("--all".to_owned(), ids, Vec::new(), output)
 }
 
 struct WorkerCloseSelection {
@@ -93,24 +100,26 @@ fn close_worker_group(
     selection: String,
     ids: Vec<String>,
     selection_failures: Vec<(String, String)>,
+    output: &mut Output<'_>,
 ) -> Result<()> {
-    println!(
+    writeln!(
+        output.out,
         "workers[{}]{{id,status,archive}}:",
         ids.len() + selection_failures.len()
-    );
+    )?;
 
     let mut failures = Vec::new();
     for (id, err) in selection_failures {
-        println!("  {id},failed,-");
-        eprintln!("worker {id} close failed: {err}");
+        writeln!(output.out, "  {id},failed,-")?;
+        writeln!(output.err, "worker {id} close failed: {err}")?;
         failures.push(id);
     }
     for id in ids {
         match close_worker_once(&id) {
-            Ok(outcome) => print_group_close_success(&outcome),
+            Ok(outcome) => print_group_close_success(&outcome, output)?,
             Err(err) => {
-                println!("  {id},failed,-");
-                eprintln!("worker {id} close failed: {err:#}");
+                writeln!(output.out, "  {id},failed,-")?;
+                writeln!(output.err, "worker {id} close failed: {err:#}")?;
                 failures.push(id);
             }
         }
@@ -142,35 +151,45 @@ fn select_worker_ids_by_task(label: &str) -> Result<WorkerCloseSelection> {
     Ok(WorkerCloseSelection { ids, unreadable })
 }
 
-fn print_single_close_outcome(outcome: &WorkerCloseOutcome) {
+fn print_single_close_outcome(outcome: &WorkerCloseOutcome, output: &mut Output<'_>) -> Result<()> {
     if let Some(path) = &outcome.pane_path {
-        println!("pane: {path}");
+        writeln!(output.out, "pane: {path}")?;
     }
     if let Some(err) = &outcome.pane_error {
-        println!("pane not captured for worker {}: {err}", outcome.id);
+        writeln!(
+            output.out,
+            "pane not captured for worker {}: {err}",
+            outcome.id
+        )?;
     }
-    print_window_close_detail(outcome);
+    print_window_close_detail(outcome, output)?;
     if let Some(tree) = &outcome.tree {
-        println!("tree: {tree}");
+        writeln!(output.out, "tree: {tree}")?;
     }
-    println!("archive: {}", outcome.archive_dir);
-    println!("closed: {}", outcome.id);
+    writeln!(output.out, "archive: {}", outcome.archive_dir)?;
+    writeln!(output.out, "closed: {}", outcome.id)?;
+    Ok(())
 }
 
-fn print_group_close_success(outcome: &WorkerCloseOutcome) {
-    println!("  {},closed,{}", outcome.id, outcome.archive_dir);
+fn print_group_close_success(outcome: &WorkerCloseOutcome, output: &mut Output<'_>) -> Result<()> {
+    writeln!(
+        output.out,
+        "  {},closed,{}",
+        outcome.id, outcome.archive_dir
+    )?;
     if let Some(err) = &outcome.pane_error {
-        println!("  {},pane-not-captured,{err}", outcome.id);
+        writeln!(output.out, "  {},pane-not-captured,{err}", outcome.id)?;
     }
     if let Some(err) = outcome.window.kill_error() {
-        println!("  {},window-not-closed,{err}", outcome.id);
+        writeln!(output.out, "  {},window-not-closed,{err}", outcome.id)?;
     }
     if let Some(state) = outcome.window.state() {
-        println!("  {},window-state,{state}", outcome.id);
+        writeln!(output.out, "  {},window-state,{state}", outcome.id)?;
     }
     if let Some(tree) = &outcome.tree {
-        println!("  {},tree,{tree}", outcome.id);
+        writeln!(output.out, "  {},tree,{tree}", outcome.id)?;
     }
+    Ok(())
 }
 
 fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
@@ -241,29 +260,31 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     })
 }
 
-fn print_window_close_detail(outcome: &WorkerCloseOutcome) {
+fn print_window_close_detail(outcome: &WorkerCloseOutcome, output: &mut Output<'_>) -> Result<()> {
     if let Some((target, err)) = outcome.window.kill_failure() {
-        println!("window {} not closed: {err}", target.render());
-        return;
+        writeln!(output.out, "window {} not closed: {err}", target.render())?;
+        return Ok(());
     }
 
     match &outcome.window {
         WindowCloseOutcome::Recorded(killed) => {
-            println!("closed window: {}", killed.target.window());
+            writeln!(output.out, "closed window: {}", killed.target.window())?;
         }
         WindowCloseOutcome::Recovered { recorded, actual } => {
-            println!("closed window: {}", actual.target);
-            println!(
+            writeln!(output.out, "closed window: {}", actual.target)?;
+            writeln!(
+                output.out,
                 "window state: orphan-recovered:{recorded}->{}",
                 actual.target
-            );
+            )?;
         }
-        WindowCloseOutcome::WindowDead => println!("window state: window-dead"),
-        WindowCloseOutcome::OrphanGone => println!("window state: orphan-gone"),
+        WindowCloseOutcome::WindowDead => writeln!(output.out, "window state: window-dead")?,
+        WindowCloseOutcome::OrphanGone => writeln!(output.out, "window state: orphan-gone")?,
         WindowCloseOutcome::Unknown { error } => {
-            println!("window state: unknown:{error}");
+            writeln!(output.out, "window state: unknown:{error}")?;
         }
     }
+    Ok(())
 }
 
 impl WindowCloseOutcome {

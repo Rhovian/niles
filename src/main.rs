@@ -7,11 +7,13 @@ mod agent_window;
 mod agents;
 mod build_info;
 mod cli;
+mod commands;
 mod compat;
 mod config;
 mod doctor;
 mod duration;
 mod harness;
+mod mcp;
 mod models;
 mod projects;
 #[cfg(feature = "remote")]
@@ -37,6 +39,8 @@ mod test_support;
 use crate::cli::{Cli, CommandName};
 use anyhow::Result;
 use clap::Parser;
+use commands::Output;
+use std::io;
 use std::process::{self, ExitCode};
 
 #[tokio::main(flavor = "current_thread")]
@@ -60,16 +64,17 @@ async fn run() -> Result<ExitCode> {
             .transpose()
     };
 
+    let mut output = Output {
+        out: &mut io::stdout(),
+        err: &mut io::stderr(),
+    };
     match cli.command {
-        Some(CommandName::Agent { command }) => worker::agent_status::run(command)?,
+        Some(CommandName::Agent { command }) => worker::agent_status::run(command, &mut output)?,
+        Some(CommandName::Mcp) => mcp::run(cli.setup).await?,
         None => projects::explorer::home()?,
         Some(CommandName::Acp { dir, prompt }) => harness::acp::run(&dir, prompt).await?,
-        Some(CommandName::Cancel { id }) => worker::pane::cancel(id)?,
-        Some(CommandName::Approve {
-            id,
-            request,
-            option,
-        }) => worker::pane::approve(id, request, option)?,
+        Some(CommandName::Cancel(args)) => worker::pane::cancel(args.id, &mut output)?,
+        Some(CommandName::Approve(args)) => args.run()?,
         Some(CommandName::Resume { id }) => worker::pane::resume(id)?,
         Some(CommandName::Explorer) => projects::explorer::run()?,
         Some(CommandName::Panel { panel }) => projects::panels::render(panel)?,
@@ -134,67 +139,22 @@ async fn run() -> Result<ExitCode> {
             return compat::compat(&families, selection()?.as_ref());
         }
         Some(CommandName::Prune { older_than, apply }) => projects::prune::run(older_than, apply)?,
-        Some(CommandName::Spawn {
-            wait,
-            id,
-            assignment,
-            task_label,
-            agent,
-            tree,
-            worktree,
-            base,
-            checkin,
-            message,
-        }) => {
-            let selection = selection()?;
-            let task = worker::SpawnTask {
-                label: task_label,
-                text: message.resolve()?,
-            };
-            let tree = match worktree {
-                Some(branch) => Some(worker::SpawnTree::Worktree { branch, base }),
-                None => tree.map(worker::SpawnTree::Path),
-            };
-            worker::spawn(
-                id,
-                *assignment,
-                agent,
-                task,
-                checkin,
-                tree,
-                selection.as_ref(),
-            )?;
-            if wait {
-                return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
-            }
+        Some(CommandName::Spawn { args, message }) => {
+            let worker = args.run(message.resolve()?, selection()?.as_ref(), &mut output)?;
+            cli::spawn_hints(output.out, worker)?;
         }
-        Some(CommandName::Close {
-            id,
-            task_label,
-            all,
-        }) => worker::worker_close(id, task_label, all)?,
+        Some(CommandName::Close(args)) => args.run(&mut output)?,
         Some(CommandName::Log { id, decision }) => session::log::run(&id, &decision.join(" "))?,
-        Some(CommandName::Workers) => worker::workers()?,
+        Some(CommandName::Workers) => worker::print_json(&worker::workers(&mut output)?)?,
         Some(CommandName::Usage) => worker::usage()?,
         Some(CommandName::Models) => models::models()?,
-        Some(CommandName::Report { id }) => worker::report(id)?,
-        Some(CommandName::Peek { id, lines, quiet }) => worker::peek(id, lines, quiet)?,
-        Some(CommandName::Send {
-            wait,
-            checkin,
-            id,
-            message,
-        }) => {
-            let selection = selection()?;
-            let message = message.resolve()?;
-            worker::send(wait, checkin, id, message, selection.as_ref())?;
-            if wait {
-                return Ok(wait::wait(wait::DEFAULT_INTERVAL, wait::DEFAULT_TIMEOUT)?.emit());
-            }
+        Some(CommandName::Report(args)) => worker::report(args.id, &mut output)?,
+        Some(CommandName::Peek(args)) => args.run(&mut output)?,
+        Some(CommandName::Send { args, message }) => {
+            let id = args.run(message.resolve()?, selection()?.as_ref(), &mut output)?;
+            cli::send_hints(output.out, &id)?;
         }
-        Some(CommandName::Wait { interval, timeout }) => {
-            return Ok(wait::wait(interval, timeout)?.emit());
-        }
+        Some(CommandName::Wait(args)) => return args.run(|| false)?.emit(output.out),
         Some(CommandName::Quiet { id }) => {
             if watch::quiet(&id)? {
                 println!("quiet: {id}");

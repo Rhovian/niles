@@ -1,4 +1,5 @@
 use super::snapshot::{WorkerSnapshot, worker_snapshot};
+use crate::commands::Output;
 use crate::skills::SkillName;
 use crate::telemetry::SessionState;
 use crate::tmux::TargetState;
@@ -10,29 +11,30 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::io::{self, Write};
 
-/// Renders the workspace's live workers as one compact JSON object.
+/// Lists the workspace's live workers and their recorded state.
 ///
 /// Every fact comes from [`worker_snapshot`], which is also what the watcher reads: a listing that
 /// enumerated workers its own way would be a second answer to "which workers are live", and the
 /// two would drift.
-pub fn workers() -> Result<()> {
+pub fn workers(output: &mut Output<'_>) -> Result<WorkersOutput> {
     let snapshots = worker_snapshot(&current_dir_utf8()?)?;
     for worker in &snapshots {
         if let Some(error) = &worker.read_error {
-            eprintln!(
+            writeln!(
+                output.err,
                 "worker {} metadata is unreadable; remove its directory to recover: {error}",
                 worker.id
-            );
+            )?;
         }
     }
     let workers = snapshots
         .iter()
         .map(WorkerOutput::read)
         .collect::<Result<Vec<_>>>()?;
-    print_json(&WorkersOutput { workers })
+    Ok(WorkersOutput { workers })
 }
 
-pub(super) fn print_json(value: &impl Serialize) -> Result<()> {
+pub(crate) fn print_json(value: &impl Serialize) -> Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     serde_json::to_writer(&mut output, value).context("failed to serialize JSON")?;
@@ -40,7 +42,7 @@ pub(super) fn print_json(value: &impl Serialize) -> Result<()> {
 }
 
 #[derive(Serialize)]
-struct WorkersOutput {
+pub(crate) struct WorkersOutput {
     workers: Vec<WorkerOutput>,
 }
 

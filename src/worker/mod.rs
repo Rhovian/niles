@@ -25,18 +25,19 @@ mod validation;
 mod worktree;
 
 pub use close::worker_close;
-pub use list::workers;
+pub(crate) use list::{print_json, workers};
 pub(crate) use pane::DEFAULT_PEEK_LINES;
 pub use pane::{peek, send};
 pub use report::report;
 pub(crate) use resolve::resolve_worker as worker_dir;
 pub(crate) use skills::skill_workspace;
 pub(crate) use snapshot::{ActionableWake, WorkerSnapshot, status_log_len, worker_snapshot};
+pub(crate) use spawn::Spawned;
 pub use spawn::{Assignment, SpawnTask, spawn};
 pub(crate) use usage::lead_session;
 pub use usage::usage;
 pub(crate) use usage::worker_session;
-pub(crate) use validation::validate_task_label;
+pub(crate) use validation::{validate_id, validate_task_label};
 pub use worktree::SpawnTree;
 pub(crate) use worktree::remove_project_worktrees;
 
