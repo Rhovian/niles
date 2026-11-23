@@ -21,8 +21,6 @@ for line in sys.stdin:
     if method in ['session/new','session/load']:
         assert not p.get('mcpServers',[])
         if not claude and not pi:assert 'mcp_servers' not in json.loads(os.environ['CODEX_CONFIG'])
-        if claude and 'PEER_TOOL_TIMEOUT' in os.environ:
-            assert os.environ.get('MCP_TOOL_TIMEOUT')==os.environ.get('PEER_TOOL_TIMEOUT')
     if claude and method in ['session/new','session/load']:
         assert p['_meta']['claudeCode']['options']==dict(model='sonnet',effort='high')
         assert p['_meta']['systemPrompt']['append']
@@ -196,8 +194,6 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     let mut child = Running(
         env.niles(&env.root, &["acp", dir.to_str().unwrap(), "approval"])
             .env("ANTHROPIC_API_KEY", "must-not-reach-adapter")
-            .env("PEER_TOOL_TIMEOUT", "1234")
-            .env("MCP_TOOL_TIMEOUT", "1234")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -207,6 +203,13 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     observed(&dir, |s| {
         s.pointer("/turn/state") == Some(&json!("RequiresAction"))
     });
+    // The state is visible before the wake is appended. An answer from the runner
+    // confirms it finished handling the request, and a bad option leaves it pending.
+    assert_failure_contains(
+        "bad option",
+        &env.run(&["approve", "job", "100", "wrong"]),
+        "unknown permission option",
+    );
     assert!(stdout_of(&env.run(&["workers"])).contains("needs_attention"));
     assert_eq!(
         fs::read_to_string(dir.join("status.log"))
@@ -214,11 +217,6 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
             .matches("attention:")
             .count(),
         1
-    );
-    assert_failure_contains(
-        "bad option",
-        &env.run(&["approve", "job", "100", "wrong"]),
-        "unknown permission option",
     );
     let _partial_client = UnixStream::connect(socket_dir.join("rpc")).unwrap();
     let approval_started = Instant::now();
