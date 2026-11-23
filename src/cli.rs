@@ -113,9 +113,6 @@ pub enum CommandName {
         dir: camino::Utf8PathBuf,
         prompt: String,
     },
-    /// Serve local agent tools over MCP stdio.
-    #[command(hide = true)]
-    Mcp,
     /// Request cancellation of a headless worker turn.
     Cancel(Target),
     /// Answer a headless permission; omit the option to cancel the request.
@@ -269,6 +266,7 @@ mod tests {
     fn command_definition_is_consistent() {
         Cli::command().debug_assert();
         assert!(Cli::try_parse_from(["niles"]).unwrap().command.is_none());
+        assert!(Cli::try_parse_from(["niles", "mcp"]).is_err());
     }
 
     #[test]

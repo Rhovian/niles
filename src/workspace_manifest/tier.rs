@@ -1,17 +1,6 @@
 use serde::Deserialize;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Deserialize,
-    clap::ValueEnum,
-    schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Frontier,

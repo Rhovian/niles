@@ -69,8 +69,6 @@ ece = { version = "2", optional = true }
 pulldown-cmark = { version = "0.13.5", default-features = false }
 unicode-general-category = "1"
 zstd = { version = "0.14", default-features = false }
-rmcp = { version = "=3.11.0", default-features = false, features = ["server", "macros", "transport-io"] }
-schemars = "1.2"
 
 # The profile that 'dist' will build with
 [profile.dist]

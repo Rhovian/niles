@@ -19,20 +19,10 @@ for line in sys.stdin:
     with open('peer.log','a') as f:f.write(json.dumps(m)+'\n')
     method=m.get('method');p=m.get('params',{})
     if method in ['session/new','session/load']:
-        servers=p.get('mcpServers',[])
-        if not claude:
-            assert not servers
-            if not pi:
-                server=json.loads(os.environ['CODEX_CONFIG'])['mcp_servers']['niles']
-                assert server['args']==['mcp'] and server['tool_timeout_sec']>3600
-                assert os.path.isabs(server['command'])
-                assert 'NILES_AGENT_DIR' in server['env_vars']
-        else:
-            assert int(os.environ['MCP_TOOL_TIMEOUT'])>3600000
-            [server]=servers
-            assert server['name']=='niles' and server['args']==['mcp']
-            assert os.path.isabs(server['command'])
-            assert {e['name']:e['value'] for e in server['env']}['NILES_AGENT_DIR']==os.environ['NILES_AGENT_DIR']
+        assert not p.get('mcpServers',[])
+        if not claude and not pi:assert 'mcp_servers' not in json.loads(os.environ['CODEX_CONFIG'])
+        if claude and 'PEER_TOOL_TIMEOUT' in os.environ:
+            assert os.environ.get('MCP_TOOL_TIMEOUT')==os.environ.get('PEER_TOOL_TIMEOUT')
     if claude and method in ['session/new','session/load']:
         assert p['_meta']['claudeCode']['options']==dict(model='sonnet',effort='high')
         assert p['_meta']['systemPrompt']['append']
@@ -206,6 +196,8 @@ fn headless_permissions_queue_cancel_resume_and_errors_share_the_harness() {
     let mut child = Running(
         env.niles(&env.root, &["acp", dir.to_str().unwrap(), "approval"])
             .env("ANTHROPIC_API_KEY", "must-not-reach-adapter")
+            .env("PEER_TOOL_TIMEOUT", "1234")
+            .env("MCP_TOOL_TIMEOUT", "1234")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())

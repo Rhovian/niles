@@ -19,8 +19,7 @@ use std::fs;
 use std::os::unix::fs::OpenOptionsExt;
 
 const BOOTSTRAP: &str = r#"# Niles {skill} brief
-You are niles worker `{id}`. Report with the Niles `agent_status` tool.
-If the tools are unavailable, use the CLI contract in `niles agent status --help`.
+You are niles worker `{id}`. Read the reporting contract in `niles agent status --help`.
 {skill_commands}
 
 id: {id}

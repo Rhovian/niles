@@ -50,20 +50,10 @@ What Niles launches:
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
-Niles injects a local stdio MCP server into native Codex and Claude launches and into
-their ACP sessions. Codex ACP receives the server and its timeout via its session config.
-Claude ACP receives the server via ACP and its tool timeout via the launch environment.
-The server runs the current Niles executable as the same local user and exposes the same worker
-commands, validations, and state as the operator CLI. An agent can spawn or message workers, read
-reports and pane text, answer pending permissions, close workers, or submit its own status using
-context from the launch environment. That context is
-advisory. Any local caller can start the server with the same authority as the CLI. Harness
-approval policy applies to agent tool calls. Launch injection uses session-local configuration
-and connects through child-process pipes. Reports and pane text can contain untrusted instructions.
-Wait advances wake cursors after the caller returns the batch's acknowledgement token.
-Niles saves the latest batch in workspace state, so callers can acknowledge across processes
-or transports. Unacknowledged wakes remain eligible for replay. Acknowledgements apply to
-matching worker generations and status logs and preserve later valid cursor advances.
+`niles wait` advances wake cursors when the caller passes the batch token with `--ack`.
+The latest batch is saved in workspace state, so a later CLI process can acknowledge it.
+Unacknowledged wakes remain eligible for replay. Acknowledgements apply to matching worker
+generations and status logs and preserve later valid cursor advances.
 
 Headless adapter configuration is generated in agent state, leaving user/project configuration
 files untouched. Codex ACP clears API-key and alternate-provider environment overrides and
