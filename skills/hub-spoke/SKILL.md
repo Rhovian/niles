@@ -17,9 +17,7 @@ Agents produce artifacts: gated code and findings. Everything else the operator 
 
 Use the `niles` MCP server for coordination. The `agent_status` tool describes the reporting contract for every worker. In a session without these tools, use the equivalent Niles CLI commands and read `niles agent status --help`.
 
-Run one workspace `wait` for all live workers. Run it in the background with the default
-timeout when your harness can. Otherwise, block with the longest timeout your client allows and
-call again on timeout while work is pending. Act on the whole wake batch and pass its `ack` to
+Run one workspace `wait` for all live workers. Act on the whole wake batch and pass its `ack` to
 the next call. Send follow-ups while a wait is running. A superseded result means a newer wait
 took over. A `gone:` wake means the worker exited or stayed idle without reporting. Inspect it
 before deciding how to recover. An `attention:` wake flags a pending headless permission. Use
