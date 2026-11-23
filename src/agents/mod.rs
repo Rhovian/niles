@@ -4,6 +4,7 @@ mod acp;
 pub(crate) use acp::{AuthSource, SessionConfig, SubscriptionStatus};
 pub(crate) mod catalogue;
 mod families;
+mod mcp;
 pub(crate) mod picker;
 mod system_prompt;
 #[cfg(test)]

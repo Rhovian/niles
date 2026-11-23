@@ -1,5 +1,6 @@
 use super::acp::{AuthSource, ChildCommand, CommandFile, Readiness, SessionConfig};
 use super::catalogue::{Catalogue, Model, Models, StdinRequest};
+use super::mcp::NativeMcp;
 use super::{AgentInvocation, AgentSpec, InvocationDefaults};
 use crate::telemetry::SessionLink;
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub(crate) enum AcpAdapter {
 pub struct AgentProfile {
     pub id: &'static str,
     pub(crate) acp: Option<AcpProfile>,
+    pub(super) niles_mcp: Option<NativeMcp>,
     pub binary: &'static str,
     pub(crate) catalogue: Catalogue,
     pub tested_version: &'static str,
@@ -85,6 +87,7 @@ pub(crate) fn session_link(family: &str, dir: &Utf8Path) -> Option<SessionLink> 
 const PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: "codex",
+        niles_mcp: Some(NativeMcp::Codex),
         catalogue: Catalogue {
             args: &["debug", "models"],
             request: None,
@@ -126,6 +129,7 @@ const PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: "claude",
+        niles_mcp: Some(NativeMcp::Claude),
         catalogue: Catalogue {
             args: &[
                 "-p",
@@ -178,6 +182,7 @@ const PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: "pi",
+        niles_mcp: None,
         catalogue: Catalogue {
             args: &["--mode", "rpc", "--no-session", "--no-extensions"],
             request: Some(StdinRequest {

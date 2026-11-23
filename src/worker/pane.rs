@@ -1,6 +1,7 @@
 use super::meta::read_meta;
 use super::worker_dir;
 use crate::agent_window::shell_quote;
+use crate::commands::Output;
 use crate::harness::operations::{InputDisposition, PermissionAnswer};
 use crate::harness::{
     Harness, Prompt,
@@ -39,21 +40,22 @@ impl WorkerPane {
         }
     }
 }
-pub fn peek(id: String, lines: usize, quiet: bool) -> Result<()> {
+pub fn peek(id: String, lines: usize, quiet: bool, output: &mut Output<'_>) -> Result<()> {
     let target = worker_target(id)?;
     if target.headless {
-        acp::peek(&target.dir, lines)?;
+        acp::peek(&target.dir, lines, output.out)?;
     } else {
-        print!(
+        write!(
+            output.out,
             "{}",
             tmux::capture_pane(&tmux::TmuxTarget::window(&target.target), lines)?
-        );
+        )?;
     }
     if quiet {
         if watch::quiet(&target.id)? {
-            eprintln!("quiet: {}", target.id);
+            writeln!(output.err, "quiet: {}", target.id)?;
         } else {
-            eprintln!("quiet: {} (no check-in armed)", target.id);
+            writeln!(output.err, "quiet: {} (no check-in armed)", target.id)?;
         }
     }
     Ok(())
@@ -64,12 +66,12 @@ pub fn peek(id: String, lines: usize, quiet: bool) -> Result<()> {
 /// The wake cursor is advanced first, so the wait that follows this send cannot be satisfied by a
 /// status line the worker wrote before the message arrived.
 pub fn send(
-    wait: bool,
     checkin: Option<String>,
     id: String,
     message: String,
     selection: Option<&SetupSelection>,
-) -> Result<()> {
+    output: &mut Output<'_>,
+) -> Result<String> {
     let target = worker_target(id)?;
     // Resolved before anything is delivered — the wake cursor, the paste — so a manifest typo
     // fails a dispatch that has not happened yet rather than one already typed into the pane.
@@ -78,7 +80,7 @@ pub fn send(
     let mut harness = target.harness()?;
     let id = target.id.as_str();
     for line in wait::advance_cursor(id)? {
-        eprintln!("skipped unconsumed wake: {line}");
+        writeln!(output.err, "skipped unconsumed wake: {line}")?;
     }
     // Read before the message is typed: a report that lands while the send is in flight is the
     // worker answering this assignment, and a baseline taken afterwards would swallow it.
@@ -87,24 +89,19 @@ pub fn send(
     // An unreported follow-up stays visible to wait even when check-ins are disabled.
     util::append_line(&wake::status_log_path(dir), FOLLOWUP_STARTED)?;
     if harness.prompt(Prompt(message))? == InputDisposition::Queued {
-        eprintln!("queued: {id}");
+        writeln!(output.err, "queued: {id}")?;
     }
+    drop(harness);
     // A message to a worker is an assignment, so the lead arms a check-in with it — the same
     // contract `spawn` writes, and the one thing a worker cannot do for itself.
     let armed = watch::arm_checkin(dir, cadence, armed_len, dispatched_at)?;
 
-    println!("sent: {id}");
+    writeln!(output.out, "sent: {id}")?;
     match armed {
-        Some(delay) => println!("checkin: {}", watch::describe_delay(delay)),
-        None => println!("checkin: off"),
+        Some(delay) => writeln!(output.out, "checkin: {}", watch::describe_delay(delay))?,
+        None => writeln!(output.out, "checkin: off")?,
     }
-    if !wait {
-        // wait first, as spawn prints it: the send has armed a wake, and collecting it is the
-        // next move. `--wait` is already doing that, so it needs no pointer to itself.
-        println!("wait: niles wait");
-        println!("peek: niles peek {id}");
-    }
-    Ok(())
+    Ok(target.id)
 }
 
 fn worker_target(id: String) -> Result<WorkerPane> {
@@ -121,10 +118,10 @@ fn worker_target(id: String) -> Result<WorkerPane> {
     })
 }
 
-pub(crate) fn cancel(id: String) -> Result<()> {
+pub(crate) fn cancel(id: String, output: &mut Output<'_>) -> Result<()> {
     let target = worker_target(id)?;
     target.harness()?.cancel()?;
-    println!("cancel requested: {}", target.id);
+    writeln!(output.out, "cancel requested: {}", target.id)?;
     Ok(())
 }
 

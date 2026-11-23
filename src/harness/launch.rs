@@ -6,19 +6,21 @@ use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::env;
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
-pub(crate) enum Billing {
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+enum Billing {
     Subscription,
     ApiKey,
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
     NativeTui,
     Headless,
 }
 
-#[derive(Debug, Clone, Copy, clap::Args)]
+#[derive(Debug, Clone, Copy, clap::Args, Deserialize, schemars::JsonSchema)]
 pub(crate) struct LaunchArgs {
     /// Launch mode. Defaults to native-tui, or the workspace's workers setting for spawn.
     #[arg(long, value_enum)]
@@ -111,12 +113,7 @@ impl Launch {
                 .adapter
                 .configure(&invocation.spec, primary, worker)?;
             session.env.extend(invocation.env.clone());
-            acp::prepare(
-                dir,
-                invocation.spec.family(),
-                Billing::Subscription,
-                session,
-            )?;
+            acp::prepare(dir, invocation.spec.family(), session)?;
             let executable = env::current_exe()?;
             invocation.binary = "sh";
             invocation.args = vec![
@@ -128,6 +125,9 @@ impl Launch {
                 ),
                 "niles-acp".into(),
             ];
+        } else if let Some(args) = invocation.spec.profile().mcp_args()? {
+            // Keep variadic configuration flags ahead of the flags before the opening prompt.
+            drop(invocation.args.splice(..0, args));
         }
         Ok(())
     }

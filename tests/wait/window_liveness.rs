@@ -28,13 +28,17 @@ fn dead_unreported_workers_share_one_batch_and_are_not_replayed() {
     lab.worker("d", None, b"done: finished the work\n");
     let output = lab.wait_now();
     assert_command_success("gone batch", &output);
-    let text = stdout_of(&output);
+    let batch = wake_batch(&output);
+    let text = batch.wakes;
     assert_eq!(text.lines().count(), 4, "{text}");
     assert!(text.contains("c done: ready\n"));
     assert!(text.contains("d done: finished the work\n"));
     assert!(text.contains("a gone: worker window or agent exited without reporting"));
     assert!(text.contains("b gone: worker window or agent exited without reporting"));
-    let output = lab.wait_now();
+    let output = lab
+        .niles(&["wait", "--timeout", "0", "--ack", &batch.ack])
+        .output()
+        .unwrap();
     assert_drained(&output);
 }
 

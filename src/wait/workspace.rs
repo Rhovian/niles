@@ -1,20 +1,20 @@
 use super::cursor::*;
+use super::delivery::{Batch, Receipt};
 use super::exit::Outcome;
-use super::{Target, WaitExit, render};
+use super::{Identity, Target, render};
 use crate::wake::{self, WakeKind};
 use crate::{store, util, worker};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, TryLockError};
-use std::io::{self, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const TAKEOVER_POLL: Duration = Duration::from_millis(100);
 
-/// Replacing the presence inode under a short-lived lock makes takeover and output atomic.
+/// Replacing the presence inode under a short-lived lock serializes takeover with batch publication.
 struct Registration {
     path: Utf8PathBuf,
     running: Utf8PathBuf,
@@ -55,9 +55,16 @@ impl Registration {
     }
 }
 
-pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
+pub(crate) fn wait(
+    interval: Duration,
+    timeout: Duration,
+    mut ack: Option<String>,
+    cancelled: impl Fn() -> bool,
+) -> Result<Outcome> {
+    ensure!(!cancelled(), "wait cancelled");
     let registration = Registration::start()?;
     let workspace = util::current_dir_utf8()?;
+    let batch_path = registration.path.with_file_name("wait.batch");
     let deadline = Instant::now()
         .checked_add(timeout)
         .context("wait deadline overflow")?;
@@ -66,22 +73,29 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
     // Remember progress here without persisting past unprinted reports.
     let mut targets = BTreeMap::new();
     loop {
-        // Keep takeover serialized with printing, including the cursor writes that follow it.
+        // Serialize takeover with acknowledging and publishing batches.
         let gate = open_lock_file(&registration.path)?;
         gate.lock()?;
+        ensure!(!cancelled(), "wait cancelled");
         if !registration.current()? {
-            return Ok(WaitExit::from_outcome(Outcome::Superseded));
+            return Ok(Outcome::Superseded);
+        }
+        if let Some(ack) = ack.take() {
+            Batch::acknowledge(&batch_path, &workspace, &ack)?;
         }
         if Instant::now() >= next_poll {
-            if poll_workers(&workspace, &mut targets, &mut io::stdout().lock())? {
-                return Ok(WaitExit::from_outcome(Outcome::Wake));
+            let batch = poll_workers(&workspace, &mut targets, &cancelled)?;
+            if !batch.is_empty() {
+                let (wakes, receipts) = batch.into_iter().unzip();
+                let ack = Batch::publish(&batch_path, receipts)?;
+                return Ok(Outcome::Wake { wakes, ack });
             }
             next_poll = Instant::now()
                 .checked_add(interval)
                 .context("poll deadline overflow")?;
         }
         if Instant::now() >= deadline {
-            return Ok(WaitExit::from_outcome(Outcome::Timeout { timeout }));
+            return Ok(Outcome::Timeout { timeout });
         }
         drop(gate);
         let now = Instant::now();
@@ -96,12 +110,12 @@ pub(crate) fn wait(interval: Duration, timeout: Duration) -> Result<WaitExit> {
 fn poll_workers(
     workspace: &Utf8Path,
     targets: &mut BTreeMap<String, Target>,
-    output: &mut impl Write,
-) -> Result<bool> {
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<(String, Receipt)>> {
     let workers = worker::live_worker_locations(workspace)?;
     let live: BTreeSet<_> = workers.iter().map(|worker| worker.id.as_str()).collect();
     targets.retain(|id, _| live.contains(id.as_str()));
-    let mut delivered = false;
+    let mut delivered = Vec::new();
     for worker in &workers {
         let target = targets
             .entry(worker.id.clone())
@@ -135,14 +149,22 @@ fn poll_workers(
                 }
             }
         }
-        if let Some((line, end)) = report {
-            let line = render(&format!("{} {line}", target.id));
-            writeln!(output, "{line}").context("failed to print workspace wake")?;
-            output.flush().context("failed to flush workspace wake")?;
-            // A killed or broken-output wait cannot consume an unprinted line.
-            write_cursor(&mut cursor, &path, end)?;
-            target.scanned = end;
-            delivered = true;
+        if let Some(report) = report
+            && let Some(meta) = worker::meta::read_meta_if_exists(&target.dir)?
+        {
+            ensure!(!cancelled(), "wait cancelled");
+            let metadata = report.log.metadata()?;
+            let line = render(&format!("{} {}", target.id, report.line));
+            delivered.push((
+                line,
+                Receipt {
+                    id: target.id.clone(),
+                    created_at: meta.created_at,
+                    identity: Identity::from(&metadata),
+                    end: report.end,
+                    reset_from: (persisted > metadata.len()).then_some(persisted),
+                },
+            ));
         }
     }
     Ok(delivered)

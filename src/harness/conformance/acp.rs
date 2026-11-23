@@ -1,6 +1,6 @@
 use super::*;
 use crate::agents::{self, AuthSource};
-use crate::harness::{acp as headless, launch::Billing};
+use crate::harness::acp as headless;
 use crate::{store, test_support};
 use camino::Utf8PathBuf;
 use std::process::{Child, Stdio};
@@ -83,7 +83,7 @@ impl Fixture for Acp {
             .adapter
             .configure(&self.spec, PRIMARY, true)
             .unwrap();
-        headless::prepare(&dir, self.spec.family(), Billing::Subscription, session).unwrap();
+        headless::prepare(&dir, self.spec.family(), session).unwrap();
         self.launch(&dir, first);
         dir
     }

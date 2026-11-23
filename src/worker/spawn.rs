@@ -4,6 +4,7 @@ use super::resolve::resolve_live_worker_if_exists;
 use super::snapshot::status_log_len;
 use super::validation::{validate_id, validate_task_label};
 use super::worktree::{self, SpawnTree};
+use crate::commands::Output;
 use crate::harness::{Launch, LaunchArgs};
 use crate::skills::{self, SkillName};
 use crate::store::{self, Scope, atomic_write};
@@ -18,7 +19,8 @@ use std::fs;
 use std::os::unix::fs::OpenOptionsExt;
 
 const BOOTSTRAP: &str = r#"# Niles {skill} brief
-You are niles worker `{id}`. Report with `niles agent status --help`.
+You are niles worker `{id}`. Report with the Niles `agent_status` tool.
+If the tools are unavailable, use the CLI contract in `niles agent status --help`.
 {skill_commands}
 
 id: {id}
@@ -33,24 +35,23 @@ report_file: {report_path}
 
 const UNLABELED_TASK_LABEL: &str = "-";
 
-#[derive(Debug, clap::Args)]
 pub struct Assignment {
-    #[command(flatten)]
     pub launch: LaunchArgs,
-    /// Installed primary skill to launch on a project tier.
-    #[arg(long)]
     pub skill: SkillName,
-    /// Inject an additional skill into the system prompt (repeatable).
-    #[arg(long = "with")]
-    with: Vec<SkillName>,
-    /// Manifest tier whose primary to launch (standard by default).
-    #[arg(long, value_enum, default_value_t = Tier::Standard, conflicts_with = "agent")]
+    pub with: Vec<SkillName>,
     pub tier: Tier,
 }
 
 pub struct SpawnTask {
     pub label: Option<String>,
     pub text: String,
+    pub checkin: Option<String>,
+}
+
+pub(crate) struct Spawned {
+    pub(crate) id: String,
+    pub(crate) task_label: Option<String>,
+    pub(crate) checkin_armed: bool,
 }
 
 pub fn spawn(
@@ -58,13 +59,14 @@ pub fn spawn(
     assignment: Assignment,
     agent: Option<String>,
     task: SpawnTask,
-    checkin: Option<String>,
     tree: Option<SpawnTree>,
     selection: Option<&SetupSelection>,
-) -> Result<()> {
+    output: &mut Output<'_>,
+) -> Result<Spawned> {
     let SpawnTask {
         label: task_label,
         text: task,
+        checkin,
     } = task;
     let skill = assignment.skill.clone();
     let tier = assignment.tier;
@@ -157,10 +159,10 @@ pub fn spawn(
 
     let setup = manifest.source.as_ref();
     if let Some(setup) = setup {
-        println!("setup: {setup}");
+        writeln!(output.out, "setup: {setup}")?;
     }
-    println!("skill: {primary_skill}");
-    print!("{}", resolved.provenance);
+    writeln!(output.out, "skill: {primary_skill}")?;
+    write!(output.out, "{}", resolved.provenance)?;
     archive_worker_dir(&project, &id, &dir, Utc::now())?;
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {dir}"))?;
 
@@ -242,32 +244,26 @@ pub fn spawn(
     // this only writes it.
     let armed = watch::arm_checkin(&dir, cadence, armed_len, created_at)?;
 
-    println!("spawned: {id}");
-    println!("window: {window_name}");
-    println!("agent: {}", meta.agent);
-    print_worker_tier(&meta);
+    writeln!(output.out, "spawned: {id}")?;
+    writeln!(output.out, "window: {window_name}")?;
+    writeln!(output.out, "agent: {}", meta.agent)?;
+    print_worker_tier(&meta, output)?;
     if let Some(label) = &meta.task_label {
-        println!("task: {label}");
+        writeln!(output.out, "task: {label}")?;
     }
-    println!("brief: {}", meta.brief);
-    println!("wait: niles wait");
-    println!("peek: niles peek {id}");
-    println!("report: niles report {id}");
-    println!("send: niles send {id} <message>");
-    println!("close: niles close {id}");
-    if let Some(label) = &meta.task_label {
-        println!("close_task: niles close --task {label}");
-    }
-    println!("workers: niles workers");
+    writeln!(output.out, "brief: {}", meta.brief)?;
     match armed {
         Some(delay) => {
-            println!("checkin: {}", watch::describe_delay(delay));
-            println!("quiet: niles quiet {id}");
+            writeln!(output.out, "checkin: {}", watch::describe_delay(delay))?;
         }
-        None => println!("checkin: off"),
+        None => writeln!(output.out, "checkin: off")?,
     }
 
-    Ok(())
+    Ok(Spawned {
+        id,
+        task_label: meta.task_label,
+        checkin_armed: armed.is_some(),
+    })
 }
 
 fn resolve_agent(
@@ -302,16 +298,17 @@ fn tag_worker_window(target: &WindowTarget, project: &Utf8Path, id: &str) -> Res
     tmux::set_window_option(target, "remain-on-exit", "on")
 }
 
-fn print_worker_tier(meta: &WorkerMeta) {
+fn print_worker_tier(meta: &WorkerMeta, output: &mut Output<'_>) -> Result<()> {
     if let Some(family) = &meta.agent_family {
-        println!("agent_family: {family}");
+        writeln!(output.out, "agent_family: {family}")?;
     }
     if let Some(model) = &meta.model {
-        println!("model: {model}");
+        writeln!(output.out, "model: {model}")?;
     }
     if let Some(effort) = &meta.effort {
-        println!("effort: {effort}");
+        writeln!(output.out, "effort: {effort}")?;
     }
+    Ok(())
 }
 
 fn write_brief(

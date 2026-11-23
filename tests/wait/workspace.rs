@@ -17,22 +17,24 @@ fn pending_reports_are_one_immediate_batch_with_one_line_per_worker() {
 
     let output = run_wait(&workspace, &["--timeout", "0"]);
     assert_command_success("batch", &output);
-    let text = stdout_of(&output);
-    let mut lines: Vec<_> = text.lines().collect();
+    let batch = wake_batch(&output);
+    let mut lines: Vec<_> = batch.wakes.lines().collect();
     lines.sort_unstable();
     assert_eq!(lines, ["a done: one", "b needs-decision: choose"]);
+    assert_eq!(cursor(&first), "");
+
+    let output = run_wait(&workspace, &["--timeout", "0", "--ack", &batch.ack]);
+    assert_command_success("next line", &output);
+    let next = wake_batch(&output);
+    assert_eq!(next.wakes, "a blocked: two\n");
     assert_eq!(cursor(&first), "10\n");
     assert_eq!(cursor(&second), "23\n");
     assert_eq!(cursor(&quiet), "");
     assert_eq!(cursor(&closed), "");
-
-    let output = run_wait(&workspace, &["--timeout", "0"]);
-    assert_command_success("next line", &output);
-    assert_eq!(stdout_of(&output), "a blocked: two\n");
-    assert_eq!(
-        run_wait(&workspace, &["--timeout", "0"]).status.code(),
-        Some(22)
-    );
+    assert_drained(&run_wait(
+        &workspace,
+        &["--timeout", "0", "--ack", &next.ack],
+    ));
 }
 
 #[test]
@@ -50,8 +52,7 @@ fn newest_wait_takes_over_without_consuming_any_line_in_the_old_wait() {
     append_status(&dir.join("status.log"), b"done: once\n");
     let output = new.wait_with_output().unwrap();
     assert_command_success("newest wait", &output);
-    assert_eq!(stdout_of(&output), "a done: once\n");
-    assert_eq!(cursor(&dir), "25\n");
+    assert_eq!(wake_batch(&output).wakes, "a done: once\n");
 }
 
 #[test]
@@ -68,7 +69,7 @@ fn killed_wait_loses_nothing_and_cannot_hold_the_slot() {
     drop(held_cursor);
     let output = run_wait(&workspace, &["--timeout", "0"]);
     assert_command_success("after killed wait", &output);
-    assert_eq!(stdout_of(&output), "a done: safe\n");
+    assert_eq!(wake_batch(&output).wakes, "a done: safe\n");
 }
 
 #[test]
@@ -106,7 +107,7 @@ fn stopped_stale_wait_cannot_swallow_the_new_waits_report() {
         "a stale wait must not suppress report nudges after takeover"
     );
     assert_command_success("stale takeover", &output);
-    assert_eq!(stdout_of(&output), "a done: newest\n");
+    assert_eq!(wake_batch(&output).wakes, "a done: newest\n");
     let output = old.wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(11));
     assert!(stdout_of(&output).is_empty());
@@ -125,7 +126,7 @@ fn failed_output_does_not_consume_a_report() {
     assert_eq!(cursor(&dir), "");
     let output = run_wait(&workspace, &["--timeout", "0"]);
     assert_command_success("retry after broken pipe", &output);
-    assert_eq!(stdout_of(&output), "a done: keep\n");
+    assert_eq!(wake_batch(&output).wakes, "a done: keep\n");
 }
 
 #[test]
@@ -138,13 +139,15 @@ fn busy_send_cursor_is_left_alone_and_other_workers_still_print() {
     cursor_file.lock().unwrap();
     let output = run_wait(&workspace, &["--timeout", "0"]);
     assert_command_success("other worker during send", &output);
-    assert_eq!(stdout_of(&output), "b done: pending\n");
+    assert_eq!(wake_batch(&output).wakes, "b done: pending\n");
     assert_eq!(cursor(&a), "");
     use std::io::Write;
     writeln!(cursor_file, "19").unwrap();
     drop(cursor_file);
-    let output = run_wait(&workspace, &["--timeout", "0"]);
-    assert_drained(&output);
+    assert_drained(&run_wait(
+        &workspace,
+        &["--timeout", "0", "--ack", &wake_batch(&output).ack],
+    ));
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use crate::commands::Output;
 use crate::skills::SkillName;
 use crate::store;
 use crate::util::append_line;
@@ -88,10 +89,7 @@ pub(super) fn done(dir: &Utf8Path, detail: &str) -> Result<()> {
     };
     let mut annotation = String::new();
     if let Some(state) = &state {
-        ensure!(
-            state.count > 0,
-            "stage first: run niles agent status stage <summary>"
-        );
+        ensure!(state.count > 0, "stage first: submit stage with a summary");
         let latest = state
             .rounds
             .last()
@@ -123,7 +121,7 @@ pub(super) fn done(dir: &Utf8Path, detail: &str) -> Result<()> {
     clippy::arithmetic_side_effects,
     reason = "rounds own storage; current count is below the round limit"
 )]
-pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
+pub(super) fn stage(dir: &Utf8Path, detail: &str, output: &mut Output<'_>) -> Result<()> {
     let report = report_path(dir)?;
     let meta = super::meta::read_meta(dir)?;
     ensure!(
@@ -147,7 +145,7 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
         .as_ref()
         .map_or(&[][..], |gates| gates.post.as_slice());
     for gate in gates {
-        if !super::gates::run(gate, meta.agent_dir(), dir, state.rounds.len() + 1)? {
+        if !super::gates::run(gate, meta.agent_dir(), dir, state.rounds.len() + 1, output)? {
             round.failed.push(gate.name.clone());
         }
     }
@@ -167,15 +165,21 @@ pub(super) fn stage(dir: &Utf8Path, detail: &str) -> Result<()> {
         ),
     )?;
     for skill in skills {
-        println!("on_stage_skill: {skill}\n{}", skill.body);
+        writeln!(output.out, "on_stage_skill: {skill}\n{}", skill.body)?;
     }
     let next = state.count + 1;
     if passed {
-        println!("Apply the post-work skills, then report `done`.");
+        writeln!(
+            output.out,
+            "Apply the post-work skills, then report `done`."
+        )?;
     } else if next < limit {
-        println!("{}", retry(next, limit));
+        writeln!(output.out, "{}", retry(next, limit))?;
     } else {
-        println!("report `done`: the failed gates will be shown to the lead");
+        writeln!(
+            output.out,
+            "report `done`: the failed gates will be shown to the lead"
+        )?;
     }
     Ok(())
 }

@@ -1,4 +1,3 @@
-use super::launch::Billing;
 use super::operations::{InputDisposition, PermissionAnswer};
 use super::{Adapter, Capabilities, Prompt, SessionId, Turn};
 use crate::telemetry::transcript::{TextBlock, TextTurn};
@@ -9,7 +8,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::net::Shutdown;
 use std::os::unix::{
     fs::{DirBuilderExt, MetadataExt},
@@ -20,6 +19,12 @@ use std::time::Duration;
 mod runner;
 mod view;
 pub(crate) use runner::run;
+
+#[derive(Serialize, Deserialize)]
+enum Billing {
+    Subscription,
+    ApiKey,
+}
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -35,18 +40,13 @@ struct State {
     capabilities: Capabilities,
     turn: Turn,
 }
-pub(crate) fn prepare(
-    dir: &Utf8Path,
-    family: &str,
-    billing: Billing,
-    mut session: SessionConfig,
-) -> Result<()> {
+pub(crate) fn prepare(dir: &Utf8Path, family: &str, mut session: SessionConfig) -> Result<()> {
     session.prepare(dir)?;
     store::write_json(
         &dir.join("acp.json"),
         &Config {
             family: family.into(),
-            billing,
+            billing: Billing::Subscription,
             session,
         },
     )
@@ -151,7 +151,7 @@ impl Adapter for Headless<'_> {
 pub(crate) fn session(dir: &Utf8Path) -> Result<SessionId> {
     state(dir)?.session.context("session is not initialized")
 }
-pub(crate) fn peek(dir: &Utf8Path, count: usize) -> Result<()> {
+pub(crate) fn peek(dir: &Utf8Path, count: usize, output: &mut dyn Write) -> Result<()> {
     let body = util::read_optional_string(&dir.join("transcript.jsonl"))?
         .context("ACP transcript is not available yet")?;
     let text = wake::complete_lines(body.as_bytes())
@@ -171,7 +171,7 @@ pub(crate) fn peek(dir: &Utf8Path, count: usize) -> Result<()> {
         lines.clone().count().saturating_sub(count)
     };
     for line in lines.skip(start) {
-        println!("{line}");
+        writeln!(output, "{line}")?;
     }
     Ok(())
 }

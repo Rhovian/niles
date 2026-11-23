@@ -2,7 +2,7 @@
 name: worker
 description: Use when implementation work is requested.
 ---
-Make the change, prove it works, and report what you did.
+Make the change, prove it works, and report what you did. Submit the handback through the Niles `agent_status` tool, using the report path in your brief.
 
 ## Gate
 
