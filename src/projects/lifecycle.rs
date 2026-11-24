@@ -13,9 +13,7 @@ use std::{
 pub(crate) enum Start {
     Running,
     Unregistered,
-    DirectoryMissing,
-    NoManifest,
-    NameTaken,
+    Conflict(&'static str),
 }
 #[cfg(feature = "remote")]
 pub(crate) enum Stop {
@@ -36,14 +34,16 @@ pub(crate) fn start(name: &str) -> Result<Start> {
         return Ok(Start::Unregistered);
     };
     if !entry.path.is_dir() {
-        return Ok(Start::DirectoryMissing);
+        return Ok(Start::Conflict("Project directory missing"));
     }
     if workspace_manifest::load(&entry.path, None)?.is_none() {
-        return Ok(Start::NoManifest);
+        return Ok(Start::Conflict("No saved manifest; start once at the desk"));
     }
     let session = entry.name.session()?;
     if tmux::project_session(&session)?.is_some_and(|tag| tag != entry.path.as_str()) {
-        return Ok(Start::NameTaken);
+        return Ok(Start::Conflict(
+            "Tmux session name held by a foreign session",
+        ));
     }
     if entry.has_live_session()? {
         return Ok(Start::Running);

@@ -31,6 +31,34 @@ pub(crate) struct FileRemote {
     pub(crate) relay_node: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) wake_hosts: BTreeMap<String, FileWakeHost>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) mcp: Option<FileMcp>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileMcp {
+    pub(crate) resource: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) interactive_issuer: Option<String>,
+    pub(crate) issuers: BTreeMap<String, Vec<FileMcpGrant>>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileMcpGrant {
+    pub(crate) subject: String,
+    pub(crate) project: String,
+    pub(crate) access: McpAccess,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum McpAccess {
+    Read,
+    Operate,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -41,7 +69,7 @@ pub(crate) struct FileWakeHost {
 }
 
 fn remote_is_empty(remote: &FileRemote) -> bool {
-    remote.relay_node.is_none() && remote.wake_hosts.is_empty()
+    remote.relay_node.is_none() && remote.wake_hosts.is_empty() && remote.mcp.is_none()
 }
 
 #[derive(Default, Deserialize, Serialize)]

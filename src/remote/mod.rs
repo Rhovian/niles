@@ -1,8 +1,8 @@
-use crate::config::user;
+use crate::config::user::{self, FileWakeHost};
 use crate::projects::navigation::{self, Project};
 use crate::projects::status::ForegroundSession;
 use crate::projects::telemetry;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,6 +26,7 @@ mod auth;
 mod chat;
 mod control;
 mod feed;
+mod mcp;
 mod message;
 pub(crate) mod push;
 #[cfg(test)]
@@ -119,9 +121,32 @@ pub(crate) async fn run(port: u16) -> Result<()> {
     let config = blocking(|| user::FileConfig::load(&user::path()?))
         .await?
         .remote;
-    let relay = auth::Relay::new(config.relay_node)?;
+    match config.mcp {
+        Some(mcp) if config.relay_node.is_some() => {
+            tokio::select! {
+                result = run_relay(port, config.relay_node, config.wake_hosts) => result,
+                result = mcp::run(mcp) => result,
+            }
+        }
+        Some(mcp) => {
+            ensure!(
+                config.wake_hosts.is_empty(),
+                "remote.wake_hosts requires remote.relay_node"
+            );
+            mcp::run(mcp).await
+        }
+        None => run_relay(port, config.relay_node, config.wake_hosts).await,
+    }
+}
+
+async fn run_relay(
+    port: u16,
+    relay_node: Option<String>,
+    wake_hosts: BTreeMap<String, FileWakeHost>,
+) -> Result<()> {
+    let relay = auth::Relay::new(relay_node)?;
     let mut state = AppState::new(relay, Arc::new(navigation::sessions));
-    state.wake_hosts = Arc::new(wake::configured(config.wake_hosts)?);
+    state.wake_hosts = Arc::new(wake::configured(wake_hosts)?);
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
     let ip = blocking(auth::tailnet_ip).await?;
     let listener = TcpListener::bind((ip, port))

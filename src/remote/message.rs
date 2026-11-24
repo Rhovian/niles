@@ -16,6 +16,15 @@ pub(super) struct Message {
     sender_device: Option<push::DeviceId>,
 }
 
+impl Message {
+    pub(super) fn from_text(text: String) -> Result<Self> {
+        Ok(Self {
+            text: text.try_into()?,
+            sender_device: None,
+        })
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(try_from = "String")]
 struct MessageText(String);
@@ -47,9 +56,18 @@ pub(super) async fn send(
         let Some(session) = lookup()? else {
             return Ok(StatusCode::NOT_FOUND);
         };
-        deliver(session, message, sender, tmux::send_line)
+        Ok(match deliver(session, message, sender, tmux::send_line)? {
+            Delivery::Sent => StatusCode::OK,
+            Delivery::PaneUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        })
     })
     .await?)
+}
+
+#[derive(Debug)]
+pub(super) enum Delivery {
+    Sent,
+    PaneUnavailable,
 }
 
 pub(super) fn deliver(
@@ -57,7 +75,7 @@ pub(super) fn deliver(
     message: Message,
     sender: Option<Sender>,
     paste: impl FnOnce(&TmuxTarget, &str) -> Result<()>,
-) -> Result<StatusCode> {
+) -> Result<Delivery> {
     let origin = match (sender, message.sender_device) {
         (Some(sender), Some(device)) => Some((
             sender.observer,
@@ -69,7 +87,7 @@ pub(super) fn deliver(
         _ => None,
     };
     let Some(pane) = session.target.clone() else {
-        return Ok(StatusCode::SERVICE_UNAVAILABLE);
+        return Ok(Delivery::PaneUnavailable);
     };
     let receipt = match origin {
         Some((observer, sender)) => Some((
@@ -86,5 +104,5 @@ pub(super) fn deliver(
         observer.cancel(id)?;
     }
     result?;
-    Ok(StatusCode::OK)
+    Ok(Delivery::Sent)
 }

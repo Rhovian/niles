@@ -46,18 +46,29 @@ enum AgentState {
 }
 
 pub(crate) fn collect() -> Result<Vec<Project>> {
-    Ok(records()?.into_iter().map(|(project, _)| project).collect())
+    collect_for(|_| true)
+}
+
+pub(crate) fn collect_for(allows: impl Fn(&str) -> bool) -> Result<Vec<Project>> {
+    Ok(records(allows)?
+        .into_iter()
+        .map(|(project, _)| project)
+        .collect())
 }
 
 pub(crate) fn sessions() -> Result<Vec<ForegroundSession>> {
-    records()?
+    sessions_for(|_| true)
+}
+
+pub(crate) fn sessions_for(allows: impl Fn(&str) -> bool) -> Result<Vec<ForegroundSession>> {
+    records(allows)?
         .into_iter()
         .filter_map(|(_, session)| session.transpose())
         .collect()
 }
 
 pub(crate) fn push_sessions() -> Result<Vec<ForegroundSession>> {
-    Ok(records()?
+    Ok(records(|_| true)?
         .into_iter()
         .flat_map(|(_, session)| session.into_iter().flatten())
         .collect())
@@ -76,9 +87,12 @@ pub(crate) fn usage(
 }
 
 type Record = (Project, Result<Option<ForegroundSession>>);
-fn records() -> Result<Vec<Record>> {
+fn records(allows: impl Fn(&str) -> bool) -> Result<Vec<Record>> {
     let mut records = Vec::new();
-    for entry in registry::entries()? {
+    for entry in registry::entries()?
+        .into_iter()
+        .filter(|entry| allows(entry.name.as_str()))
+    {
         let live = entry.path.is_dir() && entry.has_live_session()?;
         let windows = if live {
             tmux::windows(&entry.name.session()?)?
