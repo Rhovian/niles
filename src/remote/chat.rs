@@ -15,17 +15,19 @@ pub(super) fn lead(source: Source, id: String) -> Lookup {
     Arc::new(move || resolve(&source, &id)?.as_ref().map(Chat::lead).transpose())
 }
 pub(super) fn worker(project: String, id: String) -> Lookup {
-    Arc::new(move || {
-        let Some(path) = status::project(&project)? else {
-            return Ok(None);
-        };
-        Ok(worker::chat_target(&path, &id)?.map(|target| Chat {
-            id: format!("{project}/{id}"),
-            transcript: target.transcript,
-            target: target.window.as_ref().map(TmuxTarget::window),
-            status: None,
-        }))
-    })
+    Arc::new(move || find_worker(&project, &id))
+}
+
+pub(super) fn find_worker(project: &str, id: &str) -> Result<Option<Chat>> {
+    let Some(path) = status::project(project)? else {
+        return Ok(None);
+    };
+    Ok(worker::chat_target(&path, id)?.map(|target| Chat {
+        id: format!("{project}/{id}"),
+        transcript: target.transcript,
+        target: target.window.as_ref().map(TmuxTarget::window),
+        status: None,
+    }))
 }
 impl Chat {
     pub(super) fn lead(record: &status::ForegroundSession) -> Result<Self> {

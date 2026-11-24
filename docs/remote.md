@@ -4,6 +4,8 @@ Phone access is shell access on the Niles host: the phone can instruct agents th
 as you, and workers bypass approval prompts. Serve the app only from your relay, never from
 a public site. Read the [threat model](security.md#remote-api) first.
 
+For chat apps, CI and other MCP clients, see [remote MCP](remote-mcp.md).
+
 ## Prerequisites
 
 - A Niles binary built with `--features remote`; release binaries omit it. Building needs Rust

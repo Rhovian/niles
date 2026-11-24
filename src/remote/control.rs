@@ -10,20 +10,7 @@ pub(super) async fn start(Path(project): Path<String>) -> Result<Response, ApiEr
     Ok(match blocking(move || lifecycle::start(&project)).await? {
         Start::Running => StatusCode::OK.into_response(),
         Start::Unregistered => StatusCode::NOT_FOUND.into_response(),
-        // Fixed text distinguishes operator-fixable conflicts without exposing filesystem detail.
-        Start::DirectoryMissing => {
-            (StatusCode::CONFLICT, "Project directory missing").into_response()
-        }
-        Start::NoManifest => (
-            StatusCode::CONFLICT,
-            "No saved manifest; start once at the desk",
-        )
-            .into_response(),
-        Start::NameTaken => (
-            StatusCode::CONFLICT,
-            "Tmux session name held by a foreign session",
-        )
-            .into_response(),
+        Start::Conflict(reason) => (StatusCode::CONFLICT, reason).into_response(),
     })
 }
 pub(super) async fn stop(Path(project): Path<String>) -> Result<StatusCode, ApiError> {

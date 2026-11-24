@@ -5,22 +5,29 @@ use std::time::Instant;
 
 #[test]
 fn invalid_remote_configuration_fails_before_binding() {
-    for (relay, script, error) in [
-        (false, "#!/bin/sh\nexit 99\n", "remote.relay_node must be"),
+    for (config, script, error) in [
+        (None, "#!/bin/sh\nexit 99\n", "remote.relay_node must be"),
         (
-            true,
+            Some(
+                "remote:\n  wake_hosts: { spare: { mac: '01:23:45:67:89:AB', broadcast: 192.168.1.255 } }\n  mcp: {resource: 'https://localhost/mcp', issuers: {}, port: 0}\n",
+            ),
+            "#!/bin/sh\nexit 99\n",
+            "remote.wake_hosts requires remote.relay_node",
+        ),
+        (
+            Some("remote: { relay_node: relay }"),
             "#!/bin/sh\necho 'no local daemon' >&2\nexit 1\n",
             "no local daemon",
         ),
-        (true, "#!/bin/sh\necho not-an-ip\n", "parse tailscale ip -4"),
+        (
+            Some("remote: { relay_node: relay }"),
+            "#!/bin/sh\necho not-an-ip\n",
+            "parse tailscale ip -4",
+        ),
     ] {
         let env = TestEnv::new("remote-before-binding");
-        if relay {
-            atomic_write(
-                env.home.join(".niles/config.yaml"),
-                "remote: { relay_node: relay }",
-            )
-            .unwrap();
+        if let Some(config) = config {
+            atomic_write(env.home.join(".niles/config.yaml"), config).unwrap();
         }
         write_executable(&env.bin.join("tailscale"), script);
         let socket = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -87,4 +94,56 @@ exec sleep 30
         diagnostics.contains("invalid registry link"),
         "{diagnostics}"
     );
+}
+
+#[test]
+fn mcp_can_run_alone_or_beside_the_separate_relay_listener() {
+    for relay in [false, true] {
+        let env = TestEnv::new("remote-mcp");
+        let relay_config = if relay {
+            stub_tailscale(&env);
+            "  relay_node: relay\n"
+        } else {
+            write_executable(&env.bin.join("tailscale"), "#!/bin/sh\nexit 99\n");
+            ""
+        };
+        atomic_write(
+            env.home.join(".niles/config.yaml"),
+            format!("remote:\n{relay_config}  mcp:\n    port: 0\n    resource: https://localhost/mcp\n    issuers: {{}}\n"),
+        ).unwrap();
+        let mut child = env
+            .niles(&env.root, &["remote", "--port", "0"])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut diagnostics = BufReader::new(child.stderr.take().unwrap());
+        let mut addresses = Vec::new();
+        for _ in 0..=usize::from(relay) {
+            let mut line = String::new();
+            diagnostics.read_line(&mut line).unwrap();
+            addresses.push(line);
+        }
+        let mut server = Server {
+            child,
+            address: String::new(),
+            _diagnostics: diagnostics,
+        };
+        let address = |prefix| {
+            addresses
+                .iter()
+                .find_map(|line| line.strip_prefix(prefix))
+                .map(str::trim)
+        };
+        server.address = address("remote MCP listening on ").unwrap().to_owned();
+        assert!(server.address.starts_with("127.0.0.1:"));
+        server.status("GET", "/mcp", "", 401);
+        server.status("GET", "/api/projects", "", 404);
+        if relay {
+            let relay_address = address("remote listening on ").unwrap();
+            assert_ne!(server.address, relay_address);
+            server.address = relay_address.to_owned();
+            server.status("GET", "/api/projects", "", 200);
+            server.status("GET", "/mcp", "", 404);
+        }
+    }
 }

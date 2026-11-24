@@ -22,6 +22,30 @@ pub(super) struct Snapshot {
     truncated: bool,
 }
 
+impl Snapshot {
+    pub(super) fn bound_text(&mut self, mut bytes: usize) {
+        let mut kept = 0usize;
+        for turn in self.turns.iter_mut().rev() {
+            if let Some(remaining) = bytes.checked_sub(turn.text.len()) {
+                bytes = remaining;
+                kept = kept.saturating_add(1);
+            } else {
+                self.truncated = true;
+                if kept == 0 {
+                    // Include the start of the newest turn even when it alone exceeds the budget.
+                    while !turn.text.is_char_boundary(bytes) {
+                        bytes = bytes.saturating_sub(1);
+                    }
+                    turn.text.truncate(bytes);
+                    kept = 1;
+                }
+                break;
+            }
+        }
+        self.turns.drain(..self.turns.len().saturating_sub(kept));
+    }
+}
+
 pub(super) struct Feed {
     chat: Chat,
     follower: Follower,
@@ -138,4 +162,35 @@ pub(super) fn mobile_text(turn: TextTurn) -> Option<String> {
         }
     }
     (!text.trim().is_empty()).then_some(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_budget_retains_the_newest_complete_turns() {
+        let mut snapshot = Snapshot {
+            turns: (0..26)
+                .map(|index| Turn {
+                    id: index.to_string(),
+                    role: "agent",
+                    text: "x".repeat(1024),
+                })
+                .collect(),
+            truncated: false,
+        };
+
+        snapshot.bound_text(24 * 1024);
+
+        assert!(snapshot.truncated);
+        assert_eq!(
+            snapshot
+                .turns
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect::<Vec<_>>(),
+            (2..26).map(|index| index.to_string()).collect::<Vec<_>>(),
+        );
+    }
 }

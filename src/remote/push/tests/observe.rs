@@ -1,5 +1,5 @@
 use super::*;
-use crate::remote::message::{self, Sender};
+use crate::remote::message::{self, Delivery, Sender};
 use crate::remote::tests::{self, Fixture};
 use crate::store::atomic_write;
 use crate::test_support::{array, only, only_mut};
@@ -93,10 +93,10 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
         only_mut(&mut fixture.records.lock().unwrap()).waiting = waiting;
         for sender in [None, Some(&subscription), Some(&other)] {
             if let Some(sender) = sender {
-                assert_eq!(
+                assert!(matches!(
                     send(" hi\r\nthere \n", sender, true).unwrap(),
-                    StatusCode::OK
-                );
+                    Delivery::Sent
+                ));
             } else {
                 append_user("identical text");
             }
@@ -127,10 +127,10 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     assert!(third.excluded.is_none());
     let mut unregistered = subscription.clone();
     unregistered.0.endpoint = "https://wns.example/unregistered".into();
-    assert_eq!(
+    assert!(matches!(
         send("unregistered", &unregistered, true).unwrap(),
-        StatusCode::OK
-    );
+        Delivery::Sent
+    ));
     let notifications = poll();
     assert!(
         devices

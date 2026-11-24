@@ -48,6 +48,7 @@ What Niles launches:
 | Headless ACP | Adapter JSON-RPC and local command socket | Keeps one runner per state directory under a lock; uses a private per-user socket directory, checks session identity and offered permission options, binds form answers to pending requests, and strips terminal controls from rendered text. Verifies declared subscription identity before opening a session and on subsequent auth updates. | Same-user writers can forge configuration/state or connect to the socket. An approved tool executes with the agent's permissions; worker bypass remains enabled. |
 | Agent execution | Launch values and files an agent reads | Passes launch values as separate arguments or shell-quoted; passes models and efforts to the CLI for validation. | Agents act with your full permissions. |
 | Remote API | Requests forwarded by the relay node | Listens on the host’s tailnet IPv4 address; WhoIs must identify the configured relay, with one forwarded Tailscale login. | Phone access is shell access. See [Remote API](#remote-api). |
+| Remote MCP | HTTPS proxy requests with OIDC bearer tokens | Verifies issuer, audience and signature and applies per-project grants to every request. | Bearer replay and agent execution as the host user. See [Remote MCP](#remote-mcp). |
 | Remote PWA | Transcript text shown in the app | Sanitizes rendered Markdown, enforces a same-origin CSP, and keeps push payloads minimal. | No clickjacking protection. See [Remote PWA](#remote-pwa-frontend). |
 
 `niles wait` advances wake cursors when the caller passes the batch token with `--ack`.
@@ -149,10 +150,11 @@ Doctor runs the user service's configured executable directly with `--version`. 
 executable as the service manager does when starting the service. Doctor compares file identity
 without changing the service.
 
-The `remote` feature is off in release binaries. `niles remote` binds the host's IPv4 address
+The `remote` feature is off in release binaries. The relay API listener binds the host's IPv4 address
 from `tailscale ip -4`, never a wildcard or LAN address. Set `remote.relay_node` in
 `~/.niles/config.yaml` to the relay's stable Tailscale node ID (the `Node.StableID` from
-`tailscale whois --json <relay-tailnet-ip>`). Missing or invalid configuration stops startup.
+`tailscale whois --json <relay-tailnet-ip>`). An invalid relay configuration stops startup.
+With only MCP configured, the relay API is disabled.
 Each request authenticates its TCP peer through `tailscale whois --json --proto=tcp` and must
 match that node ID. Forwarding headers cannot select the peer. WhoIs failures and malformed
 responses fail closed; another node gets 403 even with a forged login header.
@@ -209,6 +211,33 @@ preflight, and the body is capped at 16 bytes. No CORS access is granted. Any us
 admitted by the relay can wake every configured host. Protect the map as routing
 configuration: it authorizes LAN UDP traffic. Packet delivery does not prove the
 machine woke. The relay must share the target's LAN and remain awake.
+
+### Remote MCP
+
+When configured, `niles remote` opens the MCP listener on loopback. An HTTPS proxy can
+publish the MCP and protected resource metadata paths beyond the tailnet.
+When both listeners are configured, an MCP listener failure or an unreachable issuer at
+startup stops the relay API too.
+The proxy terminates TLS and can see bearer tokens and transcript data. Keep tokens out of
+proxy logs and restrict access to the proxy host. The MCP transport checks the configured
+authority and rejects browser Origin headers. Metadata is public.
+
+Each MCP request requires an asymmetrically signed JWT with the canonical resource URL
+as audience, checked against its issuer's HTTPS-discovered public keys. Only configured issuers
+can select verification keys. A valid issuer can assert any subject within its own grants.
+An exact issuer/subject grant limits access to the named registered project. Protect the config
+and keep project registrations and workload subjects stable. Restart the service to apply
+changes to grants or issuers. Niles stores no sign-in secrets, bearer tokens or MCP sessions.
+Stolen bearer tokens can be replayed while
+valid and granted. Signing keys refresh on demand after five minutes. If a refresh fails,
+previously loaded keys remain usable for up to 15 minutes from the last successful fetch.
+
+Read grants expose project and worker metadata and recent transcript text, which may contain
+secrets. Operate grants let a caller instruct agents that run with the host user's permissions.
+Use narrow GitHub Actions subjects and control who can run workflows under those subjects.
+The application checks project access before invoking lead or worker operations. Outside callers
+can start saved sessions and steer their work through messages. Worker creation, stages and
+worker self-reporting remain lead/worker responsibilities. See [remote MCP setup](remote-mcp.md).
 
 ### Remote PWA frontend
 
