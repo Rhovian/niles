@@ -74,7 +74,10 @@ impl Auth {
 }
 
 pub(super) async fn run(config: FileMcp) -> Result<()> {
-    let port = config.port.map_or(DEFAULT_PORT, |port| port);
+    let port = match config.port {
+        Some(port) => port,
+        None => DEFAULT_PORT,
+    };
     let verifier = Verifier::load(&config).await?;
     let app = router(Auth::new(verifier, config)?, LeadTools::new());
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))

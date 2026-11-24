@@ -85,8 +85,8 @@ async fn refresh_retains_last_good_keys_and_survives_request_cancellation() {
         tokio::spawn(async move { issuer.keys().await })
     };
 
-    let unsupported = json!({"kty":"OKP", "crv":"X25519", "x":""});
-    let unusable = json!({"keys": [unsupported]}).to_string();
+    let x25519 = json!({"kty":"OKP", "crv":"X25519", "x":""});
+    let unusable = json!({"keys": [x25519]}).to_string();
     for (status, document) in [
         ("503 Service Unavailable", ""),
         ("200 OK", unusable.as_str()),
@@ -106,7 +106,7 @@ async fn refresh_retains_last_good_keys_and_survives_request_cancellation() {
     let document = json!({"keys": [
         {"kty":"EC", "crv":"secp256k1", "x":"", "y":""},
         new.key,
-        unsupported,
+        x25519,
     ]});
     reply(stream, "200 OK", &document.to_string()).await;
     let keys = issuer.keys().await.unwrap();

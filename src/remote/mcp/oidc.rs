@@ -141,26 +141,25 @@ impl Discovery {
     }
 }
 
-// jsonwebtoken's JwkSet rejects the whole document on an unsupported key.
+// jsonwebtoken's JwkSet rejects the whole document if it cannot parse an individual key.
 // https://docs.rs/jsonwebtoken/10.3.0/jsonwebtoken/jwk/struct.JwkSet.html
 #[derive(Deserialize)]
 struct KeyDocument {
     keys: Vec<Value>,
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "unsupported individual keys do not invalidate the issuer's supported keys"
-)]
 fn fetch_keys(client: &HttpClient, uri: &Url) -> Result<Arc<[Jwk]>> {
     let document: KeyDocument = fetch(client, uri.as_str())?;
     let keys: Vec<Jwk> = document
         .keys
         .into_iter()
-        .filter_map(|key| serde_json::from_value::<Jwk>(key).ok())
-        .filter(|key| {
-            !matches!(key.algorithm, AlgorithmParameters::OctetKey(_))
-                && DecodingKey::from_jwk(key).is_ok()
+        .filter_map(|raw| {
+            let Ok(key) = serde_json::from_value::<Jwk>(raw) else {
+                return None;
+            };
+            (!matches!(key.algorithm, AlgorithmParameters::OctetKey(_))
+                && DecodingKey::from_jwk(&key).is_ok())
+            .then_some(key)
         })
         .collect();
     ensure!(
