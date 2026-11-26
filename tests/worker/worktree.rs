@@ -1,6 +1,7 @@
 use super::support::*;
 use std::os::unix::fs::symlink;
 use std::process::{Command, Output, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn git_output(cwd: &Path, args: &[&str]) -> Output {
@@ -188,7 +189,7 @@ TMUX_NEW_WINDOW_HOOK= "$NILES_TEST_BIN" spawn --skill worker second Fix >> "$RAC
     atomic_write(release, "").unwrap();
     let started = Instant::now();
     while retired.exists() && started.elapsed() < Duration::from_secs(5) {
-        std::thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
     }
     assert!(!retired.exists(), "trash deletion must finish after close");
 }
