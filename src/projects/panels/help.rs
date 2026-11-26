@@ -16,7 +16,7 @@ Coordinates coding agents from different model families in tmux.
 
 Get started
   r    register a project directory, in the explorer on the left
-  ↵    start its lead and show it here
+  ↵    show the selected project’s actions
 
 With tmux.bindings enabled, M-\\ toggles explorer/view focus.
 Detach home from the explorer with prefix d (Ctrl-b d by default).
@@ -24,13 +24,13 @@ Detach home from the explorer with prefix d (Ctrl-b d by default).
 Key bindings for the home view: https://github.com/Rhovian/niles/blob/main/docs/setup.md
 ";
 
-const KEYS: &str = "Choose a project on the left.
+const KEYS: &str = "Click a project or worker for its actions. In the menu,
+  ↑ ↓  choose an action       ↵      run it       esc    dismiss
 
-  ↵      open                 → ←    expand / collapse
+  ↵      actions / open       → ←    expand / collapse
   [ ]    previous / next project
   ; '    previous / next window
-  r / d  register / deregister
-  c      close a worker or project
+  r      register
   ?      this help            esc    back
 
   {running} running   {waiting} waiting

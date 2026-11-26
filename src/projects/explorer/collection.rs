@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Result;
 
-use super::{Explorer, REFRESH, tree::Project};
+use super::{Explorer, Mode, REFRESH, tree::Project};
 use crate::projects::snapshot::collect;
 
 impl Explorer {
@@ -26,7 +26,15 @@ impl Explorer {
         // Keep the whole last successful snapshot rather than present partial data as current.
         match projects {
             Ok(projects) => {
+                let cursor = self.tree.cursor();
                 self.tree.replace(projects);
+                // A row shift can put a different item next to the menu.
+                if let Mode::Menu(menu) = &self.mode
+                    && (cursor != self.tree.cursor()
+                        || !self.tree.selected().is_some_and(|item| menu.matches(item)))
+                {
+                    self.mode = Mode::Browse;
+                }
                 self.collection_error = None;
             }
             Err(error) => {

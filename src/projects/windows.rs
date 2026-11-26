@@ -16,6 +16,15 @@ pub(super) enum WindowKind {
     Plain,
 }
 
+impl WindowKind {
+    pub(super) fn worker_id(&self) -> Option<&str> {
+        match self {
+            Self::Worker(id, _) => Some(id),
+            Self::Lead | Self::Plain => None,
+        }
+    }
+}
+
 /// One tmux window of a session and the agent it holds. The status bar and the explorer both read
 /// windows through this, so they can't disagree about what a window is.
 pub(super) struct AgentWindow {
@@ -82,11 +91,7 @@ pub(super) fn session_agents(
             } else {
                 (WindowKind::Plain, None, None, None)
             };
-            let worker_id = match &kind {
-                WindowKind::Worker(id, _) => Some(id.as_str()),
-                WindowKind::Lead | WindowKind::Plain => None,
-            };
-            let label = window_label(&window.name, project.is_some(), worker_id);
+            let label = window_label(&window.name, project.is_some(), kind.worker_id());
             Ok(AgentWindow {
                 name: window.name,
                 kind,

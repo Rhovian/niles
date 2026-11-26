@@ -106,6 +106,6 @@ disables check-ins, and a fixed `recheck` must be above zero. `--checkin` on a c
 - `~/.niles/remote/`: push keys and subscriptions, if you use [remote access](remote.md).
 - One tmux session per project, with status bar options set on that session only.
 
-Niles doesn't edit your agent CLIs' or tmux configuration. To remove Niles, close its projects in the home view
-(`c`), uninstall the binary, and delete `~/.niles`, any
+Niles doesn't edit your agent CLIs' or tmux configuration. To remove Niles, choose `close` from each running project’s menu
+in the home view, uninstall the binary, and delete `~/.niles`, any
 `.niles/` directories in your repositories, and branches left by worktree spawns.

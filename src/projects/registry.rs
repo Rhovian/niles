@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::store::atomic_write;
 use crate::store::{Scope, paths};
-use crate::tmux::{self, SessionName};
+use crate::tmux::{self, SessionName, WindowTarget};
 use crate::util::{self, read_dir_utf8_paths, utf8_path};
 use crate::worker;
 use anyhow::{Context, Result, bail};
@@ -32,13 +32,17 @@ impl ProjectName {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Entry {
     pub name: ProjectName,
     pub path: Utf8PathBuf,
 }
 
 impl Entry {
+    pub(super) fn window(&self, window: &str) -> Result<WindowTarget> {
+        WindowTarget::new(self.name.session()?, window)
+    }
+
     pub(super) fn has_live_session(&self) -> Result<bool> {
         let session = self.name.session()?;
         Ok(

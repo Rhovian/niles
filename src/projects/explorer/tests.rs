@@ -20,17 +20,6 @@ pub(super) fn explorer() -> Explorer {
 }
 
 #[test]
-fn footer_keys_are_muted() {
-    let theme = Theme::parse(None).unwrap();
-    let line = key_hints(&theme);
-    assert_eq!(
-        line.to_string(),
-        "↵ open · r register · c close · d deregister"
-    );
-    assert_eq!(line.style, theme.style(StyleKey::Muted));
-}
-
-#[test]
 fn failed_refresh_retains_tree_and_error_until_newer_success() {
     let mut explorer = explorer();
     let initial = explorer.collected + REFRESH;
@@ -39,8 +28,8 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
         explorer.collection_error.as_deref(),
         Some("refresh failed; retrying: tmux unavailable")
     );
-    explorer.key(KeyCode::Down).unwrap();
-    explorer.key(KeyCode::Up).unwrap();
+    explorer.key(KeyCode::Down);
+    explorer.key(KeyCode::Up);
     let start = initial + REFRESH;
     explorer.accept_collection(
         start,
@@ -51,7 +40,7 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
         )]),
     );
     assert!(explorer.collection_error.is_none());
-    explorer.key(KeyCode::Down).unwrap();
+    explorer.key(KeyCode::Down);
     let item_count = explorer.tree.items().len();
     let failed = start + REFRESH;
     explorer.accept_collection(
@@ -62,7 +51,7 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
         matches!(explorer.tree.selected(), Some(Item::Project(project))
         if project.row.entry.name.as_str() == "retained")
     );
-    explorer.key(KeyCode::Up).unwrap();
+    explorer.key(KeyCode::Up);
     let error = "refresh failed; retrying: collect project: transcript unavailable";
     assert_eq!(explorer.collection_error.as_deref(), Some(error));
     let rendered = test_support::render(100, 20, |frame| explorer.draw(frame));
@@ -78,23 +67,51 @@ fn failed_refresh_retains_tree_and_error_until_newer_success() {
 }
 
 #[test]
-fn deregister_requires_project_selection_and_confirmation() {
+fn keyboard_moves_the_menu_highlight_and_escape_dismisses_it() {
+    use menu::Action;
+
     let mut explorer = explorer();
-    explorer.key(KeyCode::Char('d')).unwrap();
-    assert_eq!(
-        explorer.footer.as_deref(),
-        Some("select a project to deregister")
-    );
-    explorer.tree.replace(vec![tree::tests::project(
-        "sample",
-        State::NotRunning,
-        None,
-    )]);
-    explorer.key(KeyCode::Down).unwrap();
-    explorer.key(KeyCode::Char('d')).unwrap();
-    assert!(matches!(&explorer.mode, Mode::Deregister(entry) if entry.name.as_str() == "sample"));
-    let rendered = test_support::render(120, 20, |frame| explorer.draw(frame));
-    assert!(rendered.contains("deletes all state and managed worktrees"));
-    explorer.key(KeyCode::Char('n')).unwrap();
+    explorer.tree = tree::tests::tree();
+    for (key, action) in [
+        (KeyCode::Enter, None),
+        (KeyCode::Enter, None),
+        (KeyCode::Up, Some("deregister")),
+        (KeyCode::Up, Some("close")),
+        (KeyCode::Up, Some("view")),
+        (KeyCode::Up, Some("view")),
+        (KeyCode::Down, Some("close")),
+        (KeyCode::Down, Some("deregister")),
+        (KeyCode::Down, Some("deregister")),
+    ] {
+        explorer.key(key);
+        assert!(
+            matches!(&explorer.mode, Mode::Menu(menu) if menu.highlighted().map(Action::label) == action)
+        );
+    }
+    let rendered = test_support::render(40, 12, |frame| explorer.draw(frame));
+    assert!(rendered.contains("↑↓ choose · ↵ run · esc dismiss"));
+    explorer.key(KeyCode::Esc);
+    assert!(matches!(explorer.mode, Mode::Browse));
+    assert_eq!(explorer.tree.cursor(), 1);
+}
+
+#[test]
+fn refresh_dismisses_moved_rows_and_changed_menu_actions() {
+    let mut explorer = explorer();
+    let project = |state| tree::tests::project("sample", state, None);
+    explorer.tree.replace(vec![project(State::NotRunning)]);
+    explorer.tree.down();
+    explorer.key(KeyCode::Enter);
+    let started = explorer.collected + REFRESH;
+    explorer.accept_collection(started, Ok(vec![project(State::NotRunning)]));
+    assert!(matches!(explorer.mode, Mode::Menu(_)));
+    let shifted = started + REFRESH;
+    let earlier = || tree::tests::project("earlier", State::Missing, None);
+    let rows = |state| vec![earlier(), project(state)];
+    explorer.accept_collection(shifted, Ok(rows(State::NotRunning)));
+    assert!(matches!(explorer.mode, Mode::Browse));
+    assert_eq!(explorer.tree.cursor(), 2);
+    explorer.key(KeyCode::Enter);
+    explorer.accept_collection(shifted + REFRESH, Ok(rows(State::Missing)));
     assert!(matches!(explorer.mode, Mode::Browse));
 }
