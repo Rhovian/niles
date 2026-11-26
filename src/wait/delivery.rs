@@ -2,7 +2,7 @@ use super::Identity;
 use super::cursor::{cursor_path, read_cursor, write_cursor};
 use crate::{store, wake, worker};
 use anyhow::{Context, Result};
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, TryLockError};
@@ -11,12 +11,27 @@ use std::os::unix::fs::OpenOptionsExt;
 use uuid::Uuid;
 
 #[derive(Deserialize, Serialize)]
-pub(super) struct Batch {
+pub(crate) struct Batch {
     token: String,
     receipts: Vec<Receipt>,
 }
 
 impl Batch {
+    pub(super) fn path(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
+        Ok(store::workers_dir(workspace)?.join("wait.batch"))
+    }
+
+    pub(crate) fn latest(workspace: &Utf8Path) -> Result<Option<Self>> {
+        store::read_optional_json(&Self::path(workspace)?)
+    }
+
+    pub(crate) fn published_end(&self, id: &str, created_at: DateTime<Utc>) -> u64 {
+        self.receipts
+            .iter()
+            .find(|receipt| receipt.id == id && receipt.created_at == created_at)
+            .map_or(0, |receipt| receipt.end)
+    }
+
     pub(super) fn publish(path: &Utf8Path, receipts: Vec<Receipt>) -> Result<String> {
         let token = Uuid::new_v4().to_string();
         store::write_json(

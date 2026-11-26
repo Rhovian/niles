@@ -1,5 +1,6 @@
 use crate::harness::LaunchArgs;
 use crate::skills::SkillName;
+use crate::util::current_dir_utf8;
 use crate::wait::{self, DEFAULT_INTERVAL, DEFAULT_TIMEOUT, Outcome};
 use crate::worker::{self, Assignment, SpawnTree};
 use crate::workspace_manifest::{Tier, setup::SetupSelection};
@@ -219,6 +220,7 @@ impl Default for Wait {
 
 impl Wait {
     pub(crate) fn run(self) -> Result<Outcome> {
-        wait::wait(self.interval, self.timeout, self.ack)
+        let workspace = current_dir_utf8()?;
+        wait::wait(&workspace, self.interval, self.timeout, self.ack)
     }
 }

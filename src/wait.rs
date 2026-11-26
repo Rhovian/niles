@@ -13,7 +13,7 @@ use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::time::Duration;
 pub(crate) mod cursor;
-mod delivery;
+pub(crate) mod delivery;
 mod exit;
 mod liveness;
 mod workspace;

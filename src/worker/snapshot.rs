@@ -1,5 +1,6 @@
 use super::meta::{WorkerMeta, read_meta_if_exists};
 use crate::wait::cursor::{cursor_path, parse_cursor, wait_running};
+use crate::wait::delivery::Batch;
 use crate::wake::{self, WakeKind};
 use crate::{store, util};
 use anyhow::{Context, Result};
@@ -38,6 +39,8 @@ pub(crate) struct WorkerSnapshot {
     /// The wake cursor: how far `niles wait` has delivered. No cursor means no wait has ever
     /// consumed a line, which is position zero.
     cursor: u64,
+    /// End of the latest published receipt for this worker generation, or zero without one.
+    published_end: u64,
     /// Whether a workspace `niles wait` was running when the snapshot was taken.
     pub(crate) wait_running: bool,
 }
@@ -55,6 +58,7 @@ impl WorkerSnapshot {
             last_actionable: None,
             last_answer: None,
             cursor: 0,
+            published_end: 0,
             wait_running: false,
         };
         snapshot.set_log(log);
@@ -94,25 +98,26 @@ impl WorkerSnapshot {
             .map(str::to_owned)
     }
 
-    /// How far into this log `niles wait` has delivered. A cursor past the end describes a log that
-    /// has since been replaced, which `wait` rescans from the start, so it has delivered none of it.
+    /// How far into this log `niles wait` has delivered, including the latest published receipt.
     pub(crate) fn delivered(&self) -> u64 {
-        if self.cursor <= self.log_len {
-            self.cursor
-        } else {
-            0
-        }
+        self.bounded_end(self.cursor)
+            .max(self.bounded_end(self.published_end))
     }
 
-    /// The bytes `niles wait` has not delivered yet.
+    /// An offset past the end belongs to a longer log that wait can no longer resume.
+    fn bounded_end(&self, end: u64) -> u64 {
+        if end <= self.log_len { end } else { 0 }
+    }
+
+    /// The bytes still eligible for replay.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::indexing_slicing,
-        reason = "delivered is bounded by log_len, derived from this owned log's usize length"
+        reason = "the cursor is bounded by log_len, derived from this owned log's usize length"
     )]
     pub(super) fn undelivered(&self) -> Option<&[u8]> {
         let log = self.log.as_deref()?;
-        Some(&log[self.delivered() as usize..])
+        Some(&log[self.bounded_end(self.cursor) as usize..])
     }
 
     /// The recorded pane and workspace while an otherwise-silent worker is still starting.
@@ -150,11 +155,23 @@ pub(crate) fn metadata_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapsh
 }
 
 pub(crate) fn worker_snapshot(workspace: &Utf8Path) -> Result<Vec<WorkerSnapshot>> {
+    // Check presence before reading the batch, and read the batch before its ack cursors.
     let wait_running = wait_running(workspace)?;
+    let batch = if wait_running {
+        None
+    } else {
+        Batch::latest(workspace)?
+    };
     let mut workers = metadata_snapshot(workspace)?;
     for snapshot in &mut workers {
         snapshot.set_log(status_log(&snapshot.worker_dir)?);
         snapshot.cursor = read_wake_cursor(&snapshot.worker_dir)?;
+        snapshot.published_end = batch
+            .as_ref()
+            .zip(snapshot.meta.as_ref())
+            .map_or(0, |(batch, meta)| {
+                batch.published_end(&snapshot.id, meta.created_at)
+            });
         snapshot.wait_running = wait_running;
     }
     Ok(workers)
@@ -259,7 +276,12 @@ mod tests {
         let mut worker = snapshot("impl", "done: one\ndone: two\n");
 
         worker.cursor = 10;
+        worker.published_end = 200;
+        assert_eq!(worker.delivered(), 10);
+        worker.published_end = 20;
+        assert_eq!(worker.delivered(), 20);
         assert_eq!(worker.undelivered(), Some(&b"done: two\n"[..]));
+        worker.published_end = 0;
         worker.cursor = 0;
         assert_eq!(worker.undelivered(), Some(&b"done: one\ndone: two\n"[..]));
         worker.cursor = 200;
