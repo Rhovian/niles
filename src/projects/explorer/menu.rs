@@ -9,6 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::Constraint::{Fill, Length};
 use ratatui::layout::{Direction, Layout, Position, Rect};
 use ratatui::widgets::{Block, Clear, List, ListState, Padding};
+use std::{cmp::max_by_key, mem::replace};
 
 const DEREGISTER: &str = "deregister";
 
@@ -115,7 +116,7 @@ impl Menu {
         };
         let [before, _, after] =
             Layout::new(axis, [Length(offset), Length(1), Fill(1)]).areas(list);
-        self.area = std::cmp::max_by_key(popup.clamp(before), popup.clamp(after), |r| r.area());
+        self.area = max_by_key(popup.clamp(before), popup.clamp(after), |r| r.area());
         let widget = List::new(self.actions.iter().map(Action::label))
             .block(Block::new().padding(Padding::horizontal(1)))
             .style(theme.style(StyleKey::Bar))
@@ -140,7 +141,7 @@ impl Explorer {
     }
 
     pub(super) fn pick_menu(&mut self, input: MenuInput) -> bool {
-        let mode = std::mem::replace(&mut self.mode, Mode::Browse);
+        let mode = replace(&mut self.mode, Mode::Browse);
         if let Mode::Menu(menu) = mode {
             let action = match input {
                 MenuInput::Enter => menu.highlighted(),
