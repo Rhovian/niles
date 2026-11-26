@@ -103,7 +103,7 @@ const PROFILES: &[AgentProfile] = &[
                 "MODEL_PROVIDER",
             ],
         }),
-        tested_version: "0.170.0",
+        tested_version: "0.172.0",
         // The shared daemon lets a running session continue in the background, out of its tmux
         // pane.
         foreground_args: &["--no-daemon"],
@@ -160,7 +160,7 @@ const PROFILES: &[AgentProfile] = &[
                 "CLAUDE_CODE_USE_FOUNDRY",
             ],
         }),
-        tested_version: "2.1.328",
+        tested_version: "2.1.332",
         foreground_args: &[],
         worker_args: &["--dangerously-skip-permissions"],
         headless: &["-p"],
@@ -199,7 +199,7 @@ const PROFILES: &[AgentProfile] = &[
             }),
             remove_env: &["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"],
         }),
-        tested_version: "1.5.2",
+        tested_version: "1.6.1",
         foreground_args: &[],
         worker_args: &[],
         headless: &["-p"],
@@ -331,9 +331,9 @@ fn pi_models(body: Value) -> Result<Models> {
         context_window: Option<NonZeroU64>,
     }
     let list: Rpc<ModelList<Entry>> = serde_json::from_value(body)?;
-    // pi-ai 1.5.2 getSupportedThinkingLevels: absent mappings keep base levels, explicit null
+    // pi-ai 1.6.1 getSupportedThinkingLevels: absent mappings keep base levels, explicit null
     // disables a level, and extended levels need an explicit mapping. This is CLI vocabulary.
-    // https://unpkg.com/@earendil-works/pi-ai@1.5.2/dist/models.js
+    // https://unpkg.com/@earendil-works/pi-ai@1.6.1/dist/models.js
     let base = ["off", "minimal", "low", "medium", "high"];
     let extended = ["xhigh", "max"];
     Ok(list

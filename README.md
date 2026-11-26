@@ -29,9 +29,9 @@ with the version):
 
 | CLI | Tested version |
 | --- | --- |
-| Claude Code | 2.1.328 |
-| Codex | 0.170.0 |
-| pi coding agent | 1.5.2 |
+| Claude Code | 2.1.332 |
+| Codex | 0.172.0 |
+| pi coding agent | 1.6.1 |
 
 ## Quickstart
 
