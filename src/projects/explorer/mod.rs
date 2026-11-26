@@ -123,6 +123,8 @@ enum Closing {
         name: ProjectName,
         path: Utf8PathBuf,
         workers: Vec<String>,
+        // Set on confirmation, before drawing the first close step.
+        next_worker: Option<usize>,
     },
 }
 
@@ -150,7 +152,7 @@ impl Explorer {
         let collections = collector();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(tree::SPINNER_FRAME)? {
+            if !self.advance_close() && event::poll(tree::SPINNER_FRAME)? {
                 self.event(event::read()?)?;
             }
             match collections.try_recv() {
@@ -217,23 +219,15 @@ impl Explorer {
                 Some(closing) => self.mode = Mode::Close(closing),
                 None => self.footer = Some("select a worker or running project".to_owned()),
             },
-            (Mode::Close(closing), KeyCode::Char('y')) => {
-                // Onto the next running project first, so the view moves there once this one is
-                // gone. When it was the only one, its row stays selected and the view stays
-                // on help.
-                let project = matches!(closing, Closing::Project { .. });
-                if project {
-                    self.tree.cycle_projects(1);
-                }
-                self.footer = shown(close(closing, &self.pane));
+            (Mode::Close(Closing::Worker { id, project }), KeyCode::Char('y')) => {
+                self.footer = shown(super::lifecycle::niles_in(project, &["close", id]).map(Some));
                 self.mode = Mode::Browse;
                 self.refresh();
-                if project
-                    && matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
-                    && let Some(error) = shown(self.open())
-                {
-                    self.footer = Some(error);
-                }
+            }
+            (Mode::Close(Closing::Project { next_worker, .. }), KeyCode::Char('y')) => {
+                // Select the next running project so its view can open once this one is gone.
+                self.tree.cycle_projects(1);
+                *next_worker = Some(0);
             }
             (Mode::Register(prompt), code) => {
                 use register::prompt::Action;
@@ -259,6 +253,35 @@ impl Explorer {
             (Mode::Browse, _) => {}
         }
         Ok(())
+    }
+
+    fn advance_close(&mut self) -> bool {
+        let Mode::Close(Closing::Project {
+            name,
+            path,
+            workers,
+            next_worker: Some(next),
+        }) = &mut self.mode
+        else {
+            return false;
+        };
+        let outcome = match workers.get(*next) {
+            Some(id) => super::lifecycle::niles_in(path, &["close", id]).map(|_| None),
+            None => finish_project_close(name, &self.pane).map(Some),
+        };
+        if matches!(outcome, Ok(None)) {
+            *next = next.saturating_add(1);
+            return true;
+        }
+        self.footer = shown(outcome);
+        self.mode = Mode::Browse;
+        self.refresh();
+        if matches!(self.tree.selected(), Some(Item::Project(project)) if project.agents.is_some())
+            && let Some(error) = shown(self.open())
+        {
+            self.footer = Some(error);
+        }
+        true
     }
 
     fn open(&self) -> Result<Option<String>> {
@@ -335,6 +358,7 @@ impl Explorer {
             name: project.row.entry.name.clone(),
             path: project.row.entry.path.clone(),
             workers,
+            next_worker: None,
         })
     }
 
@@ -347,9 +371,23 @@ impl Explorer {
                 entry.name.as_str()
             )),
             Mode::Close(Closing::Worker { id, .. }) => Some(format!("close {id}? y/n")),
-            Mode::Close(Closing::Project { name, .. }) => {
-                Some(format!("close {} and its workers? y/n", name.as_str()))
-            }
+            Mode::Close(Closing::Project {
+                name,
+                workers,
+                next_worker,
+                ..
+            }) => Some(match next_worker {
+                None => format!("close {} and its workers? y/n", name.as_str()),
+                Some(next) => match workers.get(*next) {
+                    Some(id) => format!(
+                        "closing {} {}/{} {id}",
+                        name.as_str(),
+                        next.saturating_add(1),
+                        workers.len()
+                    ),
+                    None => format!("closing {}", name.as_str()),
+                },
+            }),
         };
         let mut text = match (&self.footer, prompt) {
             (Some(message), Some(prompt)) => Text::raw(format!("{message}\n{prompt}")),
@@ -396,25 +434,11 @@ fn shown(outcome: Result<Option<String>>) -> Option<String> {
     }
 }
 
-fn close(closing: &Closing, explorer: &TmuxTarget) -> Result<Option<String>> {
-    match closing {
-        Closing::Worker { id, project } => {
-            super::lifecycle::niles_in(project, &["close", id]).map(Some)
-        }
-        Closing::Project {
-            name,
-            path,
-            workers,
-        } => {
-            for id in workers {
-                super::lifecycle::niles_in(path, &["close", id])?;
-            }
-            // Before the session goes, so its client never moves to another session.
-            tmux::close_view(explorer)?;
-            tmux::kill_session(&name.session()?)?;
-            Ok(Some(format!("closed {}", name.as_str())))
-        }
-    }
+fn finish_project_close(name: &ProjectName, explorer: &TmuxTarget) -> Result<String> {
+    // Before the session goes, so its client never moves to another session.
+    tmux::close_view(explorer)?;
+    tmux::kill_session(&name.session()?)?;
+    Ok(format!("closed {}", name.as_str()))
 }
 
 #[cfg(test)]

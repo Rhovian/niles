@@ -5,13 +5,19 @@ use camino::Utf8Path;
 use chrono::{Duration, Utc};
 
 use super::registry;
-use crate::{session, store};
+use crate::{session, store, util, worker};
 
 pub fn run(older_than: u32, apply: bool) -> Result<()> {
     let cutoff = Utc::now()
         .checked_sub_signed(Duration::days(i64::from(older_than)))
         .context("--older-than exceeds the timestamp range")?;
     for entry in registry::entries()? {
+        for path in worker::trashed_worktrees(&entry.path)? {
+            if apply {
+                util::remove_dir_all_if_exists(&path)?;
+            }
+            print_removal(&path, apply);
+        }
         if !entry.path.is_dir() {
             let link = registry::directory()?.join(entry.name.as_str());
             if apply {

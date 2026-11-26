@@ -244,11 +244,16 @@ fn close_worker_once(id: &str) -> Result<WorkerCloseOutcome> {
     let finished_at = Utc::now();
     let archive_dir = archive_worker_dir(&project, id, &worker_dir, finished_at)?;
     let pane_path = captured_pane.then(|| final_pane_path(&archive_dir));
-    let tree = if let Some((tree, lock)) = tree {
-        worktree::retire(&meta.project, tree, lock)
-            .with_context(|| format!("worker {id} closed but the tree was not retired"))?
-    } else {
-        None
+    let tree = match tree {
+        Some(_)
+            if window.kill_error().is_some()
+                || matches!(window, WindowCloseOutcome::Unknown { .. }) =>
+        {
+            Some("kept: worker window may still be running".to_owned())
+        }
+        Some((tree, lock)) => worktree::retire(&meta.project, tree, lock)
+            .with_context(|| format!("worker {id} closed but the tree was not retired"))?,
+        None => None,
     };
     Ok(WorkerCloseOutcome {
         id: id.to_owned(),

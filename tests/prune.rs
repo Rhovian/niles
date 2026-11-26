@@ -4,7 +4,7 @@ use crate::common::atomic_write;
 mod common;
 
 use common::{TestEnv, assert_command_success, register_project, state_dir, stdout_of};
-use std::{fs, os::unix::fs::symlink};
+use std::{fs, os::unix::fs::symlink, path::Path};
 
 #[test]
 fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
@@ -22,9 +22,17 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
     }
     let archive = state_dir(&env.root).join("worker/archive");
     let sessions = state_dir(&other).join("sessions");
+    let trash = |path: &Path| {
+        env.home
+            .join(".niles/trees")
+            .join(path.strip_prefix("/").unwrap())
+            .join(".trash/abandoned")
+    };
     let removed = [
+        trash(&missing),
         registry.join("a-missing"),
         archive.join("auth-fix-20000101T000000000000000Z"),
+        trash(&other),
         sessions.join("20000101T000000000000000Z"),
     ];
     let kept = [
@@ -36,9 +44,11 @@ fn prune_previews_then_removes_only_eligible_metadata_across_projects() {
         sessions.join("20000102T000000000000000Z"),
         state_dir(&env.root).join("worker/live"),
     ];
-    for dir in removed[1..].iter().chain(&kept) {
-        fs::create_dir_all(dir).unwrap();
-        atomic_write(dir.join("payload"), "keep or remove with directory").unwrap();
+    for dir in removed.iter().chain(&kept) {
+        if !dir.starts_with(&registry) {
+            fs::create_dir_all(dir).unwrap();
+            atomic_write(dir.join("payload"), "keep or remove with directory").unwrap();
+        }
     }
     let files = [
         archive.join("file-20000101T000000000000000Z"),

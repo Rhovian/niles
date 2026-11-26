@@ -81,6 +81,9 @@ case "$1" in
     fi
     exit 0
     ;;
+  kill-window)
+    if [ "${TMUX_FAIL_KILL_WINDOW:-}" = 1 ]; then printf 'kill-window failed\n' >&2; exit 1; fi
+    exit 0 ;;
   send-keys)
     [ -z "${TMUX_SEND_HOOK:-}" ] || sh -c "$TMUX_SEND_HOOK"
     if [ -n "${TMUX_PANE_FILE:-}" ]; then
