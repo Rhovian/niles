@@ -9,8 +9,7 @@
 //! line, or a check-in came due with no report. Both are STATE, not events — the nudge says where
 //! things stand, carries no status-line content, and consumes nothing. `niles wait` stays the only
 //! consumer of the wake cursor, so a nudge that is lost, doubled or read twice costs a look. The
-//! watcher only reads that cursor, and whether a wait is running, so a line the lead takes from a
-//! wait is not reported to it a second time.
+//! watcher reads that cursor, the latest published batch, and whether a wait is running.
 //!
 //! The lead's stdout and stderr are its TUI, so nothing here writes to them: diagnostics go to
 //! `watch.log` in the session directory, and the only thing that leaves the process is the nudge

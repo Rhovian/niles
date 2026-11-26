@@ -219,6 +219,7 @@ impl Default for Wait {
 
 impl Wait {
     pub(crate) fn run(self) -> Result<Outcome> {
-        wait::wait(self.interval, self.timeout, self.ack)
+        let workspace = crate::util::current_dir_utf8()?;
+        wait::wait(&workspace, self.interval, self.timeout, self.ack)
     }
 }

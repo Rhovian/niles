@@ -22,8 +22,8 @@ struct Registration {
 }
 
 impl Registration {
-    fn start() -> Result<Self> {
-        let root = store::workers_dir(&util::current_dir_utf8()?)?;
+    fn start(workspace: &Utf8Path) -> Result<Self> {
+        let root = store::workers_dir(workspace)?;
         fs::create_dir_all(&root).with_context(|| format!("failed to create {root}"))?;
         let path = root.join("wait.lock");
         let gate = open_lock_file(&path)?;
@@ -56,13 +56,13 @@ impl Registration {
 }
 
 pub(crate) fn wait(
+    workspace: &Utf8Path,
     interval: Duration,
     timeout: Duration,
     mut ack: Option<String>,
 ) -> Result<Outcome> {
-    let registration = Registration::start()?;
-    let workspace = util::current_dir_utf8()?;
-    let batch_path = registration.path.with_file_name("wait.batch");
+    let registration = Registration::start(workspace)?;
+    let batch_path = Batch::path(workspace)?;
     let deadline = Instant::now()
         .checked_add(timeout)
         .context("wait deadline overflow")?;
@@ -78,10 +78,10 @@ pub(crate) fn wait(
             return Ok(Outcome::Superseded);
         }
         if let Some(ack) = ack.take() {
-            Batch::acknowledge(&batch_path, &workspace, &ack)?;
+            Batch::acknowledge(&batch_path, workspace, &ack)?;
         }
         if Instant::now() >= next_poll {
-            let batch = poll_workers(&workspace, &mut targets)?;
+            let batch = poll_workers(workspace, &mut targets)?;
             if !batch.is_empty() {
                 let (wakes, receipts) = batch.into_iter().unzip();
                 let ack = Batch::publish(&batch_path, receipts)?;

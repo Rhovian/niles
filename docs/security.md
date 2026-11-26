@@ -55,6 +55,8 @@ What Niles launches:
 The latest batch is saved in workspace state, so a later CLI process can acknowledge it.
 Unacknowledged wakes remain eligible for replay. Acknowledgements apply to matching worker
 generations and status logs and preserve later valid cursor advances.
+The watcher uses published receipts for the matching worker generation to suppress duplicate
+nudges.
 
 Headless adapter configuration is generated in agent state, leaving user/project configuration
 files untouched. Codex ACP clears API-key and alternate-provider environment overrides and

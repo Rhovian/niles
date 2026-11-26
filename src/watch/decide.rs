@@ -39,7 +39,7 @@ pub(crate) struct Disarm {
 ///
 /// In memory because the process is the lead's: there is no lock file, no recorded pid and no
 /// second process to agree with. `niles wait`'s cursor stays the only thing that consumes a status
-/// line; this only reads it, so a line the lead already took from a wait is not reported again.
+/// line. The watcher also sees reports from the latest batch before the lead acknowledges them.
 #[derive(Debug, Default)]
 pub(crate) struct WatchMemory {
     seen: BTreeMap<String, u64>,
