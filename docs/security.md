@@ -107,7 +107,7 @@ those entries regardless of metadata age.
 
 ### Project deregistration
 
-The explorer's `d` action requires confirmation before deleting a project's
+Choosing `deregister` in the explorer's project menu immediately deletes the project's
 `~/.niles/state/<workspace key>/@state/` folder (including archives and saved configuration)
 and managed worktrees, including uncommitted files. It rechecks the registry link and refuses
 while any worker metadata remains live, including workers whose tmux windows were lost. A matching tagged project session is closed; unrelated

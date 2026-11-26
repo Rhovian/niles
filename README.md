@@ -145,7 +145,7 @@ See Claude Code's [marketplace documentation](https://code.claude.com/docs/en/pl
 Niles writes under `~/.niles/` (state, project list, skill cache, config, worktrees, remote keys),
 fetches selected skills from GitHub’s latest Git HEAD on first setup and records their commit SHAs,
 creates one tmux session per project, and creates branches for worktree spawns. It doesn't touch your agent CLIs' or tmux's
-config. To remove it, close its projects in the home view (`c`), uninstall the binary, and delete `~/.niles` and
+config. To remove it, choose `close` from each running project’s menu in the home view, uninstall the binary, and delete `~/.niles` and
 any `.niles/` in your repositories. See
 [state layout](docs/configuration.md#state-layout) for details.
 

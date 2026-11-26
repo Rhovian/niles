@@ -43,7 +43,7 @@ fn window(name: &str, kind: WindowKind, label: &str) -> AgentWindow {
     }
 }
 
-fn lead_only() -> SessionAgents {
+pub(in crate::projects::explorer) fn lead_only() -> SessionAgents {
     SessionAgents {
         windows: vec![window("niles", WindowKind::Lead, "start")],
         lost: Vec::new(),

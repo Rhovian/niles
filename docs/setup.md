@@ -22,13 +22,15 @@ seconds, under a header that counts projects, agents and tokens.
 | --- | --- |
 | ↑ ↓ | Move |
 | → ← | Expand or collapse a running project or skill folder |
-| Enter | Show the project's entry agent, or the selected window or panel, in the view pane |
+| Enter | Show actions for a project or worker, or open the selected panel |
 | `[` `]` | Show the previous or next running project |
 | `;` `'` | Show the previous or next window of the shown project |
 | `?` | Show help in the view pane |
 | Esc | Show the selected item again, leaving help |
 | `r` | Register a directory as a project |
-| `c` | Close the selected worker or running project, after a y/n confirm |
+
+Click a project or worker for its actions. The disclosure arrow expands or collapses the row.
+Run an action with a click or ↑ ↓ then Enter. Click elsewhere or press Esc to dismiss.
 
 The explorer also has three panels:
 

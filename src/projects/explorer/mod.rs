@@ -1,10 +1,11 @@
 use self::collection::collector;
-use self::tree::{Item, Member, Tree};
+use self::menu::{Menu, MenuInput};
+use self::tree::{Item, Member, Project, Tree};
 use super::panels::{self, Panel};
 use super::register;
 use super::registry::{self, ProjectName};
 use super::rows::State;
-use super::windows::{LEAD_WINDOW, WindowKind};
+use super::windows::LEAD_WINDOW;
 use crate::config::user::UserConfig;
 use crate::theme::{StyleKey, Theme};
 use crate::tmux::{self, TmuxTarget, WindowTarget};
@@ -26,21 +27,11 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, io};
 
 mod collection;
+mod menu;
 mod scroll;
 mod tree;
 
 const REFRESH: Duration = Duration::from_secs(2);
-const KEYS: [(&str, &str); 4] = [
-    ("↵", "open"),
-    ("r", "register"),
-    ("c", "close"),
-    ("d", "deregister"),
-];
-
-fn key_hints(theme: &Theme) -> Line<'_> {
-    let hints = KEYS.map(|(key, label)| format!("{key} {label}"));
-    Line::styled(hints.join(" · "), theme.style(StyleKey::Muted))
-}
 
 /// Bare `niles`: takes the operator to the home session, creating it on first use.
 pub fn home() -> Result<()> {
@@ -62,9 +53,8 @@ pub fn home() -> Result<()> {
 }
 
 fn start_project(entry: &registry::Entry, theme: &Theme) -> Result<WindowTarget> {
-    let session = entry.name.session()?;
     super::lifecycle::start_entry(entry, tmux::LeadStart::Attended, theme)?;
-    WindowTarget::new(session, LEAD_WINDOW)
+    entry.window(LEAD_WINDOW)
 }
 
 /// `niles explorer`: the tree in the home session's left pane.
@@ -109,23 +99,35 @@ fn modified(binary: &Path) -> Result<SystemTime> {
 enum Mode {
     Browse,
     Register(register::prompt::Prompt),
+    Menu(Menu),
     Close(Closing),
-    Deregister(registry::Entry),
 }
 
-enum Closing {
-    Worker {
-        id: String,
-        project: Utf8PathBuf,
-    },
-    /// A running project: its workers, then its view and session.
-    Project {
-        name: ProjectName,
-        path: Utf8PathBuf,
-        workers: Vec<String>,
-        // Set on confirmation, before drawing the first close step.
-        next_worker: Option<usize>,
-    },
+#[derive(Clone, PartialEq, Eq)]
+struct Closing {
+    name: ProjectName,
+    path: Utf8PathBuf,
+    workers: Vec<String>,
+    next_worker: usize,
+}
+
+impl Closing {
+    fn project(project: &Project) -> Option<Self> {
+        let agents = project.agents.as_ref()?;
+        let workers = agents
+            .windows
+            .iter()
+            .filter_map(|window| window.kind.worker_id())
+            .chain(agents.lost.iter().map(|(id, _)| id.as_str()))
+            .map(str::to_owned)
+            .collect();
+        Some(Self {
+            name: project.row.entry.name.clone(),
+            path: project.row.entry.path.clone(),
+            workers,
+            next_worker: 0,
+        })
+    }
 }
 
 struct Explorer {
@@ -153,7 +155,7 @@ impl Explorer {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
             if !self.advance_close() && event::poll(tree::SPINNER_FRAME)? {
-                self.event(event::read()?)?;
+                self.event(event::read()?);
             }
             match collections.try_recv() {
                 Ok((started, projects)) => {
@@ -171,21 +173,22 @@ impl Explorer {
     }
 
     /// Every key clears the footer; a key that does something reports its outcome there.
-    fn key(&mut self, code: KeyCode) -> Result<()> {
+    fn key(&mut self, code: KeyCode) {
         self.footer = None;
+        if code == KeyCode::Enter && self.pick_menu(MenuInput::Enter) {
+            return;
+        }
+        let view = |target| tmux::show_in_view(&self.pane, &target);
         match (&mut self.mode, code) {
             (Mode::Browse, KeyCode::Up) => self.tree.up(),
             (Mode::Browse, KeyCode::Down) => self.tree.down(),
             (Mode::Browse, KeyCode::Right) => self.tree.expand(),
             (Mode::Browse, KeyCode::Left) => self.tree.collapse(),
+            (Mode::Browse, KeyCode::Enter) => self.activate(None),
             // Help leaves the selection alone, so Esc reopens what the view showed before it.
-            (Mode::Browse, KeyCode::Enter | KeyCode::Esc) => self.footer = shown(self.open()),
+            (Mode::Browse, KeyCode::Esc) => self.footer = shown(self.open()),
             (Mode::Browse, KeyCode::Char('?')) => {
-                self.footer = shown(
-                    panels::open(Panel::Help)
-                        .and_then(|window| tmux::show_in_view(&self.pane, &window))
-                        .map(|()| None),
-                );
+                self.footer = shown(panels::open(Panel::Help).and_then(view).map(|()| None));
             }
             (Mode::Browse, KeyCode::Char(key @ ('[' | ']' | ';' | '\''))) => {
                 let steps = if matches!(key, ']' | '\'') { 1 } else { -1 };
@@ -201,34 +204,10 @@ impl Explorer {
             (Mode::Browse, KeyCode::Char('r')) => {
                 self.mode = Mode::Register(register::prompt::Prompt::new())
             }
-            (Mode::Browse, KeyCode::Char('d')) => match self.tree.selected() {
-                Some(Item::Project(project)) => {
-                    self.mode = Mode::Deregister(project.row.entry.clone());
-                }
-                _ => self.footer = Some("select a project to deregister".to_owned()),
-            },
-            (Mode::Deregister(entry), KeyCode::Char('y')) => {
-                self.footer = shown(registry::deregister(entry).and_then(|()| {
-                    tmux::close_view(&self.pane)?;
-                    Ok(Some(format!("deregistered {}", entry.name.as_str())))
-                }));
-                self.mode = Mode::Browse;
-                self.refresh();
+            (Mode::Menu(menu), KeyCode::Up | KeyCode::Down) => {
+                menu.move_highlight(code == KeyCode::Down);
             }
-            (Mode::Browse, KeyCode::Char('c')) => match self.selected_closing() {
-                Some(closing) => self.mode = Mode::Close(closing),
-                None => self.footer = Some("select a worker or running project".to_owned()),
-            },
-            (Mode::Close(Closing::Worker { id, project }), KeyCode::Char('y')) => {
-                self.footer = shown(super::lifecycle::niles_in(project, &["close", id]).map(Some));
-                self.mode = Mode::Browse;
-                self.refresh();
-            }
-            (Mode::Close(Closing::Project { next_worker, .. }), KeyCode::Char('y')) => {
-                // Select the next running project so its view can open once this one is gone.
-                self.tree.cycle_projects(1);
-                *next_worker = Some(0);
-            }
+            (Mode::Menu(_), KeyCode::Esc) => self.mode = Mode::Browse,
             (Mode::Register(prompt), code) => {
                 use register::prompt::Action;
                 match prompt.key(code, &self.cwd) {
@@ -237,11 +216,9 @@ impl Explorer {
                     Ok(Action::Register { path, name }) => match register::register(&name, &path) {
                         Ok(entry) => {
                             self.mode = Mode::Browse;
+                            let started = start_project(&entry, &self.theme).and_then(view);
                             self.footer =
-                                shown(start_project(&entry, &self.theme).and_then(|window| {
-                                    tmux::show_in_view(&self.pane, &window)?;
-                                    Ok(Some(format!("registered {name}")))
-                                }));
+                                shown(started.map(|()| Some(format!("registered {name}"))));
                             self.refresh();
                         }
                         Err(error) => self.footer = Some(format!("{error:#}")),
@@ -249,28 +226,20 @@ impl Explorer {
                     Err(error) => self.footer = Some(format!("{error:#}")),
                 }
             }
-            (Mode::Close { .. } | Mode::Deregister(_), _) => self.mode = Mode::Browse,
-            (Mode::Browse, _) => {}
+            (Mode::Browse | Mode::Menu(_) | Mode::Close(_), _) => {}
         }
-        Ok(())
     }
 
     fn advance_close(&mut self) -> bool {
-        let Mode::Close(Closing::Project {
-            name,
-            path,
-            workers,
-            next_worker: Some(next),
-        }) = &mut self.mode
-        else {
+        let Mode::Close(closing) = &mut self.mode else {
             return false;
         };
-        let outcome = match workers.get(*next) {
-            Some(id) => super::lifecycle::niles_in(path, &["close", id]).map(|_| None),
-            None => finish_project_close(name, &self.pane).map(Some),
+        let outcome = match closing.workers.get(closing.next_worker) {
+            Some(id) => super::lifecycle::niles_in(&closing.path, &["close", id]).map(|_| None),
+            None => finish_project_close(&closing.name, &self.pane).map(Some),
         };
         if matches!(outcome, Ok(None)) {
-            *next = next.saturating_add(1);
+            closing.next_worker = closing.next_worker.saturating_add(1);
             return true;
         }
         self.footer = shown(outcome);
@@ -295,105 +264,45 @@ impl Explorer {
                 project: project.map(|project| project.row.entry.name.clone()),
             })?,
             Item::Range(range) => panels::open(Panel::Telemetry { range })?,
-            Item::Project(project) => {
-                let entry = &project.row.entry;
-                let session = entry.name.session()?;
-                match project.row.state {
-                    State::Missing => {
-                        return Ok(Some(format!(
-                            "press d to deregister {}",
-                            entry.name.as_str()
-                        )));
-                    }
-                    State::NotRunning => {
-                        start_project(entry, &self.theme)?;
-                    }
-                    State::Running | State::Starting | State::Waiting(_) => {}
+            Item::Project(project) => match project.row.state {
+                State::Missing => return Ok(Some("project directory missing".to_owned())),
+                State::NotRunning => start_project(&project.row.entry, &self.theme)?,
+                State::Running | State::Starting | State::Waiting(_) => {
+                    project.row.entry.window(LEAD_WINDOW)?
                 }
-                WindowTarget::new(session, LEAD_WINDOW)?
-            }
+            },
             Item::Member(project, _, Member::Window(window)) => {
-                WindowTarget::new(project.row.entry.name.session()?, &window.name)?
+                project.row.entry.window(&window.name)?
             }
             Item::Member(_, _, Member::Lost(id)) => return Ok(Some(format!("{id}: window lost"))),
         };
-        tmux::show_in_view(&self.pane, &target)?;
-        Ok(None)
-    }
-
-    fn selected_worker(&self) -> Option<(String, Utf8PathBuf)> {
-        let (project, id) = match self.tree.selected()? {
-            Item::Member(project, _, Member::Window(window)) => match &window.kind {
-                WindowKind::Worker(id, _) => (project, id.as_str()),
-                WindowKind::Lead | WindowKind::Plain => return None,
-            },
-            Item::Member(project, _, Member::Lost(id)) => (project, id),
-            Item::Project(_)
-            | Item::Folder(..)
-            | Item::Header
-            | Item::Panel(_)
-            | Item::Scope(_)
-            | Item::ProjectScopes
-            | Item::Range(_) => return None,
-        };
-        Some((id.to_owned(), project.row.entry.path.clone()))
-    }
-
-    fn selected_closing(&self) -> Option<Closing> {
-        let Some(Item::Project(project)) = self.tree.selected() else {
-            let (id, project) = self.selected_worker()?;
-            return Some(Closing::Worker { id, project });
-        };
-        let agents = project.agents.as_ref()?;
-        let workers = agents
-            .windows
-            .iter()
-            .filter_map(|window| match &window.kind {
-                WindowKind::Worker(id, _) => Some(id.clone()),
-                WindowKind::Lead | WindowKind::Plain => None,
-            })
-            .chain(agents.lost.iter().map(|(id, _)| id.clone()))
-            .collect();
-        Some(Closing::Project {
-            name: project.row.entry.name.clone(),
-            path: project.row.entry.path.clone(),
-            workers,
-            next_worker: None,
-        })
+        tmux::show_in_view(&self.pane, &target).map(|()| None)
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let prompt = match &self.mode {
-            Mode::Browse => None,
-            Mode::Register(prompt) => Some(prompt.text(&self.cwd)),
-            Mode::Deregister(entry) => Some(format!(
-                "deregister {}? deletes all state and managed worktrees (including uncommitted files); closes its session. y/n",
-                entry.name.as_str()
-            )),
-            Mode::Close(Closing::Worker { id, .. }) => Some(format!("close {id}? y/n")),
-            Mode::Close(Closing::Project {
-                name,
-                workers,
-                next_worker,
-                ..
-            }) => Some(match next_worker {
-                None => format!("close {} and its workers? y/n", name.as_str()),
-                Some(next) => match workers.get(*next) {
+        let hints = |keys| Text::styled(keys, self.theme.style(StyleKey::Muted));
+        let mut text = match (&self.mode, &self.footer) {
+            (Mode::Browse, None) => hints("↵ actions/open · r register"),
+            (Mode::Browse, Some(message)) => Text::raw(message.as_str()),
+            (Mode::Menu(_), _) => hints("↑↓ choose · ↵ run · esc dismiss"),
+            (Mode::Close(closing), _) => {
+                Text::raw(match closing.workers.get(closing.next_worker) {
                     Some(id) => format!(
                         "closing {} {}/{} {id}",
-                        name.as_str(),
-                        next.saturating_add(1),
-                        workers.len()
+                        closing.name.as_str(),
+                        closing.next_worker.saturating_add(1),
+                        closing.workers.len()
                     ),
-                    None => format!("closing {}", name.as_str()),
-                },
-            }),
-        };
-        let mut text = match (&self.footer, prompt) {
-            (Some(message), Some(prompt)) => Text::raw(format!("{message}\n{prompt}")),
-            (Some(message), None) => Text::raw(message.as_str()),
-            (None, Some(prompt)) => Text::raw(prompt),
-            (None, None) => Text::from(key_hints(&self.theme)),
+                    None => format!("closing {}", closing.name.as_str()),
+                })
+            }
+            (Mode::Register(prompt), message) => {
+                let mut text = Text::raw(prompt.text(&self.cwd));
+                if let Some(message) = message {
+                    text.lines.insert(0, Line::raw(message.as_str()));
+                }
+                text
+            }
         };
         if let Some(error) = &self.collection_error {
             text.lines.insert(0, Line::raw(error.as_str()));
@@ -423,6 +332,10 @@ impl Explorer {
         self.list_state.select(Some(self.tree.cursor()));
         let list_widget = List::new(labels).highlight_style(self.theme.style(StyleKey::Selection));
         frame.render_stateful_widget(list_widget, list, &mut self.list_state);
+        if let Mode::Menu(menu) = &mut self.mode {
+            let row = self.tree.cursor().saturating_sub(self.list_state.offset());
+            menu.draw(frame, list, row, &self.theme);
+        }
     }
 }
 
