@@ -39,7 +39,7 @@ pub use usage::usage;
 pub(crate) use usage::worker_session;
 pub(crate) use validation::{validate_id, validate_task_label};
 pub use worktree::SpawnTree;
-pub(crate) use worktree::remove_project_worktrees;
+pub(crate) use worktree::{remove_project_worktrees, trashed_worktrees};
 
 pub(crate) struct StatusWorker {
     pub id: String,

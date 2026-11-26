@@ -37,6 +37,7 @@ pub(crate) enum Scope<'a> {
     Deregister(&'a Utf8Path),
     Worker(&'a Utf8Path, &'a str),
     Tree(&'a Utf8Path),
+    Trash(&'a Utf8Path),
     Pane(&'a str),
 }
 
@@ -53,7 +54,7 @@ impl Scope<'_> {
         // https://doc.rust-lang.org/1.89.0/std/fs/struct.File.html#method.try_lock
         match self {
             Self::Project(_) => file.try_lock_shared(),
-            Self::Pane(_) => file.lock().map_err(TryLockError::Error),
+            Self::Pane(_) | Self::Trash(_) => file.lock().map_err(TryLockError::Error),
             Self::Deregister(_) | Self::Worker(..) | Self::Tree(_) => file.try_lock(),
         }
         .with_context(|| format!("{self:?} is busy; cannot lock {path}"))?;

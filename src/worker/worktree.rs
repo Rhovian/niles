@@ -3,12 +3,15 @@ use crate::store::{self, Lock, Scope};
 use crate::util;
 use crate::workspace_manifest::WorktreeConfig;
 use anyhow::{Context, Result, bail};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::{fs, io};
+use uuid::Uuid;
 
 const DETACHED_HEAD: &str = "(detached HEAD)";
+const TRASH: &str = ".trash";
 
 pub enum SpawnTree {
     Path(Utf8PathBuf),
@@ -36,6 +39,12 @@ fn root(workspace: &Utf8Path) -> Result<Utf8PathBuf> {
     let workspace = workspace
         .strip_prefix("/")
         .context("workspace path is not absolute")?;
+    if workspace
+        .components()
+        .any(|part| part == Utf8Component::ParentDir)
+    {
+        bail!("workspace path contains parent traversal: {workspace}");
+    }
     let home = util::home_dir()?.canonicalize_utf8()?;
     Ok(home.join(".niles/trees").join(workspace))
 }
@@ -149,7 +158,8 @@ fn setup(path: &Utf8Path, command: &str, config: &WorktreeConfig) -> Result<()> 
 }
 
 pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path, _lock: Lock) -> Result<Option<String>> {
-    if !tree.starts_with(root(workspace)?) || registered_branch(workspace, tree)?.is_none() {
+    let root = root(workspace)?;
+    if !tree.starts_with(&root) || registered_branch(workspace, tree)?.is_none() {
         return Ok(None);
     }
     for entry in store::worker_locations(workspace)? {
@@ -169,8 +179,49 @@ pub(super) fn retire(workspace: &Utf8Path, tree: &Utf8Path, _lock: Lock) -> Resu
     if commits > 0 {
         return Ok(Some(format!("kept: {commits} commits not on any remote")));
     }
-    git(workspace, &["worktree", "remove", tree.as_str()])?;
+    // Git only checks for submodules while the old checkout exists.
+    // https://github.com/git/git/blob/v2.50.1/builtin/worktree.c
+    let admin = git(tree, &["rev-parse", "--absolute-git-dir"])?;
+    let admin = Utf8Path::new(admin.strip_suffix('\n').context("missing Git directory")?);
+    if admin.join("modules").try_exists()?
+        || git(tree, &["submodule", "status"])?
+            .lines()
+            .any(|line| !line.starts_with('-'))
+    {
+        bail!("working trees containing submodules cannot be moved or removed");
+    }
+    trash_worktree(workspace, tree, &root.join(TRASH))?;
     Ok(Some(format!("removed: {tree}")))
+}
+
+fn trash_worktree(workspace: &Utf8Path, tree: &Utf8Path, trash: &Utf8Path) -> Result<()> {
+    let _trash_lock = Scope::Trash(trash).reserve()?;
+    fs::create_dir_all(trash).with_context(|| format!("create {trash}"))?;
+    let retired = trash.join(Uuid::new_v4().to_string());
+    fs::rename(tree, &retired).with_context(|| format!("move {tree} to {retired}"))?;
+    if let Err(error) = git(workspace, &["worktree", "remove", tree.as_str()]) {
+        fs::rename(&retired, tree)
+            .with_context(|| format!("{error:#}; failed to restore {tree} from {retired}"))?;
+        return Err(error);
+    }
+    if let Err(error) = Command::new("rm")
+        .args(["-rf", "--", retired.as_str()])
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        eprintln!("could not start trash deletion for {retired}: {error}");
+    }
+    Ok(())
+}
+
+/// Snapshot entries after any in-flight Git removal or rollback completes.
+pub(crate) fn trashed_worktrees(workspace: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
+    let trash = root(workspace)?.join(TRASH);
+    let _trash_lock = Scope::Trash(&trash).reserve()?;
+    util::read_dir_utf8_paths(&trash)
 }
 
 /// Use Git to remove only this repository's managed trees, including dirty trees.

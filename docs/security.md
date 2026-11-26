@@ -97,6 +97,14 @@ preserves distinctions between separators, hyphens, case and Unicode. Keys canno
 back to paths; project registration supplies the path. See [state layout](configuration.md#state-layout).
 Existing state is not carried over on upgrade; Niles does not migrate or look up old keys.
 
+### Worktree retirement
+
+After closing the last window using a managed worktree, Niles checks for local changes and
+unpushed commits under the tree lock. It renames eligible trees into the managed root's
+`.trash` directory and removes the checkout's Git registration before starting background
+deletion. `niles prune` previews leftover trash for registered projects. `--apply` deletes
+those entries regardless of metadata age.
+
 ### Project deregistration
 
 The explorer's `d` action requires confirmation before deleting a project's

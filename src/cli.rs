@@ -139,9 +139,9 @@ pub enum CommandName {
     /// Run one headless turn per manifest family with Niles's launch arguments
     /// (maintainer check; makes real model calls with approval-bypass flags).
     Compat { families: Vec<String> },
-    /// Remove dated metadata across registered projects (preview unless --apply)
+    /// Remove dated metadata and worktree trash across registered projects (preview unless --apply)
     Prune {
-        /// Minimum age in days.
+        /// Minimum metadata age in days.
         #[arg(long, default_value_t = 14, value_name = "DAYS")]
         older_than: u32,
         /// Delete the listed paths.

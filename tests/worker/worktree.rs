@@ -1,6 +1,7 @@
 use super::support::*;
 use std::os::unix::fs::symlink;
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 fn git_output(cwd: &Path, args: &[&str]) -> Output {
     Command::new("git")
@@ -153,11 +154,43 @@ TMUX_NEW_WINDOW_HOOK= "$NILES_TEST_BIN" spawn --skill worker second Fix >> "$RAC
     let first = repo.run(&["close", "first"]);
     assert_command_success("close first", &first);
     assert!(stdout_of(&first).contains("tree: kept: in use by second"));
-    let second = repo.run(&["close", "second"]);
+    let stale = repo.env.root.join("stale");
+    let stale = stale.to_str().unwrap();
+    git(&repo.workspace, &["worktree", "add", "--detach", stale]);
+    fs::remove_dir_all(stale).unwrap();
+    atomic_write(repo.workspace.join(".git/info/exclude"), "/target/\n").unwrap();
+    fs::create_dir(repo.tree.join("target")).unwrap();
+    atomic_write(repo.tree.join("target/artifact"), "ignored").unwrap();
+    let release = repo.env.root.join("release-delete");
+    write_executable(
+        &repo.env.bin.join("rm"),
+        "#!/bin/sh\nfor tick in $(seq 100); do\n  if [ -f \"$RELEASE_DELETE\" ]; then exec /bin/rm \"$@\"; fi\n  sleep 0.05\ndone\nexit 1\n",
+    );
+    let second = repo
+        .command(&["close", "second"])
+        .env("RELEASE_DELETE", &release)
+        .output()
+        .unwrap();
     assert_command_success("close second", &second);
     assert!(stdout_of(&second).contains("tree: removed:"));
     assert!(!repo.tree.exists());
-    assert!(git(&repo.workspace, &["branch", "--list", "fix/x"]).contains("fix/x"));
+    let registered = git(&repo.workspace, &["worktree", "list", "--porcelain", "-z"]);
+    assert!(registered.contains(&format!("worktree {stale}\0")));
+    assert!(!registered.contains(&format!("worktree {}\0", repo.tree.display())));
+    let reused = repo.env.root.join("reused");
+    let reused = reused.to_str().unwrap();
+    git(&repo.workspace, &["worktree", "add", reused, "fix/x"]);
+    let trash = repo.tree.ancestors().nth(2).unwrap().join(".trash");
+    let mut entries = trash.read_dir().expect("expected retired checkout");
+    let retired = entries.next().unwrap().unwrap().path();
+    assert!(entries.next().is_none());
+    assert!(retired.join("target/artifact").exists());
+    atomic_write(release, "").unwrap();
+    let started = Instant::now();
+    while retired.exists() && started.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!retired.exists(), "trash deletion must finish after close");
 }
 
 #[test]
@@ -179,13 +212,42 @@ fn dirty_and_unpushed_trees_are_kept() {
 }
 
 #[test]
+fn initialized_submodule_blocks_retirement() {
+    let repo = Repo::new("niles-managed-submodule");
+    repo.spawn("worker", true);
+    let url = git(&repo.tree, &["remote", "get-url", "origin"]);
+    let mut add = vec!["-c", "protocol.file.allow=always", "submodule", "add"];
+    add.extend([url.trim(), "nested"]);
+    git(&repo.tree, &add);
+    git(&repo.tree, &["commit", "-m", "add submodule"]);
+    git(&repo.tree, &["push", "origin", "fix/x"]);
+    let close = repo.run(&["close", "worker"]);
+    let stderr = stderr_of(&close);
+    assert!(repo.tree.join("nested/file").is_file());
+    assert!(!close.status.success());
+    assert!(stderr.contains("containing submodules"), "{stderr}");
+}
+
+#[test]
 fn group_close_keeps_tree_result_inside_the_table() {
-    let repo = Repo::new("niles-managed-group");
-    repo.spawn("group", true);
-    let close = repo.run(&["close", "--all"]);
-    assert_command_success("close all", &close);
-    assert!(stdout_of(&close).contains("  group,tree,removed:"));
-    assert!(!repo.tree.exists());
+    for (fail, expected) in [
+        ("0", "removed:"),
+        ("1", "kept: worker window may still be running"),
+    ] {
+        let repo = Repo::new("niles-managed-group");
+        repo.spawn("group", true);
+        let close = repo
+            .command(&["close", "--all"])
+            .env("TMUX_WINDOWS", "niles-group\t0")
+            .env("TMUX_FAIL_KILL_WINDOW", fail)
+            .output()
+            .unwrap();
+        assert_command_success("close all", &close);
+        let output = stdout_of(&close);
+        let tree_row = format!("  group,tree,{expected}");
+        assert!(output.contains(&tree_row), "{output}");
+        assert_eq!(repo.tree.exists(), fail == "1");
+    }
 }
 
 #[test]
