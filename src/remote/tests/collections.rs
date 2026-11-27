@@ -1,7 +1,7 @@
 use super::*;
 
-fn collection_source<T>(failing: bool) -> impl Fn() -> Result<Vec<T>> {
-    move || {
+fn collection_source<T>(failing: bool) -> impl Fn(&dyn Fn(&str) -> bool) -> Result<Vec<T>> {
+    move |_| {
         anyhow::ensure!(!failing, "private collection path");
         Ok(Vec::new())
     }

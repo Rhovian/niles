@@ -1,21 +1,25 @@
-use crate::config::user::{self, FileWakeHost};
+use crate::config::user::{
+    self,
+    Access::{Operate, Read},
+    FileWeb,
+};
 use crate::projects::navigation::{self, Project};
 use crate::projects::status::ForegroundSession;
 use crate::projects::telemetry;
-use anyhow::{Context, Result, ensure};
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
-use axum::http::{StatusCode, header};
-use axum::middleware::{self, Next};
+use anyhow::{Context, Result, bail, ensure};
+use auth::{Auth, authenticate};
+use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use oidc::{Grants, Verifier, https_url};
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task;
@@ -28,41 +32,34 @@ mod control;
 mod feed;
 mod mcp;
 mod message;
+mod oidc;
 pub(crate) mod push;
 #[cfg(test)]
 mod tests;
-mod wake;
 
 const API_VERSION: u32 = 1;
 const SUBSCRIPTION_BODY_BYTES: usize = 4096;
-const WAKE_BODY_BYTES: usize = 16;
 const POLL: Duration = Duration::from_secs(1);
 type Source = Arc<dyn Fn() -> Result<Vec<ForegroundSession>> + Send + Sync>;
-type ProjectSource = Arc<dyn Fn() -> Result<Vec<Project>> + Send + Sync>;
-
-type TelemetrySource = Arc<dyn Fn() -> Result<Vec<telemetry::Session>> + Send + Sync>;
+type Collection<T> = Arc<dyn Fn(&dyn Fn(&str) -> bool) -> Result<Vec<T>> + Send + Sync>;
 
 #[derive(Clone)]
 struct AppState {
-    relay: auth::Relay,
-    source: Source,
-    projects: ProjectSource,
+    source: Collection<ForegroundSession>,
+    projects: Collection<Project>,
     push: Option<Arc<push::Store>>,
     push_observer: Arc<push::Observer>,
-    wake_hosts: Arc<wake::Hosts>,
-    telemetry: TelemetrySource,
+    telemetry: Collection<telemetry::Session>,
 }
 
 impl AppState {
-    fn new(relay: auth::Relay, source: Source) -> Self {
+    fn new(source: Collection<ForegroundSession>) -> Self {
         Self {
-            relay,
             source,
-            projects: Arc::new(navigation::collect),
+            projects: Arc::new(|allows| navigation::collect_for(allows)),
             push: None,
             push_observer: Arc::default(),
-            wake_hosts: Arc::new(wake::Hosts::new()),
-            telemetry: Arc::new(telemetry::collect),
+            telemetry: Arc::new(|allows| telemetry::collect_for(allows)),
         }
     }
 }
@@ -111,60 +108,49 @@ fn session_id(record: &ForegroundSession) -> String {
     format!("{}:{}", record.project, record.meta.id)
 }
 
-fn resolve(source: &Source, id: &str) -> Result<Option<ForegroundSession>> {
-    Ok(source()?
-        .into_iter()
-        .find(|record| session_id(record) == id))
-}
-
 pub(crate) async fn run(port: u16) -> Result<()> {
     let config = blocking(|| user::FileConfig::load(&user::path()?))
         .await?
         .remote;
-    match config.mcp {
-        Some(mcp) if config.relay_node.is_some() => {
-            tokio::select! {
-                result = run_relay(port, config.relay_node, config.wake_hosts) => result,
-                result = mcp::run(mcp) => result,
-            }
-        }
-        Some(mcp) => {
-            ensure!(
-                config.wake_hosts.is_empty(),
-                "remote.wake_hosts requires remote.relay_node"
-            );
-            mcp::run(mcp).await
-        }
-        None => run_relay(port, config.relay_node, config.wake_hosts).await,
+    let verifier = Arc::new(Verifier::load(config.issuers, config.introspection).await?);
+    match (config.web, config.mcp) {
+        (Some(web), Some(mcp)) => tokio::select! {
+            result = run_web(port, web, verifier.clone()) => result,
+            result = mcp::run(verifier, mcp) => result,
+        },
+        (Some(web), None) => run_web(port, web, verifier).await,
+        (None, Some(mcp)) => mcp::run(verifier, mcp).await,
+        (None, None) => bail!("configure remote.web or remote.mcp"),
     }
 }
 
-async fn run_relay(
-    port: u16,
-    relay_node: Option<String>,
-    wake_hosts: BTreeMap<String, FileWakeHost>,
-) -> Result<()> {
-    let relay = auth::Relay::new(relay_node)?;
-    let mut state = AppState::new(relay, Arc::new(navigation::sessions));
-    state.wake_hosts = Arc::new(wake::configured(wake_hosts)?);
+async fn run_web(port: u16, web: FileWeb, verifier: Arc<Verifier>) -> Result<()> {
+    let resource = https_url(&web.resource)?;
+    ensure!(
+        resource.path().ends_with("/api")
+            && resource.query().is_none()
+            && resource.as_str() == web.resource,
+        "remote.web.resource must be a canonical HTTPS URL ending in /api"
+    );
+    ensure!(
+        !web.bind.is_unspecified(),
+        "remote.web.bind must name a specific IPv4 address"
+    );
+    let auth = Auth::new(verifier.clone(), resource, None)?;
+    let mut state = AppState::new(Arc::new(|allows| navigation::sessions_for(allows)));
     state.push = blocking(push::Store::load_optional).await?.map(Arc::new);
-    let ip = blocking(auth::tailnet_ip).await?;
-    let listener = TcpListener::bind((ip, port))
+    let listener = TcpListener::bind((web.bind, port))
         .await
         .context("bind remote listener")?;
     eprintln!("remote listening on {}", listener.local_addr()?);
     let notifier = state.push.clone();
     let source: Source = Arc::new(navigation::push_sessions);
     let observer = state.push_observer.clone();
-    let server = axum::serve(
-        listener,
-        router(state).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .into_future();
+    let server = axum::serve(listener, router(state, auth)).into_future();
     if let Some(store) = notifier {
         tokio::select! {
             result = server => result.context("serve remote API")?,
-            result = push::watch(source, store, observer) => result.context("watch Web Push notifications")?,
+            result = push::watch(source, store, observer, verifier) => result.context("watch Web Push notifications")?,
         }
     } else {
         server.await?;
@@ -172,12 +158,8 @@ async fn run_relay(
     Ok(())
 }
 
-fn router(state: AppState) -> Router {
+fn router(state: AppState, auth: Auth) -> Router {
     Router::new()
-        .route(
-            "/api/hosts/{id}/wake",
-            post(wake::wake).layer(DefaultBodyLimit::max(WAKE_BODY_BYTES)),
-        )
         .route("/api/push/vapid", get(push::vapid))
         .route(
             "/api/push/subscribe",
@@ -207,59 +189,14 @@ fn router(state: AppState) -> Router {
             "/api/sessions/{id}/message",
             post(lead_message).layer(DefaultBodyLimit::max(message::MAX_BODY_BYTES)),
         )
-        .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(state, authorize))
-}
-
-#[derive(Clone)]
-struct AuthorizedUser(String);
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "Malformed identity headers intentionally become a 403, not a server error"
-)]
-async fn authorize(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
-    // HeaderMap preserves duplicate values; the relay contract requires a single login.
-    // https://docs.rs/http/1.5.0/http/header/struct.HeaderMap.html#method.get_all
-    let mut logins = request.headers().get_all("tailscale-user-login").iter();
-    let login = logins
-        .next()
-        .and_then(|value| value.to_str().ok())
-        .filter(|login| {
-            !login.is_empty()
-                && login.trim() == *login
-                && !login.chars().any(char::is_control)
-                && !login.contains(',')
-        })
-        .filter(|_| logins.next().is_none())
-        .map(str::to_owned);
-    let result = async {
-        let Some(login) = login else {
-            return Ok(StatusCode::FORBIDDEN.into_response());
-        };
-        let Some(ConnectInfo(peer)) = request
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .copied()
-        else {
-            return Ok(StatusCode::FORBIDDEN.into_response());
-        };
-        if !blocking(move || state.relay.accepts(peer)).await? {
-            return Ok(StatusCode::FORBIDDEN.into_response());
-        }
-        request.extensions_mut().insert(AuthorizedUser(login));
-        Ok::<_, anyhow::Error>(next.run(request).await)
-    }
-    .await;
-    let mut response = match result {
-        Ok(response) => response,
-        Err(error) => ApiError(error).into_response(),
-    };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    response
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(auth.clone(), authenticate))
+        .route(
+            "/api/auth/token",
+            post(auth::exchange)
+                .layer(DefaultBodyLimit::max(2048))
+                .with_state(auth),
+        )
 }
 
 async fn blocking<T: Send + 'static>(
@@ -281,22 +218,33 @@ impl IntoResponse for ApiError {
     }
 }
 
-async fn projects(State(state): State<AppState>) -> Result<Response, ApiError> {
-    let projects = blocking(move || (state.projects)()).await?;
+async fn projects(
+    State(state): State<AppState>,
+    Extension(grants): Extension<Arc<Grants>>,
+) -> Result<Response, ApiError> {
+    let projects =
+        blocking(move || (state.projects)(&|project| grants.allows(project, Read))).await?;
     Ok(Json(serde_json::json!({"api_version": API_VERSION, "projects": projects})).into_response())
 }
 
-async fn telemetry(State(state): State<AppState>) -> Result<Response, ApiError> {
-    let sessions = blocking(move || (state.telemetry)()).await?;
+async fn telemetry(
+    State(state): State<AppState>,
+    Extension(grants): Extension<Arc<Grants>>,
+) -> Result<Response, ApiError> {
+    let sessions =
+        blocking(move || (state.telemetry)(&|project| grants.allows(project, Read))).await?;
     Ok(Json(serde_json::json!({
         "api_version": API_VERSION, "collected_at": chrono::Utc::now(), "sessions": sessions,
     }))
     .into_response())
 }
 
-async fn sessions(State(state): State<AppState>) -> Result<Response, ApiError> {
+async fn sessions(
+    State(state): State<AppState>,
+    Extension(grants): Extension<Arc<Grants>>,
+) -> Result<Response, ApiError> {
     let sessions = blocking(move || {
-        Ok(state.source.as_ref()()?
+        Ok((state.source)(&|project| grants.allows(project, Read))?
             .iter()
             .map(Session::from_record)
             .collect::<Vec<_>>())
@@ -308,36 +256,64 @@ async fn sessions(State(state): State<AppState>) -> Result<Response, ApiError> {
 async fn events(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Extension(grants): Extension<Arc<Grants>>,
 ) -> Result<Response, ApiError> {
-    stream(chat::lead(state.source, id)).await
+    let expires = grants.expires;
+    stream(
+        chat::lead(state.source, id, move |name| grants.allows(name, Read)),
+        expires,
+    )
+    .await
 }
 
-async fn worker_events(Path((project, id)): Path<(String, String)>) -> Result<Response, ApiError> {
-    stream(chat::worker(project, id)).await
+async fn worker_events(
+    Path((project, id)): Path<(String, String)>,
+    Extension(grants): Extension<Arc<Grants>>,
+) -> Result<Response, ApiError> {
+    if !grants.allows(&project, Read) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+    stream(chat::worker(project, id), grants.expires).await
 }
+
 async fn lead_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    axum::Extension(AuthorizedUser(user)): axum::Extension<AuthorizedUser>,
+    Extension(grants): Extension<Arc<Grants>>,
     message: Json<message::Message>,
 ) -> Result<StatusCode, ApiError> {
+    let sender = state.push.map(|_| message::Sender {
+        principal: grants.principal.clone(),
+        observer: state.push_observer,
+    });
     message::send(
-        chat::lead(state.source, id),
+        chat::lead(state.source, id, move |name| grants.allows(name, Operate)),
         message,
-        state.push.map(|_| message::Sender {
-            user,
-            observer: state.push_observer,
-        }),
+        sender,
     )
     .await
 }
 async fn worker_message(
     Path((project, id)): Path<(String, String)>,
+    Extension(grants): Extension<Arc<Grants>>,
     message: Json<message::Message>,
 ) -> Result<StatusCode, ApiError> {
+    if !grants.allows(&project, Operate) {
+        return Ok(StatusCode::FORBIDDEN);
+    }
     message::send(chat::worker(project, id), message, None).await
 }
-async fn stream(lookup: chat::Lookup) -> Result<Response, ApiError> {
+async fn stream(lookup: chat::Lookup, expires: u64) -> Result<Response, ApiError> {
+    let elapsed = SystemTime::UNIX_EPOCH
+        .elapsed()
+        .context("read stream expiry clock")?;
+    let lifetime = Duration::from_secs(expires).saturating_sub(elapsed);
+    if lifetime.is_zero() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let deadline = time::Instant::now()
+        .checked_add(lifetime)
+        .context("stream expiry exceeds clock range")?;
     let initial_lookup = lookup.clone();
     let initial = blocking(move || initial_lookup()?.map(feed::Feed::open).transpose()).await?;
     let Some((feed, snapshot)) = initial else {
@@ -352,7 +328,7 @@ async fn stream(lookup: chat::Lookup) -> Result<Response, ApiError> {
         .await
         .map_err(anyhow::Error::from)?;
     tokio::spawn(async move {
-        if let Err(error) = pump(lookup, feed, sender).await {
+        if let Ok(Err(error)) = time::timeout_at(deadline, pump(lookup, feed, sender)).await {
             eprintln!("remote stream: {error:#}");
         }
     });

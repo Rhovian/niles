@@ -12,11 +12,14 @@ export class Stream extends EventTarget {
   onopen?: () => void;
   onerror?: () => void;
   close = vi.fn();
-  constructor(readonly url: string) { super(); Stream.opened.push(this); }
+  readonly url: string;
+  constructor(url: URL, readonly options: { fetch: typeof fetch }) { super(); this.url = url.pathname; Stream.opened.push(this); }
   emit(name: string, data: unknown) { this.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })); }
 }
 
 export const json = (data: unknown) => ({ ok: true, status: 200, json: async () => data }) as Response;
+export const signInSettings = { issuer: 'https://login.example.test' };
+export const standaloneManifest = { ...signInSettings, hosts: [{ id: '', name: 'This host', client_id: 'phone' }] };
 export const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
 export function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,7 +27,7 @@ export function deferred<T>() {
   return { promise, resolve };
 }
 export function serveLocal({ projects, sessions }: { projects: Project[]; sessions: Session[] | (() => Promise<Response>) }) {
-  const fetcher = vi.fn<typeof fetch>(input => String(input) === '/hosts.json' ? Promise.resolve(new Response(null, { status: 404 }))
+  const fetcher = vi.fn<typeof fetch>(input => String(input) === '/hosts.json' ? Promise.resolve(json(standaloneManifest))
     : String(input) === '/api/projects' ? Promise.resolve(json({ api_version: 1, projects }))
     : typeof sessions === 'function' ? sessions() : Promise.resolve(json({ api_version: 1, sessions })));
   vi.stubGlobal('fetch', fetcher);
@@ -41,7 +44,7 @@ export function fakeHosts({ hosts, defaults }: { hosts: Host[] | null; defaults:
     const response = responses.get(url) ?? (host && failures.get(host.id));
     if (response instanceof Error) throw response;
     if (response) return typeof response === 'function' ? response(options) : response;
-    if (url === '/hosts.json') return hosts ? json({ hosts }) : { status: 404 } as Response;
+    if (url === '/hosts.json') return json(hosts ? { ...signInSettings, hosts: hosts.map(host => ({ client_id: 'phone', ...host })) } : standaloneManifest);
     if (options?.method) return json({});
     const endpoint = host ? url.slice(`/h/${host.id}`.length) : url;
     if (!(endpoint in defaults)) throw new Error(`Unexpected request: ${url}`);

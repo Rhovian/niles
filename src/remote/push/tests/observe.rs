@@ -1,5 +1,6 @@
 use super::*;
 use crate::remote::message::{self, Delivery, Sender};
+use crate::remote::oidc::tests::web_verifier;
 use crate::remote::tests::{self, Fixture};
 use crate::store::atomic_write;
 use crate::test_support::{array, only, only_mut};
@@ -29,10 +30,11 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     let (other, _, _) = keyed_subscription("https://fcm.googleapis.com/fcm/send/other");
     for subscription in [&subscription, &other] {
         store
-            .save("alice".into(), subscription.clone(), None)
+            .save(principal("alice"), subscription.clone(), None)
             .unwrap();
     }
     let devices = store.subscriptions().unwrap();
+    let verifier = web_verifier();
     let send = |text: &str, subscription: &Subscription, success: bool| {
         let record = only_mut(&mut fixture.records.lock().unwrap()).clone();
         let mut chat = Chat::lead(&record).unwrap();
@@ -42,7 +44,7 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
         )
         .unwrap();
         let sender = Sender {
-            user: "alice".into(),
+            principal: principal("alice"),
             observer: observer.clone(),
         };
         message::deliver(chat, message, Some(sender), |_, text| {
@@ -74,7 +76,17 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     append_user("history");
     let waiting = poll();
     assert_eq!(only(&waiting).reason, Reason::Waiting);
-    assert!(devices.iter().all(|device| only(&waiting).includes(device)));
+    assert!(
+        devices
+            .iter()
+            .all(|device| only(&waiting).includes(device, &verifier))
+    );
+    let device = store::Device {
+        principal: principal("without-grant"),
+        subscription: subscription.clone(),
+        host: None,
+    };
+    assert!(!only(&waiting).includes(&device, &verifier));
     assert!(poll().is_empty());
     fixture.append(&tests::message("assistant response"));
     for text in [
@@ -105,7 +117,7 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
             assert_eq!(only(&notifications).reason, Reason::OperatorMessage);
             for device in &devices {
                 assert_eq!(
-                    only(&notifications).includes(device),
+                    only(&notifications).includes(device, &verifier),
                     sender.map(|s| &s.0.endpoint) != Some(&device.subscription.0.endpoint)
                 );
             }
@@ -135,7 +147,7 @@ fn waiting_and_operator_transitions_do_not_replay_history_or_retain_exited_sessi
     assert!(
         devices
             .iter()
-            .all(|device| only(&notifications).includes(device))
+            .all(|device| only(&notifications).includes(device, &verifier))
     );
     assert_err_contains(send("failed", &subscription, false), "paste failed");
     assert!(
@@ -182,7 +194,7 @@ async fn polling_failure_is_reported_without_any_browser_connection() {
     assert_err_contains(
         time::timeout(
             Duration::from_secs(3),
-            watch(source, Arc::new(store), Arc::default()),
+            watch(source, Arc::new(store), Arc::default(), web_verifier()),
         )
         .await
         .unwrap(),

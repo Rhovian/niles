@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "dompurify": "3.4.17",
+    "eventsource": "4.1.0",
     "marked": "18.1.1",
+    "oauth4webapi": "3.8.6",
     "preact": "11.0.1",
     "workbox-precaching": "7.4.1",
     "workbox-routing": "7.4.1",

@@ -1,5 +1,8 @@
 use super::*;
-use crate::remote::tests::relay_request;
+use crate::remote::{
+    oidc::tests::{WEB_RESOURCE, principal, web_auth},
+    tests::authenticated_request,
+};
 use crate::test_support::{TempDir, array, assert_err_contains, json_field, only, temp_dir};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -46,20 +49,20 @@ fn private_keys_and_device_files_survive_restart_without_rotation() {
     let (root, store, subscription) = fixture();
     let key = store.public_key().unwrap();
     store
-        .save("alice".into(), subscription.clone(), None)
+        .save(principal("alice"), subscription.clone(), None)
         .unwrap();
     store
-        .save("alice".into(), subscription.clone(), None)
+        .save(principal("alice"), subscription.clone(), None)
         .unwrap();
     let devices = store.subscriptions().unwrap();
     let device = only(&devices);
     let sender = Sender {
-        user: "alice".into(),
+        principal: principal("alice"),
         device: DeviceId::from_endpoint(&subscription.0.endpoint),
     };
     assert!(device.is_sender(&sender));
     assert!(!device.is_sender(&Sender {
-        user: "bob".into(),
+        principal: principal("bob"),
         ..sender.clone()
     }));
     assert!(!device.is_sender(&Sender {
@@ -148,7 +151,7 @@ fn prunes_only_gone_endpoints_and_keeps_other_delivery_failures_nonfatal() {
     let (_root, store, subscription) = fixture();
     for code in [404, 410] {
         store
-            .save("alice".into(), subscription.clone(), None)
+            .save(principal("alice"), subscription.clone(), None)
             .unwrap();
         let info = serde_json::from_value(
             serde_json::json!({"code":code,"errno":0,"error":"gone","message":"gone"}),
@@ -163,7 +166,7 @@ fn prunes_only_gone_endpoints_and_keeps_other_delivery_failures_nonfatal() {
         assert!(store.subscriptions().unwrap().is_empty());
     }
     store
-        .save("alice".into(), subscription.clone(), None)
+        .save(principal("alice"), subscription.clone(), None)
         .unwrap();
     for error in [WebPushError::InvalidResponse, WebPushError::Unspecified] {
         finish_delivery(&store, &subscription, Err(error)).unwrap();
@@ -177,17 +180,13 @@ async fn push_routes_authorize_validate_and_never_cache() {
     let (_root, store, subscription) = fixture();
     let api = super::super::tests::Fixture::new(0);
     let records = api.records.clone();
-    let mut state = AppState::new(
-        super::super::tests::relay(),
-        Arc::new(move || Ok(records.lock().unwrap().clone())),
-    );
+    let mut state = AppState::new(Arc::new(move |_| Ok(records.lock().unwrap().clone())));
     state.push = Some(Arc::new(store));
     let message =
         serde_json::json!({"text": "hello", "sender_device": DeviceId::from_endpoint(&subscription.0.endpoint)}).to_string();
-    let app = super::super::router(state);
+    let app = super::super::router(state, web_auth(WEB_RESOURCE));
     let subscription = serde_json::to_string(&subscription).unwrap();
     for (method, path, login, body, expected) in [
-        ("GET", "/api/push/vapid", "", "", 403),
         ("GET", "/api/push/vapid", "alice", "", 200),
         (
             "POST",
@@ -212,8 +211,7 @@ async fn push_routes_authorize_validate_and_never_cache() {
             422,
         ),
     ] {
-        let request = relay_request(method, path)
-            .header("Tailscale-User-Login", login)
+        let request = authenticated_request(method, path, login)
             .header("Content-Type", "application/json")
             .body(Body::from(body.to_owned()))
             .unwrap();
@@ -261,7 +259,11 @@ fn shared_key_and_subscription_deliver_host_qualified_payloads_after_restart() {
         }))
         .unwrap();
         store
-            .save("alice".into(), registration.subscription, registration.host)
+            .save(
+                principal("alice"),
+                registration.subscription,
+                registration.host,
+            )
             .unwrap();
         let devices = store.subscriptions().unwrap();
         let device = only(&devices);

@@ -13,7 +13,10 @@ it('serves the mock JSON/SSE contract and keeps script execution external', asyn
     expect(html).toContain("script-src 'self'");
     expect(html).not.toMatch(/<script(?![^>]*src=)[^>]*>\s*\S/);
     const manifest = await fetch(`${base}hosts.json`);
-    expect(manifest.status).toBe(404);
+    expect(manifest.status).toBe(200);
+    expect(await manifest.json()).toEqual({
+      issuer: 'https://login.example.test', hosts: [{ id: '', name: 'This host', client_id: 'niles-mock' }],
+    });
     expect(manifest.headers.get('cache-control')).toBe('no-store');
     const list = await fetch(`${base}api/sessions`);
     expect(list.headers.get('cache-control')).toBe('no-store');

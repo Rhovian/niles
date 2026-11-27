@@ -1,4 +1,5 @@
 use super::chat::Lookup;
+use super::oidc::Principal;
 use super::{ApiError, blocking, push};
 use crate::tmux::{self, TmuxTarget};
 use anyhow::{Result, ensure};
@@ -43,7 +44,7 @@ impl TryFrom<String> for MessageText {
 }
 
 pub(super) struct Sender {
-    pub user: String,
+    pub principal: Principal,
     pub observer: Arc<push::Observer>,
 }
 
@@ -80,7 +81,7 @@ pub(super) fn deliver(
         (Some(sender), Some(device)) => Some((
             sender.observer,
             push::Sender {
-                user: sender.user,
+                principal: sender.principal,
                 device,
             },
         )),

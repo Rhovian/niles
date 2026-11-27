@@ -2,11 +2,12 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { act, cleanup } from '@testing-library/preact';
 import { Stream } from './test-utils';
 
+vi.mock('eventsource', () => ({ EventSource: Stream }));
+
 beforeEach(() => {
   if (typeof window === 'undefined') return;
-  window.history.replaceState(null, '', '/'); localStorage.clear();
+  window.history.replaceState(null, '', '/'); localStorage.clear(); sessionStorage.clear();
   Element.prototype.scrollIntoView = vi.fn(); Stream.opened = [];
-  vi.stubGlobal('EventSource', Stream);
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 });
 // Preact 11 defers passive unmount cleanup; Testing Library cleanup does not use act.

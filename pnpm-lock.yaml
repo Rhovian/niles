@@ -18,9 +18,15 @@ importers:
       dompurify:
         specifier: 3.4.17
         version: 3.4.17
+      eventsource:
+        specifier: 4.1.0
+        version: 4.1.0
       marked:
         specifier: 18.1.1
         version: 18.1.1
+      oauth4webapi:
+        specifier: 3.8.6
+        version: 3.8.6
       preact:
         specifier: 11.0.1
         version: 11.0.1
@@ -88,6 +94,17 @@ importers:
         version: 5.0.5(@types/node@26.6.5)(vite@8.3.6(@types/node@26.6.5)(yaml@2.9.1))
 
 packages:
+
+  eventsource-parser@3.1.1:
+    resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
+    engines: {node: '>=18.0.0'}
+
+  eventsource@4.1.0:
+    resolution: {integrity: sha512-2GuF51iuHX6A9xdTccMTsNb7VO0lHZihApxhvQzJB5A03DvHDd2FQepodbMaztPBmBcE/ox7o2gqaxGhYB9LhQ==}
+    engines: {node: '>=20.0.0'}
+
+  oauth4webapi@3.8.6:
+    resolution: {integrity: sha512-iwemM91xz8nryHti2yTmg5fhyEMVOkOXwHNqbvcATjyajb5oQxCQzrNOA6uElRHuMhQQTKUyFKV9y/CNyg25BQ==}
 
   '@apideck/better-ajv-errors@0.3.7':
     resolution: {integrity: sha512-TajUJwGWbDwkCx/CZi7tRE8PVB7simCvKJfHUsSdvps+aTM/PDPP4gkLmKnc+x3CE//y9i/nj74GqdL/hwk7Iw==}
@@ -4121,6 +4138,14 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  eventsource-parser@3.1.1: {}
+
+  eventsource@4.1.0:
+    dependencies:
+      eventsource-parser: 3.1.1
+
+  oauth4webapi@3.8.6: {}
 
   '@apideck/better-ajv-errors@0.3.7(ajv@8.20.0)':
     dependencies:

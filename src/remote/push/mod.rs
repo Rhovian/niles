@@ -1,6 +1,7 @@
 use super::chat::Chat;
 use super::feed::{Follower, mobile_text};
-use super::{ApiError, AppState, AuthorizedUser, POLL, Session, Source, blocking};
+use super::oidc::Principal;
+use super::{ApiError, AppState, Grants, POLL, Session, Source, Verifier, blocking};
 use crate::projects::status::ForegroundSession;
 use crate::telemetry::transcript::TextRole;
 use crate::util;
@@ -40,13 +41,20 @@ pub(super) async fn vapid(State(state): State<AppState>) -> Result<Response, Api
 }
 pub(super) async fn subscribe(
     State(state): State<AppState>,
-    Extension(AuthorizedUser(user)): Extension<AuthorizedUser>,
+    Extension(grants): Extension<Arc<Grants>>,
     Json(registration): Json<store::Registration>,
 ) -> Result<StatusCode, ApiError> {
     let Some(store) = state.push else {
         return Ok(StatusCode::SERVICE_UNAVAILABLE);
     };
-    blocking(move || store.save(user, registration.subscription, registration.host)).await?;
+    blocking(move || {
+        store.save(
+            grants.principal.clone(),
+            registration.subscription,
+            registration.host,
+        )
+    })
+    .await?;
     Ok(StatusCode::OK)
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,16 +91,17 @@ pub(super) struct Notification {
     excluded: Option<Sender>,
 }
 impl Notification {
-    fn includes(&self, device: &store::Device) -> bool {
-        !self
-            .excluded
-            .as_ref()
-            .is_some_and(|sender| device.is_sender(sender))
+    fn includes(&self, device: &store::Device, verifier: &Verifier) -> bool {
+        verifier.can_read(&device.principal, &self.session.project)
+            && !self
+                .excluded
+                .as_ref()
+                .is_some_and(|sender| device.is_sender(sender))
     }
 }
 #[derive(Clone)]
 pub(super) struct Sender {
-    pub user: String,
+    pub principal: Principal,
     pub device: DeviceId,
 }
 #[derive(Default)]
@@ -212,6 +221,7 @@ pub(super) async fn watch(
     source: Source,
     store: Arc<Store>,
     observer: Arc<Observer>,
+    verifier: Arc<Verifier>,
 ) -> Result<()> {
     let client = IsahcWebPushClient::from(
         HttpClient::builder()
@@ -229,7 +239,7 @@ pub(super) async fn watch(
         for notification in notifications {
             let list_store = store.clone();
             for device in blocking(move || list_store.subscriptions()).await? {
-                if !notification.includes(&device) {
+                if !notification.includes(&device, &verifier) {
                     continue;
                 }
                 let session = &notification.session;

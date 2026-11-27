@@ -1,5 +1,5 @@
 import { createHash, webcrypto } from 'node:crypto';
-import { Stream, deferred, serveLocal } from './test-utils';
+import { Stream, deferred, json, serveLocal, standaloneManifest } from './test-utils';
 import { expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './App';
@@ -42,7 +42,7 @@ it('upserts streaming revisions', () => {
   expect(upsertTurn(turns, { ...turns[0], text: 'revised' })).toEqual([{ ...turns[0], text: 'revised' }]);
 });
 it('blocks chat on API version mismatch', async () => {
-  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url === '/hosts.json' ? { status: 404 } : { ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) })));
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url === '/hosts.json' ? json(standaloneManifest) : { ok: true, json: async () => ({ api_version: 2, sessions: 'incompatible' }) })));
   render(<App />);
   await screen.findByText(/Update the web app/);
   expect(screen.getByRole('button', { name: 'Open menu' })).toBeDefined();

@@ -1,34 +1,5 @@
 use super::*;
 
-#[test]
-fn discovery_requires_the_configured_issuer_and_https_keys() {
-    for (issuer, jwks_uri, error) in [
-        (
-            WORKLOAD,
-            "https://login.example.test/keys",
-            "issuer mismatch",
-        ),
-        (
-            INTERACTIVE,
-            "http://login.example.test/keys",
-            "expected an HTTPS URL",
-        ),
-    ] {
-        let discovery = Discovery {
-            issuer: issuer.into(),
-            jwks_uri: jwks_uri.into(),
-        };
-        assert!(
-            discovery
-                .keys_url(INTERACTIVE)
-                .unwrap_err()
-                .to_string()
-                .contains(error),
-            "{issuer} {jwks_uri}"
-        );
-    }
-}
-
 #[tokio::test]
 async fn refresh_retains_last_good_keys_and_survives_request_cancellation() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -62,7 +33,7 @@ async fn refresh_retains_last_good_keys_and_survives_request_cancellation() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let old = SigningKey::new();
-    let mut issuer = old.issuer(Vec::new());
+    let mut issuer = old.jwt_keys();
     issuer.jwks_uri = format!("http://{}/keys", listener.local_addr().unwrap())
         .parse()
         .unwrap();
@@ -80,7 +51,7 @@ async fn refresh_retains_last_good_keys_and_survives_request_cancellation() {
         cache.loaded_at = stale;
         cache.attempted_at = stale;
     }
-    let refresh = |issuer: &Arc<Issuer>| {
+    let refresh = |issuer: &Arc<JwtKeys>| {
         let issuer = issuer.clone();
         tokio::spawn(async move { issuer.keys().await })
     };

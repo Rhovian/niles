@@ -18,12 +18,14 @@ export function mockApi(): Plugin {
   return { name: 'niles-mock-api', configureServer(server) {
     server.middlewares.use(async (request, response, next) => {
       const path = new URL(request.url!, 'http://localhost').pathname;
-      if (path === '/hosts.json') { response.setHeader('Cache-Control', 'no-store'); response.writeHead(404); response.end(); return; }
-      if (!path.startsWith('/api/')) return next();
+      if (path !== '/hosts.json' && !path.startsWith('/api/')) return next();
       response.setHeader('Cache-Control', 'no-store');
       const json = (status: number, body: unknown) => {
         response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(body));
       };
+      if (path === '/hosts.json') return json(200, {
+        issuer: 'https://login.example.test', hosts: [{ id: '', name: 'This host', client_id: 'niles-mock' }],
+      });
       if (path === '/api/projects' && request.method === 'GET') return json(200, { api_version: API_VERSION, projects: [
         ...sessions.map(session => ({ name: session.project, lead_state: session.waiting ? 'waiting' : 'working', state: session.waiting ? 'waiting' : 'running', workers: session.worker_count ? [{ id: 'nav', skill: 'worker', lost: false, state: 'working' }, { id: 'review', skill: 'reviewer', lost: true }] : [] })),
         { name: 'offline', state: 'not running', workers: [] },

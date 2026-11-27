@@ -1,4 +1,4 @@
-use super::{Session, Source, resolve, session_id};
+use super::{Collection, Session, session_id};
 use crate::{projects::status, telemetry::transcript::TranscriptSource, tmux::TmuxTarget, worker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -11,8 +11,18 @@ pub(super) struct Chat {
 }
 pub(super) type Lookup = Arc<dyn Fn() -> Result<Option<Chat>> + Send + Sync>;
 
-pub(super) fn lead(source: Source, id: String) -> Lookup {
-    Arc::new(move || resolve(&source, &id)?.as_ref().map(Chat::lead).transpose())
+pub(super) fn lead(
+    source: Collection<status::ForegroundSession>,
+    id: String,
+    allows: impl Fn(&str) -> bool + Send + Sync + 'static,
+) -> Lookup {
+    Arc::new(move || {
+        source(&allows)?
+            .iter()
+            .find(|record| session_id(record) == id)
+            .map(Chat::lead)
+            .transpose()
+    })
 }
 pub(super) fn worker(project: String, id: String) -> Lookup {
     Arc::new(move || find_worker(&project, &id))

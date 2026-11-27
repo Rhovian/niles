@@ -1,29 +1,28 @@
 ---
 name: remote-setup
-description: Use when setting up Niles phone access through a Tailscale relay, including Caddy, host tags, shared push and Wake-on-LAN. Fresh installs only; not for migrating existing remote deployments or configuring project setups.
+description: Use when installing or upgrading Niles phone access through a Tailscale relay, including issuer sign-in, Caddy, tailnet grants and shared push.
 ---
 # Remote setup
 
 Set up an always-on relay that also runs Niles. The request path is phone → Tailscale
 Serve HTTPS → localhost Caddy → each Niles host's tailnet IPv4 listener. Serve cannot
-proxy directly to other tailnet IPs: its dialer bypasses Tailscale routes. No CORS,
-Funnel, public listeners or extra authentication headers are needed.
+proxy directly to other tailnet IPs because its dialer bypasses Tailscale routes.
+Keep Niles private to the tailnet. The browser contacts the issuer separately.
 
 ## Inventory before changing anything
 
 1. Collect the relay and host SSH/access details, OS users running Niles, host display
-   names and routing IDs for the manifest, permitted phone users, and whether push/WoL
-   are wanted. For push collect a mailto: or https: contact URI. Include the relay as
-   a host. For WoL collect target MACs and LAN broadcasts from the operator/network.
+   names and routing IDs, tailnet users, issuer and client registrations, per-host
+   issuer subjects and project grants, and whether push is wanted. For push collect
+   a mailto: or https: contact URI. Include the relay as a host.
    Ask only for information you cannot discover through authorized access.
 2. Read the deployment's existing config and service state. Inspect
    `tailscale serve status --json`, Funnel status, Caddy configuration and listeners,
    `~/.niles/config.yaml`, and Niles user services on every machine.
-   Existing remote deployments need a separate migration plan: stop and report the
-   conflict instead of overwriting services, Serve mounts, push keys or tailnet policy.
-   An occupied Serve root, chosen port or service path is also a conflict, even if unrelated.
+   For an existing Niles deployment, follow the cutover below. Treat paths, listeners and
+   Serve mounts owned by unrelated services as conflicts.
    Preserve unrelated config. Do not use `tailscale serve reset`.
-   Existing path/Unix-socket mounts gate the whole Serve config: even step 13's HTTP
+   Existing path/Unix-socket mounts gate the whole Serve config: even step 12's HTTP
    proxy may need sudo. Preserve those mounts and report missing privileges.
    [Tailscale #22117](https://github.com/tailscale/tailscale/pull/22117) makes root
    mandatory for configs containing these mounts; operator privileges no longer suffice.
@@ -31,12 +30,9 @@ Funnel, public listeners or extra authentication headers are needed.
    `tailscale version --daemon --json`, `tailscale status --json`, and
    `tailscale ip -4` on each machine. Require a remote-enabled Niles binary, matching
    Tailscale CLI/daemon versions >=1.96.2, a running authenticated daemon, and stable
-   tailnet IPv4 addresses. Record the relay's DNS name, Self.ID and IPv4; confirm its
-   stable node ID with `tailscale whois --json <relay-tailnet-ip>` → Node.StableID.
-   Do not use a node key, machine key, DNS name or IP as `remote.relay_node`.
+   tailnet IPv4 addresses. Record the relay's DNS name and each host's IPv4 address.
 4. On the relay enable MagicDNS and HTTPS certificates in the tailnet DNS settings.
-   Verify its DNS name is listed in CertDomains. The phone joins the same tailnet
-   as a user-owned device: tagged clients have no Serve login header.
+   Verify its DNS name is listed in CertDomains. The phone joins the same tailnet.
    Use open-source Homebrew tailscaled on macOS. Check the LaunchDaemon's PATH
    includes the directory containing the tailscale CLI; Homebrew service regeneration
    can undo this. Keep this PATH check until the relay includes Tailscale #22117,
@@ -77,23 +73,42 @@ Funnel, public listeners or extra authentication headers are needed.
    SSH/admin access; verify policy tests permit chosen phone users on relay:443 and
    relay on every backend port, and deny unwanted users/devices. Apply tags through
    the admin console or `tailscale set --advertise-tags=...`, preserving existing tags.
-   Recheck the relay's stable ID after tagging. Tags control network reachability;
-   the backend additionally pins one exact relay node, not every node with its tag.
+   Tags and tailnet grants control network reachability. Issuer grants control Niles access.
    Tailnet policy reference: https://tailscale.com/docs/reference/syntax/policy-file
 
 ## Configure hosts and push
 
-7. Merge this into each host user's `~/.niles/config.yaml`, including the relay:
+7. For tsidp, keep its HTTPS issuer on the tailnet. Register a distinct confidential
+   client per Niles host. Give each client the exact PWA HTTPS root as its redirect URI. On the tsidp node, grant
+   `tailscale.com/cap/tsidp` for the intended phone users with exact `users` and
+   `resources` for each Niles host. Allow the phone and backends to reach tsidp on
+   HTTPS. The phone uses a user-owned tailnet device, and the PWA uses S256 PKCE.
+   Ask the operator to complete issuer changes that require their access.
+   [tsidp capability setup](https://github.com/tailscale/tsidp/blob/v0.0.21/README.md#setting-an-application-capability-grant)
 
    ```yaml
    remote:
-     relay_node: nYOUR_RELAY_STABLE_NODE_ID
+     web:
+       bind: 100.64.0.2
+       resource: https://relay.example.ts.net/h/desktop/api
+     introspection:
+       issuer: https://idp.example.ts.net
+       client_id: desktop-client-id
+       client_secret_env: NILES_PWA_CLIENT_SECRET
+     issuers:
+       https://idp.example.ts.net:
+         - {subject: '123456', project: demo, access: operate}
+         - {subject: '654321', project: demo, access: read}
    ```
 
-   `remote.allowed_users` no longer exists. Every login admitted by Serve and the
-   tailnet policy has shell authority on every configured host. The backend binds
-   `tailscale ip -4`, not localhost; Caddy must connect to that address even for the
-   relay's own backend so WhoIs sees the relay node.
+   Merge the settings into each host’s existing `~/.niles/config.yaml` and set
+   its bind address, resource and client ID separately. Use the exact decimal
+   Tailscale user ID as the subject. Set only that client’s secret in the named
+   Niles service environment variable. Each host uses its credentials for token
+   exchange and introspection. Preserve existing JWT issuer grants.
+   Operate permits shell access through agents for its project. A public JWT
+   OAuth client can omit `remote.introspection` and use browser token exchange.
+
 8. For push, generate one key with
    `niles remote init --subject mailto:you@example.com` on the relay as the Niles user.
    Securely copy that same `~/.niles/remote/vapid.json` to every host user's same path.
@@ -101,22 +116,8 @@ Funnel, public listeners or extra authentication headers are needed.
    Compare files without printing private contents. Do not generate independent keys,
    overwrite an existing key, put keys in the web root, or copy subscriptions.
    If push is declined, skip initialization and report push as unconfigured.
-9. If WoL is requested, keep the relay awake on the targets' LAN. Enable WoL in
-   each target's firmware and OS, determine the correct NIC MAC and subnet broadcast, and add this
-   server-side map only on the relay, alongside its relay_node:
-
-   ```yaml
-     wake_hosts:
-       desktop:
-         mac: "01:23:45:67:89:ab"
-         broadcast: 192.168.1.255
-   ```
-
-   IDs must match hosts.json. Invalid targets stop backend startup. No MAC or
-   broadcast address belongs in hosts.json, JavaScript or a phone request.
-   If a target cannot support WoL, leave it out and report that limitation.
-10. Create a user service for `niles remote --port 8765` on each host, using the
-    absolute binary path and an explicit PATH containing tailscale, tmux and the
+9. Create a user service for `niles remote --port 8765` on each host, using the
+    absolute binary path and an explicit PATH containing tmux and the
     agent CLIs. Preserve the user's HOME and credential environment; shell startup
     files are not loaded. On Linux use `~/.config/systemd/user/niles-remote.service`,
     with After=network-online.target, Restart=on-failure, RestartSec=5 and
@@ -130,16 +131,26 @@ Funnel, public listeners or extra authentication headers are needed.
 
 ## Configure the relay origin
 
-11. Write hosts.json in the built PWA root. IDs are unique, match
-    `[A-Za-z0-9][A-Za-z0-9_-]*`, and stay stable; names are nonempty display text.
-    Choose lowercase IDs: Caddy path matching cannot distinguish IDs by case alone.
-    Example (replace with the inventory):
+10. Write `hosts.json` in the built PWA root. With tsidp, set
+    `host_token_exchange` to true and give each host its own `client_id`. For direct
+    browser exchange, repeat the public `client_id` on each host entry. Use unique
+    lowercase routing IDs matching `[A-Za-z0-9][A-Za-z0-9_-]*`.
 
     ```json
-    {"hosts":[{"id":"relay","name":"Relay"},{"id":"desktop","name":"Desktop"}]}
+    {
+      "issuer": "https://idp.example.ts.net",
+      "host_token_exchange": true,
+      "hosts": [
+        {"id": "relay", "name": "Relay", "client_id": "relay-client-id"},
+        {"id": "desktop", "name": "Desktop", "client_id": "desktop-client-id"}
+      ]
+    }
     ```
 
-12. Write a dedicated Caddyfile outside the web root, e.g.
+    For one direct host, use a single host entry with an empty ID. Route
+    `/api/*` to the host and use the PWA origin followed by `/api` as its resource.
+
+11. Write a dedicated Caddyfile outside the web root, e.g.
     `~/.config/niles/Caddyfile`. Replace example IPs with the recorded tailnet IPv4s,
     and extend one explicit handle_path per manifest host. NILES_WEB_DIR must be an
     absolute path to the built PWA root, set in Caddy's service environment:
@@ -151,9 +162,6 @@ Funnel, public listeners or extra authentication headers are needed.
     }
     http://127.0.0.1:8080 {
         bind 127.0.0.1
-        handle /api/hosts/*/wake {
-            reverse_proxy 100.64.0.1:8765
-        }
         handle_path /h/relay/* {
             reverse_proxy 100.64.0.1:8765
         }
@@ -167,52 +175,70 @@ Funnel, public listeners or extra authentication headers are needed.
         handle {
             root * "{$NILES_WEB_DIR}"
             header /hosts.json Cache-Control no-store
+            header Content-Security-Policy "connect-src 'self' https://idp.example.ts.net"
             file_server
         }
     }
     ```
 
-    handle_path strips /h/<id>, retaining /api/... and query strings. The wake route
-    retains its full path and always targets the relay. Caddy preserves Serve's
-    Tailscale-User-Login header by default; do not synthesize or append an identity.
+    handle_path strips /h/<id>, retaining /api/... and query strings. Caddy forwards
+    Authorization to each backend.
+    Replace the example login origin in the CSP with each configured discovery and
+    token endpoint origin. Keep the CSP on the shell response.
     Caddy streams text/event-stream automatically. Use its normal HTTP transport,
     not a userspace Tailscale transport. Reference:
     https://caddyserver.com/docs/caddyfile/directives/reverse_proxy
-13. With NILES_WEB_DIR set, run `caddy validate --config <Caddyfile> --adapter caddyfile`.
+12. With NILES_WEB_DIR set, run `caddy validate --config <Caddyfile> --adapter caddyfile`.
     Install a separate Caddy service as the relay user, with absolute binary/config
-    paths and that environment, using the same OS service manager as step 10.
+    paths and that environment, using the same OS service manager as step 9.
     Check that port 8080 listens only on 127.0.0.1. Start Caddy before Serve.
     Run `tailscale serve --bg --https=443 http://127.0.0.1:8080` as the configured
-    operator. Check Serve status and confirm Funnel is disabled. Serve owns TLS and
-    strips forged identity headers; Caddy is reachable only locally.
+    operator. Check Serve status and confirm Funnel is disabled. Serve owns TLS and Caddy is reachable only locally.
     Reference: https://tailscale.com/docs/features/tailscale-serve
 
 ## Verify and hand back
 
-14. From an allowed user-owned tailnet device, require 200 HTML at the relay HTTPS
-    root and a valid, noncached hosts.json. Fetch every `/h/<id>/api/sessions` and
-    `/h/<id>/api/projects`; require 200 JSON with api_version=1, the corresponding
-    arrays and Cache-Control: no-store. Check an SSE feed
-    emits its initial snapshot promptly. Confirm an unknown /h/ ID returns 404.
-    A direct request to a backend from a different tailnet node, even with a forged
-    Tailscale-User-Login, must be denied by policy or return 403. Also test an unwanted
-    user cannot access relay HTTPS. Do not treat local spoofed-header curls as proof
-    of end-to-end identity. On failures inspect service logs, policy and proxy paths;
-    stop and report the failed layer rather than claiming installation succeeded.
-15. Open the relay URL on the phone, send a harmless message and verify it at the desk.
+13. From an allowed tailnet device, require 200 HTML at the relay HTTPS root and a
+    valid, noncached hosts.json. Sign in to each host through the issuer. Verify
+    session/project listings and the initial transcript stream. After the first tsidp
+    access token expires, reopen the PWA and verify it refreshes without sign-in.
+    Confirm an unknown
+    host route returns 404. Through the relay, submit a request to each host with
+    `Tailscale-User-Login` and no bearer token and require 401. Use a short-lived
+    token for one host at another host and require 401. Use a read grant to open
+    a transcript. Confirm lead messaging returns 404 and starting a session returns 403.
+    Keep tokens out of logs and command history. Verify an unauthorized tailnet peer cannot
+    reach the relay HTTPS listener. Report any verification that could not be run.
+14. Open the relay URL on the phone, send a harmless message and verify it at the desk.
     Install/Add to Home Screen (iOS push requires 16.4+ and the installed app). With all
     hosts awake and push configured, Enable notifications must register one shared
     subscription through every host; fix any named failure and retry. Check each public VAPID key matches,
     trigger a notification per host, and confirm it opens the correct host/session.
     Rerun registration after adding hosts. Opening notifications needs Tailscale.
-16. If WoL is configured, test `POST /api/hosts/desktop/wake` through relay HTTPS with
-    Content-Type: application/json and body `null`; require 204, then check actual
-    wake/reachability and the phone's asleep-host Wake button. A sent packet is not
-    proof of waking; unknown IDs return 404. Never accept a phone-supplied destination.
-17. Record exactly which mounts, files and services this run created. Report the relay
+15. Record exactly which mounts, files and services this run created. Report the relay
     URL, host/route inventory, changed files and policy, service/log
     locations, restart commands, verification results and anything untested. For
     recovery remove only files/services and the Serve mount created in this run
     (`tailscale serve --bg --https=443 --set-path=/ off`), after rechecking ownership;
     preserve keys, config and
     unrelated mounts. Upgrade binary and PWA together and close/reopen app windows.
+
+## Cut over an existing relay-identity deployment
+
+- Inventory the existing Niles services, assets, routes, tailnet policy and shared VAPID key.
+  Complete issuer setup from step 7 for every host before changing listeners.
+- Stage the matching binary, PWA assets, and config for all hosts. Stop the old Niles
+  services during the cutover. Remove `remote.relay_node` and any older
+  `remote.allowed_users` key. Set `remote.web` and `remote.issuers` on every host. Move
+  any `remote.mcp.issuers` to `remote.issuers` and merge those grants. For tsidp, set
+  `remote.introspection` and install each host’s own client secret in its service
+  environment. Remove retired wake configuration. Preserve VAPID keys, network
+  grants, and unrelated mounts and services. While the old services
+  are stopped, move each host’s `~/.niles/remote/subscriptions` directory aside. Niles
+  recreates it at startup.
+- Update the Caddy asset root, host routes and shell CSP from step 11. Remove
+  identity-header injection and any retired wake route. Set the issuer and each
+  host’s client ID in `hosts.json` and enable host token exchange for tsidp. Validate the Caddy
+  config and restart Caddy and the Niles services. Keep the existing HTTPS Serve mount.
+- Reopen the PWA and follow steps 13–14. After signing in to all hosts, enable notifications
+  again to bind registrations to issuer identities. Preserve the shared signing key.

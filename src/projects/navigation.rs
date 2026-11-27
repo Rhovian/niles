@@ -45,19 +45,11 @@ enum AgentState {
     Waiting,
 }
 
-pub(crate) fn collect() -> Result<Vec<Project>> {
-    collect_for(|_| true)
-}
-
 pub(crate) fn collect_for(allows: impl Fn(&str) -> bool) -> Result<Vec<Project>> {
     Ok(records(allows)?
         .into_iter()
         .map(|(project, _)| project)
         .collect())
-}
-
-pub(crate) fn sessions() -> Result<Vec<ForegroundSession>> {
-    sessions_for(|_| true)
 }
 
 pub(crate) fn sessions_for(allows: impl Fn(&str) -> bool) -> Result<Vec<ForegroundSession>> {

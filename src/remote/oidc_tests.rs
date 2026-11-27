@@ -1,6 +1,7 @@
 use super::*;
-use crate::config::user::FileConfig;
-use crate::remote::mcp::{Auth, ENDPOINT, LeadTools, METADATA, router};
+use crate::config::user::{FileConfig, FileMcp};
+use crate::remote::auth::Auth;
+use crate::remote::mcp::{ENDPOINT, LeadTools, METADATA, router};
 use crate::session;
 use crate::store::atomic_write;
 use crate::test_support::{home_dir, temp_dir, write_executable_script};
@@ -18,7 +19,50 @@ use std::fs;
 use std::iter::once;
 use std::os::unix::fs::symlink;
 use std::process::Command;
+use std::sync::OnceLock;
 use tower::ServiceExt;
+
+pub(in crate::remote) const WEB_RESOURCE: &str = "https://niles.example.test/h/desk/api";
+pub(in crate::remote) fn web_auth(resource: &str) -> Auth {
+    Auth::new(web_verifier(), https_url(resource).unwrap(), None).unwrap()
+}
+pub(in crate::remote) fn web_verifier() -> Arc<Verifier> {
+    let grants =
+        [("alice", Access::Operate), ("bob", Access::Read)].map(|(subject, access)| FileGrant {
+            subject: subject.into(),
+            project: "project".into(),
+            access,
+        });
+    Arc::new(Verifier {
+        issuers: BTreeMap::from([(INTERACTIVE.into(), web_key().issuer(grants.into()))]),
+    })
+}
+pub(in crate::remote) fn authorization(subject: &str, audience: &str) -> String {
+    authorization_until(
+        subject,
+        audience,
+        get_current_timestamp().saturating_add(300),
+    )
+}
+pub(in crate::remote) fn authorization_until(subject: &str, audience: &str, exp: u64) -> String {
+    format!(
+        "Bearer {}",
+        web_key().sign(&json!({
+            "iss": INTERACTIVE, "sub": subject, "aud": audience, "exp": exp,
+        }))
+    )
+}
+pub(in crate::remote) fn principal(subject: &str) -> Principal {
+    Principal {
+        issuer: INTERACTIVE.into(),
+        subject: subject.into(),
+    }
+}
+
+fn web_key() -> &'static SigningKey {
+    static KEY: OnceLock<SigningKey> = OnceLock::new();
+    KEY.get_or_init(SigningKey::new)
+}
 
 const RESOURCE: &str = "https://mcp.example.test/mcp";
 const INTERACTIVE: &str = "https://login.example.test";
@@ -50,9 +94,15 @@ impl SigningKey {
         encode(&header, claims, &self.private).unwrap()
     }
 
-    fn issuer(&self, grants: Vec<FileMcpGrant>) -> Issuer {
+    fn issuer(&self, grants: Vec<FileGrant>) -> Issuer {
         Issuer {
             grants,
+            verification: Verification::Jwt(self.jwt_keys()),
+        }
+    }
+
+    fn jwt_keys(&self) -> JwtKeys {
+        JwtKeys {
             jwks_uri: Url::parse("https://unused.example.test").unwrap(),
             client: HttpClient::new().unwrap(),
             cache: Arc::new(Mutex::new(KeyCache {
@@ -184,29 +234,29 @@ async fn mcp_verifies_bearers_and_enforces_issuer_project_and_access_grants() {
     register_projects(&root);
     let path = root.join("config.yaml");
     let yaml = format!(
-        "remote:\n  mcp:\n    resource: {RESOURCE}\n    interactive_issuer: {INTERACTIVE}\n    issuers:\n      {INTERACTIVE}:\n        - {{subject: alice, project: mcp-project, access: read}}\n      {WORKLOAD}:\n"
+        "remote:\n  mcp:\n    resource: {RESOURCE}\n    interactive_issuer: {INTERACTIVE}\n  issuers:\n    {INTERACTIVE}:\n      - {{subject: alice, project: mcp-project, access: read}}\n    {WORKLOAD}:\n"
     ) + &["mcp-project", "stopped", "unregistered"]
         .map(|project| {
-            format!("        - {{subject: '{JOB}', project: {project}, access: operate}}\n")
+            format!("      - {{subject: '{JOB}', project: {project}, access: operate}}\n")
         })
         .concat();
     atomic_write(&path, &yaml).unwrap();
     let config = FileConfig::load(&path).unwrap();
     config.save(&path).unwrap();
     assert!(!fs::read_to_string(&path).unwrap().contains("port:"));
+    let issuers = config.remote.issuers;
     let config = config.remote.mcp.unwrap();
     let interactive = SigningKey::new();
     let workload = SigningKey::new();
     let fixture_app = |config: FileMcp| {
-        let grants = |name: &str| config.issuers.get(name).unwrap().clone();
+        let grants = |name: &str| issuers.get(name).unwrap().clone();
         let verifier = Verifier {
-            audience: RESOURCE.into(),
             issuers: BTreeMap::from([
                 (INTERACTIVE.into(), interactive.issuer(grants(INTERACTIVE))),
                 (WORKLOAD.into(), workload.issuer(grants(WORKLOAD))),
             ]),
         };
-        router(Auth::new(verifier, config).unwrap(), LeadTools::new())
+        router(Arc::new(verifier), config, LeadTools::new()).unwrap()
     };
     let app = fixture_app(config);
     atomic_write(
@@ -257,6 +307,9 @@ async fn mcp_verifies_bearers_and_enforces_issuer_project_and_access_grants() {
         let _previous = fields.as_object_mut().unwrap().insert(claim.into(), value);
         invalid.push((label, Some(workload.sign(&fields))));
     }
+    let mut multiple = claims.clone();
+    *multiple.get_mut("aud").unwrap() = json!([RESOURCE, WEB_RESOURCE]);
+    invalid.push(("multiple audiences", Some(workload.sign(&multiple))));
     let mut no_audience = claims.clone();
     assert!(no_audience.as_object_mut().unwrap().remove("aud").is_some());
     invalid.push(("missing audience", Some(workload.sign(&no_audience))));
