@@ -1,10 +1,10 @@
 use super::*;
 
-fn collection_source<T>(failing: bool) -> impl Fn(&dyn Fn(&str) -> bool) -> Result<Vec<T>> {
-    move |_| {
+fn collection_source<T>(failing: bool) -> Collection<T> {
+    Arc::new(move |_| {
         anyhow::ensure!(!failing, "private collection path");
         Ok(Vec::new())
-    }
+    })
 }
 
 #[tokio::test]
@@ -12,13 +12,13 @@ async fn versioned_uncached_and_errors_are_private() {
     type SourceSetter = fn(&mut AppState, bool);
     let routes: [(&str, &str, SourceSetter); 3] = [
         ("/api/projects", "projects", |state, failing| {
-            state.projects = Arc::new(collection_source(failing));
+            state.projects = collection_source(failing);
         }),
         ("/api/telemetry", "sessions", |state, failing| {
-            state.telemetry = Arc::new(collection_source(failing));
+            state.telemetry = collection_source(failing);
         }),
         ("/api/sessions", "sessions", |state, failing| {
-            state.source = Arc::new(collection_source(failing));
+            state.source = collection_source(failing);
         }),
     ];
     for (path, field, set_source) in routes {
