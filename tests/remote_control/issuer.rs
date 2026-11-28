@@ -7,8 +7,11 @@ use openssl::pkey::PKey;
 use openssl::rsa::Rsa;
 use openssl::ssl::{SslAcceptor, SslMethod};
 use openssl::x509::{X509, X509NameBuilder, extension::SubjectAlternativeName};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::process::Command;
 use std::thread;
+use url::form_urlencoded;
 
 const CLIENT_ID: &str = "phone-client";
 const CLIENT_SECRET: &str = "fixture!+secret";
@@ -156,7 +159,7 @@ impl Issuer {
         )
     }
 
-    pub(super) fn trust(&self, command: &mut std::process::Command) {
+    pub(super) fn trust(&self, command: &mut Command) {
         command
             .env("SSL_CERT_FILE", &self.cert)
             .env("NO_PROXY", "127.0.0.1")
@@ -178,18 +181,20 @@ impl Drop for Issuer {
 }
 
 fn opaque_response(issuer: &str, path: &str, data: &[u8], status: &mut &str) -> serde_json::Value {
-    let form: std::collections::BTreeMap<_, _> = url::form_urlencoded::parse(data).collect();
-    assert_eq!(form["client_id"], CLIENT_ID);
-    assert_eq!(form["client_secret"], CLIENT_SECRET);
+    let form: BTreeMap<_, _> = form_urlencoded::parse(data).collect();
+    let field = |name| form.get(name).expect(name).as_ref();
+    assert_eq!(field("client_id"), CLIENT_ID);
+    assert_eq!(field("client_secret"), CLIENT_SECRET);
     if path == "/token" {
-        assert_eq!(form["resource"], RESOURCE);
-        let (credential, valid, replacement) = if form["grant_type"] == "authorization_code" {
-            assert_eq!(form["redirect_uri"], "https://niles.example.test/");
-            assert_eq!(form["code_verifier"], "v".repeat(43));
-            (&form["code"], "valid-code", "first-refresh")
+        assert_eq!(field("resource"), RESOURCE);
+        let grant = field("grant_type");
+        let (credential, valid, replacement) = if grant == "authorization_code" {
+            assert_eq!(field("redirect_uri"), "https://niles.example.test/");
+            assert_eq!(field("code_verifier"), "v".repeat(43));
+            (field("code"), "valid-code", "first-refresh")
         } else {
-            assert_eq!(form["grant_type"], "refresh_token");
-            (&form["refresh_token"], "first-refresh", "rotated-refresh")
+            assert_eq!(grant, "refresh_token");
+            (field("refresh_token"), "first-refresh", "rotated-refresh")
         };
         if credential != valid {
             *status = "400 Bad Request";
@@ -202,30 +207,34 @@ fn opaque_response(issuer: &str, path: &str, data: &[u8], status: &mut &str) -> 
         "client_id": CLIENT_ID, "exp": get_current_timestamp().saturating_add(300),
         "token_type": "Bearer",
     });
-    match form["token"].as_ref() {
+    let fields = claims.as_object_mut().unwrap();
+    let (name, value) = match field("token") {
         "valid-opaque" => return claims,
-        "single-audience" => claims["aud"] = json!(RESOURCE),
-        "wrong-resource" => {
-            claims["aud"] = json!([CLIENT_ID, "https://niles.example.test/h/other/api"])
-        }
-        "two-resources" => {
-            claims["aud"] = json!([
+        "single-audience" => ("aud", json!(RESOURCE)),
+        "wrong-resource" => (
+            "aud",
+            json!([CLIENT_ID, "https://niles.example.test/h/other/api"]),
+        ),
+        "two-resources" => (
+            "aud",
+            json!([
                 CLIENT_ID,
                 RESOURCE,
                 "https://niles.example.test/h/other/api"
-            ])
-        }
+            ]),
+        ),
         "wrong-client" => {
-            claims["client_id"] = json!("another-host-client");
-            claims["aud"] = json!(RESOURCE);
+            fields.insert("client_id".into(), json!("another-host-client"));
+            ("aud", json!(RESOURCE))
         }
-        "foreign-issuer" => claims["iss"] = json!("https://other.example.test"),
-        "unknown-subject" => claims["sub"] = json!("other-user"),
-        "future" => claims["nbf"] = json!(get_current_timestamp().saturating_add(300)),
-        "wrong-type" => claims["token_type"] = json!("DPoP"),
-        "empty-subject" => claims["sub"] = json!(""),
-        "expired" => claims["exp"] = json!(get_current_timestamp().saturating_sub(1)),
+        "foreign-issuer" => ("iss", json!("https://other.example.test")),
+        "unknown-subject" => ("sub", json!("other-user")),
+        "future" => ("nbf", json!(get_current_timestamp().saturating_add(300))),
+        "wrong-type" => ("token_type", json!("DPoP")),
+        "empty-subject" => ("sub", json!("")),
+        "expired" => ("exp", json!(get_current_timestamp().saturating_sub(1))),
         _ => return json!({"active": false}),
-    }
+    };
+    fields.insert(name.into(), value);
     claims
 }
