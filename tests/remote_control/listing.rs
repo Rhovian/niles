@@ -40,7 +40,12 @@ fn invalid_remote_configuration_fails_before_binding() {
 
 #[test]
 fn fatal_server_error_exits_while_a_blocking_request_is_running() {
-    let env = TestEnv::with_tmux("remote-fatal", TMUX);
+    // The push watcher can invoke tmux as soon as the server starts.
+    let tmux = TMUX.replace(
+        "kill-session)",
+        "kill-session) echo $$ > \"$HOME/blocked-pid\"; exec sleep 30;",
+    );
+    let env = TestEnv::with_tmux("remote-fatal", &tmux);
     atomic_write(marker(&env, "running"), "").unwrap();
     assert_command_success(
         "enable push",
@@ -48,13 +53,6 @@ fn fatal_server_error_exits_while_a_blocking_request_is_running() {
     );
     let mut server = Server::new(&env);
     let pid = env.home.join("blocked-pid");
-    write_executable(
-        &env.bin.join("tmux"),
-        &TMUX.replace(
-            "kill-session)",
-            "kill-session) echo $$ > \"$HOME/blocked-pid\"; exec sleep 30;",
-        ),
-    );
     let _socket = server.socket("DELETE", "/api/projects/api/session", "");
     let until = |condition: &mut dyn FnMut() -> bool| {
         let deadline = Instant::now() + Duration::from_secs(5);
