@@ -7,6 +7,8 @@ import { BUCKET_MS, telemetrySchema } from './telemetry-data';
 import type { Host } from './hosts';
 
 const hosts = [{ id: 'desk', name: 'Desktop' }, { id: 'laptop', name: 'Laptop' }];
+const DESK_CACHE = 'niles.oauth.telemetry:http://localhost:3000/h/desk/api';
+const LAPTOP_CACHE = 'niles.oauth.telemetry:http://localhost:3000/h/laptop/api';
 const collected_at = new Date().toISOString();
 const bucket = new Date(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS).toISOString();
 const snapshot = { api_version: 1, collected_at, sessions: [{
@@ -42,17 +44,18 @@ it('fetches machines concurrently, isolates colliding sessions and opens from th
 it('retains last good data and collection time across remount, failure and recovery', async () => {
   const app = render(<Telemetry />);
   await (await findRegion('Laptop')).findByText('42 tokens');
-  app.unmount(); server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 502 } as Response);
+  app.unmount(); sessionStorage.clear();
+  server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 502 } as Response);
   render(<Telemetry />);
   const laptop = await findRegion('Laptop');
   await laptop.findByText('Asleep or unreachable');
   expect(laptop.getByText('42 tokens')).toBeDefined();
   expect(laptop.getByText(new Date(collected_at).toLocaleString(), { selector: 'time' }).getAttribute('datetime')).toBe(collected_at);
-  server.responses.set('/h/laptop/api/telemetry', { ok: false, status: 500 } as Response);
+  server.responses.set('/h/laptop/api/telemetry', new Response(null, { status: 500 }));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
-  expect((await laptop.findByRole('alert')).textContent).toContain('500');
+  await laptop.findByText('Failed: API request failed (500)');
   expect(laptop.getByText('42 tokens')).toBeDefined();
-  expect(JSON.parse(localStorage.getItem('niles.telemetry.v1:laptop')!)).toEqual(snapshot);
+  expect(JSON.parse(localStorage.getItem(LAPTOP_CACHE)!)).toEqual(snapshot);
   server.responses.clear(); fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
   await laptop.findByText('Connected');
   expect(laptop.queryByRole('alert')).toBeNull();
@@ -71,7 +74,7 @@ it.each([
   server.responses.set('/h/laptop/api/telemetry', json(data));
   render(<Telemetry />);
   expect((await (await findRegion('Laptop')).findByRole('alert')).textContent).toContain(message);
-  expect(localStorage.getItem('niles.telemetry.v1:laptop')).toBeNull();
+  expect(localStorage.getItem(LAPTOP_CACHE)).toBeNull();
 });
 it('times out a hung host without blocking another host', async () => {
   server.responses.set('/h/laptop/api/telemetry', options => new Promise((_, reject) =>
@@ -92,7 +95,7 @@ it('ignores a cancelled refresh and uses the newest response', async () => {
   await desktop.findByText('42 tokens');
   await act(async () => { finish(json({ ...snapshot, sessions: [] })); });
   expect(desktop.getByText('42 tokens')).toBeDefined();
-  expect(JSON.parse(localStorage.getItem('niles.telemetry.v1:desk')!)).toEqual(snapshot);
+  expect(JSON.parse(localStorage.getItem(DESK_CACHE)!)).toEqual(snapshot);
 });
 it('filters time buckets and rejects unaligned buckets at the boundary', async () => {
   const now = Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS + 300_000;
@@ -109,19 +112,19 @@ it('filters time buckets and rejects unaligned buckets at the boundary', async (
   expect(desktop.queryByText('demo / old-session')).toBeNull();
   expect(telemetrySchema.safeParse({ ...snapshot, sessions: [{ ...snapshot.sessions[0], buckets: { '2026-10-01T00:01:00Z': 1 } }] }).success).toBe(false);
 });
-it('uses the local backend only when the manifest is absent', async () => {
+it('uses the local backend for a direct host manifest', async () => {
   serve(null, snapshot);
   render(<Telemetry />); await (await findRegion('This host')).findByText('42 tokens');
   expect(server.fetcher).toHaveBeenCalledWith('/api/telemetry', expect.objectContaining({ cache: 'no-store' }));
   await waitFor(() => expect(server.fetcher).toHaveBeenCalledTimes(2));
 });
 it('replaces incompatible and malformed cached snapshots from healthy hosts', async () => {
-  localStorage.setItem('niles.telemetry.v1:desk', JSON.stringify({ ...snapshot, api_version: 99 }));
-  localStorage.setItem('niles.telemetry.v1:laptop', '{bad json');
+  localStorage.setItem(DESK_CACHE, JSON.stringify({ ...snapshot, api_version: 99 }));
+  localStorage.setItem(LAPTOP_CACHE, '{bad json');
   render(<Telemetry />);
   await (await findRegion('Desktop')).findByText('Connected');
   await (await findRegion('Laptop')).findByText('Connected');
-  for (const host of hosts) expect(JSON.parse(localStorage.getItem(`niles.telemetry.v1:${host.id}`)!)).toEqual(snapshot);
+  for (const key of [DESK_CACHE, LAPTOP_CACHE]) expect(JSON.parse(localStorage.getItem(key)!)).toEqual(snapshot);
 });
 it('preserves row identity for reused worker IDs when snapshots reorder them', async () => {
   const earlier = { ...snapshot.sessions[0], entry: false, created_at: new Date(Date.now() - 3_600_000).toISOString() };
@@ -132,7 +135,7 @@ it('preserves row identity for reused worker IDs when snapshots reorder them', a
   const before = desktop.getAllByRole('row');
   sessions = [later, earlier];
   fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry' }));
-  await waitFor(() => expect(JSON.parse(localStorage.getItem('niles.telemetry.v1:desk')!).sessions[0].created_at).toBe(later.created_at));
+  await waitFor(() => expect(JSON.parse(localStorage.getItem(DESK_CACHE)!).sessions[0].created_at).toBe(later.created_at));
   const after = desktop.getAllByRole('row');
   expect(after[1]).toBe(before[2]);
   expect(after[2]).toBe(before[1]);

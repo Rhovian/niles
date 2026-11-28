@@ -1,8 +1,8 @@
 # Remote access over Tailscale
 
-Phone access is shell access on the Niles host: the phone can instruct agents that run commands
-as you, and workers bypass approval prompts. Serve the app only from your relay, never from
-a public site. Read the [threat model](security.md#remote-api) first.
+An `operate` grant gives shell authority on the host through its agents. Serve the PWA
+from the relay on your tailnet. Each Niles host verifies issuer tokens and applies project
+grants. Read the [threat model](security.md#remote-api) first.
 
 For chat apps, CI and other MCP clients, see [remote MCP](remote-mcp.md).
 
@@ -13,8 +13,10 @@ For chat apps, CI and other MCP clients, see [remote MCP](remote-mcp.md).
   Building the app from a checkout also needs Node 24 and pnpm 10.8.1
   ([web prerequisites](../apps/pwa/README.md)).
 - Tailscale 1.96.2 or newer on the host and phone, both on your tailnet, with tailnet ACLs or
-  grants restricting the host's TCP 443 to your users and devices. The phone must sign in as a
-  user, not a tagged device, because tagged clients get no identity header.
+  grants restricting the relay's TCP 443 and the backend ports to the intended peers.
+- An HTTPS issuer that supports browser-based OAuth authorization code with S256 PKCE,
+  OpenID Connect discovery, and bearer access tokens with host-specific audiences. Niles
+  supports JWTs and opaque tokens with RFC 7662 introspection.
 - MagicDNS and HTTPS enabled in the [Tailscale DNS settings](https://login.tailscale.com/admin/dns).
 - On macOS, the open-source `tailscaled` from Homebrew instead of the GUI app, which can't
   serve a directory. See [Serve's requirements](https://tailscale.com/docs/features/tailscale-serve).
@@ -47,39 +49,105 @@ from as code running on your host.
 Use the [remote-setup skill](../skills/remote-setup/SKILL.md) with an agent that can access
 these machines. It is an ordinary disk skill: copy its directory to
 `~/.niles/skills/remote-setup/` to use it across projects, or follow the linked instructions
-in an attended agent session. Give it the relay and host inventory, permitted phone users,
-push contact URI, and any Wake-on-LAN targets. It handles fresh installations; migration of
-existing remote deployments is out of scope.
+in an attended agent session. Give it the relay and host inventory, issuer and client details,
+per-host project grants and push contact URI. The skill covers
+fresh installs and upgrades from relay identity.
 
 The relay stays awake and also runs Niles. Tailscale Serve terminates HTTPS and forwards to
 Caddy on `127.0.0.1:8080`. Caddy serves the built PWA and `hosts.json`, strips `/h/<id>` from
 host API requests, and forwards them to each host's tailnet IPv4 port (default 8765).
 Serve cannot proxy directly to other tailnet IPs because its dialer bypasses Tailscale routes.
-The phone uses one HTTPS origin; no CORS configuration is needed. Use Serve, never Funnel.
+The phone uses one HTTPS origin for the shell and all Niles API requests. Use Serve on the
+tailnet. The browser also contacts the issuer, where discovery and token exchange must
+allow CORS from the PWA origin when made by the browser. Set a Caddy response header on the shell with
+`Content-Security-Policy: connect-src 'self' https://login.example.com`. Substitute the
+actual discovery and token endpoint origins.
 
-Every host, including the relay, needs this in its existing `~/.niles/config.yaml`:
+### Configure tsidp
+
+Keep tsidp on the tailnet and use its HTTPS issuer URL. Register a separate confidential client for
+each Niles host in the tsidp admin UI. Give each client the exact PWA origin
+followed by `/` as its redirect URI. Use a user-owned tailnet device for phone sign-in.
+Configure the `tailscale.com/cap/tsidp` application capability on tsidp for the
+intended phone users. Set `users` to their login names and `resources` to each
+exact Niles API resource, including the relay if it runs Niles. Use a separate
+admin grant for client registration. Allow each backend to reach tsidp over HTTPS.
+[tsidp capability setup](https://github.com/tailscale/tsidp/blob/v0.0.21/README.md#setting-an-application-capability-grant)
+
+Serve a noncached `hosts.json` beside the shell:
+
+```json
+{
+  "issuer": "https://idp.example.ts.net",
+  "host_token_exchange": true,
+  "hosts": [
+    {"id": "relay", "name": "Relay", "client_id": "relay-client-id"},
+    {"id": "desktop", "name": "Desktop", "client_id": "desktop-client-id"}
+  ]
+}
+```
+
+On each host, including the relay, merge this into its `~/.niles/config.yaml`.
+Use the host’s own bind address, resource, and client ID from the manifest.
+Put only that client’s secret in the named variable in its Niles service environment.
 
 ```yaml
 remote:
-  relay_node: nYOUR_RELAY_STABLE_NODE_ID
+  web:
+    bind: 100.64.0.2
+    resource: https://relay.example.ts.net/h/desktop/api
+  introspection:
+    issuer: https://idp.example.ts.net
+    client_id: desktop-client-id
+    client_secret_env: NILES_PWA_CLIENT_SECRET
+  issuers:
+    https://idp.example.ts.net:
+      - {subject: '123456', project: demo, access: operate}
+      - {subject: '654321', project: demo, access: read}
 ```
 
-Use `Node.StableID` from `tailscale whois --json <relay-tailnet-ip>`. Caddy must use the relay's
-own tailnet IP for its backend too, so WhoIs can authenticate its connection. Hosts require
-exactly one forwarded Tailscale login and the configured relay as their TCP peer. There is
-no `remote.allowed_users`: tailnet policy restricts phone users to relay TCP 443 and the relay
-to host backend ports. Anyone admitted through the relay has shell authority on every host.
+Use each user’s exact decimal Tailscale user ID as the grant subject. The PWA
+uses PKCE and sends the authorization code and verifier to the selected host.
+That host redeems the code and refreshes tokens using its own secret and fixed
+resource. The PWA keeps each host’s access and refresh tokens across launches.
+When an access token expires, the app uses that host’s refresh token and saves
+the replacement returned by tsidp. An invalid or expired refresh grant requires
+sign-in again. Each host authenticates to HTTPS introspection with its own client credentials.
+Niles requires the introspected client ID to match the host’s registration and
+the audience to name exactly that host resource. tsidp also includes the client
+ID in the audience. [tsidp token implementation](https://github.com/tailscale/tsidp/blob/v0.0.21/server/token.go)
+
+### Other issuers
+
+For a JWT issuer with a public browser client, put its `client_id` on every host
+entry and omit `host_token_exchange` and `remote.introspection`. Register
+the same redirect URI and use authorization code with S256 PKCE. Issue signed access tokens with the exact host resource as their
+sole audience. Hosts can configure one opaque issuer alongside JWT issuers. Other
+opaque issuers must advertise HTTPS introspection and token endpoints and support
+`client_secret_post` on both. An active introspection result must include `active`, `iss`,
+`sub`, `exp`, `aud`, and the issuing `client_id`. The host verifies JWT issuers locally, including GitHub Actions.
+
+For a direct single-host setup, keep the same manifest fields and set `hosts` to
+one entry with an empty `id` and the same client fields as above. Route `/api/*`
+to the host and use `https://<pwa-origin-host>/api` as its resource. Projects and transcripts are visible
+with either grant. Starting and stopping sessions, messaging and closing workers require
+`operate` on that project. The web and MCP listeners on a host share `remote.issuers`,
+and each listener requires its own resource audience. Tailnet policy continues to restrict
+network reachability. Caddy preserves the `Authorization` header on every proxied API route.
 
 The skill configures tags and grants, explicit Caddy routes, a noncached host manifest,
-shared VAPID keys, optional server-side WoL targets, and OS user services. It verifies the
+shared VAPID keys, and OS user services. It verifies the
 API through the relay and tests denied access. Its Caddyfile and service files live outside
 the public asset directory. Never put private keys or Niles state in the PWA directory.
 
 ## Install on the phone
 
-Open `https://<relay>.<tailnet>.ts.net/` on the phone, select a live session and send a harmless
-message; check it arrives at the desk. Then use the browser's Add to Home Screen. On iOS 16.4+,
-push needs the installed app: choose Enable notifications there. Notifications arrive even with
+Open `https://<relay>.<tailnet>.ts.net/` on the phone. Choose **Sign in to** for each host
+you want to open and complete sign-in in the same app window. The app reuses each host’s
+credentials across launches and refreshes through the selected host when available. Select a live session and send
+a harmless message with an `operate` grant. Check that it arrives at the desk. Use the
+browser's Add to Home Screen to install the app. On iOS 16.4+, use **Enable notifications**
+from the installed app after signing in to all hosts. Notifications arrive even with
 Tailscale off, but opening one needs Tailscale. See [notification behavior](../apps/pwa/README.md#notifications).
 
 ## Using it
@@ -92,8 +160,8 @@ each machine independently. An unreachable machine retains its last successful s
 “As of” timestamp; relay gateway failures (502/503/504) and request timeouts are classified as unreachable.
 A network failure reaching the relay shows one connection notice suggesting reconnecting Tailscale,
 while other API failures are shown as Failed alongside any cached usage. Totals include these stale
-snapshots, so check collection times when comparing machines. Snapshots persist in browser site
-data; clearing it removes the cache. Without a relay manifest the view uses the local backend.
+snapshots, so check collection times when comparing machines. The browser keeps each
+snapshot across launches until sign-in clears it.
 An outdated or malformed cache is discarded with a notice and refreshed from the server.
 Browser storage failures are reported explicitly while fresh fetched usage remains visible.
 The CLI TELEMETRY panel remains local-only.
@@ -121,7 +189,8 @@ text is returned. Run matching web/backend releases on every host.
 
 ## Troubleshooting
 
-- 403: check the request comes through the configured relay and the phone isn't a tagged device.
+- For HTTP 401, sign in to the host again and check the issuer, token expiry and audience.
+- For HTTP 403, check the issuer, subject and project access in the host’s grants.
 - 404 at `/h/<id>/api/sessions`, or HTML instead of JSON: check the manifest ID and Caddy
   `handle_path /h/<id>/*` route. Strip only `/h/<id>`, retaining `/api/...`.
 - 502: `niles remote` isn't running, or the proxy port doesn't match `--port`.
@@ -147,10 +216,26 @@ launchctl kickstart -k gui/$(id -u)/dev.niles.remote   # macOS
 systemctl --user restart niles-remote                   # Linux
 ```
 
-To upgrade a release install, install matching new binary and web assets as above, update
-Caddy's asset directory, validate its config and restart the affected services. To upgrade a
-checkout, rerun `scripts/install-remote.sh` and restart. Close and reopen every Niles app
-window. Upgrade the binary and app together: a version mismatch blocks chat.
+To upgrade a release install, install matching new binary and web assets as above. For a
+checkout, rerun `scripts/install-remote.sh`. Close and reopen every app window after
+restarting the services.
+
+When moving from relay identity, prepare the client registrations, resources and grants first.
+Stop the old Niles services during the cutover. On every host, remove `remote.relay_node`
+and any older `remote.allowed_users` key and apply the `remote.web` and `remote.issuers`
+settings above. For tsidp, configure `remote.introspection` with a separate client ID
+and secret on each host. Remove any legacy `remote.wake_hosts` entry. Move existing
+`remote.mcp.issuers` up to `remote.issuers` and merge its grants.
+While the old services are stopped, move `~/.niles/remote/subscriptions` aside on each
+host. Niles recreates it for issuer-backed registrations. Keep the existing tailnet policy and
+VAPID key. Update Caddy to serve the matching new assets and forward bearer headers.
+For tsidp, set the issuer and per-host client IDs in the manifest and enable host
+token exchange. For a public client, move any top-level client ID into each host
+entry. Remove retired wake routes and manifest entries. Update the shell CSP
+with the issuer origins. Validate the Caddy config and restart
+Caddy and the Niles services. Test issuer sign-in, a rejected forged-header request,
+and cross-host audience rejection. Re-enable notifications
+from the upgraded PWA after sign-in to bind each registration to an issuer identity.
 
 To uninstall, inspect the files and services recorded by the setup skill. Stop and remove
 only the Niles and dedicated Caddy services it created, then remove only its Serve root mount
@@ -169,35 +254,5 @@ initialize independent keys per host.
 With the relay's `/hosts.json` listing all hosts, Enable notifications verifies that every
 host uses the same key, creates or reuses one browser subscription, and registers it through
 each `/h/<id>/api/push/subscribe`. All hosts must be awake during registration. A failed
-registration names the host; retry after fixing it. Existing registrations remain valid.
-Enable notifications again after adding a host. Notifications display the originating host
+registration names the host; retry after fixing it. Enable notifications again after migrating from relay identity or adding a host. Notifications display the originating host
 and open its session even when other hosts use the same session ID.
-
-## Wake-on-LAN through the relay
-
-Keep the relay awake on the same LAN as the sleeping hosts and enable Wake-on-LAN
-in each host's firmware and OS. Add targets to the relay's `~/.niles/config.yaml`:
-
-```yaml
-remote:
-  relay_node: nYOUR_RELAY_STABLE_NODE_ID
-  wake_hosts:
-    desktop:
-      mac: "01:23:45:67:89:ab"
-      broadcast: 192.168.1.255
-```
-
-Use the same IDs as `/hosts.json`; MAC addresses have six colon-separated hex
-bytes. Restart `niles remote` after editing. Invalid targets stop startup.
-Caddy must route `/api/hosts/*/wake` to the relay's own Niles tailnet listener,
-preserving Tailscale Serve's login header. Configure the relay's `relay_node` as
-its own stable node ID so its connection passes the same WhoIs check as host
-requests. Keep Caddy bound to localhost behind Tailscale Serve.
-
-`POST /api/hosts/desktop/wake` with `Content-Type: application/json` and body `null`
-sends one standard magic packet to the configured broadcast address on UDP port 9.
-It returns 204 after sending, 404 for an unknown ID, and 500 on a socket failure.
-It requires the same relay identity as other API routes. MAC and destination
-addresses never come from the phone. An asleep host's Wake button uses this relay
-route; successful sending does not guarantee the host will wake. Normal polling
-recognizes it when its API becomes reachable.

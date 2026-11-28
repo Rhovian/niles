@@ -77,7 +77,7 @@ pub enum CommandName {
     /// Serve the configured remote listeners (requires --features remote).
     #[command(args_conflicts_with_subcommands = true)]
     Remote {
-        /// Port for the tailnet relay API. Set remote.mcp.port for MCP.
+        /// Port for the web API. Set remote.mcp.port for MCP.
         #[arg(long, default_value_t = 8765)]
         port: u16,
         #[command(subcommand)]

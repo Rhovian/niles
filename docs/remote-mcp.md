@@ -2,12 +2,11 @@
 
 Build Niles with `--features remote` and run `niles remote` as the Niles host user.
 Use the same user service and `niles doctor` checks as for the PWA. The process enables
-MCP when `remote.mcp` is configured and enables the relay API when `remote.relay_node`
+MCP when `remote.mcp` is configured and enables the web API when `remote.web`
 is configured. MCP-only hosts can omit the relay configuration and Tailscale.
-Wake-on-LAN hosts configured in `remote.wake_hosts` require the relay API.
 
 MCP listens on `127.0.0.1:8766` by default. Set `remote.mcp.port` to change it.
-The `--port` flag sets the relay API port.
+The `--port` flag sets the web API port.
 Put an HTTPS reverse proxy on the same host and give clients the canonical URL,
 for example `https://niles.example.com/mcp`.
 Preserve the authority in `Host`, the request paths and the `Authorization` header.
@@ -20,7 +19,8 @@ niles.example.com {
 }
 ```
 
-Set `remote.mcp` in `~/.niles/config.yaml`. The resource URL is also the exact token
+Set `remote.mcp` and the shared `remote.issuers` in `~/.niles/config.yaml`. Move any
+existing `remote.mcp.issuers` to `remote.issuers` on upgrade. The resource URL is also the exact token
 audience. Use the exact issuer (`iss`) and subject (`sub`) values published by each
 provider. Grants match registered project names.
 
@@ -29,11 +29,11 @@ remote:
   mcp:
     resource: https://niles.example.com/mcp
     interactive_issuer: https://login.example.com
-    issuers:
-      https://login.example.com:
-        - {subject: 'alice-provider-subject', project: demo, access: read}
-      https://token.actions.githubusercontent.com:
-        - {subject: 'repo:example/demo:ref:refs/heads/main', project: demo, access: operate}
+  issuers:
+    https://login.example.com:
+      - {subject: 'alice-provider-subject', project: demo, access: read}
+    https://token.actions.githubusercontent.com:
+      - {subject: 'repo:example/demo:ref:refs/heads/main', project: demo, access: operate}
 ```
 
 A `read` grant allows project and session listings and transcript reads. An `operate`
@@ -47,28 +47,28 @@ A verified identity with no grants receives HTTP 403. If a grant does not cover 
 requested project or operation, the tool returns an error message in its MCP result.
 Restart `niles remote` after editing MCP settings, grants or issuers.
 
-Every configured issuer's discovery document and signing keys must be reachable over
+Every issuer's discovery document and each JWT issuer’s signing keys must be reachable over
 HTTPS with publicly trusted TLS at startup. The process exits if either fetch fails.
 Niles refreshes keys on demand after five minutes. On a failed refresh it keeps the last
 good keys for up to 15 minutes from the last successful fetch. Keep the host clock
-synchronized. Token validity allows 60 seconds of clock skew.
+synchronized. Local JWT validation allows 60 seconds of clock skew.
 
 ## Interactive clients
 
 Set `interactive_issuer` to a listed issuer to advertise it for sign-in. Leave it unset
-for workload-only access. Configure the interactive issuer to issue signed JWT access tokens
-for the MCP resource and
-support authorization code with PKCE and the client's registration method, typically DCR or
-CIMD. For cloud chat clients, both the issuer and endpoint must be reachable from the
+for workload-only access. Configure the issuer for the MCP resource and the client's
+registration method, typically DCR or CIMD with authorization code and PKCE. For cloud chat clients, both the issuer and endpoint must be reachable from the
 vendor's egress. Add the resource URL to the client as a remote MCP server. Its discovery
 starts from the 401 Bearer challenge, which links to the public protected resource metadata.
 Consult your client's requirements. [Claude connector authentication](https://claude.com/docs/connectors/building/authentication),
 [ChatGPT custom MCP servers](https://developers.openai.com/api/docs/guides/custom-mcp-server).
 
-Configure the provider to place the exact resource URL in the JWT access token's
+Configure the provider to place the exact resource URL as the sole value in the JWT access token’s
 `aud` claim. Common provider defaults can produce a different audience or opaque tokens.
-tsidp and Google user OAuth access tokens are opaque. [tsidp token implementation](https://github.com/tailscale/tsidp/blob/main/server/token.go),
-[Google token types](https://docs.cloud.google.com/docs/authentication/token-types).
+Opaque tokens from a configured introspection issuer such as tsidp use the same
+project grants. See the [remote PWA guide](remote.md#configure-tsidp) for issuer setup.
+An interactive MCP client must support the issuer’s registration and redemption
+requirements. The PWA’s host-side code exchange serves the PWA.
 
 Clients that send an `Origin` header, including browser-based MCP tools, receive 403
 with valid credentials. Use an MCP client that connects from its desktop process or backend.

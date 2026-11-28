@@ -37,7 +37,13 @@ connection banner; it does not replay transcripts or queue messages for later.
 ## API v1 contract
 
 `src/api.ts` is the single client contract and runtime JSON parse boundary. All
-URLs are same origin. JSON property names use snake_case. IDs are opaque strings;
+API URLs are same origin. `hosts.json` supplies the issuer and OAuth client IDs.
+The PWA uses the host’s API URL as its audience and signs in using authorization
+code and S256 PKCE. Each host's access token persists across launches in local
+storage. The app sends it as a bearer on API requests and event streams. A host’s
+HTTP 401 triggers refresh if the host’s confidential client issued a refresh token.
+An invalid refresh grant prompts sign-in for that host. The API applies read or operate grants by
+project. JSON property names use snake_case. IDs are opaque strings;
 the client percent-encodes session IDs in URL path segments.
 
 - `GET /api/projects` → `200 {"api_version":1,"projects":[Project]}`. Additive v1
@@ -139,21 +145,26 @@ fields are additive optional API v1 metadata. The chat follows the latest conten
 through viewport and content resizing; scrolling up pauses following until the
 operator scrolls back to the bottom. No extra scroll controls are shown.
 
-## Relay hosts
+## Host manifest
 
-Serve a noncached `/hosts.json` beside the shell to merge hosts in one sidebar:
+Serve a noncached `/hosts.json` beside the shell in every deployment:
 
 ```json
-{"hosts":[{"id":"desktop","name":"Desktop"},{"id":"laptop","name":"Laptop"}]}
+{
+  "issuer": "https://login.example.com",
+  "hosts": [
+    {"id": "desktop", "name": "Desktop", "client_id": "niles-phone"},
+    {"id": "laptop", "name": "Laptop", "client_id": "niles-phone"}
+  ]
+}
 ```
 
-The list must be nonempty. IDs are unique, case-sensitive routing names, starting
-with an ASCII letter or digit and containing only letters, digits, `_` and `-`.
-Names are nonempty display labels. The relay routes `/h/<id>/api/...` to that
-host's `/api/...`; the client never connects directly to a tailnet IP. Only a
-manifest 404 selects the legacy single-host `/api/...` mode; malformed manifests
-and other HTTP errors stop loading and show an error. The development mock uses
-this single-host mode.
+The list must be nonempty. Relay IDs are unique routing names, starting with an
+ASCII letter or digit and containing only letters, digits, `_` and `-`. Names
+are nonempty display labels. The relay forwards `/h/<id>/api/...` to the host’s
+`/api/...` on the tailnet. A single direct host uses an empty ID and `/api/...`
+at the PWA origin. The development mock uses
+the direct single-host manifest. A missing or invalid manifest stops loading.
 
 Projects and workers are grouped under each host; identical names and IDs remain
 separate. Remembered project keys and session link IDs are JSON tuples
@@ -165,10 +176,9 @@ An incompatible or invalid host cannot open chat; healthy hosts remain usable.
 Each host refreshes independently every 15 seconds and on window focus, with an
 eight-second request timeout. Network failures, timeouts and relay 502/503/504
 responses show **Asleep**, clear that host's chat, and recover on a later refresh.
-Authorization and other HTTP failures show errors instead. The asleep row's **Wake**
-button posts JSON `null` to the relay's `/api/hosts/<id>/wake`. A 204 means the packet
-was sent; the host remains asleep until a refresh reaches it. Errors permit retry.
-Wake is disabled in legacy single-host mode. Notification registration verifies a shared
-VAPID key and registers one browser subscription through every manifest host's
-`/h/<id>/api/push/...` endpoints. No transcripts,
+The last telemetry snapshot stays available across launches for unreachable hosts.
+Each host entry supplies its `client_id`. With host token exchange enabled, the
+client IDs must be distinct.
+Notification registration verifies a shared VAPID key and registers one browser
+subscription through every host’s `/h/<id>/api/push/...` endpoints. No transcripts,
 host responses or outgoing messages are cached or queued.

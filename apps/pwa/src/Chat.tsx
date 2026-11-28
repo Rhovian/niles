@@ -1,3 +1,5 @@
+import { EventSource } from 'eventsource';
+import { apiFetch } from './auth';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type Connection, type Session, type Turn, RECENT_TURN_LIMIT, TAILNET_UNREACHABLE, connectionError, sendMessage, sessionSchema, snapshotSchema, turnSchema } from './api';
 import { createPortal } from 'preact/compat';
@@ -42,7 +44,7 @@ export function Chat({ base, id, title, subtitle, pane, headerTarget, working, o
   }, []);
   useEffect(() => {
     setConnection('catching up'); setStreamError('');
-    const stream = new EventSource(`${base}/events`);
+    const stream = new EventSource(new URL(`${base}/events`, location.origin), { fetch: apiFetch });
     const receive = (name: string, accept: (data: unknown) => void) => {
       stream.addEventListener(name, event => {
         try { accept(JSON.parse((event as MessageEvent<string>).data)); }

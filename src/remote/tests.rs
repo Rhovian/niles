@@ -1,12 +1,13 @@
+use super::oidc::tests::{WEB_RESOURCE, authorization, authorization_until, web_auth};
 use super::*;
 use crate::session::SessionMeta;
-use crate::store::{self, atomic_write};
+use crate::store::atomic_write;
 use crate::telemetry::SessionLink;
 use crate::telemetry::transcript::TranscriptSource;
 use crate::test_support::{TempDir, json_field, only_mut, temp_dir};
 use axum::body::{Body, BodyDataStream, to_bytes};
-use axum::http::Request as HttpRequest;
 use axum::http::request::Builder;
+use axum::http::{Request as HttpRequest, header};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::sync::Mutex;
@@ -54,10 +55,15 @@ impl Fixture {
         };
         let records = Arc::new(Mutex::new(vec![record]));
         let source_records = records.clone();
-        let state = AppState::new(
-            relay(),
-            Arc::new(move || Ok(source_records.lock().unwrap().clone())),
-        );
+        let state = AppState::new(Arc::new(move |allows| {
+            Ok(source_records
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|record| allows(&record.project))
+                .cloned()
+                .collect())
+        }));
         Self {
             root,
             records,
@@ -65,7 +71,7 @@ impl Fixture {
         }
     }
     fn app(&self) -> Router {
-        router(self.state.clone())
+        router(self.state.clone(), web_auth(WEB_RESOURCE))
     }
     async fn get(&self, path: &str) -> Response {
         self.app().oneshot(request(path)).await.unwrap()
@@ -93,28 +99,16 @@ pub(super) fn message(text: &str) -> String {
         json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":text}]}})
     )
 }
-pub(super) fn relay() -> auth::Relay {
-    auth::Relay {
-        node: "relay".into(),
-        lookup: Arc::new(|peer| {
-            assert_eq!(peer, "100.64.0.1:1234".parse().unwrap());
-            Ok("relay".into())
-        }),
-    }
-}
 fn request(path: &str) -> HttpRequest<Body> {
-    relay_request("GET", path)
-        .header("Tailscale-User-Login", "alice@example.com")
+    authenticated_request("GET", path, "alice")
         .body(Body::empty())
         .unwrap()
 }
-pub(super) fn relay_request(method: &str, path: &str) -> Builder {
+pub(super) fn authenticated_request(method: &str, path: &str, subject: &str) -> Builder {
     HttpRequest::builder()
         .method(method)
         .uri(path)
-        .extension(ConnectInfo(
-            "100.64.0.1:1234".parse::<SocketAddr>().unwrap(),
-        ))
+        .header(header::AUTHORIZATION, authorization(subject, WEB_RESOURCE))
 }
 async fn event(body: &mut BodyDataStream) -> (String, Value) {
     let bytes = time::timeout(Duration::from_secs(3), body.next())
@@ -135,31 +129,6 @@ async fn event(body: &mut BodyDataStream) -> (String, Value) {
     )
 }
 
-#[test]
-fn configuration_requires_relay_node_and_survives_config_save() {
-    for node in [
-        None,
-        Some("".into()),
-        Some(" relay".into()),
-        Some("relay\n".into()),
-    ] {
-        assert!(auth::Relay::new(node).is_err());
-    }
-    let file: user::FileConfig = store::parse_yaml("remote: { relay_node: relay }").unwrap();
-    assert_eq!(file.remote.relay_node.as_deref(), Some("relay"));
-    let root = temp_dir("remote-config");
-    let path = root.join("config.yaml");
-    file.save(&path).unwrap();
-    assert_eq!(
-        user::FileConfig::load(&path)
-            .unwrap()
-            .remote
-            .relay_node
-            .as_deref(),
-        Some("relay")
-    );
-}
-
 const ROUTES: &[&str] = &[
     "/api/telemetry",
     "/api/projects",
@@ -170,62 +139,98 @@ const ROUTES: &[&str] = &[
 ];
 
 #[tokio::test]
-async fn all_routes_require_one_forwarded_identity_and_never_cache() {
+async fn all_routes_require_a_bearer_for_this_host_and_enforce_project_grants() {
     let fixture = Fixture::new(0);
-    for path in ROUTES {
-        for (login, peer) in [
-            (None, true),
-            (Some(""), true),
-            (Some(" alice"), true),
-            (Some("alice,bob"), true),
-            (Some("alice@example.com"), false),
-        ] {
-            let mut req = relay_request("GET", path).body(Body::empty()).unwrap();
-            if let Some(login) = login {
-                req.headers_mut()
-                    .insert("tailscale-user-login", login.parse().unwrap());
-            }
-            if !peer {
-                req.extensions_mut().remove::<ConnectInfo<SocketAddr>>();
-            }
-            let response = fixture.app().oneshot(req).await.unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
-            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        }
-        for method in ["GET", "POST", "PUT", "DELETE"] {
-            let mut state = fixture.state.clone();
-            state.relay.lookup = Arc::new(|_| Ok("other-node".into()));
-            let mut req = request(path);
-            *req.method_mut() = method.parse().unwrap();
-            req.headers_mut()
-                .insert("x-forwarded-for", "100.64.0.1".parse().unwrap());
-            let response = router(state).oneshot(req).await.unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
-            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        }
+    {
+        let mut records = fixture.records.lock().unwrap();
+        let mut other = records.first().unwrap().clone();
+        other.project = "other".into();
+        records.push(other);
     }
-    let mut duplicate = request("/api/sessions");
-    duplicate
-        .headers_mut()
-        .append("tailscale-user-login", "alice@example.com".parse().unwrap());
-    let mut invalid = request("/api/sessions");
-    invalid.headers_mut().insert(
-        "tailscale-user-login",
-        header::HeaderValue::from_bytes(&[0xff]).unwrap(),
-    );
-    for req in [duplicate, invalid] {
+    for path in ROUTES {
+        let req = HttpRequest::get(*path)
+            .header("Tailscale-User-Login", "alice@example.com")
+            .body(Body::empty())
+            .unwrap();
         let response = fixture.app().oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     }
-    for login in ["alice@example.com", "other@example.net"] {
-        let mut req = request("/api/sessions");
-        req.headers_mut()
-            .insert("tailscale-user-login", login.parse().unwrap());
+    let req = HttpRequest::get("/api/sessions")
+        .header(
+            header::AUTHORIZATION,
+            authorization("alice", "https://niles.example.test/h/other/api"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        fixture.app().oneshot(req).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for (method, path, body, expected) in [
+        (
+            "PUT",
+            "/api/projects/project/session",
+            "",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "DELETE",
+            "/api/projects/project/session",
+            "",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "DELETE",
+            "/api/projects/project/workers/worker",
+            "",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "POST",
+            "/api/projects/project/workers/worker/message",
+            r#"{"text":"hello"}"#,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "POST",
+            "/api/sessions/project:session/message",
+            r#"{"text":"hello"}"#,
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let req = authenticated_request(method, path, "bob")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
         assert_eq!(
             fixture.app().oneshot(req).await.unwrap().status(),
-            StatusCode::OK
+            expected,
+            "{method} {path}"
         );
+    }
+    for (subject, path, expected) in [
+        (
+            "bob",
+            "/api/sessions/project:session/events",
+            StatusCode::OK,
+        ),
+        (
+            "alice",
+            "/api/sessions/other:session/events",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "alice",
+            "/api/projects/other/workers/worker/events",
+            StatusCode::FORBIDDEN,
+        ),
+        ("unknown", "/api/sessions", StatusCode::FORBIDDEN),
+    ] {
+        let req = authenticated_request("GET", path, subject)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(fixture.app().oneshot(req).await.unwrap().status(), expected);
     }
 }
 
@@ -256,6 +261,45 @@ async fn sessions_match_v1_and_resolve_only_enumerated_live_ids() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     }
+}
+
+#[tokio::test]
+async fn sse_requires_unexpired_tokens_even_with_jwt_leeway_and_closes_at_expiry() {
+    use jsonwebtoken::get_current_timestamp;
+
+    let fixture = Fixture::new(0);
+    let request = |expires| {
+        HttpRequest::get("/api/sessions/project:session/events")
+            .header(
+                header::AUTHORIZATION,
+                authorization_until("alice", WEB_RESOURCE, expires),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let expired = fixture
+        .app()
+        .oneshot(request(get_current_timestamp().saturating_sub(1)))
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+
+    let live = fixture
+        .app()
+        .oneshot(request(get_current_timestamp().saturating_add(2)))
+        .await
+        .unwrap();
+    assert_eq!(live.status(), StatusCode::OK);
+    let mut body = live.into_body().into_data_stream();
+    assert_eq!(event(&mut body).await.0, "snapshot");
+    assert!(
+        time::timeout(Duration::from_secs(4), async {
+            while body.next().await.is_some() {}
+        })
+        .await
+        .is_ok(),
+        "open session stream outlived its token"
+    );
 }
 
 #[tokio::test]

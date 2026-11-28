@@ -1,9 +1,9 @@
-use super::oidc::Grants;
-use crate::config::user::McpAccess::{self, Operate, Read};
+use crate::config::user::Access::{self, Operate, Read};
 use crate::projects::lifecycle::{self, Closed, Start, Stop};
 use crate::projects::{navigation, status};
 use crate::remote::chat::{Chat, find_worker};
 use crate::remote::message::Delivery;
+use crate::remote::oidc::Grants;
 use crate::remote::{Session, blocking, feed, message};
 use crate::tmux;
 use anyhow::Result;
@@ -20,7 +20,7 @@ type Context = RequestContext<RoleServer>;
 type ToolResult = Result<CallToolResult, ErrorData>;
 
 #[derive(Clone)]
-pub(super) struct LeadTools {
+pub(in crate::remote) struct LeadTools {
     tool_router: ToolRouter<Self>,
 }
 
@@ -64,7 +64,7 @@ struct WorkerMessage {
 impl ServerHandler for LeadTools {}
 
 impl LeadTools {
-    pub(super) fn new() -> Self {
+    pub(in crate::remote) fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
         }
@@ -225,7 +225,7 @@ fn grants(context: &Context) -> Result<Arc<Grants>, ErrorData> {
 async fn for_project(
     context: &Context,
     project: String,
-    access: McpAccess,
+    access: Access,
     operation: impl FnOnce(&str) -> Result<CallToolResult> + Send + 'static,
 ) -> ToolResult {
     if !grants(context)?.allows(&project, access) {

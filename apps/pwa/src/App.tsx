@@ -3,19 +3,19 @@ import { isReadableWorker, TAILNET_UNREACHABLE, incompatibleMessage, leadBase, w
 import { hostPrefix, qualified, useHosts, type Host } from './hosts';
 import { Navigation } from './Navigation';
 import { Chat } from './Chat';
-import { Wake } from './Wake';
 import { Notifications } from './push';
 import { selectedSession } from './notification';
+import { SignIn } from './SignIn';
 import { Telemetry } from './Telemetry';
 
-export function App() {
+export function App({ signInError }: { signInError?: string }) {
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
   const [menu, setMenu] = useState(false);
   const [help, setHelp] = useState(false);
   const [telemetry, setTelemetry] = useState(false);
-  const { hosts, error, refresh, onStatus: hostStatus } = useHosts();
+  const { hosts, manifest, error, refresh, onStatus: hostStatus } = useHosts();
   const [active, setActive] = useState<string | null>(() => localStorage.getItem('niles.activeProject'));
   const [selected, setSelected] = useState<string | undefined>(selectedSession(window.location.hash));
   const [worker, setWorker] = useState<{ host: Host; project: string; id: string }>();
@@ -72,7 +72,6 @@ export function App() {
           selected={host.projects.find(project => qualified(host, project.name) === active)?.name}
           refresh={refresh} openProject={name => openProject(host, name)}
           openWorker={(project, id) => { openProject(host, project); setWorker({ host, project, id }); }} /> :
-          host.state === 'asleep' ? <Wake host={host} refresh={refresh} /> :
           host.state === 'loading' ? <p>Connecting…</p> : null}
         {host.state === 'ready' && host.projects.length === 0 && <p class="empty">No registered projects.</p>}
       </section>)}
@@ -81,10 +80,11 @@ export function App() {
     </aside>}
     {menu && <button class="scrim" aria-label="Dismiss menu" onClick={() => setMenu(false)} />}
     {!telemetry && hosts.some(host => host.state === 'unreachable') && <p class="banner" role="alert">{TAILNET_UNREACHABLE}</p>}
-    {error && <p class="banner" role="alert">{error}</p>}
-    {hosts.map(host => host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: {incompatibleMessage(host.version)}</p> :
+    {(error || signInError) && <p class="banner" role="alert">{error || signInError}</p>}
+    {manifest && hosts.map(host => host.state === 'sign-in' ? <SignIn key={host.id} name={host.name} prefix={hostPrefix(host)} settings={{ ...manifest, client_id: host.client_id }} /> :
+      host.state === 'incompatible' ? <p key={host.id} class="banner" role="alert">{host.name}: {incompatibleMessage(host.version)}</p> :
       host.state === 'error' ? <p key={host.id} class="banner" role="alert">{host.name}: {host.error}</p> :
-      host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep or unreachable. Check the host and try waking it.</p> : null)}
+      host.state === 'asleep' ? <p key={host.id} class="banner" role="alert">{host.name}: Asleep or unreachable.</p> : null)}
     {telemetry ? <Telemetry /> : help ? <main class="empty"><p>Expand a project in the menu to open its lead chat or chat directly with a worker. Start launches the saved default lead; Stop and Close ask for confirmation. Workers are grouped by skill; Lost means their recorded window is gone.</p>
       <a href="https://github.com/Rhovian/niles/blob/main/docs/remote.md" target="_blank" rel="noopener noreferrer">Remote setup guide</a></main> :
       worker && workerHost?.state === 'ready' ? <Chat key={workerBase(worker.project, worker.id, hostPrefix(worker.host))} base={workerBase(worker.project, worker.id, hostPrefix(worker.host))} id={`${worker.project}/${worker.id}`} title={worker.id} pane={`${worker.host.id ? worker.host.name + ' · ' : ''}${member?.skill ?? 'worker'} · ${worker.id}`} subtitle={member?.model ?? ''} headerTarget={headerTarget} /> :

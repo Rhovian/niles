@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { useEffect, useState } from 'preact/hooks';
+import { hostResource } from './auth';
 import { API_VERSION, getJson, connectionError, type Incompatible } from './api';
 import { configuredHosts, hostPrefix, hostFailure, HOST_TIMEOUT_MS, type Host } from './hosts';
 
@@ -17,7 +18,9 @@ export const telemetrySchema = z.object({
 export type Snapshot = z.infer<typeof telemetrySchema>;
 type Availability = { state: 'loading' | 'ready' | 'asleep' | 'unreachable' } | { state: 'error'; error: string } | Incompatible;
 export type Machine = Host & Availability & { snapshot?: Snapshot; cacheWarning?: string };
-const cacheKey = (host: Host) => `niles.telemetry.v${API_VERSION}:${host.id}`;
+const telemetryKey = (resource: string) => `niles.oauth.telemetry:${resource}`;
+export const clearTelemetry = (resource: string) => localStorage.removeItem(telemetryKey(resource));
+const cacheKey = (host: Host) => telemetryKey(hostResource(hostPrefix(host)));
 
 // Cached formats are disposable: schema/API upgrades and malformed cache entries invalidate
 // the cache, not the host. Zod validates but does not migrate or persist browser storage.
@@ -64,7 +67,7 @@ export function useTelemetry() {
         update(host, hostFailure(cause));
       }
     };
-    void configuredHosts(controller.signal).then(async hosts => {
+    void configuredHosts(controller.signal).then(async ({ hosts }) => {
       if (controller.signal.aborted) return;
       setError('');
       setMachines(hosts.map(host => ({ ...host, state: 'loading' })));

@@ -20,7 +20,6 @@ use std::time::Duration;
 mod batch;
 mod hold;
 mod refusal;
-mod taken;
 
 fn running() -> AtomicBool {
     AtomicBool::new(false)

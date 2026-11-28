@@ -1,83 +1,95 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    process::Command,
-    sync::Arc,
+use super::{
+    ApiError,
+    oidc::{TokenGrant, Verifier},
 };
-
-use anyhow::{Context, Result, ensure};
-use serde::Deserialize;
-
-type Lookup = Arc<dyn Fn(SocketAddr) -> Result<String> + Send + Sync>;
+use anyhow::Result;
+use axum::Json;
+use axum::extract::{Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use std::sync::Arc;
+use url::Url;
 
 #[derive(Clone)]
-pub(super) struct Relay {
-    pub(super) node: String,
-    pub(super) lookup: Lookup,
+pub(super) struct Auth {
+    verifier: Arc<Verifier>,
+    resource: Url,
+    challenge: HeaderValue,
+    invalid_token: HeaderValue,
 }
 
-impl Relay {
-    pub(super) fn new(node: Option<String>) -> Result<Self> {
-        let node =
-            node.context("remote.relay_node must be the relay's stable Tailscale node ID")?;
-        ensure!(
-            !node.is_empty() && node.trim() == node && !node.chars().any(char::is_control),
-            "remote.relay_node is invalid"
-        );
+impl Auth {
+    pub(super) fn new(
+        verifier: Arc<Verifier>,
+        resource: Url,
+        metadata: Option<&str>,
+    ) -> Result<Self> {
+        let challenge = match metadata {
+            Some(url) => format!("Bearer resource_metadata=\"{url}\""),
+            None => "Bearer".to_owned(),
+        };
+        let separator = if metadata.is_some() { ", " } else { " " };
         Ok(Self {
-            node,
-            lookup: Arc::new(whois),
+            verifier,
+            resource,
+            challenge: challenge.parse()?,
+            invalid_token: format!("{challenge}{separator}error=\"invalid_token\"").parse()?,
         })
     }
-
-    pub(super) fn accepts(&self, peer: SocketAddr) -> Result<bool> {
-        Ok((self.lookup)(peer)? == self.node)
-    }
 }
 
-fn command(args: &[&str]) -> Result<String> {
-    let output = Command::new("tailscale")
-        .args(args)
-        .output()
-        .context("run tailscale")?;
-    ensure!(
-        output.status.success(),
-        "tailscale {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8(output.stdout)?)
+pub(super) async fn authenticate(
+    State(auth): State<Auth>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let mut response = match bearer(request.headers()) {
+        Some(token) => match auth.verifier.verify(auth.resource.as_str(), token).await {
+            Ok(Some(grants)) if !grants.is_empty() => {
+                request.headers_mut().remove(header::AUTHORIZATION);
+                request.extensions_mut().insert(Arc::new(grants));
+                next.run(request).await
+            }
+            Ok(Some(_)) => StatusCode::FORBIDDEN.into_response(),
+            Ok(None) => challenge(auth.invalid_token),
+            Err(error) => ApiError(error).into_response(),
+        },
+        None if request.headers().contains_key(header::AUTHORIZATION) => {
+            challenge(auth.invalid_token)
+        }
+        None => challenge(auth.challenge),
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
-pub(super) fn tailnet_ip() -> Result<Ipv4Addr> {
-    // The CLI selects the local IPv4; Rust parses its text representation.
-    // https://github.com/tailscale/tailscale/blob/v1.96.2/cmd/tailscale/cli/ip.go
-    let ip = command(&["ip", "-4"])?;
-    ip.trim().parse().context("parse tailscale ip -4")
+pub(super) async fn exchange(
+    State(auth): State<Auth>,
+    Json(grant): Json<TokenGrant>,
+) -> Result<Response, ApiError> {
+    let Some(token) = auth.verifier.exchange(auth.resource, grant).await? else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    };
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(token)).into_response())
 }
 
-// WhoIs authenticates the TCP peer, never an HTTP forwarding header.
-// The CLI emits JSON but offers no stable-node-ID-only output:
-// https://github.com/tailscale/tailscale/blob/v1.96.2/cmd/tailscale/cli/whois.go
-fn whois(peer: SocketAddr) -> Result<String> {
-    #[derive(Deserialize)]
-    struct WhoIs {
-        #[serde(rename = "Node")]
-        node: Node,
-    }
-    #[derive(Deserialize)]
-    struct Node {
-        #[serde(rename = "StableID")]
-        stable_id: String,
-    }
-    let identity: WhoIs = serde_json::from_str(&command(&[
-        "whois",
-        "--json",
-        "--proto=tcp",
-        &peer.to_string(),
-    ])?)?;
-    ensure!(
-        !identity.node.stable_id.is_empty(),
-        "WhoIs returned an empty node ID"
-    );
-    Ok(identity.node.stable_id)
+fn challenge(value: HeaderValue) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, value)],
+    )
+        .into_response()
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let Ok(value) = values.next()?.to_str() else {
+        return None;
+    };
+    let (scheme, token) = value.split_once(' ')?;
+    (values.next().is_none() && scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty())
+        .then_some(token.trim_start_matches(' '))
 }

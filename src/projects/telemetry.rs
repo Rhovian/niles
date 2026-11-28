@@ -23,13 +23,16 @@ pub(crate) struct Session {
 
 const HISTORY: TimeDelta = TimeDelta::days(30);
 
-pub(crate) fn collect() -> Result<Vec<Session>> {
+pub(crate) fn collect_for(allows: impl Fn(&str) -> bool) -> Result<Vec<Session>> {
     let since = Utc::now()
         .checked_sub_signed(HISTORY)
         .context("telemetry history overflow")?
         .duration_trunc(BUCKET)?;
     let mut sessions = Vec::new();
-    for entry in registry::entries()? {
+    for entry in registry::entries()?
+        .into_iter()
+        .filter(|entry| allows(entry.name.as_str()))
+    {
         sessions.extend(project(&entry, since)?);
     }
     Ok(sessions)

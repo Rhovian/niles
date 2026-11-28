@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { apiFetch } from './auth';
 
 export const API_VERSION = 1;
 export const sessionSchema = z.object({
@@ -38,7 +39,7 @@ export function incompatibleMessage(version: number) {
   return `Update the web app. API version ${version} requires a matching release (this app supports ${API_VERSION}).`;
 }
 export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<{ state: 'ready'; data: T } | Incompatible> {
-  const response = await fetch(path, { cache: 'no-store', signal });
+  const response = await apiFetch(path, { signal });
   if (!response.ok) throw new ApiError(response.status);
   const data: unknown = await response.json();
   const { api_version } = apiVersionSchema.parse(data);
@@ -54,8 +55,8 @@ export async function sendMessage(base: string, message: Message) {
   const subscription = await registration?.pushManager.getSubscription();
   const fingerprint = subscription ? new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subscription.endpoint))) : undefined;
   const sender_device = fingerprint ? btoa(String.fromCharCode(...fingerprint)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '') : undefined;
-  const response = await fetch(`${base}/message`, {
-    method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+  const response = await apiFetch(`${base}/message`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...message, ...(sender_device ? { sender_device } : {}) }),
   });
   if (response.status !== 200) throw new ApiError(response.status);
@@ -74,7 +75,7 @@ export const leadBase = (id: string, prefix = '') => `${prefix}/api/sessions/${e
 export const workerBase = (project: string, id: string, prefix = '') => `${prefix}/api/projects/${encodeURIComponent(project)}/workers/${encodeURIComponent(id)}`;
 
 async function request(method: 'PUT' | 'DELETE', url: string) {
-  const response = await fetch(url, { method, cache: 'no-store' });
+  const response = await apiFetch(url, { method });
   if (response.status === 200 || response.status === 404) return;
   throw new ApiError(response.status, response.status === 409 ? await response.text() : undefined);
 }

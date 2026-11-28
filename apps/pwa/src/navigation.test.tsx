@@ -132,7 +132,7 @@ it('opens worker transcripts and exposes confirmed lifecycle actions with refetc
     if (label === 'Close review') fireEvent.click(screen.getByRole('button', { name: 'review', exact: true }));
     const before = fetcher.mock.calls.filter(([url]) => url === '/api/projects').length;
     fireEvent.click(screen.getByRole('button', { name: label }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(url, { method, cache: 'no-store' }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(url, expect.objectContaining({ method, cache: 'no-store' })));
     await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === '/api/projects').length).toBeGreaterThan(before));
   }
   confirm.mockRestore();

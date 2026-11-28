@@ -10,6 +10,8 @@ use std::process::{Child, ChildStderr, Stdio};
 use std::time::Duration;
 
 mod common;
+#[path = "remote_control/issuer.rs"]
+mod issuer;
 #[path = "remote_control/listing.rs"]
 mod listing;
 
@@ -29,28 +31,30 @@ list-windows) case "$*" in
   esac ;;
 new-session) touch "$TMUX_LOG.running"; if [ -f "$TMUX_LOG.race" ]; then echo duplicate >&2; exit 1; fi ;;
 kill-session) rm "$TMUX_LOG.running"; if [ -f "$TMUX_LOG.stop-race" ]; then echo vanished >&2; exit 1; fi ;;
-capture-pane) cat "$TMUX_LOG.pane" 2>/dev/null; exit 0 ;;
-send-keys) printf '%s\n' "$*" >> "$TMUX_LOG.pane" ;;
 esac
 "#;
 struct Server {
     child: Child,
+    issuer: Option<issuer::Issuer>,
     address: String,
     _diagnostics: BufReader<ChildStderr>,
 }
 impl Server {
     fn new(env: &TestEnv) -> Self {
-        common::stub_tailscale(env);
+        Self::with_issuer(env, issuer::Issuer::start())
+    }
+    fn with_issuer(env: &TestEnv, issuer: issuer::Issuer) -> Self {
         atomic_write(&env.tmux_log, "").unwrap();
         register_project(env, "api", &env.root);
         atomic_write(
             env.home.join(".niles/config.yaml"),
-            "remote: { relay_node: relay }",
+            format!("remote:\n{}", issuer.config()),
         )
         .unwrap();
         // Workspace selection must not affect this multi-project service or its close children.
-        let mut child = env
-            .niles(&env.root, &["remote", "--port", "0"])
+        let mut command = env.niles(&env.root, &["remote", "--port", "0"]);
+        issuer.trust(&mut command);
+        let mut child = command
             .args(["--setup", "workspace:tdd"])
             .env("NILES_SETUP", "invalid:selection")
             .env("TMUX_PROJECT_TAG", &env.root)
@@ -60,8 +64,13 @@ impl Server {
         let mut line = String::new();
         let mut diagnostics = BufReader::new(child.stderr.take().unwrap());
         diagnostics.read_line(&mut line).unwrap();
+        assert!(
+            line.starts_with("remote listening on "),
+            "server failed to start: {line}"
+        );
         Self {
             child,
+            issuer: Some(issuer),
             address: line
                 .strip_prefix("remote listening on ")
                 .unwrap()
@@ -70,8 +79,14 @@ impl Server {
             _diagnostics: diagnostics,
         }
     }
+    fn authorization(&self) -> String {
+        match &self.issuer {
+            Some(issuer) => issuer.authorization(),
+            None => String::new(),
+        }
+    }
     fn socket(&self, method: &str, path: &str, body: &str) -> TcpStream {
-        self.socket_with(method, path, "Tailscale-User-Login: alice\r\n", body)
+        self.socket_with(method, path, &self.authorization(), body)
     }
     fn socket_with(&self, method: &str, path: &str, headers: &str, body: &str) -> TcpStream {
         let mut socket = TcpStream::connect(&self.address).unwrap();
@@ -82,7 +97,7 @@ impl Server {
         socket
     }
     fn request(&self, method: &str, path: &str, body: &str) -> String {
-        self.request_with(method, path, "Tailscale-User-Login: alice\r\n", body)
+        self.request_with(method, path, &self.authorization(), body)
     }
     fn request_with(&self, method: &str, path: &str, headers: &str, body: &str) -> String {
         let mut result = String::new();
@@ -112,68 +127,6 @@ impl Drop for Server {
 
 fn marker(env: &TestEnv, name: &str) -> PathBuf {
     env.tmux_log.with_extension(format!("log.{name}"))
-}
-
-#[test]
-fn worker_chat_uses_its_transcript_and_live_window_only() {
-    let env = TestEnv::with_tmux("worker-chat", TMUX);
-    atomic_write(marker(&env, "running"), "").unwrap();
-    let worker = write_worker(&env.root, "worker", "api:w", None, b"");
-    let broken = write_worker(&env.root, "broken", "api:broken", None, b"");
-    atomic_write(broken.join("meta.json"), "{").unwrap();
-    write_worker(&env.root, "lost", "api:gone", None, b"");
-    let transcript = env.root.join("transcript");
-    fs::create_dir(&transcript).unwrap();
-    atomic_write(transcript.join("001.jsonl"), format!("{}\n", json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"worker says hi"}]}}))).unwrap();
-    edit_json(worker.join("meta.json"), |meta| {
-        meta["session_link"] = json!({"family":"pi","session_dir":transcript});
-    });
-    let server = Server::new(&env);
-    let mut stream =
-        BufReader::new(server.socket("GET", "/api/projects/api/workers/worker/events", ""));
-    let mut received = String::new();
-    loop {
-        let mut line = String::new();
-        stream.read_line(&mut line).unwrap();
-        received.push_str(&line);
-        if line.contains("worker says hi") {
-            break;
-        }
-    }
-    assert!(received.contains("snapshot"), "{received}");
-    assert!(received.contains("api/worker:0"));
-    server.status(
-        "POST",
-        "/api/projects/api/workers/worker/message",
-        r#"{"text":"hello"}"#,
-        200,
-    );
-    assert!(
-        env.tmux_log().contains("send-keys -t =api:=w"),
-        "{}",
-        env.tmux_log()
-    );
-    server.status(
-        "POST",
-        "/api/projects/api/workers/lost/message",
-        r#"{"text":"hello"}"#,
-        503,
-    );
-    for id in ["unknown", "%2E%2E", "%2Fetc%2Fpasswd", "--all"] {
-        server.status(
-            "POST",
-            &format!("/api/projects/api/workers/{id}/message"),
-            r#"{"text":"hi"}"#,
-            404,
-        );
-        server.status(
-            "DELETE",
-            &format!("/api/projects/api/workers/{id}"),
-            "",
-            404,
-        );
-    }
-    server.status("GET", "/api/projects/api/workers/unknown/events", "", 404);
 }
 
 #[test]

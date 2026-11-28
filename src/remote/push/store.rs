@@ -1,3 +1,4 @@
+use super::Principal;
 use crate::util;
 use anyhow::{Context, Result, ensure};
 use base64::Engine;
@@ -23,7 +24,7 @@ struct Key {
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Device {
-    user: String,
+    pub(super) principal: Principal,
     pub(super) subscription: Subscription,
     #[serde(default)]
     pub(super) host: Option<Host>,
@@ -75,7 +76,7 @@ impl TryFrom<String> for DeviceId {
 }
 impl Device {
     pub(super) fn is_sender(&self, sender: &super::Sender) -> bool {
-        self.user == sender.user
+        self.principal == sender.principal
             && DeviceId::from_endpoint(&self.subscription.0.endpoint) == sender.device
     }
 
@@ -175,7 +176,7 @@ impl Store {
     }
     pub(super) fn save(
         &self,
-        user: String,
+        principal: Principal,
         subscription: Subscription,
         host: Option<Host>,
     ) -> Result<()> {
@@ -183,7 +184,7 @@ impl Store {
         // tempfile 3.27 persist atomically replaces; readers never see partially written JSON.
         let mut temp = tempfile::NamedTempFile::new_in(self.root.join("subscriptions"))?;
         temp.write_all(&serde_json::to_vec(&Device {
-            user,
+            principal,
             subscription,
             host,
         })?)?;

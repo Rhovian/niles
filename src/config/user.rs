@@ -28,9 +28,11 @@ pub(crate) struct FileConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FileRemote {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) relay_node: Option<String>,
+    pub(crate) web: Option<FileWeb>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) wake_hosts: BTreeMap<String, FileWakeHost>,
+    pub(crate) issuers: BTreeMap<String, Vec<FileGrant>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) introspection: Option<FileIntrospection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) mcp: Option<FileMcp>,
 }
@@ -43,33 +45,43 @@ pub(crate) struct FileMcp {
     pub(crate) port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) interactive_issuer: Option<String>,
-    pub(crate) issuers: BTreeMap<String, Vec<FileMcpGrant>>,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct FileMcpGrant {
-    pub(crate) subject: String,
-    pub(crate) project: String,
-    pub(crate) access: McpAccess,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum McpAccess {
-    Read,
-    Operate,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FileWakeHost {
-    pub(crate) mac: String,
-    pub(crate) broadcast: Ipv4Addr,
+pub(crate) struct FileWeb {
+    pub(crate) bind: Ipv4Addr,
+    pub(crate) resource: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileIntrospection {
+    pub(crate) issuer: String,
+    pub(crate) client_id: String,
+    pub(crate) client_secret_env: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileGrant {
+    pub(crate) subject: String,
+    pub(crate) project: String,
+    pub(crate) access: Access,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Access {
+    Read,
+    Operate,
 }
 
 fn remote_is_empty(remote: &FileRemote) -> bool {
-    remote.relay_node.is_none() && remote.wake_hosts.is_empty() && remote.mcp.is_none()
+    remote.web.is_none()
+        && remote.issuers.is_empty()
+        && remote.introspection.is_none()
+        && remote.mcp.is_none()
 }
 
 #[derive(Default, Deserialize, Serialize)]

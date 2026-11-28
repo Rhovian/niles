@@ -1,3 +1,4 @@
+import { apiFetch } from './auth';
 import { useState } from 'preact/hooks';
 import { z } from 'zod';
 import { ApiError } from './api';
@@ -14,7 +15,7 @@ export function Notifications({ hosts }: { hosts: Host[] }) {
       const registration = await navigator.serviceWorker.getRegistration();
       if (!registration?.active) throw new Error('Open the installed production app and try again once its offline shell is ready.');
       const keys = await Promise.all(hosts.map(async host => {
-        const response = await fetch(`${hostPrefix(host)}/api/push/vapid`, { cache: 'no-store', signal: AbortSignal.timeout(8_000) });
+        const response = await apiFetch(`${hostPrefix(host)}/api/push/vapid`, { signal: AbortSignal.timeout(8_000) });
         if (!response.ok) throw new Error(`${host.name}: ${new ApiError(response.status).message}`);
         return z.object({ public_key: z.string().min(1) }).parse(await response.json()).public_key;
       }));
@@ -30,7 +31,7 @@ export function Notifications({ hosts }: { hosts: Host[] }) {
       }
       const subscription = existing ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: publicKey });
       const results = await Promise.allSettled(hosts.map(async host => {
-        const saved = await fetch(`${hostPrefix(host)}/api/push/subscribe`, { method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(8_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...subscription.toJSON(), host: host.id ? { id: host.id, name: host.name } : null }) });
+        const saved = await apiFetch(`${hostPrefix(host)}/api/push/subscribe`, { method: 'POST', signal: AbortSignal.timeout(8_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...subscription.toJSON(), host: host.id ? { id: host.id, name: host.name } : null }) });
         if (saved.status !== 200) throw new ApiError(saved.status);
       }));
       const failures = results.flatMap((result, index) => result.status === 'rejected' ? [`${hosts[index].name}: ${String(result.reason)}`] : []);
